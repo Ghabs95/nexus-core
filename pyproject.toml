@@ -1,0 +1,99 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-core"
+version = "0.1.0"
+description = "Production-grade framework for orchestrating AI agents in multi-step workflows"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Nexus Team"},
+]
+keywords = ["ai", "agents", "workflow", "orchestration", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+
+dependencies = [
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "typing-extensions>=4.0",
+]
+
+[project.optional-dependencies]
+telegram = [
+    "python-telegram-bot>=20.0",
+]
+slack = [
+    "slack-sdk>=3.0",
+]
+postgres = [
+    "psycopg2-binary>=2.9",
+    "sqlalchemy>=2.0",
+]
+redis = [
+    "redis>=5.0",
+]
+openai = [
+    "openai>=1.0",
+]
+anthropic = [
+    "anthropic>=0.18",
+]
+all = [
+    "nexus-core[telegram,slack,postgres,redis,openai,anthropic]",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Ghabs95/nexus-core"
+Documentation = "https://nexus-core.readthedocs.io"
+Repository = "https://github.com/Ghabs95/nexus-core"
+Issues = "https://github.com/Ghabs95/nexus-core/issues"
+
+[project.scripts]
+nexus = "nexus.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nexus*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+select = ["E", "F", "I", "N", "W", "B", "C4", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --cov=nexus --cov-report=term-missing"
