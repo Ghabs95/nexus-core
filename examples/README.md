@@ -6,7 +6,6 @@ This folder demonstrates how to use Nexus Core with real examples.
 
 ```
 examples/
-├── basic_workflow.py           # Getting started: simple 3-step workflow
 ├── workflows/                  # Workflow orchestration (YAML)
 │   └── nexus_core_development.yaml  # Example: Multi-agent development workflow
 ├── agents/                     # Agent definitions (YAML)
@@ -20,20 +19,68 @@ examples/
 
 ---
 
+## Agent Types & Use Cases
+
+### Nexus Core Task Agents (This Framework)
+
+**What:** Workflow agents that execute specific tasks in orchestrated sequences.
+
+**Examples:**
+- Triage Agent: Classify GitHub issues
+- Design Agent: Create design proposals
+- Code Review Agent: Review pull requests
+- Docs Agent: Update documentation
+
+**Deployment:** Run inside workflows, get orchestrated by WorkflowEngine, all decisions tracked in Git.
+
+**When to use:** Build automation tasks that need observability, routing, and git-native audit trails.
+
+---
+
+### GitHub Copilot Org Agents (Different Paradigm)
+
+**What:** Persistent personas that guide humans in VS Code Chat (not automation).
+
+**Examples:**
+- @CEO: Strategic oversight
+- @CTO: Architecture decisions  
+- @BackendLead: Backend expertise
+- @QAGuard: Quality gates
+
+**Deployment:** `.agent/` format in VS Code workspace, invoked by human with `@AgentName`.
+
+**When to use:** Embed team knowledge/governance into AI Chat assistants for developers.
+
+**Reference:** See [github.com/Ghabs95/agents](https://github.com/Ghabs95/agents) for organizational agent patterns.
+
+---
+
 ## Quick Start
 
-### 1. Run the Basic Workflow
+### 1. Explore Agent Definitions
+
+Agent YAML files show the complete schema:
 
 ```bash
-cd /path/to/nexus-core
-python examples/basic_workflow.py
+cat examples/agents/triage-agent.yaml    # Issue classification agent
+cat examples/agents/design-agent.yaml    # Feature design proposal agent
+cat examples/workflows/nexus_core_development.yaml  # Multi-agent workflow
 ```
 
-This demonstrates core Nexus Core concepts:
-- Creating workflows
-- Managing state
-- Pausing/resuming
-- Audit trails
+### 2. Generate Agent Code / Docs
+
+Use translator tools to generate documentation or Python scaffolding:
+
+```bash
+# Generate markdown documentation
+python examples/translator/to_markdown.py examples/agents/triage-agent.yaml
+
+# Generate Python class template to implement
+python examples/translator/to_python.py examples/agents/triage-agent.yaml
+
+# Generate Copilot Chat instructions
+python examples/translator/to_copilot.py examples/agents/triage-agent.yaml
+```
 
 ---
 
