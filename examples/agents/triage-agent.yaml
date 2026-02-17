@@ -1,0 +1,103 @@
+apiVersion: "nexus-core/v1"
+kind: "Agent"
+metadata:
+  name: "triage-agent"
+  description: "Analyzes GitHub issues and classifies them by type and priority"
+  author: "Nexus Core Team"
+  version: "0.1.0"
+
+spec:
+  # Agent behavior configuration
+  agent_type: "classifier"
+  timeout_seconds: 300
+  max_retries: 3
+  
+  # What this agent does
+  purpose: |
+    Reads new GitHub issues, analyzes title/description, and:
+    1. Classifies as: bug | feature | documentation | support
+    2. Assigns priority: p0-critical | p1-high | p2-medium | p3-low
+    3. Suggests appropriate labels and assignee
+    4. Posts findings as issue comment
+    
+  # Tools the agent needs
+  requires_tools:
+    - github:read_issue
+    - github:add_comment
+    - github:add_label
+    - ai:completion  # LLM call
+  
+  # Input contract
+  inputs:
+    issue_url:
+      type: string
+      description: "GitHub issue URL"
+      required: true
+      example: "https://github.com/Ghabs95/nexus-core/issues/42"
+  
+  # Output contract
+  outputs:
+    classification:
+      type: enum
+      values: ["bug", "feature", "doc", "support"]
+      description: "Issue type"
+    priority:
+      type: enum
+      values: ["p0-critical", "p1-high", "p2-medium", "p3-low"]
+      description: "Priority level"
+    suggested_labels:
+      type: array
+      items: string
+      description: "Recommended GitHub labels"
+      example: ["bug", "adapters/ai", "high-priority"]
+    reasoning:
+      type: string
+      description: "Why we classified it this way"
+  
+  # The AI prompt to use
+  ai_instructions: |
+    Analyze this GitHub issue for the Nexus Core framework.
+    
+    Issue Title: {issue_title}
+    Issue Body: {issue_body}
+    
+    Classify it into ONE category:
+    - BUG: Something is broken or doesn't work
+    - FEATURE: New functionality or enhancement request
+    - DOC: Documentation improvement needed
+    - SUPPORT: Question or general support
+    
+    Assign priority (p0=needs immediate fix, p3=nice to have).
+    
+    Consider:
+    - Does it affect production functionality? (↑ priority)
+    - Is it a common pain point? (↑ priority)
+    - Can users work around it? (↓ priority)
+    
+    Return JSON:
+    {
+      "classification": "bug|feature|doc|support",
+      "priority": "p0-critical|p1-high|p2-medium|p3-low",
+      "reasoning": "2-3 sentences explaining your classification",
+      "suggested_labels": ["label1", "label2"]
+    }
+  
+  # Example run for testing
+  example:
+    input:
+      issue_url: "https://github.com/Ghabs95/nexus-core/issues/15"
+    expected_output:
+      classification: "feature"
+      priority: "p2-medium"
+      suggested_labels: ["enhancement", "adapters/storage", "good-first-issue"]
+      reasoning: "Request for PostgreSQL storage adapter. Useful but not blocking core functionality."
+  
+  # Routing: what happens after this agent runs
+  next_steps:
+    - condition: "classification == 'bug'"
+      then: "debug-agent"
+    - condition: "classification == 'feature'"
+      then: "design-agent"
+    - condition: "classification == 'doc'"
+      then: "docs-agent"
+    - default: "close_loop"
