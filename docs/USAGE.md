@@ -26,7 +26,7 @@ Your specific app that:
 
 ## Nexus-Core Framework (Generic)
 
-**Location:** `/home/ubuntu/git/ghabs/nexus-core/`
+**Location:** `nexus-core/`
 
 **What it provides:**
 
@@ -145,7 +145,7 @@ See [examples/workflows/development_workflow.yaml](../examples/workflows/develop
 
 ## Integration Layer (Your Code)
 
-**Location:** `/home/ubuntu/git/ghabs/nexus/src/nexus_core_helpers.py`
+**Location:** `nexus/src/nexus_core_helpers.py`
 
 **What it does:**
 

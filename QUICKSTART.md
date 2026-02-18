@@ -3,7 +3,7 @@
 ## Installation
 
 ```bash
-cd /home/ubuntu/git/ghabs/nexus-core
+cd nexus-core
 pip install -e .
 ```
 

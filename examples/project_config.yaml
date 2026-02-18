@@ -13,6 +13,11 @@
 # Relative paths are resolved from BASE_DIR environment variable
 workflow_definition_path: your-org/workflows/your_org_workflow.yaml
 
+# VCS-agnostic inbox/tasks directory (can be .nexus, .gitlab, .gitea, etc.)
+# Relative to project workspace root
+# This allows the system to work with any VCS platform by changing a single config value
+nexus_dir: .nexus
+
 # PR Merge Policy (project-level enforcement)
 # Controls whether @OpsCommander can auto-merge PRs or must wait for human approval
 # Options:
@@ -21,32 +26,59 @@ workflow_definition_path: your-org/workflows/your_org_workflow.yaml
 #   - never: Auto-merge allowed (NOT recommended for production)
 require_human_merge_approval: workflow-based  # Overrideable per project
 
-# Global AI tool preferences: which AI tool to use for each agent
-# Options: copilot (GitHub Copilot, better for code reasoning), gemini (Google Gemini, faster for analysis)
-# Map agent names or agent_type values to AI tools
-ai_tool_preferences:
-  # Ghabs org-specific agents
-  ProjectLead: copilot
-  Atlas: copilot
-  Architect: copilot
-  Tier2Lead: copilot
-  ProductDesigner: gemini
-  QAGuard: gemini
-  Scribe: gemini
-  OpsCommander: gemini
-  Privacy: gemini
-  FrontendLead: copilot
-  BackendLead: copilot
-  MobileLead: copilot
-  Developer: copilot  # Generic developer agent for quick implementations
+# GitHub Issue Triage Configuration (optional)
+# Maps incoming GitHub issues to agent types based on labels and repository
+#
+# Agent types are abstract roles that workflows implement:
+#   - triage: Initial issue analysis and classification
+#   - escalation: High-priority/urgent issues (escalate to senior agent)
+#   - debug: Bug analysis and root cause analysis
+#
+# Each project's workflow defines which actual agent implements each type.
+github_issue_triage:
+  # Default agent type for issues with no matching labels
+  default_agent_type: "triage"
   
-  # Generic agent types (for development_workflow.yaml and custom workflows)
-  triage: copilot          # Issue classification
-  design: copilot          # Design proposals
-  debug: copilot           # Root cause analysis
-  code_reviewer: copilot   # PR reviews
-  docs: gemini             # Documentation updates
-  summarizer: gemini       # Workflow summaries
+  # Per-repository override (use different agent type for specific repos)
+  per_repo:
+    # "your-org/important-repo": "escalation"  # All issues in this repo → escalation
+  
+  # Label-based routing to agent types
+  label_based:
+    "triage": "triage"              # Triage workflow
+    "good first issue": "triage"    # Beginner-friendly → triage
+    "bug": "debug"                  # Bugs → debug agent
+    "urgent": "escalation"          # Urgent → escalation agent
+    "critical": "escalation"        # Critical → escalation agent
+    # "enhancement": "design"       # Features → design agent (optional)
+
+# Global AI tool preferences: which AI tool to use for each AGENT TYPE
+# Options: copilot (GitHub Copilot, better for code reasoning), gemini (Google Gemini, faster for analysis)
+#
+# IMPORTANT: This maps AGENT TYPES (system roles) to AI tools, not individual agents
+# - Agent types are defined in agent YAML files with `agent_type` field
+# - Multiple agents can have the same type (e.g., two @triage agents for fallback)
+# - Tasks are routed to agent types, not specific agents
+# - The first available agent of that type handles the task
+#
+# Example agent YAML:
+#   spec:
+#     agent_type: "triage"       # This agent is a triage agent
+#     provider_preference: null  # Can be overridden by ai_tool_preferences
+ai_tool_preferences:
+  # ===== SYSTEM AGENT TYPES (abstract roles used by workflows) =====
+  # These types are used by:
+  # - github_issue_triage config (routes issues to agent types)
+  # - workflow YAML (assigns work to agent types)
+  # - task assignment (looks for agents with matching system_type)
+  
+  triage: copilot          # Issue classification and analysis
+  design: copilot          # Design and architecture proposals
+  debug: copilot           # Root cause analysis for bugs
+  code_reviewer: copilot   # PR reviews and code quality
+  docs: gemini             # Documentation updates (faster)
+  summarizer: gemini       # Workflow summaries (faster)
+  escalation: copilot      # High-priority escalation to senior agent
 
 # --- PROJECT CONFIGURATIONS ---
 # Each project must have: agents_dir, workspace, github_repo

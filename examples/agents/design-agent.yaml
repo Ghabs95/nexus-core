@@ -7,7 +7,12 @@ metadata:
   version: "0.1.0"
 
 spec:
-  agent_type: "creator"
+  # Agent type - determines which tasks this agent can handle
+  # Types: triage | design | debug | code_reviewer | docs | summarizer | escalation
+  # When a task is assigned to "design", this agent will pick it up
+  agent_type: "design"
+  
+  # Agent behavior configuration
   timeout_seconds: 600
   max_retries: 2
   
