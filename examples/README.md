@@ -7,7 +7,7 @@ This folder demonstrates how to use Nexus Core with real examples.
 ```
 examples/
 ├── workflows/                  # Workflow orchestration (YAML)
-│   └── nexus_core_development.yaml  # Example: Multi-agent development workflow
+│   └── development_workflow.yaml  # Example: Multi-agent development workflow
 ├── agents/                     # Agent definitions (YAML)
 │   ├── triage-agent.yaml       # Example: Issue triage agent
 │   └── design-agent.yaml       # Example: Feature design agent
@@ -64,7 +64,7 @@ Agent YAML files show the complete schema:
 ```bash
 cat examples/agents/triage-agent.yaml    # Issue classification agent
 cat examples/agents/design-agent.yaml    # Feature design proposal agent
-cat examples/workflows/nexus_core_development.yaml  # Multi-agent workflow
+cat examples/workflows/development_workflow.yaml  # Multi-agent workflow
 ```
 
 ### 2. Generate Agent Code / Docs
@@ -174,10 +174,10 @@ You can paste these instructions into Copilot and ask:
 
 ## Workflow Orchestration
 
-Workflows coordinate multiple agents. See `nexus_core_development.yaml` for an example:
+Workflows coordinate multiple agents. See `development_workflow.yaml` for an example:
 
 ```yaml
-# examples/workflows/nexus_core_development.yaml
+# examples/workflows/development_workflow.yaml
 name: "Nexus Core Development Workflow"
 
 steps:
@@ -277,7 +277,7 @@ result = await engine.run(workflow=..., inputs={...})
 
 This repo uses agents for its own development!
 
-The workflow in `nexus_core_development.yaml`:
+The workflow in `development_workflow.yaml`:
 1. **Triage**: New issues automatically analyzed
 2. **Design**: Feature requests get design docs
 3. **Code Review**: PRs reviewed automatically

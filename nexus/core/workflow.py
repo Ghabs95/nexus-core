@@ -1,7 +1,10 @@
 """Basic workflow engine - simplified version for MVP."""
 import logging
+import re
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
+
+import yaml
 
 from nexus.adapters.storage.base import StorageBackend
 from nexus.core.models import (
@@ -162,16 +165,105 @@ class WorkflowDefinition:
     """
     Workflow definition loader (from YAML/JSON).
     
-    This is a placeholder for future YAML/JSON-based workflow definitions.
-    For MVP, workflows are created programmatically.
+    Provides a minimal YAML-based loader that maps a workflow definition
+    into Nexus Core's Workflow/WorkflowStep models.
     """
 
     @staticmethod
-    def from_yaml(yaml_path: str) -> Workflow:
-        """Load workflow from YAML file (TODO)."""
-        raise NotImplementedError("YAML workflow loading not yet implemented")
+    def from_yaml(
+        yaml_path: str,
+        workflow_id: Optional[str] = None,
+        name_override: Optional[str] = None,
+        description_override: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Workflow:
+        """Load workflow from a YAML file and return a Workflow object."""
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        return WorkflowDefinition.from_dict(
+            data,
+            workflow_id=workflow_id,
+            name_override=name_override,
+            description_override=description_override,
+            metadata=metadata,
+        )
 
     @staticmethod
-    def from_dict(data: dict) -> Workflow:
-        """Load workflow from dict (TODO)."""
-        raise NotImplementedError("Dict workflow loading not yet implemented")
+    def from_dict(
+        data: Dict[str, Any],
+        workflow_id: Optional[str] = None,
+        name_override: Optional[str] = None,
+        description_override: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Workflow:
+        """Load workflow from a dict and return a Workflow object."""
+        if not isinstance(data, dict):
+            raise ValueError("Workflow definition must be a dict")
+
+        name = name_override or data.get("name", "Unnamed Workflow")
+        description = description_override or data.get("description", "")
+        version = data.get("version", "1.0")
+
+        resolved_id = workflow_id or WorkflowDefinition._slugify(name)
+        if not resolved_id:
+            raise ValueError("Workflow ID could not be resolved")
+
+        steps_data = data.get("steps", [])
+        if not isinstance(steps_data, list) or not steps_data:
+            raise ValueError("Workflow definition must include a non-empty steps list")
+
+        steps = []
+        for idx, step_data in enumerate(steps_data, start=1):
+            if not isinstance(step_data, dict):
+                raise ValueError(f"Step {idx} must be a dict")
+
+            agent_type = step_data.get("agent_type", "agent")
+            step_name = step_data.get("id") or step_data.get("name") or f"step_{idx}"
+            step_desc = step_data.get("description", "")
+            prompt_template = step_data.get("prompt_template") or step_desc or "Execute step"
+
+            agent = Agent(
+                name=agent_type,
+                display_name=step_data.get("name", agent_type),
+                description=step_desc or f"Step {idx}",
+                timeout=data.get("timeout_seconds", 600),
+                max_retries=2,
+            )
+
+            inputs_data = step_data.get("inputs", {})
+            if isinstance(inputs_data, list):
+                normalized_inputs = {}
+                for entry in inputs_data:
+                    if isinstance(entry, dict):
+                        normalized_inputs.update(entry)
+                inputs_data = normalized_inputs
+
+            steps.append(
+                WorkflowStep(
+                    step_num=idx,
+                    name=WorkflowDefinition._slugify(step_name) or step_name,
+                    agent=agent,
+                    prompt_template=prompt_template,
+                    condition=step_data.get("condition"),
+                    inputs=inputs_data,
+                )
+            )
+
+        workflow_metadata = {"definition": data}
+        if metadata:
+            workflow_metadata.update(metadata)
+
+        return Workflow(
+            id=resolved_id,
+            name=name,
+            version=version,
+            description=description,
+            steps=steps,
+            metadata=workflow_metadata,
+        )
+
+    @staticmethod
+    def _slugify(text: str) -> str:
+        """Convert text into a safe workflow ID."""
+        value = re.sub(r"[^a-zA-Z0-9_-]+", "-", text.strip().lower())
+        return value.strip("-")

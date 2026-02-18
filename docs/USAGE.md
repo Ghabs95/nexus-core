@@ -54,19 +54,39 @@ class WorkflowEngine:
     async def complete_step(workflow_id, step_num, outputs)
 ```
 
+### YAML Workflow Definitions
+
+Nexus Core can load workflow definitions from YAML and map them into
+`Workflow` and `WorkflowStep` models.
+
+```python
+from nexus.core.workflow import WorkflowDefinition
+
+workflow = WorkflowDefinition.from_yaml(
+    "./examples/workflows/development_workflow.yaml",
+    workflow_id="demo-issue-42",
+    name_override="nexus-core/feature-demo",
+    description_override="Demo workflow from YAML"
+)
+
+await engine.create_workflow(workflow)
+```
+
 **What it does NOT know:**
 - ❌ What "tier-2-standard" means
-- ❌ That you have projects called "casit-agents", "wallible"
+- ❌ That you have projects called "acme-app", "retail-platform"
 - ❌ That you use Telegram for notifications
 - ❌ How to map GitHub issue numbers to workflow IDs
-- ❌ Your WORKFLOW_CHAIN configuration
 - ❌ Your tier → workflow type mapping
+- ❌ Your specific workflow orchestration logic
 
 **Why?** Because someone else using nexus-core might:
 - Use GitLab instead of GitHub
 - Use Discord instead of Telegram
 - Have completely different workflow types (no tiers at all)
 - Use different project structures
+
+> **📝 Note:** The examples below show different integration approaches. The **recommended pattern** is to define workflows in YAML files and use `project_config.yaml` to reference them (see examples/workflows/). However, you can also programmatically build workflows in Python if your use case requires dynamic workflow generation.
 
 ---
 
@@ -77,11 +97,14 @@ class WorkflowEngine:
 **What it does:**
 
 ```python
+# Example integration approach: Programmatic workflow generation
+# (For YAML-based approach, see examples/workflows/ and examples/project_config.yaml)
+
 # YOUR tier system
 def _tier_to_workflow_type(tier_name: str) -> str:
     tier_mapping = {
         "tier-1-simple": "fast-track",      # YOUR naming
-        "tier-2-standard": "shortened",      # YOUR naming
+        "tier-2-standard": "shortened",     # YOUR naming
         "tier-3-complex": "full",           # YOUR naming
         "tier-4-critical": "full"           # YOUR naming
     }
@@ -90,7 +113,7 @@ def _tier_to_workflow_type(tier_name: str) -> str:
 # YOUR workflow definitions
 async def create_workflow_for_issue(
     issue_number: str,        # YOUR GitHub issue
-    project_name: str,        # YOUR project (casit-agents, etc.)
+    project_name: str,        # YOUR project (acme-app, etc.)
     tier_name: str,           # YOUR tier system
     task_type: str,           # YOUR task types
     description: str
@@ -125,7 +148,7 @@ async def create_workflow_for_issue(
             "project": project_name,           # YOUR metadata
             "tier": tier_name,                 # YOUR metadata
             "task_type": task_type,            # YOUR metadata
-            "github_issue_url": f"https://github.com/{GITHUB_AGENTS_REPO}/issues/{issue_number}"
+            "github_issue_url": f"https://github.com/{get_github_repo(project_name)}/issues/{issue_number}"
         }
     )
     
@@ -142,15 +165,15 @@ async def create_workflow_for_issue(
 ## Concrete Example
 
 ### What You Want to Do
-Create a workflow for a new GitHub issue #123 in casit-agents project, tier-2-standard
+Create a workflow for a new GitHub issue #123 in acme-app project, tier-2-standard
 
 ### Using Framework Directly (Hard)
 
 ```python
 # You'd have to manually do all this:
 workflow = Workflow(
-    id="casit-agents-123-tier-2-standard",  # Manual
-    name="casit-agents/feat/add-authentication",  # Manual
+    id="acme-app-123-tier-2-standard",  # Manual
+    name="acme-app/feat/add-authentication",  # Manual
     steps=[
         WorkflowStep(
             step_num=1,
@@ -168,7 +191,7 @@ workflow = Workflow(
     ],
     metadata={
         "issue_number": "123",
-        "project": "casit-agents",
+        "project": "acme-app",
         # ... all your metadata
     }
 )
@@ -177,7 +200,7 @@ engine = WorkflowEngine(storage=FileStorage(...))
 await engine.create_workflow(workflow)
 
 # And manually track the mapping
-mapping = {"123": "casit-agents-123-tier-2-standard"}
+mapping = {"123": "acme-app-123-tier-2-standard"}
 # Save it somewhere yourself
 ```
 
@@ -188,7 +211,7 @@ mapping = {"123": "casit-agents-123-tier-2-standard"}
 workflow_id = create_workflow_for_issue_sync(
     issue_number="123",
     issue_title="feat/add-authentication",
-    project_name="casit-agents",
+    project_name="acme-app",
     tier_name="tier-2-standard",
     task_type="feature",
     description="Add user authentication"
@@ -492,7 +515,7 @@ Notice how:
 1. **Framework API is identical** (`create_workflow`, `pause_workflow`, `resume_workflow`)
 2. **But the concepts are completely different:**
    - You: `tier-2-standard` → They: `order_type="express"`
-   - You: `casit-agents-123` → They: `order-54321-international`
+   - You: `acme-app-123` → They: `order-54321-international`
    - You: GitHub + Telegram → They: GitLab + Slack
    - You: `WORKFLOW_CHAIN` → They: `ORDER_WORKFLOWS`
 
@@ -585,7 +608,7 @@ async def create_security_audit_workflow(
             "workflow_type": "security-audit",
             "severity": severity,
             "requires_penetration_test": severity in ["critical", "high"],
-            "github_issue_url": f"https://github.com/{GITHUB_AGENTS_REPO}/issues/{issue_number}"
+            "github_issue_url": f"https://github.com/{get_github_repo(project_name)}/issues/{issue_number}"
         }
     )
     

@@ -2,7 +2,7 @@
 
 Example Nexus Core workflows that orchestrate agent actions.
 
-## nexus_core_development.yaml
+## development_workflow.yaml
 
 Multi-agent workflow for managing Nexus Core's own development:
 
