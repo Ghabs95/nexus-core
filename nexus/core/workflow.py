@@ -132,15 +132,42 @@ class WorkflowEngine:
         step.error = error
         step.status = StepStatus.FAILED if error else StepStatus.COMPLETED
         
-        # Advance to next step or complete workflow
-        next_step = workflow.get_next_step()
-        if next_step and not error:
-            workflow.current_step = next_step.step_num
-            next_step.status = StepStatus.RUNNING
-            next_step.started_at = datetime.utcnow()
+        if not error:
+            # Build context from all completed steps for condition evaluation
+            context = self._build_step_context(workflow)
+            
+            # Walk forward, skipping steps whose conditions evaluate to False
+            next_step = workflow.get_next_step()
+            while next_step:
+                if self._evaluate_condition(next_step.condition, context):
+                    # Condition passed (or no condition) – run this step
+                    workflow.current_step = next_step.step_num
+                    next_step.status = StepStatus.RUNNING
+                    next_step.started_at = datetime.utcnow()
+                    break
+                else:
+                    # Condition failed – skip this step
+                    next_step.status = StepStatus.SKIPPED
+                    next_step.completed_at = datetime.utcnow()
+                    await self._audit(workflow_id, "STEP_SKIPPED", {
+                        "step_num": next_step.step_num,
+                        "step_name": next_step.name,
+                        "condition": next_step.condition,
+                        "reason": f"Condition evaluated to False: {next_step.condition}",
+                    })
+                    logger.info(
+                        f"Skipped step {next_step.step_num} ({next_step.name}) in workflow "
+                        f"{workflow_id}: condition '{next_step.condition}' was False"
+                    )
+                    workflow.current_step = next_step.step_num
+                    next_step = workflow.get_next_step()
+            else:
+                # No more steps
+                workflow.state = WorkflowState.COMPLETED
+                workflow.completed_at = datetime.utcnow()
         else:
-            # Workflow complete or failed
-            workflow.state = WorkflowState.FAILED if error else WorkflowState.COMPLETED
+            # Workflow failed
+            workflow.state = WorkflowState.FAILED
             workflow.completed_at = datetime.utcnow()
         
         workflow.updated_at = datetime.utcnow()
@@ -155,6 +182,39 @@ class WorkflowEngine:
         
         logger.info(f"Completed step {step_num} in workflow {workflow_id}")
         return workflow
+
+    def _build_step_context(self, workflow: Workflow) -> Dict[str, Any]:
+        """Build evaluation context from all completed/skipped step outputs."""
+        context: Dict[str, Any] = {}
+        for step in workflow.steps:
+            if step.status in (StepStatus.COMPLETED, StepStatus.SKIPPED):
+                context[step.name] = step.outputs
+                # Expose the most-recently-completed step as `result`
+                if step.status == StepStatus.COMPLETED:
+                    context["result"] = step.outputs
+        return context
+
+    def _evaluate_condition(self, condition: Optional[str], context: Dict[str, Any]) -> bool:
+        """
+        Evaluate a Python expression against the step context.
+
+        Returns True when:
+        - condition is None or empty (no condition → always run)
+        - the expression evaluates to a truthy value
+
+        Returns False when the expression evaluates to a falsy value.
+        Logs a warning and returns True (safe default) if the expression raises.
+        """
+        if not condition:
+            return True
+        try:
+            result = eval(condition, {"__builtins__": {}}, context)  # noqa: S307
+            return bool(result)
+        except Exception as exc:
+            logger.warning(
+                f"Condition evaluation error for '{condition}': {exc}. Defaulting to True."
+            )
+            return True
 
     async def get_audit_log(self, workflow_id: str) -> list:
         """Get audit log for a workflow."""

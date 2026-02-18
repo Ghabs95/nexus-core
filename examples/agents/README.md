@@ -40,8 +40,71 @@ To generate markdown documentation:
 python ../translator/to_markdown.py triage-agent.yaml > TRIAGE-AGENT.md
 ```
 
-To generate Copilot instructions:
-```bash
-python ../translator/to_copilot.py triage-agent.yaml > triage-agent.copilot
+
+
+## Completion Summary Format
+
+When an agent completes its work, it should write a `completion_summary.json` file in the task logs directory. This file provides structured information about the work completed and recommendations for the next step.
+
+**File location:** `.nexus/tasks/logs/completion_summary_{issue_number}.json`
+
+**Schema:**
+
+```json
+{
+  "status": "complete",
+  "summary": "Brief description of work completed",
+  "key_findings": [
+    "Finding 1",
+    "Finding 2",
+    "Finding 3"
+  ],
+  "effort_breakdown": {
+    "analysis": "2 hours",
+    "implementation": "4 hours",
+    "testing": "1 hour"
+  },
+  "verdict": "✅ Ready to proceed",
+  "next_agent": "architect"
+}
 ```
 
+**Field Descriptions:**
+- `status`: Agent completion status (complete, in-progress, blocked)
+- `summary`: One-line summary of what was accomplished
+- `key_findings`: List of important discoveries or results (optional)
+- `effort_breakdown`: Time/effort spent on major tasks (optional)
+- `verdict`: Assessment of work quality (optional)
+- `next_agent`: Agent type for next step in workflow (e.g., "architect", "code_reviewer")
+
+**Python Example:**
+
+```python
+import json
+import os
+
+# At the end of agent work
+completion_data = {
+    "status": "complete",
+    "summary": "Conditional step execution feature fully implemented and tested",
+    "key_findings": [
+        "All 14 tests pass",
+        "Implementation handles context evaluation correctly",
+        "No breaking changes to existing APIs"
+    ],
+    "effort_breakdown": {
+        "code_implementation": "3 hours",
+        "testing": "1 hour"
+    },
+    "verdict": "✅ Implementation complete and correct",
+    "next_agent": "code_reviewer"
+}
+
+# Write to logs directory
+log_dir = os.path.expandvars("$HOME/.nexus/tasks/logs")
+os.makedirs(log_dir, exist_ok=True)
+with open(os.path.join(log_dir, f"completion_summary_{issue_id}.json"), "w") as f:
+    json.dump(completion_data, f, indent=2)
+```
+
+The Nexus processor will automatically detect this file, parse it, and post a formatted GitHub comment with the structured information.
