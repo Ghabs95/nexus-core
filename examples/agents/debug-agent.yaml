@@ -1,0 +1,71 @@
+apiVersion: "nexus-core/v1"
+kind: "Agent"
+metadata:
+  name: "debug-agent"
+  description: "Analyzes bug reports and suggests root causes"
+  author: "Nexus Core Team"
+  version: "0.1.0"
+
+spec:
+  agent_type: "analyzer"
+  timeout_seconds: 600
+  max_retries: 2
+  
+  purpose: |
+    For bug reports, this agent:
+    1. Reads the bug description
+    2. Searches codebase for related code
+    3. Suggests root cause analysis
+    4. Provides reproduction steps
+    5. Identifies affected versions
+    6. Posts analysis as issue comment
+    
+  requires_tools:
+    - github:read_issue
+    - github:search_codebase
+    - github:add_comment
+    - github:add_label
+    - ai:completion
+  
+  inputs:
+    issue_url:
+      type: string
+      description: "URL to bug report issue"
+      required: true
+  
+  outputs:
+    suspected_cause:
+      type: string
+      description: "Root cause analysis"
+    reproduction_steps:
+      type: string
+      description: "Steps to reproduce the bug"
+    affected_versions:
+      type: array
+      items: string
+      description: "List of affected software versions"
+    severity:
+      type: enum
+      values: ["critical", "high", "medium", "low"]
+      description: "Bug severity assessment"
+
+  # Example prompt template
+  prompt_template: |
+    You are a debugging expert. Analyze this bug report:
+    
+    Issue: {issue_url}
+    Title: {issue_title}
+    Description: {issue_body}
+    
+    Search the codebase for related code and provide:
+    1. Suspected root cause
+    2. Reproduction steps
+    3. Affected versions
+    4. Severity level (critical/high/medium/low)
+    
+    Format your response as a GitHub comment.
+
+  # Success criteria
+  validation:
+    required_outputs: ["suspected_cause", "reproduction_steps"]
+    max_duration_seconds: 600

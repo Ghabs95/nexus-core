@@ -72,6 +72,59 @@ workflow = WorkflowDefinition.from_yaml(
 await engine.create_workflow(workflow)
 ```
 
+### Workflow Monitoring & Approval Gates
+
+Nexus Core supports human approval gates and merge policies within workflow definitions.
+
+**Example**: PR Merge Approval Configuration
+
+```yaml
+# examples/workflows/development_workflow.yaml
+
+monitoring:
+  log_all_decisions: true
+  audit_trail: "github_comments"
+  notify_human: true
+  
+  human_approval_gates:
+    - before: "create_pr"  # Require review before opening PR
+  
+  # PR Merge Policy: Require human approval before merging PRs
+  # Only applies when project config policy is 'workflow-based'
+  # When project config is 'always', this is ignored (human approval always enforced)
+  require_human_merge_approval: true  # Default for this workflow
+```
+
+**Two-Level Configuration**:
+
+1. **Project-Level Policy** (`config/project_config.yaml`):
+
+```yaml
+require_human_merge_approval: always  # Options: always | workflow-based | never
+```
+
+2. **Workflow-Level Preference** (workflow YAML `monitoring` section):
+
+```yaml
+require_human_merge_approval: true  # Only applies when project policy is 'workflow-based'
+```
+
+**Precedence Rules**:
+
+| Project Config   | Workflow Config | Result                      |
+|------------------|-----------------|-----------------------------|
+| `always`         | [ignored]       | Human approval REQUIRED     |
+| `workflow-based` | `true`          | Human approval required     |
+| `workflow-based` | `false`         | Auto-merge allowed          |
+| `never`          | [ignored]       | Auto-merge ALWAYS allowed   |
+
+**Use Cases**:
+- **Production safety**: Set project policy to `always` to prevent accidental auto-merges
+- **Flexible workflows**: Use `workflow-based` to allow some workflows to auto-merge (e.g., docs-only changes)
+- **Agent behavior**: Deployment agents (e.g., @OpsCommander) check this policy before executing merge operations
+
+See [examples/workflows/development_workflow.yaml](../examples/workflows/development_workflow.yaml) for complete example.
+
 **What it does NOT know:**
 - ❌ What "tier-2-standard" means
 - ❌ That you have projects called "acme-app", "retail-platform"

@@ -1,0 +1,82 @@
+apiVersion: "nexus-core/v1"
+kind: "Agent"
+metadata:
+  name: "code-reviewer-agent"
+  description: "Reviews pull requests for code quality and best practices"
+  author: "Nexus Core Team"
+  version: "0.1.0"
+
+spec:
+  agent_type: "reviewer"
+  timeout_seconds: 900
+  max_retries: 2
+  
+  purpose: |
+    When a PR is submitted, this agent:
+    1. Reads the PR diff
+    2. Analyzes code quality, style, and best practices
+    3. Checks for security issues
+    4. Suggests improvements
+    5. Posts review comments
+    6. Approves or requests changes
+    
+  requires_tools:
+    - github:read_pr
+    - github:review_pr
+    - github:suggest_changes
+    - github:add_comment
+    - github:approve_pr
+    - ai:completion
+  
+  inputs:
+    pr_url:
+      type: string
+      description: "URL to pull request"
+      required: true
+    review_depth:
+      type: enum
+      values: ["quick", "standard", "thorough"]
+      description: "Review depth level"
+      default: "standard"
+  
+  outputs:
+    review_comments:
+      type: array
+      items: string
+      description: "List of review comments with file/line context"
+    approval_status:
+      type: enum
+      values: ["approved", "changes_requested", "commented"]
+      description: "Final review decision"
+    security_issues:
+      type: array
+      items: string
+      description: "Security concerns found"
+    code_quality_score:
+      type: integer
+      description: "Overall code quality score (0-100)"
+
+  # Example prompt template
+  prompt_template: |
+    You are a senior code reviewer. Review this pull request:
+    
+    PR: {pr_url}
+    Title: {pr_title}
+    Description: {pr_body}
+    
+    Review the code changes for:
+    1. Code quality and readability
+    2. Best practices and patterns
+    3. Security vulnerabilities
+    4. Performance concerns
+    5. Test coverage
+    
+    Provide specific, actionable feedback.
+    Use the review_depth setting: {review_depth}
+    
+    Decision: approve | changes_requested | commented
+
+  # Success criteria
+  validation:
+    required_outputs: ["approval_status"]
+    max_duration_seconds: 900

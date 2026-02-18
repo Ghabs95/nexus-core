@@ -123,3 +123,8 @@ monitoring:
   notify_human: true
   human_approval_gates:
     - before: "create_pr"  # Require review before opening PR
+  
+  # PR Merge Policy: Require human approval before merging PRs
+  # Only applies when project config policy is 'workflow-based'
+  # When project config is 'always', this is ignored (human approval always enforced)
+  require_human_merge_approval: true  # Default for this workflow

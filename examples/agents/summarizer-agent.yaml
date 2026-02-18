@@ -1,0 +1,73 @@
+apiVersion: "nexus-core/v1"
+kind: "Agent"
+metadata:
+  name: "summarizer-agent"
+  description: "Provides final summaries and closes workflow loops"
+  author: "Nexus Core Team"
+  version: "0.1.0"
+
+spec:
+  agent_type: "finalizer"
+  timeout_seconds: 180
+  max_retries: 1
+  
+  purpose: |
+    As the final step in workflows, this agent:
+    1. Reads all previous agent outputs
+    2. Summarizes what was done
+    3. Lists outcomes and next steps
+    4. Posts summary comment
+    5. Optionally closes the issue
+    
+  requires_tools:
+    - github:read_issue
+    - github:add_comment
+    - github:close_issue  # Optional
+    - ai:completion
+  
+  inputs:
+    issue_url:
+      type: string
+      description: "URL to issue being summarized"
+      required: true
+    workflow_outputs:
+      type: object
+      description: "All outputs from previous workflow steps"
+      required: true
+    should_close:
+      type: boolean
+      description: "Whether to close the issue"
+      default: false
+  
+  outputs:
+    summary:
+      type: string
+      description: "Final workflow summary"
+    next_steps:
+      type: array
+      items: string
+      description: "Recommended next actions"
+    issue_closed:
+      type: boolean
+      description: "Whether issue was closed"
+
+  # Example prompt template
+  prompt_template: |
+    You are a workflow coordinator. Summarize this workflow:
+    
+    Issue: {issue_url}
+    Workflow outputs: {workflow_outputs}
+    
+    Provide a clear, concise summary including:
+    1. What was accomplished
+    2. Key decisions made
+    3. Outcomes (PRs created, reviews completed, etc.)
+    4. Recommended next steps
+    
+    Post as a final comment on the issue.
+    Close issue: {should_close}
+
+  # Success criteria
+  validation:
+    required_outputs: ["summary"]
+    max_duration_seconds: 180

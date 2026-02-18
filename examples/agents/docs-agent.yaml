@@ -1,0 +1,74 @@
+apiVersion: "nexus-core/v1"
+kind: "Agent"
+metadata:
+  name: "docs-agent"
+  description: "Updates and maintains project documentation"
+  author: "Nexus Core Team"
+  version: "0.1.0"
+
+spec:
+  agent_type: "writer"
+  timeout_seconds: 600
+  max_retries: 2
+  
+  purpose: |
+    For documentation issues, this agent:
+    1. Reads the documentation request
+    2. Identifies files to update (README, docs/)
+    3. Creates or updates documentation
+    4. Creates branch and PR
+    5. Links to original issue
+    
+  requires_tools:
+    - github:read_issue
+    - github:read_file
+    - github:create_branch
+    - github:edit_file
+    - github:create_pr
+    - github:add_comment
+    - ai:completion
+  
+  inputs:
+    issue_url:
+      type: string
+      description: "URL to documentation issue"
+      required: true
+    doc_type:
+      type: enum
+      values: ["readme", "api", "tutorial", "changelog"]
+      description: "Type of documentation to update"
+      default: "readme"
+  
+  outputs:
+    docs_pr_url:
+      type: string
+      description: "URL of created documentation PR"
+    files_updated:
+      type: array
+      items: string
+      description: "List of documentation files updated"
+    summary:
+      type: string
+      description: "Summary of changes made"
+
+  # Example prompt template
+  prompt_template: |
+    You are a technical writer. Update documentation for this request:
+    
+    Issue: {issue_url}
+    Title: {issue_title}
+    Description: {issue_body}
+    Doc Type: {doc_type}
+    
+    Read existing documentation, then:
+    1. Identify what needs updating
+    2. Make clear, concise changes
+    3. Ensure consistency with existing style
+    4. Update examples if needed
+    
+    Create a PR with your changes.
+
+  # Success criteria
+  validation:
+    required_outputs: ["docs_pr_url"]
+    max_duration_seconds: 600
