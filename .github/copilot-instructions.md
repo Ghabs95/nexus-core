@@ -1,59 +1,53 @@
 # Copilot Instructions - Nexus Core
 
-## Agent System
+## Framework Architecture
 
-**CRITICAL:** Nexus Core uses an **agent_type** system, NOT hardcoded agent names.
+Nexus Core is an **agent-agnostic workflow orchestration framework**. It provides primitives for defining multi-agent workflows without prescribing specific agent implementations.
 
-### Agent Type Reference
+### Agent Type System
 
-When routing tasks or mentioning agents, ALWAYS use agent_types from the `examples/agents/` folder:
+**CRITICAL:** The framework uses **agent_type** (string), NOT hardcoded agent names or @mentions.
 
-- **`triage`** - Issue classification, priority analysis, complexity assessment
-- **`design`** - Technical design proposals, architecture planning
-- **`debug`** - Root cause analysis, bug investigation
-- **`code_reviewer`** - Code review, PR feedback, quality checks
-- **`docs`** - Documentation updates, README improvements
-- **`summarizer`** - Workflow summaries, status reports
-
-### Agent Definitions
-
-Agent specifications are in `examples/agents/*.yaml`. Reference these files for:
-- Agent capabilities and tools
-- Input/output schemas
-- Prompt templates
-- Routing logic
-
-**Example agent reference:**
 ```yaml
-# Correct
-agent_type: triage
-# See: examples/agents/triage-agent.yaml
-
-# WRONG - DO NOT USE
-agent: ProjectLead
-agent: @Atlas
+# ✅ CORRECT - Framework pattern
+steps:
+  - id: analyze
+    agent_type: "triage"  # Abstract type, not a specific agent name
+    prompt_template: "Analyze {issue_url}"
+    
+# ❌ WRONG - Coupled to specific implementation
+steps:
+  - id: analyze
+    agent: "@ProjectLead"  # Hard-coded agent name
+    prompt_template: "Analyze {issue_url}"
 ```
 
-### Workflow Routing
+### Examples vs Framework
 
-When completing a task and routing to next agent:
+- **Framework code** (`nexus/core/*.py`): Agent-agnostic, works with any agent_type string
+- **Example implementations** (`examples/agents/*.yaml`): Sample agents demonstrating the framework
 
-✅ **CORRECT:**
-- "Routing to **triage** agent for complexity analysis"
-- "Next step: **design** agent will create technical proposal"
-- "Escalating to **debug** agent for root cause analysis"
+When working on **framework code**: Do not reference specific agent types
+When working on **example workflows/agents**: Use agent_type strings defined in `examples/agents/` folder
 
-❌ **INCORRECT:**
-- "Routing to @ProjectLead"
-- "Next: @Atlas for RCA"
-- "Escalating to Tier2Lead"
+### Example Agents (Demonstration Only)
+
+The `examples/` folder contains sample agent implementations to demonstrate the framework.
+See `examples/agents/*.yaml` for:
+- Agent YAML schema structure
+- Input/output contract patterns
+- Tool integration examples
+- Prompt template patterns
+
+**Note:** These are examples only. Real deployments define their own agent types based on their needs.
 
 ### Documentation Context
 
-When reading documentation:
-- README.md and ARCHITECTURE.md may contain historical examples with old agent names
-- These are for comparison purposes only
-- ALWAYS use agent_types from `examples/agents/` folder for current system
+README.md and ARCHITECTURE.md may contain:
+- "Before/After" comparisons showing migration from hardcoded names to agent_type pattern
+- Historical examples with old agent names (ProjectLead, @Atlas, etc.) - these are for illustration only
+
+When referencing agents in code or workflows, always use the `agent_type` field with string values.
 
 ## Coding Conventions
 
