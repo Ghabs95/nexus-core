@@ -86,13 +86,13 @@ version: "1.0"
 
 steps:
   - name: triage
-    agent: ProjectLead
+    agent_type: triage
     prompt: "Analyze this feature request and determine complexity"
     timeout: 300
     retry: 3
     
   - name: design
-    agent: Architect
+    agent_type: design
     prompt: "Create technical design for this feature"
     condition: "triage.complexity == 'high'"
     timeout: 600
@@ -238,16 +238,16 @@ Multi-agent workflow that creates traceable artifacts at each step:
 workflow: feature_development
 trigger: issue_created (label: feature)
 steps:
-  - ProjectLead: Triage & scope
+  - triage: Triage & scope
     → Adds comment with complexity analysis
-  - Architect: Technical design
+  - design: Technical design
     → Creates design doc, updates issue
-  - Developer: Implementation
-    → Creates PR, links to issue
-  - QAGuard: Review & test
-    → Comments on PR with test results
-  - OpsCommander: Deploy
-    → Adds deployment status to PR
+  - code_reviewer: Implementation review
+    → Reviews PR, comments with feedback
+  - debug: Root cause analysis (if needed)
+    → Investigates issues, suggests fixes
+  - docs: Documentation update
+    → Updates docs based on changes
 ```
 **All agent decisions preserved in GitHub for future reference.**
 
