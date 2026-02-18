@@ -36,6 +36,44 @@ class Severity(Enum):
     CRITICAL = "critical"
 
 
+class ApprovalGateType(Enum):
+    """Types of approval gates that can be applied to workflow steps."""
+
+    PR_MERGE = "pr_merge"  # Blocks PR merge operations
+    DEPLOYMENT = "deployment"  # Blocks deployment operations
+    DATA_ACCESS = "data_access"  # Blocks sensitive data access
+    CUSTOM = "custom"  # Custom approval gate
+
+
+@dataclass
+class ApprovalGate:
+    """Approval gate configuration for workflow steps."""
+
+    gate_type: ApprovalGateType
+    required: bool = True  # If True, human approval required
+    tool_restrictions: List[str] = field(default_factory=list)  # Blocked commands/tools
+    approval_message: Optional[str] = None  # Custom message for agent
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @staticmethod
+    def pr_merge_gate() -> "ApprovalGate":
+        """Create a PR merge approval gate."""
+        return ApprovalGate(
+            gate_type=ApprovalGateType.PR_MERGE,
+            required=True,
+            tool_restrictions=["gh pr merge", "git push origin main", "git push origin master"],
+            approval_message=(
+                "🚨 **PR MERGE APPROVAL POLICY (CRITICAL):**\n"
+                "❌ DO NOT merge Pull Requests automatically\n"
+                "❌ DO NOT use `gh pr merge` command\n"
+                "✅ You MAY create PRs with `gh pr create`\n"
+                "✅ Post PR link in your GitHub comment\n"
+                "✅ Human approval REQUIRED before merge\n"
+                "⚠️  Violating this can break production - wait for human review"
+            ),
+        )
+
+
 @dataclass
 class Agent:
     """AI agent definition."""
@@ -71,9 +109,27 @@ class WorkflowStep:
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     error: Optional[str] = None
+    approval_gates: List[ApprovalGate] = field(default_factory=list)  # Approval gates for this step
 
     def __str__(self) -> str:
         return f"Step {self.step_num}: {self.name} ({self.agent.name})"
+    
+    def has_approval_gate(self, gate_type: ApprovalGateType) -> bool:
+        """Check if step has a specific approval gate type."""
+        return any(gate.gate_type == gate_type and gate.required for gate in self.approval_gates)
+    
+    def get_approval_constraints(self) -> str:
+        """Get combined approval constraint messages for all gates."""
+        messages = [gate.approval_message for gate in self.approval_gates if gate.required and gate.approval_message]
+        return "\n\n".join(messages) if messages else ""
+    
+    def get_tool_restrictions(self) -> List[str]:
+        """Get all tool restrictions from approval gates."""
+        restrictions = []
+        for gate in self.approval_gates:
+            if gate.required:
+                restrictions.extend(gate.tool_restrictions)
+        return list(set(restrictions))  # Deduplicate
 
 
 @dataclass
@@ -91,6 +147,7 @@ class Workflow:
     updated_at: datetime = field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    require_human_merge_approval: bool = True  # Workflow-level PR merge approval policy
 
     def get_step(self, step_num: int) -> Optional[WorkflowStep]:
         """Get step by number."""
@@ -106,6 +163,19 @@ class Workflow:
     def is_complete(self) -> bool:
         """Check if workflow is complete."""
         return self.state in (WorkflowState.COMPLETED, WorkflowState.FAILED, WorkflowState.CANCELLED)
+    
+    def apply_approval_gates(self) -> None:
+        """Apply workflow-level approval gates to all steps.
+        
+        This should be called after workflow is loaded from YAML to ensure
+        workflow-level policies are applied to individual steps.
+        """
+        if self.require_human_merge_approval:
+            pr_merge_gate = ApprovalGate.pr_merge_gate()
+            for step in self.steps:
+                # Add PR merge gate if not already present
+                if not step.has_approval_gate(ApprovalGateType.PR_MERGE):
+                    step.approval_gates.append(pr_merge_gate)
 
     def __len__(self) -> int:
         return len(self.steps)

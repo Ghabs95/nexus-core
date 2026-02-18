@@ -39,6 +39,8 @@ class AIOrchestrator:
         prompt: str,
         workspace: str,
         task_type: str = "code_generation",
+        approval_required: bool = False,
+        tool_restrictions: Optional[List[str]] = None,
         **kwargs
     ) -> AgentResult:
         """
@@ -49,6 +51,8 @@ class AIOrchestrator:
             prompt: Prompt/instructions for the agent
             workspace: Workspace path
             task_type: Type of task ("code_generation", "reasoning", "analysis")
+            approval_required: If True, inject tool restrictions for approval gates
+            tool_restrictions: List of tools/commands to restrict (e.g., ["gh pr merge"])
             **kwargs: Additional context
             
         Returns:
@@ -56,10 +60,16 @@ class AIOrchestrator:
         """
         from pathlib import Path
         
+        # Generate prompt with restrictions if approval required
+        final_prompt = prompt
+        if approval_required:
+            final_prompt = self._inject_approval_constraints(prompt, tool_restrictions or [])
+        
         context = ExecutionContext(
             agent_name=agent_name,
-            prompt=prompt,
+            prompt=final_prompt,
             workspace=Path(workspace),
+            tool_restrictions=tool_restrictions,
             metadata=kwargs
         )
         
@@ -111,6 +121,39 @@ class AIOrchestrator:
             output="",
             error=f"All providers failed. Last error: {last_error}"
         )
+
+    def _inject_approval_constraints(self, prompt: str, tool_restrictions: List[str]) -> str:
+        """
+        Inject approval gate constraints into agent prompt.
+        
+        Args:
+            prompt: Original agent prompt
+            tool_restrictions: List of restricted tools/commands
+            
+        Returns:
+            Prompt with approval constraints injected
+        """
+        if not tool_restrictions:
+            return prompt
+        
+        restrictions_text = "\n".join(f"  - {tool}" for tool in tool_restrictions)
+        
+        approval_constraint = (
+            "\n\n"
+            "🚨 **APPROVAL GATE ENFORCEMENT (CRITICAL):**\n"
+            "This step requires approval before certain operations can be executed.\n\n"
+            "❌ **YOU CANNOT USE THESE TOOLS:**\n"
+            f"{restrictions_text}\n\n"
+            "✅ **YOU CAN USE:**\n"
+            "  - File operations (read, create, modify, delete)\n"
+            "  - Git operations (branch creation, commits, push)\n"
+            "  - Code generation and analysis\n"
+            "  - GitHub API reads (issues, PRs, repos)\n\n"
+            "⚠️  Attempting to use restricted tools will cause workflow failure.\n"
+            "Please wait for human approval before proceeding with these operations.\n"
+        )
+        
+        return prompt + approval_constraint
 
     async def _rank_providers(self, task_type: str) -> List[AIProvider]:
         """Rank providers by preference score for task type."""

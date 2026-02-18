@@ -17,6 +17,7 @@ class ExecutionContext:
     issue_url: Optional[str] = None
     metadata: Dict[str, Any] = None
     timeout: int = 600
+    tool_restrictions: Optional[list] = None  # Commands/tools to block (e.g., ["gh pr merge"])
 
 
 class AIProvider(ABC):

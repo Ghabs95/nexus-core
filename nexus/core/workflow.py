@@ -8,11 +8,14 @@ import yaml
 
 from nexus.adapters.storage.base import StorageBackend
 from nexus.core.models import (
+    Agent,
     AuditEvent,
     Workflow,
     WorkflowState,
+    WorkflowStep,
     StepStatus,
 )
+from nexus.core.approval import ApprovalGateEnforcer
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,9 @@ class WorkflowEngine:
         workflow.created_at = datetime.utcnow()
         workflow.updated_at = datetime.utcnow()
         
+        # Apply workflow-level approval gates to steps
+        workflow.apply_approval_gates()
+        
         await self.storage.save_workflow(workflow)
         await self._audit(workflow.id, "WORKFLOW_CREATED", {"name": workflow.name})
         
@@ -47,7 +53,11 @@ class WorkflowEngine:
 
     async def get_workflow(self, workflow_id: str) -> Optional[Workflow]:
         """Retrieve a workflow by ID."""
-        return await self.storage.load_workflow(workflow_id)
+        workflow = await self.storage.load_workflow(workflow_id)
+        if workflow:
+            # Ensure approval gates are applied (in case workflow was saved before gates existed)
+            workflow.apply_approval_gates()
+        return workflow
 
     async def start_workflow(self, workflow_id: str) -> Workflow:
         """Start workflow execution."""
@@ -212,6 +222,16 @@ class WorkflowDefinition:
         if not isinstance(steps_data, list) or not steps_data:
             raise ValueError("Workflow definition must include a non-empty steps list")
 
+        # Parse workflow-level approval settings
+        monitoring = data.get("monitoring", {})
+        require_human_merge_approval = True  # Default to safe option
+        if isinstance(monitoring, dict):
+            require_human_merge_approval = monitoring.get("require_human_merge_approval", True)
+        
+        # Also check top-level (backwards compatibility)
+        if "require_human_merge_approval" in data:
+            require_human_merge_approval = data.get("require_human_merge_approval", True)
+
         steps = []
         for idx, step_data in enumerate(steps_data, start=1):
             if not isinstance(step_data, dict):
@@ -253,14 +273,20 @@ class WorkflowDefinition:
         if metadata:
             workflow_metadata.update(metadata)
 
-        return Workflow(
+        workflow = Workflow(
             id=resolved_id,
             name=name,
             version=version,
             description=description,
             steps=steps,
             metadata=workflow_metadata,
+            require_human_merge_approval=require_human_merge_approval,
         )
+        
+        # Apply workflow-level approval gates to all steps
+        workflow.apply_approval_gates()
+        
+        return workflow
 
     @staticmethod
     def _slugify(text: str) -> str:
