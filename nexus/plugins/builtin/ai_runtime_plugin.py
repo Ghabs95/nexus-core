@@ -5,7 +5,6 @@ import logging
 import os
 import re
 import subprocess
-import tempfile
 import time
 from enum import Enum
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -360,23 +359,17 @@ class AIOrchestrator:
 
         logger.info("🎧 Transcribing with Gemini: %s", audio_file_path)
 
+        prompt = f"Transcribe this audio file exactly. Return ONLY the text.\nFile: {audio_file_path}"
         try:
             result = subprocess.run(
-                [
-                    self.gemini_cli_path,
-                    "generate",
-                    "--prompt",
-                    "Transcribe this audio exactly. Return ONLY the text.",
-                    "--file",
-                    audio_file_path,
-                ],
+                [self.gemini_cli_path, "-p", prompt],
                 capture_output=True,
                 text=True,
                 timeout=60,
             )
 
             if result.returncode != 0:
-                if "rate" in result.stderr.lower() or "quota" in result.stderr.lower():
+                if "rate limit" in result.stderr.lower() or "quota" in result.stderr.lower():
                     raise RateLimitedError(f"Gemini rate-limited: {result.stderr}")
                 raise Exception(f"Gemini error: {result.stderr}")
 
@@ -455,27 +448,22 @@ class AIOrchestrator:
 
         prompt = self._build_analysis_prompt(text, task, **kwargs)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as file_handle:
-            file_handle.write(prompt)
-            temp_prompt_file = file_handle.name
-
         try:
             result = subprocess.run(
-                [self.gemini_cli_path, "generate", "--prompt", prompt],
+                [self.gemini_cli_path, "-p", prompt],
                 capture_output=True,
                 text=True,
                 timeout=30,
             )
 
             if result.returncode != 0:
-                if "rate" in result.stderr.lower() or "quota" in result.stderr.lower():
+                if "rate limit" in result.stderr.lower() or "quota" in result.stderr.lower():
                     raise RateLimitedError(f"Gemini rate-limited: {result.stderr}")
                 raise Exception(f"Gemini error: {result.stderr}")
 
             return self._parse_analysis_result(result.stdout, task)
-        finally:
-            if os.path.exists(temp_prompt_file):
-                os.remove(temp_prompt_file)
+        except subprocess.TimeoutExpired as exc:
+            raise Exception(f"Gemini analysis timed out (>30s)") from exc
 
     def _run_copilot_analysis(self, text: str, task: str, **kwargs) -> Dict[str, Any]:
         if not self.check_tool_available(AIProvider.COPILOT):
