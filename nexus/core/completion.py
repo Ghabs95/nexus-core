@@ -91,33 +91,31 @@ def build_completion_comment(completion: CompletionSummary) -> str:
 
     Returns a Markdown string suitable for ``GitPlatform.add_comment()``.
     """
-    lines: List[str] = []
-    lines.append("### ✅ Agent Completed")
+    sections: List[str] = []
+    sections.append("### ✅ Agent Completed")
 
     if completion.summary:
-        lines.append(f"\n**Summary:** {completion.summary}")
+        sections.append(f"**Summary:** {completion.summary}")
 
     if completion.status and completion.status != "complete":
-        lines.append(f"\n**Status:** {completion.status}")
+        sections.append(f"**Status:** {completion.status}")
 
     if completion.key_findings:
-        lines.append("\n**Key Findings:**")
-        for finding in completion.key_findings:
-            lines.append(f"- {finding}")
+        items = "\n".join(f"- {f}" for f in completion.key_findings)
+        sections.append(f"**Key Findings:**\n{items}")
 
     if completion.effort_breakdown:
-        lines.append("\n**Effort Breakdown:**")
-        for task, effort in completion.effort_breakdown.items():
-            lines.append(f"- {task}: {effort}")
+        items = "\n".join(f"- {t}: {e}" for t, e in completion.effort_breakdown.items())
+        sections.append(f"**Effort Breakdown:**\n{items}")
 
     if completion.verdict:
-        lines.append(f"\n**Verdict:** {completion.verdict}")
+        sections.append(f"**Verdict:** {completion.verdict}")
 
     if completion.next_agent and not completion.is_workflow_done:
-        lines.append(f"\n**Next:** Ready for `@{completion.next_agent}`")
+        sections.append(f"**Next:** Ready for `@{completion.next_agent}`")
 
-    lines.append("\n\n_Automated comment from Nexus._")
-    return "".join(lines)
+    sections.append("_Automated comment from Nexus._")
+    return "\n\n".join(sections)
 
 
 # ---------------------------------------------------------------------------
