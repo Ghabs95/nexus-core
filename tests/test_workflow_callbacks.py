@@ -487,7 +487,7 @@ class TestMultiTierWorkflow:
             pytest.skip("org workflow not in workspace")
         wf = WorkflowDefinition.from_yaml(org_path, workflow_type="full")
         assert len(wf.steps) > 5
-        assert wf.steps[0].agent.name in ("Ghabs", "ceo")
+        assert wf.steps[0].agent.name == "ceo"
 
     def test_org_workflow_loads_shortened(self):
         """Smoke test: load the real org workflow shortened tier."""
@@ -498,3 +498,40 @@ class TestMultiTierWorkflow:
             pytest.skip("org workflow not in workspace")
         wf = WorkflowDefinition.from_yaml(org_path, workflow_type="shortened")
         assert len(wf.steps) >= 3
+
+    # -- enterprise workflow integration (example file) --
+
+    def test_enterprise_workflow_loads_full(self):
+        """Smoke test: load the enterprise workflow full tier."""
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "examples", "workflows", "enterprise_workflow.yaml"
+        )
+        if not os.path.exists(path):
+            pytest.skip("enterprise workflow not found")
+        wf = WorkflowDefinition.from_yaml(path, workflow_type="full")
+        assert len(wf.steps) > 5
+        assert wf.steps[0].agent.name == "triage"
+
+    def test_enterprise_workflow_loads_shortened(self):
+        """Smoke test: load the enterprise workflow shortened tier."""
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "examples", "workflows", "enterprise_workflow.yaml"
+        )
+        if not os.path.exists(path):
+            pytest.skip("enterprise workflow not found")
+        wf = WorkflowDefinition.from_yaml(path, workflow_type="shortened")
+        assert len(wf.steps) >= 3
+        assert wf.steps[0].agent.name == "triage"
+
+    def test_enterprise_workflow_loads_fast_track(self):
+        """Smoke test: load the enterprise workflow fast-track tier."""
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "examples", "workflows", "enterprise_workflow.yaml"
+        )
+        if not os.path.exists(path):
+            pytest.skip("enterprise workflow not found")
+        wf = WorkflowDefinition.from_yaml(path, workflow_type="fast-track")
+        assert len(wf.steps) >= 3
+        # Last non-router step should be deployer
+        non_router = [s for s in wf.steps if s.agent.name != "router"]
+        assert non_router[-1].agent.name == "deployer"

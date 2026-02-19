@@ -1,0 +1,61 @@
+apiVersion: "nexus-core/v1"
+kind: "Agent"
+metadata:
+  name: "compliance-agent"
+  description: "Reviews PRs for security, privacy, and regulatory compliance"
+  author: "Nexus Core Team"
+  version: "0.1.0"
+
+spec:
+  agent_type: "compliance"
+  timeout_seconds: 900
+  max_retries: 2
+
+  purpose: |
+    When a PR passes code review, this agent:
+    1. Scans for security vulnerabilities
+    2. Checks for personal data handling (GDPR concerns)
+    3. Verifies no secrets or credentials are exposed
+    4. Reviews data retention and third-party sharing
+    5. Approves or blocks with detailed reasoning
+
+  requires_tools:
+    - github:read_pr
+    - github:review_pr
+    - github:add_comment
+    - github:add_label
+
+  inputs:
+    implementation_pr_url:
+      type: string
+      description: "URL to the implementation PR"
+      required: true
+
+  outputs:
+    compliance_status:
+      type: enum
+      values: ["approved", "blocked"]
+      description: "Whether the PR passes compliance review"
+    compliance_issues:
+      type: array
+      items: string
+      description: "List of compliance issues found"
+
+  prompt_template: |
+    You are a compliance reviewer. Evaluate this PR for security, privacy, and
+    regulatory compliance.
+
+    PR: {implementation_pr_url}
+
+    Check for:
+    - Personal data collection, storage, processing
+    - Exposed secrets or credentials
+    - Authentication and authorisation issues
+    - Input validation and sanitisation
+    - Third-party data sharing
+    - Logging of sensitive data
+
+    Approve if compliant, or block with specific issues listed.
+
+  validation:
+    required_outputs: ["compliance_status"]

@@ -1,0 +1,66 @@
+apiVersion: "nexus-core/v1"
+kind: "Agent"
+metadata:
+  name: "deployer-agent"
+  description: "Merges approved PRs, creates releases, and manages deployments"
+  author: "Nexus Core Team"
+  version: "0.1.0"
+
+spec:
+  agent_type: "deployer"
+  timeout_seconds: 900
+  max_retries: 2
+
+  purpose: |
+    After a PR is approved (and passes compliance if required), this agent:
+    1. Merges the approved PR into the target branch
+    2. Creates a release with semantic versioning
+    3. Writes release notes from the PR description
+    4. Verifies deployment health
+    5. Posts deployment status as a comment
+
+  requires_tools:
+    - github:merge_pr
+    - github:create_release
+    - github:add_comment
+    - github:close_issue
+
+  inputs:
+    implementation_pr_url:
+      type: string
+      description: "URL to the approved PR"
+      required: false
+    fix_pr_url:
+      type: string
+      description: "URL to the fix PR (bug fix workflow)"
+      required: false
+    hotfix_pr_url:
+      type: string
+      description: "URL to the hotfix PR (fast-track workflow)"
+      required: false
+
+  outputs:
+    deployment_status:
+      type: string
+      description: "Status of the deployment"
+    release_url:
+      type: string
+      description: "URL to the created release"
+    rollback_plan:
+      type: string
+      description: "Rollback plan for emergency deployments"
+
+  prompt_template: |
+    You are the deployment agent. Deploy the approved changes.
+
+    PR: {implementation_pr_url}
+
+    Steps:
+    1. Merge the approved PR into the target branch
+    2. Create a release with proper semantic versioning
+    3. Write clear release notes
+    4. Verify deployment health
+    5. Post deployment status as a comment on the issue
+
+  validation:
+    required_outputs: ["deployment_status"]

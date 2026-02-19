@@ -1,0 +1,392 @@
+name: "Enterprise Development Workflow"
+description: >
+  Multi-tier workflow demonstrating full lifecycle orchestration for a
+  development team.  Shows conditional routing, quality gates, compliance
+  review, feedback loops, and error handling across three tiers.
+version: "1.0.0"
+
+# Three tiers selectable at runtime via workflow_type:
+#   full       — complete feature development (10 steps)
+#   shortened  — expedited bug fix pipeline  (7 steps)
+#   fast-track — critical hotfix (4 steps)
+workflow_types:
+  full: "new_feature"
+  shortened: "bug_fix"
+  fast-track: "hotfix"
+
+timeout_seconds: 7200
+
+# ==========================================================================
+# FULL WORKFLOW — New Features
+# ==========================================================================
+full_workflow:
+  steps:
+    - id: "triage"
+      name: "Triage & Classification"
+      description: "Classify the issue, assign priority, and decide the path"
+      agent_type: "triage"
+      tools:
+        - github:read_issue
+        - github:add_comment
+        - github:add_label
+      inputs:
+        - issue_url: "string"
+      outputs:
+        - classification: "enum[feature|bug|doc|support]"
+        - priority: "enum[p0-critical|p1-high|p2-medium|p3-low]"
+        - needs_design: "boolean"
+      on_success: "route_triage"
+
+    - id: "route_triage"
+      name: "Route After Triage"
+      agent_type: "router"
+      routes:
+        - when: "needs_design == true"
+          then: "design"
+        - default: "develop"
+
+    - id: "design"
+      name: "Architecture & Design"
+      description: "Create a design proposal covering API contracts and ADRs"
+      agent_type: "design"
+      tools:
+        - github:create_branch
+        - github:create_file
+        - github:create_pr
+        - github:add_comment
+      inputs:
+        - issue_url: "string"
+        - classification: "string"
+      outputs:
+        - design_pr_url: "string"
+        - design_patterns: "list[string]"
+        - estimated_effort: "string"
+      on_success: "develop"
+
+    - id: "develop"
+      name: "Implementation"
+      description: "Implement code changes based on design or triage output"
+      agent_type: "developer"
+      tools:
+        - github:create_branch
+        - github:commit_changes
+        - github:create_pr
+        - github:add_comment
+        - github:search_codebase
+      inputs:
+        - issue_url: "string"
+      outputs:
+        - implementation_pr_url: "string"
+        - test_coverage: "string"
+        - implementation_notes: "string"
+      on_success: "review"
+
+    - id: "review"
+      name: "Code Review"
+      description: "Review implementation for correctness, quality, and standards"
+      agent_type: "reviewer"
+      tools:
+        - github:review_pr
+        - github:add_comment
+        - github:request_changes
+        - github:approve_pr
+      inputs:
+        - implementation_pr_url: "string"
+      outputs:
+        - review_status: "enum[approved|changes_requested|rejected]"
+        - review_comments: "list[string]"
+      on_success: "route_review"
+
+    - id: "route_review"
+      name: "Route After Review"
+      agent_type: "router"
+      routes:
+        - when: "review_status == 'approved'"
+          then: "compliance"
+        - when: "review_status == 'changes_requested'"
+          then: "develop"          # Feedback loop
+        - default: "close_rejected"
+
+    - id: "compliance"
+      name: "Compliance & Security Review"
+      description: "Verify privacy, security, and regulatory compliance"
+      agent_type: "compliance"
+      tools:
+        - github:review_pr
+        - github:add_comment
+        - github:add_label
+      inputs:
+        - implementation_pr_url: "string"
+      outputs:
+        - compliance_status: "enum[approved|blocked]"
+        - compliance_issues: "list[string]"
+      on_success: "route_compliance"
+
+    - id: "route_compliance"
+      name: "Route After Compliance"
+      agent_type: "router"
+      routes:
+        - when: "compliance_status == 'approved'"
+          then: "deploy"
+        - default: "develop"       # Fix compliance issues
+
+    - id: "deploy"
+      name: "Merge & Deploy"
+      description: "Merge approved PR and create a release"
+      agent_type: "deployer"
+      tools:
+        - github:merge_pr
+        - github:create_release
+        - github:add_comment
+      inputs:
+        - implementation_pr_url: "string"
+      outputs:
+        - deployment_status: "string"
+        - release_url: "string"
+      on_success: "close_loop"
+
+    - id: "close_loop"
+      name: "Document & Close"
+      description: "Update docs, write changelog entry, and close the issue"
+      agent_type: "writer"
+      tools:
+        - github:create_file
+        - github:edit_file
+        - github:add_comment
+        - github:close_issue
+      inputs:
+        - issue_url: "string"
+        - deployment_status: "string"
+      outputs:
+        - documentation_url: "string"
+        - changelog_entry: "string"
+      final_step: true
+
+    - id: "close_rejected"
+      name: "Close Rejected Issue"
+      description: "Post summary and close issues that failed review"
+      agent_type: "finalizer"
+      tools:
+        - github:add_comment
+        - github:close_issue
+      inputs:
+        - issue_url: "string"
+        - review_comments: "list[string]"
+      final_step: true
+
+# ==========================================================================
+# SHORTENED WORKFLOW — Bug Fixes
+# ==========================================================================
+shortened_workflow:
+  steps:
+    - id: "triage"
+      name: "Bug Triage"
+      description: "Classify severity, priority, and affected components"
+      agent_type: "triage"
+      tools:
+        - github:read_issue
+        - github:add_comment
+        - github:add_label
+      inputs:
+        - issue_url: "string"
+      outputs:
+        - severity: "enum[critical|high|medium|low]"
+        - priority: "enum[p0|p1|p2|p3]"
+      on_success: "debug"
+
+    - id: "debug"
+      name: "Root Cause Analysis"
+      description: "Investigate the bug and identify root cause"
+      agent_type: "debug"
+      tools:
+        - github:search_codebase
+        - github:read_file
+        - github:add_comment
+      inputs:
+        - issue_url: "string"
+        - severity: "string"
+      outputs:
+        - root_cause: "string"
+        - affected_components: "list[string]"
+        - fix_approach: "string"
+      on_success: "develop"
+
+    - id: "develop"
+      name: "Implement Fix"
+      description: "Implement the bug fix and open a PR"
+      agent_type: "developer"
+      tools:
+        - github:create_branch
+        - github:commit_changes
+        - github:create_pr
+      inputs:
+        - issue_url: "string"
+        - root_cause: "string"
+        - fix_approach: "string"
+      outputs:
+        - fix_pr_url: "string"
+        - test_coverage: "string"
+      on_success: "review"
+
+    - id: "review"
+      name: "Verify Fix"
+      description: "Review the fix for correctness"
+      agent_type: "reviewer"
+      tools:
+        - github:review_pr
+        - github:approve_pr
+        - github:add_comment
+      inputs:
+        - fix_pr_url: "string"
+      outputs:
+        - review_status: "enum[approved|changes_requested]"
+      on_success: "route_review"
+
+    - id: "route_review"
+      name: "Route After Verification"
+      agent_type: "router"
+      routes:
+        - when: "review_status == 'approved'"
+          then: "deploy"
+        - default: "develop"       # Loop back if needs work
+
+    - id: "deploy"
+      name: "Deploy Fix"
+      description: "Merge the fix and create a patch release"
+      agent_type: "deployer"
+      tools:
+        - github:merge_pr
+        - github:create_release
+        - github:add_comment
+      inputs:
+        - fix_pr_url: "string"
+      outputs:
+        - deployment_status: "string"
+      on_success: "close_loop"
+
+    - id: "close_loop"
+      name: "Document & Close"
+      description: "Write postmortem and close the issue"
+      agent_type: "writer"
+      tools:
+        - github:add_comment
+        - github:close_issue
+      inputs:
+        - issue_url: "string"
+        - root_cause: "string"
+      outputs:
+        - postmortem: "string"
+      final_step: true
+
+# ==========================================================================
+# FAST-TRACK WORKFLOW — Hotfixes
+# ==========================================================================
+fast_track_workflow:
+  steps:
+    - id: "triage"
+      name: "Emergency Triage"
+      description: "Rapid assessment of the critical issue"
+      agent_type: "triage"
+      tools:
+        - github:read_issue
+        - github:add_label
+        - github:add_comment
+      inputs:
+        - issue_url: "string"
+      outputs:
+        - urgency: "enum[critical|urgent]"
+        - impact: "string"
+      on_success: "develop"
+
+    - id: "develop"
+      name: "Hotfix Implementation"
+      description: "Rapidly implement minimal fix"
+      agent_type: "developer"
+      tools:
+        - github:create_branch
+        - github:commit_changes
+        - github:create_pr
+        - github:add_comment
+      inputs:
+        - issue_url: "string"
+        - urgency: "string"
+      outputs:
+        - hotfix_pr_url: "string"
+        - fix_description: "string"
+      on_success: "review"
+
+    - id: "review"
+      name: "Quick Verification"
+      description: "Rapid review of the hotfix"
+      agent_type: "reviewer"
+      tools:
+        - github:review_pr
+        - github:approve_pr
+      inputs:
+        - hotfix_pr_url: "string"
+      outputs:
+        - review_status: "enum[approved|rejected]"
+      on_success: "route_review"
+
+    - id: "route_review"
+      name: "Route After Verification"
+      agent_type: "router"
+      routes:
+        - when: "review_status == 'approved'"
+          then: "deploy"
+        - default: "develop"       # Retry if rejected
+
+    - id: "deploy"
+      name: "Emergency Deploy"
+      description: "Merge hotfix and deploy immediately"
+      agent_type: "deployer"
+      tools:
+        - github:merge_pr
+        - github:create_release
+        - github:add_comment
+        - github:close_issue
+      inputs:
+        - hotfix_pr_url: "string"
+      outputs:
+        - deployment_status: "string"
+        - rollback_plan: "string"
+      final_step: true
+
+# ==========================================================================
+# MONITORING & GOVERNANCE
+# ==========================================================================
+monitoring:
+  log_all_decisions: true
+  audit_trail: "github_comments"
+  notify_human: true
+
+  human_approval_gates:
+    - before: "deploy"             # All deployments need approval
+    - before: "compliance"         # Compliance reviews notify human
+
+  require_human_merge_approval: true
+
+  step_timeouts:
+    triage: 1800                   # 30 min
+    design: 3600                   # 1 hour
+    develop: 7200                  # 2 hours
+    review: 1800                   # 30 min
+    compliance: 1800               # 30 min
+    deploy: 1800                   # 30 min
+
+# ==========================================================================
+# ERROR HANDLING
+# ==========================================================================
+error_handling:
+  on_timeout:
+    action: "notify_human"
+    fallback_agent: "triage"       # Re-triage on timeout
+
+  on_agent_failure:
+    action: "retry"
+    max_retries: 2
+    fallback_agent: "triage"
+
+  on_validation_failure:
+    action: "loop_back"
+    max_loops: 3

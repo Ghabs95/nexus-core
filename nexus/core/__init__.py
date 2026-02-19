@@ -1,4 +1,5 @@
 """Core workflow orchestration components."""
+from nexus.core.agents import find_agent_yaml, load_agent_definition, normalize_agent_key
 from nexus.core.completion import (
     CompletionSummary,
     DetectedCompletion,
@@ -23,6 +24,10 @@ from nexus.core.orchestrator import AIOrchestrator
 from nexus.core.workflow import WorkflowDefinition, WorkflowEngine
 
 __all__ = [
+    # Agent Resolution
+    "find_agent_yaml",
+    "load_agent_definition",
+    "normalize_agent_key",
     # Workflow Engine
     "WorkflowEngine",
     "WorkflowDefinition",

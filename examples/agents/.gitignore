@@ -1,0 +1,4 @@
+# Generated .agent.md files — YAML is the source of truth
+# These are produced by the translator (to_copilot.py) from agent YAML definitions
+*.agent.md
+__pycache__/
