@@ -104,7 +104,7 @@ Every agent is defined in YAML with:
 apiVersion: "nexus-core/v1"
 kind: "Agent"
 metadata:
-  name: "triage-agent"
+  name: "triage"
   description: "Analyzes GitHub issues and classifies them"
 
 spec:

@@ -1,7 +1,7 @@
 apiVersion: "nexus-core/v1"
 kind: "Agent"
 metadata:
-  name: "reviewer-agent"
+  name: "reviewer"
   description: "Reviews pull requests for code quality and best practices"
   author: "Nexus Core Team"
   version: "0.1.0"

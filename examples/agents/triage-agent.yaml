@@ -1,7 +1,7 @@
 apiVersion: "nexus-core/v1"
 kind: "Agent"
 metadata:
-  name: "triage-agent"
+  name: "triage"
   description: "Analyzes GitHub issues and classifies them by type and priority"
   author: "Nexus Core Team"
   version: "0.1.0"
@@ -99,9 +99,9 @@ spec:
   # Routing: what happens after this agent runs
   next_steps:
     - condition: "classification == 'bug'"
-      then: "debug-agent"
+      then: "debug"
     - condition: "classification == 'feature'"
-      then: "design-agent"
+      then: "design"
     - condition: "classification == 'doc'"
-      then: "docs-agent"
+      then: "writer"
     - default: "close_loop"

@@ -60,11 +60,11 @@ def agents_dir(tmp_path):
 
     # triage agent
     (d / "triage-agent.yaml").write_text(
-        AGENT_YAML_TEMPLATE.format(name="triage-agent", agent_type="triage")
+        AGENT_YAML_TEMPLATE.format(name="triage", agent_type="triage")
     )
     # Atlas agent (CamelCase agent_type)
     (d / "atlas-agent.yaml").write_text(
-        AGENT_YAML_TEMPLATE.format(name="atlas-agent", agent_type="Atlas")
+        AGENT_YAML_TEMPLATE.format(name="atlas", agent_type="Atlas")
     )
     # A non-agent YAML (should be skipped)
     (d / "workflow.yaml").write_text(
@@ -88,7 +88,7 @@ def shared_dir(tmp_path):
     d.mkdir()
 
     (d / "architect-agent.yaml").write_text(
-        AGENT_YAML_TEMPLATE.format(name="architect-agent", agent_type="Architect")
+        AGENT_YAML_TEMPLATE.format(name="architect", agent_type="Architect")
     )
     return str(d)
 
@@ -156,7 +156,7 @@ class TestFindAgentYaml:
         nested = tmp_path / "deep" / "nested"
         nested.mkdir(parents=True)
         (nested / "dev-agent.yml").write_text(
-            AGENT_YAML_TEMPLATE.format(name="dev-agent", agent_type="Developer")
+            AGENT_YAML_TEMPLATE.format(name="developer", agent_type="Developer")
         )
         path = find_agent_yaml("Developer", [str(tmp_path)])
         assert path.endswith("dev-agent.yml")

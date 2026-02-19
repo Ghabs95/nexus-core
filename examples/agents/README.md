@@ -5,12 +5,15 @@ Use the translator tools to convert to markdown, Python, or Copilot instructions
 
 ## Available Agents
 
-- **triage-agent.yaml** - Analyzes issues, classifies type (bug/feature/doc) and priority (P0-P3)
-- **design-agent.yaml** - Creates technical design proposals for feature requests
-- **debug-agent.yaml** - Analyzes bug reports and suggests root causes
-- **code-reviewer-agent.yaml** - Reviews pull requests for code quality and best practices
-- **docs-agent.yaml** - Updates and maintains project documentation
-- **summarizer-agent.yaml** - Provides final summaries and closes workflow loops
+- **triage-agent.yaml** (`triage`) - Analyzes issues, classifies type (bug/feature/doc) and priority (P0-P3)
+- **design-agent.yaml** (`design`) - Creates technical design proposals for feature requests
+- **debug-agent.yaml** (`debug`) - Analyzes bug reports and suggests root causes
+- **developer-agent.yaml** (`developer`) - Implements code changes based on debug analysis or design proposals
+- **reviewer-agent.yaml** (`reviewer`) - Reviews pull requests for code quality and best practices
+- **compliance-agent.yaml** (`compliance`) - Reviews PRs for security, privacy, and regulatory compliance
+- **deployer-agent.yaml** (`deployer`) - Merges approved PRs, creates releases, and manages deployments
+- **docs-agent.yaml** (`writer`) - Updates and maintains project documentation
+- **summarizer-agent.yaml** (`finalizer`) - Provides final summaries and closes workflow loops
 
 ## Usage
 

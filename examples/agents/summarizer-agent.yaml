@@ -1,7 +1,7 @@
 apiVersion: "nexus-core/v1"
 kind: "Agent"
 metadata:
-  name: "summarizer-agent"
+  name: "finalizer"
   description: "Provides final summaries and closes workflow loops"
   author: "Nexus Core Team"
   version: "0.1.0"
