@@ -39,6 +39,10 @@ from nexus.plugins.builtin.github_workflow_policy_plugin import (
     GithubWorkflowPolicyPlugin,
     register_plugins as register_github_workflow_policy_plugins,
 )
+from nexus.plugins.builtin.github_webhook_policy_plugin import (
+    GithubWebhookPolicyPlugin,
+    register_plugins as register_github_webhook_policy_plugins,
+)
 
 __all__ = [
     "AIOrchestrator",
@@ -53,6 +57,7 @@ __all__ = [
     "WorkflowPolicyPlugin",
     "WorkflowStateEnginePlugin",
     "GithubWorkflowPolicyPlugin",
+    "GithubWebhookPolicyPlugin",
     "register_ai_runtime_plugins",
     "register_agent_launch_policy_plugins",
     "register_github_issue_plugins",
@@ -62,4 +67,5 @@ __all__ = [
     "register_workflow_policy_plugins",
     "register_workflow_state_engine_plugins",
     "register_github_workflow_policy_plugins",
+    "register_github_webhook_policy_plugins",
 ]
