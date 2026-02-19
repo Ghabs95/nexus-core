@@ -34,6 +34,7 @@ Every agent action becomes part of your development history:
 
 > 📖 **Documentation:**
 > - [Usage Guide & Examples](docs/USAGE.md) - How to use nexus-core in your project
+> - [Plugin Architecture](docs/PLUGINS.md) - Build and load Telegram/GitHub/AI integrations as plugins
 > - [Comparison with Google ADK, LangChain, and others](docs/COMPARISON.md)
 > - [Positioning & Messaging](docs/POSITIONING.md)
 

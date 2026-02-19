@@ -1,0 +1,568 @@
+"""Built-in plugin: AI runtime orchestration for Copilot CLI and Gemini CLI."""
+
+import json
+import logging
+import os
+import re
+import subprocess
+import tempfile
+import time
+from enum import Enum
+from typing import Any, Callable, Dict, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+
+class AIProvider(Enum):
+    """AI provider enumeration."""
+
+    COPILOT = "copilot"
+    GEMINI = "gemini"
+
+
+class ToolUnavailableError(Exception):
+    """Raised when a tool is unavailable or fails."""
+
+
+class RateLimitedError(Exception):
+    """Raised when a tool hits rate limits."""
+
+
+def _default_tasks_logs_dir(workspace: str, project: Optional[str] = None) -> str:
+    """Resolve default logs dir when host app does not provide a resolver."""
+    logs_dir = os.path.join(workspace, ".nexus", "tasks", "logs")
+    if project:
+        logs_dir = os.path.join(logs_dir, project)
+    return logs_dir
+
+
+class AIOrchestrator:
+    """Manages AI tool orchestration with fallback support."""
+
+    _rate_limits: Dict[str, Dict[str, Any]] = {}
+    _tool_available: Dict[str, Any] = {}
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        self.config = config or {}
+        self.gemini_cli_path = self.config.get("gemini_cli_path", "gemini")
+        self.copilot_cli_path = self.config.get("copilot_cli_path", "copilot")
+        self.tool_preferences = self.config.get("tool_preferences", {})
+        self.fallback_enabled = self.config.get("fallback_enabled", True)
+        self.rate_limit_ttl = self.config.get("rate_limit_ttl", 3600)
+        self.max_retries = self.config.get("max_retries", 2)
+        self.analysis_timeout = self.config.get("analysis_timeout", 30)
+        self.refine_description_timeout = self.config.get("refine_description_timeout", 90)
+        self.get_tasks_logs_dir: Callable[[str, Optional[str]], str] = self.config.get(
+            "tasks_logs_dir_resolver",
+            _default_tasks_logs_dir,
+        )
+
+    def check_tool_available(self, tool: AIProvider) -> bool:
+        if tool.value in self._tool_available:
+            cached_at = self._tool_available.get(f"{tool.value}_cached_at", 0)
+            if time.time() - cached_at < 300:
+                return self._tool_available[tool.value]
+
+        if tool.value in self._rate_limits:
+            rate_info = self._rate_limits[tool.value]
+            if time.time() < rate_info["until"]:
+                logger.warning(
+                    "⏸️  %s is rate-limited until %s (retries: %s/%s)",
+                    tool.value.upper(),
+                    rate_info["until"],
+                    rate_info["retries"],
+                    self.max_retries,
+                )
+                return False
+            del self._rate_limits[tool.value]
+
+        try:
+            path = self.gemini_cli_path if tool == AIProvider.GEMINI else self.copilot_cli_path
+            subprocess.run([path, "--version"], capture_output=True, timeout=5, check=False)
+            available = True
+            logger.info("✅ %s available", tool.value.upper())
+        except Exception as exc:
+            available = False
+            logger.warning("⚠️  %s unavailable: %s", tool.value.upper(), exc)
+
+        self._tool_available[tool.value] = available
+        self._tool_available[f"{tool.value}_cached_at"] = time.time()
+        return available
+
+    def get_primary_tool(self, agent_name: Optional[str] = None) -> AIProvider:
+        if agent_name and agent_name in self.tool_preferences:
+            pref = self.tool_preferences[agent_name]
+            return AIProvider.COPILOT if pref == "copilot" else AIProvider.GEMINI
+
+        return AIProvider.COPILOT
+
+    def get_fallback_tool(self, primary: AIProvider) -> Optional[AIProvider]:
+        if not self.fallback_enabled:
+            return None
+
+        fallback = AIProvider.GEMINI if primary == AIProvider.COPILOT else AIProvider.COPILOT
+        if self.check_tool_available(fallback):
+            logger.info("🔄 Attempting fallback from %s → %s", primary.value, fallback.value)
+            return fallback
+
+        logger.error("❌ Fallback %s unavailable", fallback.value)
+        return None
+
+    def record_rate_limit(self, tool: AIProvider, retry_count: int = 1):
+        self._rate_limits[tool.value] = {
+            "until": time.time() + self.rate_limit_ttl,
+            "retries": retry_count,
+        }
+        logger.warning("⏸️  %s rate-limited for %ss", tool.value.upper(), self.rate_limit_ttl)
+
+    def record_failure(self, tool: AIProvider):
+        if tool.value not in self._rate_limits:
+            self._tool_available[tool.value] = False
+            logger.error("❌ %s marked unavailable", tool.value.upper())
+            return
+
+        current = self._rate_limits[tool.value]
+        current["retries"] += 1
+        if current["retries"] >= self.max_retries:
+            logger.error("❌ %s exceeded max retries, marking unavailable", tool.value.upper())
+            self._tool_available[tool.value] = False
+
+    def invoke_agent(
+        self,
+        agent_prompt: str,
+        workspace_dir: str,
+        agents_dir: str,
+        base_dir: str,
+        issue_url: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        use_gemini: bool = False,
+        log_subdir: Optional[str] = None,
+    ) -> Tuple[Optional[int], AIProvider]:
+        issue_num = None
+        if issue_url:
+            match = re.search(r"/issues/(\d+)", issue_url)
+            issue_num = match.group(1) if match else None
+
+        primary = AIProvider.GEMINI if use_gemini else self.get_primary_tool(agent_name)
+        fallback = self.get_fallback_tool(primary)
+
+        try:
+            if primary == AIProvider.COPILOT:
+                pid = self._invoke_copilot(
+                    agent_prompt,
+                    workspace_dir,
+                    agents_dir,
+                    base_dir,
+                    issue_num=issue_num,
+                    log_subdir=log_subdir,
+                )
+                if pid:
+                    return pid, AIProvider.COPILOT
+            else:
+                pid = self._invoke_gemini_agent(
+                    agent_prompt,
+                    workspace_dir,
+                    agents_dir,
+                    base_dir,
+                    issue_num=issue_num,
+                    log_subdir=log_subdir,
+                )
+                if pid:
+                    return pid, AIProvider.GEMINI
+        except RateLimitedError:
+            self.record_rate_limit(primary)
+        except Exception as exc:
+            logger.error("❌ %s invocation failed: %s", primary.value, exc)
+            self.record_failure(primary)
+
+        if fallback:
+            try:
+                if fallback == AIProvider.COPILOT:
+                    pid = self._invoke_copilot(
+                        agent_prompt,
+                        workspace_dir,
+                        agents_dir,
+                        base_dir,
+                        issue_num=issue_num,
+                        log_subdir=log_subdir,
+                    )
+                    if pid:
+                        logger.info("✅ Fallback %s succeeded", fallback.value)
+                        return pid, AIProvider.COPILOT
+                else:
+                    pid = self._invoke_gemini_agent(
+                        agent_prompt,
+                        workspace_dir,
+                        agents_dir,
+                        base_dir,
+                        issue_num=issue_num,
+                        log_subdir=log_subdir,
+                    )
+                    if pid:
+                        logger.info("✅ Fallback %s succeeded", fallback.value)
+                        return pid, AIProvider.GEMINI
+            except Exception as exc:
+                logger.error("❌ Fallback %s also failed: %s", fallback.value, exc)
+                self.record_failure(fallback)
+
+        raise ToolUnavailableError(
+            f"All AI tools unavailable. Primary: {primary.value}, Fallback: {fallback.value if fallback else 'None'}"
+        )
+
+    def _invoke_copilot(
+        self,
+        agent_prompt: str,
+        workspace_dir: str,
+        agents_dir: str,
+        base_dir: str,
+        issue_num: Optional[str] = None,
+        log_subdir: Optional[str] = None,
+    ) -> Optional[int]:
+        if not self.check_tool_available(AIProvider.COPILOT):
+            raise ToolUnavailableError("Copilot not available")
+
+        cmd = [
+            self.copilot_cli_path,
+            "-p",
+            agent_prompt,
+            "--add-dir",
+            base_dir,
+            "--add-dir",
+            workspace_dir,
+            "--add-dir",
+            agents_dir,
+            "--allow-all-tools",
+        ]
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        log_dir = self.get_tasks_logs_dir(workspace_dir, log_subdir)
+        os.makedirs(log_dir, exist_ok=True)
+        log_suffix = f"{issue_num}_{timestamp}" if issue_num else timestamp
+        log_path = os.path.join(log_dir, f"copilot_{log_suffix}.log")
+
+        logger.info("🤖 Launching Copilot CLI agent")
+        logger.info("   Workspace: %s", workspace_dir)
+        logger.info("   Log: %s", log_path)
+
+        try:
+            log_file = open(log_path, "w", encoding="utf-8")
+            process = subprocess.Popen(
+                cmd,
+                cwd=workspace_dir,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+            logger.info("🚀 Copilot launched (PID: %s)", process.pid)
+            return process.pid
+        except Exception as exc:
+            logger.error("❌ Copilot launch failed: %s", exc)
+            raise
+
+    def _invoke_gemini_agent(
+        self,
+        agent_prompt: str,
+        workspace_dir: str,
+        agents_dir: str,
+        base_dir: str,
+        issue_num: Optional[str] = None,
+        log_subdir: Optional[str] = None,
+    ) -> Optional[int]:
+        if not self.check_tool_available(AIProvider.GEMINI):
+            raise ToolUnavailableError("Gemini CLI not available")
+
+        cmd = [
+            self.gemini_cli_path,
+            "generate",
+            "--prompt",
+            agent_prompt,
+            "--project-dir",
+            workspace_dir,
+            "--context-dir",
+            agents_dir,
+        ]
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        log_dir = self.get_tasks_logs_dir(workspace_dir, log_subdir)
+        os.makedirs(log_dir, exist_ok=True)
+        log_suffix = f"{issue_num}_{timestamp}" if issue_num else timestamp
+        log_path = os.path.join(log_dir, f"gemini_{log_suffix}.log")
+
+        logger.info("🤖 Launching Gemini CLI agent")
+        logger.info("   Workspace: %s", workspace_dir)
+        logger.info("   Log: %s", log_path)
+
+        try:
+            log_file = open(log_path, "w", encoding="utf-8")
+            process = subprocess.Popen(
+                cmd,
+                cwd=workspace_dir,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+            logger.info("🚀 Gemini launched (PID: %s)", process.pid)
+            return process.pid
+        except Exception as exc:
+            logger.error("❌ Gemini launch failed: %s", exc)
+            raise
+
+    def transcribe_audio_cli(self, audio_file_path: str) -> Optional[str]:
+        primary = AIProvider.GEMINI
+        fallback = self.get_fallback_tool(primary)
+
+        try:
+            text = self._transcribe_with_gemini_cli(audio_file_path)
+            if text:
+                logger.info("✅ Transcription successful with %s", primary.value)
+                return text
+        except RateLimitedError:
+            self.record_rate_limit(primary)
+        except Exception as exc:
+            logger.warning("⚠️  %s transcription failed: %s", primary.value, exc)
+
+        if fallback:
+            try:
+                text = self._transcribe_with_copilot_cli(audio_file_path)
+                if text:
+                    logger.info("✅ Fallback transcription succeeded with %s", fallback.value)
+                    return text
+            except Exception as exc:
+                logger.error("❌ Fallback transcription also failed: %s", exc)
+
+        logger.error("❌ All transcription tools failed")
+        return None
+
+    def _transcribe_with_gemini_cli(self, audio_file_path: str) -> Optional[str]:
+        if not self.check_tool_available(AIProvider.GEMINI):
+            raise ToolUnavailableError("Gemini CLI not available")
+
+        if not os.path.exists(audio_file_path):
+            raise ValueError(f"Audio file not found: {audio_file_path}")
+
+        logger.info("🎧 Transcribing with Gemini: %s", audio_file_path)
+
+        try:
+            result = subprocess.run(
+                [
+                    self.gemini_cli_path,
+                    "generate",
+                    "--prompt",
+                    "Transcribe this audio exactly. Return ONLY the text.",
+                    "--file",
+                    audio_file_path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+
+            if result.returncode != 0:
+                if "rate" in result.stderr.lower() or "quota" in result.stderr.lower():
+                    raise RateLimitedError(f"Gemini rate-limited: {result.stderr}")
+                raise Exception(f"Gemini error: {result.stderr}")
+
+            text = result.stdout.strip()
+            if text:
+                return text
+            raise Exception("Gemini returned empty transcription")
+
+        except subprocess.TimeoutExpired as exc:
+            raise Exception("Gemini transcription timed out (>60s)") from exc
+
+    def _transcribe_with_copilot_cli(self, audio_file_path: str) -> Optional[str]:
+        if not self.check_tool_available(AIProvider.COPILOT):
+            raise ToolUnavailableError("Copilot CLI not available")
+
+        if not os.path.exists(audio_file_path):
+            raise ValueError(f"Audio file not found: {audio_file_path}")
+
+        logger.info("🎧 Transcribing with Copilot (fallback): %s", audio_file_path)
+
+        try:
+            result = subprocess.run(
+                [
+                    self.copilot_cli_path,
+                    "-p",
+                    "Transcribe this audio exactly. Return ONLY the text.",
+                    "--add-file",
+                    audio_file_path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+
+            if result.returncode != 0:
+                raise Exception(f"Copilot error: {result.stderr}")
+
+            text = result.stdout.strip()
+            if text:
+                return text
+            raise Exception("Copilot returned empty transcription")
+
+        except subprocess.TimeoutExpired as exc:
+            raise Exception("Copilot transcription timed out (>60s)") from exc
+
+    def run_text_to_speech_analysis(self, text: str, task: str = "classify", **kwargs) -> Dict[str, Any]:
+        primary = AIProvider.GEMINI
+        fallback = self.get_fallback_tool(primary)
+
+        result = None
+
+        try:
+            result = self._run_gemini_cli_analysis(text, task, **kwargs)
+            if result:
+                return result
+        except RateLimitedError:
+            self.record_rate_limit(primary)
+        except Exception as exc:
+            logger.warning("⚠️  %s analysis failed: %s", primary.value, exc)
+
+        if fallback:
+            try:
+                result = self._run_copilot_analysis(text, task, **kwargs)
+                if result:
+                    logger.info("✅ Fallback analysis succeeded with %s", fallback.value)
+                    return result
+            except Exception as exc:
+                logger.error("❌ Fallback analysis also failed: %s", exc)
+
+        logger.warning("⚠️  All tools failed for %s, returning default", task)
+        return self._get_default_analysis_result(task, text=text, **kwargs)
+
+    def _run_gemini_cli_analysis(self, text: str, task: str, **kwargs) -> Dict[str, Any]:
+        if not self.check_tool_available(AIProvider.GEMINI):
+            raise ToolUnavailableError("Gemini CLI not available")
+
+        prompt = self._build_analysis_prompt(text, task, **kwargs)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as file_handle:
+            file_handle.write(prompt)
+            temp_prompt_file = file_handle.name
+
+        try:
+            result = subprocess.run(
+                [self.gemini_cli_path, "generate", "--prompt", prompt],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode != 0:
+                if "rate" in result.stderr.lower() or "quota" in result.stderr.lower():
+                    raise RateLimitedError(f"Gemini rate-limited: {result.stderr}")
+                raise Exception(f"Gemini error: {result.stderr}")
+
+            return self._parse_analysis_result(result.stdout, task)
+        finally:
+            if os.path.exists(temp_prompt_file):
+                os.remove(temp_prompt_file)
+
+    def _run_copilot_analysis(self, text: str, task: str, **kwargs) -> Dict[str, Any]:
+        if not self.check_tool_available(AIProvider.COPILOT):
+            raise ToolUnavailableError("Copilot CLI not available")
+
+        prompt = self._build_analysis_prompt(text, task, **kwargs)
+        timeout = self.refine_description_timeout if task == "refine_description" else self.analysis_timeout
+
+        try:
+            result = subprocess.run(
+                [self.copilot_cli_path, "-p", prompt],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+
+            if result.returncode != 0:
+                raise Exception(f"Copilot error: {result.stderr}")
+
+            return self._parse_analysis_result(result.stdout, task)
+        except subprocess.TimeoutExpired as exc:
+            raise Exception(f"Copilot analysis timed out (>{timeout}s)") from exc
+
+    def _build_analysis_prompt(self, text: str, task: str, **kwargs) -> str:
+        if task == "classify":
+            projects = kwargs.get("projects", [])
+            types = kwargs.get("types", [])
+            return f"""Classify this task:
+Text: {text[:500]}
+
+1. Map to project (one of: {", ".join(projects)}). Use key format.
+2. Classify type (one of: {", ".join(types)}).
+3. Generate concise issue name (3-6 words, kebab-case).
+4. Return JSON: {{"project": "key", "type": "type_key", "issue_name": "name"}}
+
+Return ONLY valid JSON."""
+
+        if task == "route":
+            return f"""Route this task to the best agent:
+{text[:500]}
+
+1. Identify primary work type (coding, design, testing, ops, content).
+2. Suggest best agent.
+3. Rate confidence 0-100.
+4. Return JSON: {{"agent": "name", "type": "work_type", "confidence": 85}}
+
+Return ONLY valid JSON."""
+
+        if task == "generate_name":
+            project = kwargs.get("project_name", "")
+            return f"""Generate a concise issue name (3-6 words, kebab-case):
+{text[:300]}
+Project: {project}
+
+Return ONLY the name, no quotes."""
+
+        if task == "refine_description":
+            return f"""Rewrite this task description to be clear, concise, and structured.
+Preserve all concrete requirements, constraints, and details. Do not invent facts.
+
+Return in plain text (no Markdown headers), using short paragraphs and bullet points if helpful.
+
+Input:
+{text.strip()}
+"""
+
+        return text
+
+    def _parse_analysis_result(self, output: str, task: str) -> Dict[str, Any]:
+        output = output.strip()
+
+        try:
+            if output.startswith("{"):
+                return json.loads(output)
+            return {"text": output}
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse %s result as JSON: %s", task, output[:100])
+            return {"text": output, "parse_error": True}
+
+    def _get_default_analysis_result(self, task: str, **kwargs) -> Dict[str, Any]:
+        if task == "classify":
+            return {
+                "project": kwargs.get("projects", ["case-italia"])[0],
+                "type": kwargs.get("types", ["feature"])[0],
+                "issue_name": "generic-task",
+            }
+        if task == "route":
+            return {"agent": "ProjectLead", "type": "routing", "confidence": 0}
+        if task == "generate_name":
+            text = kwargs.get("text", "")
+            words = text.split()[:3]
+            if not words:
+                return {"text": "generic-task"}
+            return {"text": "-".join(words).lower()}
+        if task == "refine_description":
+            return {"text": kwargs.get("text", "")}
+        return {}
+
+
+def register_plugins(registry) -> None:
+    """Register built-in AI runtime orchestrator plugin."""
+    from nexus.plugins import PluginKind
+
+    registry.register_factory(
+        kind=PluginKind.AI_PROVIDER,
+        name="ai-runtime-orchestrator",
+        version="0.1.0",
+        factory=lambda config: AIOrchestrator(config),
+        description="Copilot/Gemini orchestration with fallback and cooldown handling",
+    )

@@ -29,6 +29,13 @@ from nexus.core.models import (
 # Adapter exports
 from nexus.adapters.storage import FileStorage
 from nexus.adapters.git import GitHubPlatform
+from nexus.plugins import (
+    PluginKind,
+    PluginSpec,
+    PluginRegistry,
+    PluginRegistrationError,
+    PluginNotFoundError,
+)
 
 __all__ = [
     # Version
@@ -55,4 +62,10 @@ __all__ = [
     # Adapters
     "FileStorage",
     "GitHubPlatform",
+    # Plugins
+    "PluginKind",
+    "PluginSpec",
+    "PluginRegistry",
+    "PluginRegistrationError",
+    "PluginNotFoundError",
 ]
