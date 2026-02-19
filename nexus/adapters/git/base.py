@@ -1,6 +1,6 @@
 """Base interface for Git platforms (GitHub, GitLab, etc.)."""
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
@@ -31,7 +31,7 @@ class PullRequest:
     head_branch: str
     base_branch: str
     url: str
-    linked_issues: List[str] = None
+    linked_issues: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -96,4 +96,32 @@ class GitPlatform(ABC):
     @abstractmethod
     async def create_branch(self, branch_name: str, base_branch: str = "main") -> str:
         """Create a new branch. Returns branch URL."""
+        pass
+
+    @abstractmethod
+    async def create_pr_from_changes(
+        self,
+        repo_dir: str,
+        issue_number: str,
+        title: str,
+        body: str,
+        base_branch: str = "main",
+        branch_prefix: str = "nexus",
+    ) -> Optional[PullRequest]:
+        """Create a PR from uncommitted changes in a local repository.
+
+        Performs the full pipeline: detect changes → create branch →
+        stage → commit → push → open PR.
+
+        Args:
+            repo_dir: Absolute path to the local git repository.
+            issue_number: Issue number this PR addresses.
+            title: PR title.
+            body: PR body (Markdown).
+            base_branch: Branch to merge into (default "main").
+            branch_prefix: Prefix for the new branch name.
+
+        Returns:
+            PullRequest object if created, ``None`` if no changes detected.
+        """
         pass

@@ -1,4 +1,12 @@
 """Core workflow orchestration components."""
+from nexus.core.completion import (
+    CompletionSummary,
+    DetectedCompletion,
+    build_completion_comment,
+    generate_completion_instructions,
+    scan_for_completions,
+)
+from nexus.core.guards import LaunchGuard
 from nexus.core.models import (
     Agent,
     AgentResult,
@@ -19,6 +27,14 @@ __all__ = [
     "WorkflowEngine",
     "WorkflowDefinition",
     "AIOrchestrator",
+    # Completion Protocol
+    "CompletionSummary",
+    "DetectedCompletion",
+    "build_completion_comment",
+    "generate_completion_instructions",
+    "scan_for_completions",
+    # Guards
+    "LaunchGuard",
     # Models
     "Agent",
     "AgentResult",

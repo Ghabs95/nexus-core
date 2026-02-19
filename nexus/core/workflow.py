@@ -1,8 +1,9 @@
 """Basic workflow engine - simplified version for MVP."""
 import logging
+import os
 import re
-from datetime import datetime
-from typing import Any, Dict, Optional
+from datetime import datetime, timezone
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import yaml
 
@@ -15,9 +16,14 @@ from nexus.core.models import (
     WorkflowStep,
     StepStatus,
 )
-from nexus.core.approval import ApprovalGateEnforcer
 
 logger = logging.getLogger(__name__)
+
+# Type aliases for transition callbacks.
+# on_step_transition(workflow, next_step, completed_step_outputs) -> None
+OnStepTransition = Callable[[Workflow, WorkflowStep, dict], Awaitable[None]]
+# on_workflow_complete(workflow, last_step_outputs) -> None
+OnWorkflowComplete = Callable[[Workflow, dict], Awaitable[None]]
 
 
 class WorkflowEngine:
@@ -27,20 +33,31 @@ class WorkflowEngine:
     Handles workflow execution, state management, and step progression.
     """
 
-    def __init__(self, storage: StorageBackend):
+    def __init__(
+        self,
+        storage: StorageBackend,
+        on_step_transition: Optional[OnStepTransition] = None,
+        on_workflow_complete: Optional[OnWorkflowComplete] = None,
+    ):
         """
         Initialize workflow engine.
         
         Args:
             storage: Storage backend for persistence
+            on_step_transition: Async callback invoked when the next step is ready.
+                Signature: ``async (workflow, next_step, completed_step_outputs) -> None``
+            on_workflow_complete: Async callback invoked when the workflow finishes.
+                Signature: ``async (workflow, last_step_outputs) -> None``
         """
         self.storage = storage
+        self._on_step_transition = on_step_transition
+        self._on_workflow_complete = on_workflow_complete
 
     async def create_workflow(self, workflow: Workflow) -> Workflow:
         """Create and persist a new workflow."""
         workflow.state = WorkflowState.PENDING
-        workflow.created_at = datetime.utcnow()
-        workflow.updated_at = datetime.utcnow()
+        workflow.created_at = datetime.now(timezone.utc)
+        workflow.updated_at = datetime.now(timezone.utc)
         
         # Apply workflow-level approval gates to steps
         workflow.apply_approval_gates()
@@ -69,7 +86,7 @@ class WorkflowEngine:
             raise ValueError(f"Cannot start workflow in state {workflow.state.value}")
         
         workflow.state = WorkflowState.RUNNING
-        workflow.updated_at = datetime.utcnow()
+        workflow.updated_at = datetime.now(timezone.utc)
         workflow.current_step = 0
         
         await self.storage.save_workflow(workflow)
@@ -88,7 +105,7 @@ class WorkflowEngine:
             raise ValueError(f"Cannot pause workflow in state {workflow.state.value}")
         
         workflow.state = WorkflowState.PAUSED
-        workflow.updated_at = datetime.utcnow()
+        workflow.updated_at = datetime.now(timezone.utc)
         
         await self.storage.save_workflow(workflow)
         await self._audit(workflow_id, "WORKFLOW_PAUSED", {})
@@ -106,7 +123,7 @@ class WorkflowEngine:
             raise ValueError(f"Cannot resume workflow in state {workflow.state.value}")
         
         workflow.state = WorkflowState.RUNNING
-        workflow.updated_at = datetime.utcnow()
+        workflow.updated_at = datetime.now(timezone.utc)
         
         await self.storage.save_workflow(workflow)
         await self._audit(workflow_id, "WORKFLOW_RESUMED", {})
@@ -127,11 +144,13 @@ class WorkflowEngine:
             raise ValueError(f"Step {step_num} not found in workflow")
         
         # Update step
-        step.completed_at = datetime.utcnow()
+        step.completed_at = datetime.now(timezone.utc)
         step.outputs = outputs
         step.error = error
         step.status = StepStatus.FAILED if error else StepStatus.COMPLETED
         
+        activated_step: Optional[WorkflowStep] = None
+
         if not error:
             # Build context from all completed steps for condition evaluation
             context = self._build_step_context(workflow)
@@ -143,12 +162,13 @@ class WorkflowEngine:
                     # Condition passed (or no condition) – run this step
                     workflow.current_step = next_step.step_num
                     next_step.status = StepStatus.RUNNING
-                    next_step.started_at = datetime.utcnow()
+                    next_step.started_at = datetime.now(timezone.utc)
+                    activated_step = next_step
                     break
                 else:
                     # Condition failed – skip this step
                     next_step.status = StepStatus.SKIPPED
-                    next_step.completed_at = datetime.utcnow()
+                    next_step.completed_at = datetime.now(timezone.utc)
                     await self._audit(workflow_id, "STEP_SKIPPED", {
                         "step_num": next_step.step_num,
                         "step_name": next_step.name,
@@ -164,13 +184,13 @@ class WorkflowEngine:
             else:
                 # No more steps
                 workflow.state = WorkflowState.COMPLETED
-                workflow.completed_at = datetime.utcnow()
+                workflow.completed_at = datetime.now(timezone.utc)
         else:
             # Workflow failed
             workflow.state = WorkflowState.FAILED
-            workflow.completed_at = datetime.utcnow()
+            workflow.completed_at = datetime.now(timezone.utc)
         
-        workflow.updated_at = datetime.utcnow()
+        workflow.updated_at = datetime.now(timezone.utc)
         await self.storage.save_workflow(workflow)
         
         event_type = "STEP_FAILED" if error else "STEP_COMPLETED"
@@ -181,6 +201,24 @@ class WorkflowEngine:
         })
         
         logger.info(f"Completed step {step_num} in workflow {workflow_id}")
+
+        # --- Fire transition callbacks ---
+        if not error and activated_step and self._on_step_transition:
+            try:
+                await self._on_step_transition(workflow, activated_step, outputs)
+            except Exception as exc:
+                logger.error(
+                    f"on_step_transition callback failed for workflow {workflow_id}, "
+                    f"step {activated_step.step_num}: {exc}"
+                )
+        elif workflow.state == WorkflowState.COMPLETED and self._on_workflow_complete:
+            try:
+                await self._on_workflow_complete(workflow, outputs)
+            except Exception as exc:
+                logger.error(
+                    f"on_workflow_complete callback failed for workflow {workflow_id}: {exc}"
+                )
+
         return workflow
 
     def _build_step_context(self, workflow: Workflow) -> Dict[str, Any]:
@@ -224,7 +262,7 @@ class WorkflowEngine:
         """Add audit event."""
         event = AuditEvent(
             workflow_id=workflow_id,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             event_type=event_type,
             data=data
         )
@@ -347,6 +385,48 @@ class WorkflowDefinition:
         workflow.apply_approval_gates()
         
         return workflow
+
+    @staticmethod
+    def to_prompt_context(yaml_path: str) -> str:
+        """Render workflow steps as a prompt-friendly checklist.
+
+        Reads the YAML file and returns a Markdown formatted list of steps
+        with their ``agent_type`` names, suitable for embedding in agent
+        prompts so agents know the full workflow and use correct step names.
+
+        Args:
+            yaml_path: Path to the workflow YAML file.
+
+        Returns:
+            Formatted Markdown text, or empty string on error.
+        """
+        try:
+            with open(yaml_path, "r") as f:
+                data = yaml.safe_load(f)
+
+            steps = data.get("steps", [])
+            if not steps:
+                return ""
+
+            basename = os.path.basename(yaml_path)
+            lines: List[str] = [f"**Workflow Steps (from {basename}):**\n"]
+            for idx, step_data in enumerate(steps, 1):
+                agent_type = step_data.get("agent_type", "unknown")
+                name = step_data.get("name", step_data.get("id", f"Step {idx}"))
+                desc = step_data.get("description", "")
+                # Skip router steps — they're internal
+                if agent_type == "router":
+                    continue
+                lines.append(f"- {idx}. **{name}** — `{agent_type}` : {desc}")
+
+            lines.append(
+                "\n**CRITICAL:** Use ONLY the agent_type names listed above. "
+                "DO NOT use old agent names or reference other workflow YAML files."
+            )
+            return "\n".join(lines)
+        except Exception as exc:
+            logger.warning(f"Could not render workflow prompt context from {yaml_path}: {exc}")
+            return ""
 
     @staticmethod
     def _slugify(text: str) -> str:

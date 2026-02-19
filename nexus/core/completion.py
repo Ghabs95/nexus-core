@@ -1,0 +1,258 @@
+"""Completion protocol for agent-to-framework communication.
+
+Defines the contract between agents and the orchestration framework:
+1. Schema for structured completion output (JSON)
+2. Prompt instructions generator (tells agents what to produce)
+3. Completion parser/validator (detects and reads agent output)
+4. Comment builder (formats structured output for Git platform comments)
+"""
+import glob
+import json
+import logging
+import os
+import re
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+# Values that indicate "no next agent" / workflow is done
+_TERMINAL_VALUES = frozenset({
+    "none", "n/a", "null", "no", "end", "done", "finish", "complete", "",
+})
+
+
+@dataclass
+class CompletionSummary:
+    """Parsed agent completion output.
+
+    Attributes:
+        status: Agent outcome, typically "complete" or "error".
+        agent_type: The agent_type that produced this summary.
+        summary: One-line human-readable summary.
+        key_findings: List of notable findings / outputs.
+        next_agent: The agent_type that should run next, or "" if workflow is done.
+        verdict: Optional verdict / recommendation.
+        effort_breakdown: Optional mapping of task → effort description.
+        raw: The full raw dict for any extra fields.
+    """
+
+    status: str = "complete"
+    agent_type: str = "unknown"
+    summary: str = ""
+    key_findings: List[str] = field(default_factory=list)
+    next_agent: str = ""
+    verdict: str = ""
+    effort_breakdown: Dict[str, str] = field(default_factory=dict)
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def is_workflow_done(self) -> bool:
+        """True when this completion signals no further agent should run."""
+        return self.next_agent.strip().lower() in _TERMINAL_VALUES
+
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -> "CompletionSummary":
+        """Build a CompletionSummary from a raw JSON dict."""
+        return CompletionSummary(
+            status=data.get("status", "complete"),
+            agent_type=data.get("agent_type", "unknown"),
+            summary=data.get("summary", ""),
+            key_findings=data.get("key_findings", []),
+            next_agent=data.get("next_agent", ""),
+            verdict=data.get("verdict", ""),
+            effort_breakdown=data.get("effort_breakdown", {}),
+            raw=data,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize back to a plain dict."""
+        d: Dict[str, Any] = {
+            "status": self.status,
+            "agent_type": self.agent_type,
+            "summary": self.summary,
+            "key_findings": self.key_findings,
+            "next_agent": self.next_agent,
+        }
+        if self.verdict:
+            d["verdict"] = self.verdict
+        if self.effort_breakdown:
+            d["effort_breakdown"] = self.effort_breakdown
+        return d
+
+
+# ---------------------------------------------------------------------------
+# Comment builder — structured output → Git platform comment
+# ---------------------------------------------------------------------------
+
+
+def build_completion_comment(completion: CompletionSummary) -> str:
+    """Build a Git-platform comment body from an agent completion summary.
+
+    Returns a Markdown string suitable for ``GitPlatform.add_comment()``.
+    """
+    lines: List[str] = []
+    lines.append("### ✅ Agent Completed")
+
+    if completion.summary:
+        lines.append(f"\n**Summary:** {completion.summary}")
+
+    if completion.status and completion.status != "complete":
+        lines.append(f"\n**Status:** {completion.status}")
+
+    if completion.key_findings:
+        lines.append("\n**Key Findings:**")
+        for finding in completion.key_findings:
+            lines.append(f"- {finding}")
+
+    if completion.effort_breakdown:
+        lines.append("\n**Effort Breakdown:**")
+        for task, effort in completion.effort_breakdown.items():
+            lines.append(f"- {task}: {effort}")
+
+    if completion.verdict:
+        lines.append(f"\n**Verdict:** {completion.verdict}")
+
+    if completion.next_agent and not completion.is_workflow_done:
+        lines.append(f"\n**Next:** Ready for `@{completion.next_agent}`")
+
+    lines.append("\n\n_Automated comment from Nexus._")
+    return "".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Prompt instructions generator
+# ---------------------------------------------------------------------------
+
+
+def generate_completion_instructions(
+    issue_number: str,
+    agent_type: str,
+    workflow_steps_text: str = "",
+    nexus_dir: str = ".nexus",
+) -> str:
+    """Generate prompt instructions that tell an agent how to produce output.
+
+    This is the *writer* side of the completion protocol.  It tells the agent
+    exactly what deliverables to produce so the framework can detect and parse
+    them.
+
+    Args:
+        issue_number: GitHub issue number being worked on.
+        agent_type: The agent_type running this step.
+        workflow_steps_text: Pre-formatted workflow steps text for context.
+        nexus_dir: Name of the .nexus directory (default ".nexus").
+
+    Returns:
+        Prompt text to append to the agent's instructions.
+    """
+    return (
+        f"**WHEN YOU FINISH — TWO MANDATORY DELIVERABLES:**\n\n"
+        f"{workflow_steps_text}\n\n"
+        f"## Deliverable 1: Post a structured GitHub comment\n\n"
+        f"Use `gh issue comment {issue_number} --repo <REPO> --body '<comment>'` "
+        f"to post a **structured** comment.\n"
+        f"The comment MUST follow this format (adapt sections to your work):\n\n"
+        f"```\n"
+        f"## 🔍 <Step Name> Complete — <agent_type>\n\n"
+        f"**Severity:** <Critical|High|Medium|Low>\n"
+        f"**Target Sub-Repo:** `<repo-name>`\n"
+        f"**Workflow:** <workflow type>\n\n"
+        f"### Findings\n\n"
+        f"<Describe what you analyzed/discovered. Use bullet points for key findings:>\n"
+        f"- Finding 1\n"
+        f"- Finding 2\n"
+        f"- Finding 3\n\n"
+        f"### SOP Checklist\n\n"
+        f"Use the workflow steps above to build the checklist. Example:\n"
+        f"- [x] 1. Triage Issue — `triage` : Severity + routing ✅\n"
+        f"- [ ] 2. Create Design Proposal — `design`\n"
+        f"- [ ] 3. Summarize & Close — `summarizer`\n\n"
+        f"Ready for **@<next_agent_type>**\n"
+        f"```\n\n"
+        f"**IMPORTANT:** The comment must contain real findings from YOUR analysis, "
+        f"not placeholder text.\n"
+        f"Adapt the template to your role ({agent_type}). Include concrete details.\n\n"
+        f"## Deliverable 2: Write completion summary JSON\n\n"
+        f"Write a JSON file with your structured results. Use this exact command:\n\n"
+        f"```bash\n"
+        f'LOG_DIR=$(find . -path \'*/{nexus_dir}/tasks/logs\' -type d 2>/dev/null | head -1)\n'
+        f'if [ -z "$LOG_DIR" ]; then LOG_DIR="{nexus_dir}/tasks/logs"; mkdir -p "$LOG_DIR"; fi\n'
+        f'cat > "$LOG_DIR/completion_summary_{issue_number}.json" << \'NEXUS_EOF\'\n'
+        f"{{\n"
+        f'  "status": "complete",\n'
+        f'  "agent_type": "{agent_type}",\n'
+        f'  "summary": "<one-line summary of what you did>",\n'
+        f'  "key_findings": [\n'
+        f'    "<finding 1>",\n'
+        f'    "<finding 2>"\n'
+        f"  ],\n"
+        f'  "next_agent": "<agent_type from workflow steps above>"\n'
+        f"}}\n"
+        f"NEXUS_EOF\n"
+        f"```\n\n"
+        f"Replace the `<placeholder>` values with real data from your analysis.\n\n"
+        f"After posting the comment and writing the JSON, **EXIT immediately**.\n"
+        f"DO NOT attempt to invoke or launch any other agent."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Completion detector — file-based scanning
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DetectedCompletion:
+    """A completion summary detected on disk."""
+
+    file_path: str
+    issue_number: str
+    summary: CompletionSummary
+
+    @property
+    def dedup_key(self) -> str:
+        """Deduplication key: ``{issue}:{agent_type}:{filename}``."""
+        basename = os.path.basename(self.file_path)
+        return f"{self.issue_number}:{self.summary.agent_type}:{basename}"
+
+
+def scan_for_completions(
+    base_dir: str,
+    nexus_dir: str = ".nexus",
+) -> List[DetectedCompletion]:
+    """Scan directories under *base_dir* for ``completion_summary_*.json`` files.
+
+    Args:
+        base_dir: Root directory to search recursively.
+        nexus_dir: Name of the nexus state directory (default ".nexus").
+
+    Returns:
+        List of detected completion summaries, each parsed and validated.
+    """
+    pattern = os.path.join(
+        base_dir, "**", nexus_dir, "tasks", "logs", "**",
+        "completion_summary_*.json",
+    )
+    results: List[DetectedCompletion] = []
+
+    for path in glob.glob(pattern, recursive=True):
+        match = re.search(r"completion_summary_(\d+)\.json$", path)
+        if not match:
+            continue
+        issue_number = match.group(1)
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+            summary = CompletionSummary.from_dict(data)
+            results.append(DetectedCompletion(
+                file_path=path,
+                issue_number=issue_number,
+                summary=summary,
+            ))
+        except json.JSONDecodeError as exc:
+            logger.warning(f"Invalid JSON in {path}: {exc}")
+        except Exception as exc:
+            logger.warning(f"Error reading completion file {path}: {exc}")
+
+    return results

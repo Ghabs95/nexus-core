@@ -1,6 +1,6 @@
 """Core data models for Nexus workflows."""
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -143,8 +143,8 @@ class Workflow:
     steps: List[WorkflowStep] = field(default_factory=list)
     state: WorkflowState = WorkflowState.PENDING
     current_step: int = 0
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: Optional[datetime] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     require_human_merge_approval: bool = True  # Workflow-level PR merge approval policy
@@ -190,7 +190,7 @@ class Task:
     title: str
     description: str
     created_by: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
@@ -248,7 +248,7 @@ class WorkflowExecution:
         """Add an audit event."""
         event = AuditEvent(
             workflow_id=self.workflow.id,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             event_type=event_type,
             data=data,
         )

@@ -1,6 +1,6 @@
 """Tests for conditional step execution in WorkflowEngine."""
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock
 
@@ -46,7 +46,7 @@ def make_workflow(steps: List[WorkflowStep]) -> Workflow:
     # Mark the first step as running
     if steps:
         steps[0].status = StepStatus.RUNNING
-        steps[0].started_at = datetime.utcnow()
+        steps[0].started_at = datetime.now(timezone.utc)
     return wf
 
 

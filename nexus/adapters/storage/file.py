@@ -1,7 +1,7 @@
 """File-based storage backend (JSON files)."""
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -183,7 +183,7 @@ class FileStorage(StorageBackend):
 
     async def cleanup_old_workflows(self, older_than_days: int = 30) -> int:
         """Delete workflows older than specified days."""
-        cutoff = datetime.utcnow() - timedelta(days=older_than_days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
         deleted = 0
         
         for workflow_file in self.workflows_dir.glob("*.json"):
