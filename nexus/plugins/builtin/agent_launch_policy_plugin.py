@@ -14,7 +14,9 @@ class AgentLaunchPolicyPlugin:
     @staticmethod
     def get_workflow_name(tier_name: str) -> str:
         """Return workflow slash-command name for a tier."""
-        if tier_name in {"fast-track", "shortened"}:
+        if tier_name == "fast-track":
+            return "fast_track"
+        if tier_name == "shortened":
             return "bug_fix"
         return "new_feature"
 

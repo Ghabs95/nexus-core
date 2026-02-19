@@ -12,7 +12,7 @@ version: "1.0.0"
 workflow_types:
   full: "new_feature"
   shortened: "bug_fix"
-  fast-track: "hotfix"
+  fast-track: "fast_track"
 
 timeout_seconds: 7200
 
@@ -279,7 +279,7 @@ shortened_workflow:
       final_step: true
 
 # ==========================================================================
-# FAST-TRACK WORKFLOW — Hotfixes
+# FAST-TRACK WORKFLOW — Rapid Changes
 # ==========================================================================
 fast_track_workflow:
   steps:
@@ -299,8 +299,8 @@ fast_track_workflow:
       on_success: "develop"
 
     - id: "develop"
-      name: "Hotfix Implementation"
-      description: "Rapidly implement minimal fix"
+      name: "Fast-Track Implementation"
+      description: "Rapidly implement minimal change"
       agent_type: "developer"
       tools:
         - github:create_branch
@@ -311,7 +311,7 @@ fast_track_workflow:
         - issue_url: "string"
         - urgency: "string"
       outputs:
-        - hotfix_pr_url: "string"
+        - fast_track_pr_url: "string"
         - fix_description: "string"
       on_success: "review"
 
@@ -323,7 +323,7 @@ fast_track_workflow:
         - github:review_pr
         - github:approve_pr
       inputs:
-        - hotfix_pr_url: "string"
+        - fast_track_pr_url: "string"
       outputs:
         - review_status: "enum[approved|rejected]"
       on_success: "route_review"
@@ -338,7 +338,7 @@ fast_track_workflow:
 
     - id: "deploy"
       name: "Emergency Deploy"
-      description: "Merge hotfix and deploy immediately"
+      description: "Merge fast-track changes and deploy immediately"
       agent_type: "deployer"
       tools:
         - github:merge_pr
@@ -346,7 +346,7 @@ fast_track_workflow:
         - github:add_comment
         - github:close_issue
       inputs:
-        - hotfix_pr_url: "string"
+        - fast_track_pr_url: "string"
       outputs:
         - deployment_status: "string"
         - rollback_plan: "string"

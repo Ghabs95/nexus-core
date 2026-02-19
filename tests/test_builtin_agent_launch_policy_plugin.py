@@ -6,7 +6,7 @@ from nexus.plugins.builtin.agent_launch_policy_plugin import AgentLaunchPolicyPl
 def test_get_workflow_name_mapping():
     plugin = AgentLaunchPolicyPlugin()
 
-    assert plugin.get_workflow_name("fast-track") == "bug_fix"
+    assert plugin.get_workflow_name("fast-track") == "fast_track"
     assert plugin.get_workflow_name("shortened") == "bug_fix"
     assert plugin.get_workflow_name("full") == "new_feature"
 
