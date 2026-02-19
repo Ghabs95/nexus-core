@@ -41,7 +41,11 @@ class GitHubPlatform(GitPlatform):
 
     def _run_gh_command(self, args: List[str], timeout: int = 30) -> str:
         """Run gh CLI command and return stdout."""
-        cmd = ["gh"] + args + ["--repo", self.repo]
+        # gh api uses full URL paths; --repo is only for issue/pr subcommands
+        if args and args[0] == "api":
+            cmd = ["gh"] + args
+        else:
+            cmd = ["gh"] + args + ["--repo", self.repo]
         
         env = None
         if self.token:
@@ -243,13 +247,25 @@ class GitHubPlatform(GitPlatform):
         """Create a PR from uncommitted changes in a local repository.
 
         Performs: detect changes → create branch → stage → commit → push → open PR.
+        Automatically appends ``Closes #<issue_number>`` to the PR body when
+        the body does not already contain a GitHub closing keyword for the
+        issue, ensuring every PR is linked to its originating issue.
         Returns None if no changes are detected.
         """
         import os
+        import re as _re
 
         if not os.path.isdir(os.path.join(repo_dir, ".git")):
             logger.warning(f"Not a git repo: {repo_dir}")
             return None
+
+        # Auto-link PR to issue if not already referenced with a closing keyword
+        closing_pattern = _re.compile(
+            rf"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#?{_re.escape(issue_number)}\b",
+            _re.IGNORECASE,
+        )
+        if issue_number and not closing_pattern.search(body):
+            body = f"{body}\n\nCloses #{issue_number}"
 
         def _git(args: list, timeout: int = 30) -> subprocess.CompletedProcess:
             return subprocess.run(
