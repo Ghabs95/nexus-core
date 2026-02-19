@@ -4,6 +4,8 @@ Normalizes GitHub webhook payloads into stable event dictionaries and provides
 small policy helpers for webhook-side decisions.
 """
 
+import hashlib
+import hmac
 from typing import Any, Optional
 
 
@@ -52,6 +54,102 @@ class GithubWebhookPolicyPlugin:
     def should_notify_pr_merged(self, merge_policy: str) -> bool:
         """Return True when PR merge notifications should be emitted."""
         return str(merge_policy or "always") != "always"
+
+    def verify_signature(
+        self,
+        payload_body: bytes,
+        signature_header: Optional[str],
+        secret: Optional[str],
+    ) -> bool:
+        """Verify GitHub webhook signature header."""
+        if not secret:
+            return True
+
+        if not signature_header or "=" not in signature_header:
+            return False
+
+        hash_algorithm, github_signature = signature_header.split("=", 1)
+        if hash_algorithm != "sha256":
+            return False
+
+        mac = hmac.new(
+            str(secret).encode("utf-8"),
+            msg=payload_body,
+            digestmod=hashlib.sha256,
+        )
+        expected_signature = mac.hexdigest()
+        return hmac.compare_digest(expected_signature, github_signature)
+
+    def resolve_project_key(
+        self,
+        repo_name: str,
+        project_config: dict[str, Any],
+        default_project: str = "nexus",
+    ) -> str:
+        """Resolve project key from repository full name."""
+        for project_key, project_cfg in (project_config or {}).items():
+            if isinstance(project_cfg, dict) and project_cfg.get("github_repo") == repo_name:
+                return project_key
+        return default_project
+
+    def resolve_merge_policy(
+        self,
+        repo_name: str,
+        project_config: dict[str, Any],
+        default_policy: str = "always",
+    ) -> str:
+        """Resolve effective merge policy for a repository."""
+        project_key = self.resolve_project_key(repo_name, project_config)
+        project_cfg = (project_config or {}).get(project_key, {})
+        if isinstance(project_cfg, dict) and project_cfg.get("require_human_merge_approval"):
+            return str(project_cfg.get("require_human_merge_approval"))
+        return str((project_config or {}).get("require_human_merge_approval", default_policy))
+
+    def build_issue_closed_message(self, event: dict[str, Any]) -> str:
+        """Build issue-closed lifecycle notification message."""
+        return (
+            "🔒 **Issue Closed**\n\n"
+            f"Issue: #{event.get('number', '')}\n"
+            f"Title: {event.get('title', '')}\n"
+            f"Repository: {event.get('repo', 'unknown')}\n"
+            f"Closed by: @{event.get('closed_by', 'unknown')}\n\n"
+            f"🔗 {event.get('url', '')}"
+        )
+
+    def build_issue_created_message(self, event: dict[str, Any], agent_type: str) -> str:
+        """Build issue-created lifecycle notification message."""
+        return (
+            "📥 **Issue Created**\n\n"
+            f"Issue: #{event.get('number', '')}\n"
+            f"Title: {event.get('title', '')}\n"
+            f"Repository: {event.get('repo', 'unknown')}\n"
+            f"Author: @{event.get('author', '')}\n"
+            f"Routed to: `{agent_type}`\n\n"
+            f"🔗 {event.get('url', '')}"
+        )
+
+    def build_pr_created_message(self, event: dict[str, Any]) -> str:
+        """Build PR-created lifecycle notification message."""
+        return (
+            "🔀 **PR Created**\n\n"
+            f"PR: #{event.get('number', '')}\n"
+            f"Title: {event.get('title', '')}\n"
+            f"Repository: {event.get('repo', 'unknown')}\n"
+            f"Author: @{event.get('author', '')}\n\n"
+            f"🔗 {event.get('url', '')}"
+        )
+
+    def build_pr_merged_message(self, event: dict[str, Any], merge_policy: str) -> str:
+        """Build PR-merged lifecycle notification message."""
+        return (
+            "✅ **PR Merged**\n\n"
+            f"PR: #{event.get('number', '')}\n"
+            f"Title: {event.get('title', '')}\n"
+            f"Repository: {event.get('repo', 'unknown')}\n"
+            f"Merged by: @{event.get('merged_by', 'unknown')}\n"
+            f"Policy: `{merge_policy}`\n\n"
+            f"🔗 {event.get('url', '')}"
+        )
 
 
 def register_plugins(registry) -> None:
