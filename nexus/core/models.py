@@ -236,6 +236,19 @@ class RateLimitStatus:
 
 
 @dataclass
+class DryRunReport:
+    """Result of a workflow dry-run validation and simulation."""
+
+    errors: List[str] = field(default_factory=list)
+    predicted_flow: List[str] = field(default_factory=list)
+
+    @property
+    def is_valid(self) -> bool:
+        """Return True when no configuration errors were detected."""
+        return len(self.errors) == 0
+
+
+@dataclass
 class WorkflowExecution:
     """Complete workflow execution context."""
 

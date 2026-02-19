@@ -11,6 +11,7 @@ from nexus.adapters.storage.base import StorageBackend
 from nexus.core.models import (
     Agent,
     AuditEvent,
+    DryRunReport,
     Workflow,
     WorkflowState,
     WorkflowStep,
@@ -295,6 +296,18 @@ class WorkflowDefinition:
         "full": "full",
     }
 
+    _TERMINAL_NEXT_AGENT_VALUES = {
+        "none",
+        "n/a",
+        "null",
+        "no",
+        "end",
+        "done",
+        "finish",
+        "complete",
+        "",
+    }
+
     @staticmethod
     def normalize_workflow_type(tier_name: str, default: str = "shortened") -> str:
         """Normalize a tier name to a canonical workflow_type.
@@ -309,7 +322,21 @@ class WorkflowDefinition:
         Returns:
             One of ``"full"``, ``"shortened"``, or ``"fast-track"``.
         """
-        return WorkflowDefinition._TIER_ALIASES.get(tier_name, default)
+        if not tier_name:
+            return default
+
+        normalized = str(tier_name).strip().lower()
+
+        # Support common workflow-name aliases found in workflow_types mappings.
+        workflow_aliases = {
+            "new_feature": "full",
+            "bug_fix": "shortened",
+            "hotfix": "fast-track",
+        }
+        if normalized in workflow_aliases:
+            return workflow_aliases[normalized]
+
+        return WorkflowDefinition._TIER_ALIASES.get(normalized, default)
 
     @staticmethod
     def _resolve_steps(data: Dict[str, Any], workflow_type: str = "") -> List[dict]:
@@ -340,6 +367,8 @@ class WorkflowDefinition:
         }
 
         if workflow_type:
+            workflow_type = WorkflowDefinition.normalize_workflow_type(workflow_type, default=workflow_type)
+
             key = tier_keys.get(workflow_type, f"{workflow_type}_workflow")
             tier = data.get(key, {})
             if isinstance(tier, dict) and tier.get("steps"):
@@ -574,6 +603,64 @@ class WorkflowDefinition:
         return unique
 
     @staticmethod
+    def canonicalize_next_agent(
+        yaml_path: str,
+        current_agent_type: str,
+        proposed_next_agent: str,
+        workflow_type: str = "",
+    ) -> str:
+        """Canonicalize a proposed next_agent into a valid successor agent_type.
+
+        Handles common model output drift:
+        - ``@agent`` mention formatting
+        - step IDs / names instead of agent_type
+        - invalid value when there is only one valid successor
+
+        Returns empty string when ambiguous or invalid.
+        """
+
+        def _normalize(value: str) -> str:
+            text = (value or "").strip()
+            text = text.lstrip("@").strip()
+            return text.strip("`").strip()
+
+        candidate = _normalize(proposed_next_agent)
+        if candidate.lower() in WorkflowDefinition._TERMINAL_NEXT_AGENT_VALUES:
+            return "none"
+
+        valid_next = WorkflowDefinition.resolve_next_agents(
+            yaml_path,
+            current_agent_type,
+            workflow_type=workflow_type,
+        )
+        if not valid_next:
+            return ""
+
+        if candidate in valid_next:
+            return candidate
+
+        try:
+            with open(yaml_path, "r") as handle:
+                data = yaml.safe_load(handle)
+        except Exception:
+            return valid_next[0] if len(valid_next) == 1 else ""
+
+        steps = WorkflowDefinition._resolve_steps(data, workflow_type)
+        candidate_lc = candidate.lower()
+        for step in steps:
+            step_id = str(step.get("id", "")).strip().lower()
+            step_name = str(step.get("name", "")).strip().lower()
+            if candidate_lc == step_id or candidate_lc == step_name:
+                mapped = str(step.get("agent_type", "")).strip()
+                if mapped in valid_next:
+                    return mapped
+
+        if len(valid_next) == 1:
+            return valid_next[0]
+
+        return ""
+
+    @staticmethod
     def to_prompt_context(
         yaml_path: str,
         current_agent_type: str = "",
@@ -645,6 +732,117 @@ class WorkflowDefinition:
         except Exception as exc:
             logger.warning(f"Could not render workflow prompt context from {yaml_path}: {exc}")
             return ""
+
+    @staticmethod
+    def dry_run(
+        data: Dict[str, Any],
+        workflow_type: str = "",
+    ) -> "DryRunReport":
+        """Validate a workflow definition dict and simulate step execution.
+
+        No agents or tools are invoked.  Returns a :class:`DryRunReport`
+        containing detected configuration errors and the predicted step
+        execution order.
+
+        Validation checks:
+        - Top-level ``name`` or ``id`` field is present.
+        - The resolved steps list is non-empty.
+        - Each step has a non-empty ``agent_type``.
+        - ``on_success`` references point to steps that exist in the definition.
+        - ``condition`` expressions are syntactically valid Python.
+
+        Simulation:
+        - Walks the steps in declaration order (skipping ``router`` steps).
+        - Evaluates each condition with an empty context; a condition that
+          raises a :class:`NameError` (because referenced outputs don't exist
+          yet) is treated as **RUN** (unknown → conservative).
+        - Any other evaluation error marks the step as SKIP.
+
+        Args:
+            data: Parsed workflow definition dict.
+            workflow_type: Tier selector (see ``_resolve_steps``).
+
+        Returns:
+            A :class:`DryRunReport` with ``errors`` and ``predicted_flow``.
+        """
+        errors: List[str] = []
+        predicted_flow: List[str] = []
+
+        if not isinstance(data, dict):
+            return DryRunReport(errors=["Workflow definition must be a dict"])
+
+        # --- Top-level field validation ---
+        if not data.get("name") and not data.get("id"):
+            errors.append("Missing required top-level field: 'name' or 'id'")
+
+        # --- Steps validation ---
+        steps = WorkflowDefinition._resolve_steps(data, workflow_type)
+        if not steps:
+            errors.append(
+                f"No steps found for workflow_type={workflow_type!r}. "
+                "Check that the workflow definition contains a non-empty steps list."
+            )
+        else:
+            step_ids = {s["id"] for s in steps if isinstance(s, dict) and "id" in s}
+
+            for idx, step in enumerate(steps, start=1):
+                if not isinstance(step, dict):
+                    errors.append(f"Step {idx}: must be a dict, got {type(step).__name__}")
+                    continue
+
+                step_label = step.get("id") or step.get("name") or f"step_{idx}"
+
+                # agent_type presence
+                agent_type = step.get("agent_type", "")
+                if not agent_type:
+                    errors.append(f"Step '{step_label}': missing 'agent_type'")
+
+                # on_success reference validity (only when step IDs are used)
+                on_success = step.get("on_success")
+                if on_success and step_ids and on_success not in step_ids:
+                    errors.append(
+                        f"Step '{step_label}': 'on_success' references unknown step id '{on_success}'"
+                    )
+
+                # condition syntax check
+                condition = step.get("condition")
+                if condition:
+                    try:
+                        compile(condition, "<condition>", "eval")
+                    except SyntaxError as exc:
+                        errors.append(
+                            f"Step '{step_label}': malformed condition expression "
+                            f"'{condition}' — {exc}"
+                        )
+
+        # --- Simulation ---
+        for idx, step in enumerate(steps, start=1):
+            if not isinstance(step, dict):
+                continue
+            agent_type = step.get("agent_type", "")
+            if agent_type == "router":
+                continue
+
+            step_label = step.get("name") or step.get("id") or f"step_{idx}"
+            condition = step.get("condition")
+
+            if not condition:
+                predicted_flow.append(f"RUN  {step_label} ({agent_type})")
+                continue
+
+            # Simulate with empty context; NameError → RUN (outputs not available yet)
+            try:
+                result = eval(condition, {"__builtins__": {}}, {})  # noqa: S307
+                status = "RUN " if result else "SKIP"
+            except NameError:
+                # References to step outputs that don't exist yet → treat as RUN
+                status = "RUN "
+            except Exception:
+                status = "SKIP"
+
+            predicted_flow.append(f"{status} {step_label} ({agent_type}) [condition: {condition}]")
+
+        return DryRunReport(errors=errors, predicted_flow=predicted_flow)
 
     @staticmethod
     def _slugify(text: str) -> str:
