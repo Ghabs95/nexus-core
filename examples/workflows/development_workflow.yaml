@@ -5,8 +5,11 @@ version: "0.1.0"
 # Demonstrates complete agent orchestration:
 # 1. Triage Agent - analyzes issue, suggests severity
 # 2. Design Agent - if feature, creates design proposal
-# 3. Code Review Agent - when PR is submitted
-# 4. Docs Agent - updates documentation
+# 3. Debug Agent - root cause analysis for bugs
+# 4. Developer Agent - implements code changes
+# 5. Reviewer Agent - reviews the implementation PR
+# 6. Docs Agent - updates documentation
+# 7. Summarizer Agent - final summary
 
 workflow_type: "full"  # fast-track | shortened | full
 timeout_seconds: 3600
@@ -36,7 +39,7 @@ steps:
       - when: "classification == 'feature'"
         then: "design"
       - when: "classification == 'bug'"
-        then: "debug_analysis"
+        then: "debug"
       - when: "classification == 'doc'"
         then: "docs_update"
       - default: "close_loop"
@@ -57,11 +60,11 @@ steps:
     outputs:
       - design_pr_url: "string"
       - estimated_effort: "string"
-    on_success: "close_loop"
+    on_success: "develop"
 
-  - id: "debug_analysis"
-    name: "Analyze Bug Report"
-    description: "For bugs: suggest root cause and reproduction steps"
+  - id: "debug"
+    name: "Debug & Root Cause Analysis"
+    description: "Identify root cause, reproduction steps, and propose fix architecture"
     agent_type: "debug"
     tools:
       - github:add_comment
@@ -73,12 +76,32 @@ steps:
       - suspected_cause: "string"
       - reproduction_steps: "string"
       - affected_versions: "list[string]"
-    on_success: "close_loop"
+    on_success: "develop"
 
-  - id: "code_review"
-    name: "Review Implementation PR"
-    description: "When PR is submitted: provide detailed code review"
-    agent_type: "code_reviewer"
+  - id: "develop"
+    name: "Implement Changes"
+    description: "Implement code changes based on debug analysis or design proposal"
+    agent_type: "developer"
+    tools:
+      - github:read_issue
+      - github:read_comments
+      - github:add_comment
+      - github:create_branch
+      - github:edit_file
+      - github:create_file
+      - github:search_codebase
+    inputs:
+      - issue_url: "string"
+    outputs:
+      - branch_name: "string"
+      - files_changed: "list[string]"
+      - implementation_summary: "string"
+    on_success: "review"
+
+  - id: "review"
+    name: "Review Implementation"
+    description: "Review the implementation for code quality and correctness"
+    agent_type: "reviewer"
     tools:
       - github:review_pr
       - github:suggest_changes

@@ -1,0 +1,80 @@
+apiVersion: "nexus-core/v1"
+kind: "Agent"
+metadata:
+  name: "developer-agent"
+  description: "Implements code changes based on debug analysis or design proposals"
+  author: "Nexus Core Team"
+  version: "0.1.0"
+
+spec:
+  agent_type: "developer"
+  timeout_seconds: 1200
+  max_retries: 2
+
+  purpose: |
+    After a debug agent identifies root cause or a design agent creates a proposal,
+    this agent implements the actual code changes:
+    1. Reads the previous agent's analysis from GitHub comments
+    2. Creates a feature/fix branch from develop (or main for hotfixes)
+    3. Implements the required code changes
+    4. Writes or updates tests for the changes
+    5. Commits with descriptive messages
+    6. Pushes the branch and posts a status update
+
+  requires_tools:
+    - github:read_issue
+    - github:read_comments
+    - github:add_comment
+    - github:create_branch
+    - github:edit_file
+    - github:create_file
+    - github:search_codebase
+    - ai:completion
+
+  inputs:
+    issue_url:
+      type: string
+      description: "URL to the GitHub issue being worked on"
+      required: true
+    previous_analysis:
+      type: string
+      description: "Summary from the previous agent (debug or design)"
+      required: false
+
+  outputs:
+    branch_name:
+      type: string
+      description: "Name of the branch with changes"
+    files_changed:
+      type: array
+      items: string
+      description: "List of files created or modified"
+    tests_added:
+      type: array
+      items: string
+      description: "List of test files added or updated"
+    implementation_summary:
+      type: string
+      description: "Brief summary of what was implemented"
+
+  prompt_template: |
+    You are a developer agent. The previous workflow step has completed analysis.
+
+    Issue: {issue_url}
+    Previous agent's findings are in the GitHub comments — read them first.
+
+    Your job:
+    1. Read the issue and all comments to understand what needs to be done
+    2. Create a branch following the naming convention from the issue's Target Branch
+    3. Implement the required changes based on the analysis
+    4. Write or update tests
+    5. Commit with clear, descriptive messages
+    6. Push the branch
+    7. Post a status comment summarizing what you implemented
+
+    Follow the project's coding conventions (PEP 8, type hints, 100-char lines).
+    Keep changes minimal and focused on the identified issue.
+
+  validation:
+    required_outputs: ["branch_name", "implementation_summary"]
+    max_duration_seconds: 1200

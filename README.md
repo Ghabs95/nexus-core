@@ -99,7 +99,7 @@ steps:
     retry: 2
     
   - name: implement
-    agent: Developer
+    agent: developer
     prompt: "Implement the feature according to spec"
     timeout: 1800
     retry: 3
