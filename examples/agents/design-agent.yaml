@@ -1,7 +1,7 @@
 apiVersion: "nexus-core/v1"
 kind: "Agent"
 metadata:
-  name: "design"
+  name: "Design"
   description: "Creates technical design proposals for feature requests"
   author: "Nexus Core Team"
   version: "0.1.0"

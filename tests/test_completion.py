@@ -92,7 +92,7 @@ class TestBuildCompletionComment:
     def test_includes_next_agent(self):
         s = CompletionSummary(next_agent="summarizer")
         comment = build_completion_comment(s)
-        assert "@summarizer" in comment
+        assert "@Summarizer" in comment
 
     def test_omits_next_when_workflow_done(self):
         s = CompletionSummary(next_agent="none")

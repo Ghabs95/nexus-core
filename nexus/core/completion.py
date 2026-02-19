@@ -112,7 +112,8 @@ def build_completion_comment(completion: CompletionSummary) -> str:
         sections.append(f"**Verdict:** {completion.verdict}")
 
     if completion.next_agent and not completion.is_workflow_done:
-        sections.append(f"**Next:** Ready for `@{completion.next_agent}`")
+        display_name = completion.next_agent.title()
+        sections.append(f"**Next:** Ready for `@{display_name}`")
 
     sections.append("_Automated comment from Nexus._")
     return "\n\n".join(sections)
@@ -166,11 +167,14 @@ def generate_completion_instructions(
         f"- [x] 1. Triage Issue — `triage` : Severity + routing ✅\n"
         f"- [ ] 2. Create Design Proposal — `design`\n"
         f"- [ ] 3. Summarize & Close — `summarizer`\n\n"
-        f"Ready for **@<Next Step Name>**\n"
+        f"Ready for **@<Display Name>**\n"
         f"```\n\n"
         f"**IMPORTANT:** The comment must contain real findings from YOUR analysis, "
         f"not placeholder text.\n"
-        f"Adapt the template to your role ({agent_type}). Include concrete details.\n\n"
+        f"Adapt the template to your role ({agent_type}). Include concrete details.\n"
+        f"For the 'Ready for @...' line, use the **Display Names** mapping from "
+        f"the workflow steps above (e.g., `Ready for **@Developer**`). "
+        f"Do NOT use the raw agent_type.\n\n"
         f"## Deliverable 2: Write completion summary JSON\n\n"
         f"Write a JSON file with your structured results. Use this exact command:\n\n"
         f"```bash\n"

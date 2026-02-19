@@ -709,6 +709,21 @@ class WorkflowDefinition:
                 "DO NOT use old agent names or reference other workflow YAML files."
             )
 
+            # Build display-name mapping (agent_type → Capitalized)
+            # Used by agents for the "Ready for @..." comment line.
+            seen: set = set()
+            display_pairs: List[str] = []
+            for step_data in steps:
+                at = step_data.get("agent_type", "")
+                if at and at != "router" and at not in seen:
+                    seen.add(at)
+                    display_pairs.append(f"`{at}` → **{at.title()}**")
+            if display_pairs:
+                lines.append(
+                    "\n**Display Names (for the 'Ready for @...' line in your comment):**\n"
+                    + ", ".join(display_pairs)
+                )
+
             # Resolve and embed next-agent constraint
             if current_agent_type:
                 valid_next = WorkflowDefinition.resolve_next_agents(

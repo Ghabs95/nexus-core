@@ -1,7 +1,7 @@
 apiVersion: "nexus-core/v1"
 kind: "Agent"
 metadata:
-  name: "debug"
+  name: "Debug"
   description: "Analyzes bug reports, identifies root causes, and proposes fix architecture"
   author: "Nexus Core Team"
   version: "0.1.0"
