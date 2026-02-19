@@ -278,14 +278,78 @@ class WorkflowDefinition:
     """
 
     @staticmethod
+    def _resolve_steps(data: Dict[str, Any], workflow_type: str = "") -> List[dict]:
+        """Resolve the steps list from a workflow definition.
+
+        Supports two layouts:
+        - **Flat**: a top-level ``steps`` list.
+        - **Tiered**: keyed under ``full_workflow.steps``,
+          ``shortened_workflow.steps``, or ``fast_track_workflow.steps``.
+
+        When *workflow_type* is provided (e.g. ``"full"``, ``"shortened"``,
+        ``"fast-track"``), the corresponding tier is selected.  When empty,
+        the flat ``steps`` list is used; if that is absent, the first
+        available tier is returned as a fallback.
+
+        Args:
+            data: Parsed workflow YAML dict.
+            workflow_type: Optional tier selector.
+
+        Returns:
+            The resolved list of step dicts (may be empty).
+        """
+        tier_keys = {
+            "full": "full_workflow",
+            "shortened": "shortened_workflow",
+            "fast-track": "fast_track_workflow",
+            "fast_track": "fast_track_workflow",
+        }
+
+        if workflow_type:
+            key = tier_keys.get(workflow_type, f"{workflow_type}_workflow")
+            tier = data.get(key, {})
+            if isinstance(tier, dict) and tier.get("steps"):
+                return tier["steps"]
+            # Fallback: maybe the caller passed the full key name directly
+            tier = data.get(workflow_type, {})
+            if isinstance(tier, dict) and tier.get("steps"):
+                return tier["steps"]
+            return []
+
+        # No workflow_type specified — prefer flat steps
+        flat = data.get("steps", [])
+        if flat:
+            return flat
+
+        # Fallback: pick the first available tier
+        for key in ["full_workflow", "shortened_workflow", "fast_track_workflow"]:
+            tier = data.get(key, {})
+            if isinstance(tier, dict) and tier.get("steps"):
+                return tier["steps"]
+
+        return []
+
+    @staticmethod
     def from_yaml(
         yaml_path: str,
         workflow_id: Optional[str] = None,
         name_override: Optional[str] = None,
         description_override: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        workflow_type: str = "",
     ) -> Workflow:
-        """Load workflow from a YAML file and return a Workflow object."""
+        """Load workflow from a YAML file and return a Workflow object.
+
+        Args:
+            yaml_path: Path to the workflow YAML file.
+            workflow_id: Optional explicit workflow ID.
+            name_override: Override the workflow name from the file.
+            description_override: Override the workflow description.
+            metadata: Extra metadata to attach.
+            workflow_type: Tier selector (``"full"``, ``"shortened"``,
+                ``"fast-track"``).  When empty, uses flat ``steps:`` or
+                falls back to the first available tier.
+        """
         with open(yaml_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return WorkflowDefinition.from_dict(
@@ -294,6 +358,7 @@ class WorkflowDefinition:
             name_override=name_override,
             description_override=description_override,
             metadata=metadata,
+            workflow_type=workflow_type,
         )
 
     @staticmethod
@@ -303,8 +368,18 @@ class WorkflowDefinition:
         name_override: Optional[str] = None,
         description_override: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        workflow_type: str = "",
     ) -> Workflow:
-        """Load workflow from a dict and return a Workflow object."""
+        """Load workflow from a dict and return a Workflow object.
+
+        Args:
+            data: Parsed workflow dict.
+            workflow_id: Optional explicit workflow ID.
+            name_override: Override the workflow name.
+            description_override: Override the description.
+            metadata: Extra metadata to attach.
+            workflow_type: Tier selector (see ``_resolve_steps``).
+        """
         if not isinstance(data, dict):
             raise ValueError("Workflow definition must be a dict")
 
@@ -316,7 +391,7 @@ class WorkflowDefinition:
         if not resolved_id:
             raise ValueError("Workflow ID could not be resolved")
 
-        steps_data = data.get("steps", [])
+        steps_data = WorkflowDefinition._resolve_steps(data, workflow_type)
         if not isinstance(steps_data, list) or not steps_data:
             raise ValueError("Workflow definition must include a non-empty steps list")
 
@@ -387,15 +462,103 @@ class WorkflowDefinition:
         return workflow
 
     @staticmethod
-    def to_prompt_context(yaml_path: str) -> str:
+    def resolve_next_agents(
+        yaml_path: str,
+        current_agent_type: str,
+        workflow_type: str = "",
+    ) -> List[str]:
+        """Resolve valid next agent_types for a given agent_type from the workflow.
+
+        Follows ``on_success`` links and router ``routes`` to determine which
+        agent_types can legitimately follow *current_agent_type*.
+
+        Args:
+            yaml_path: Path to workflow YAML file.
+            current_agent_type: The agent_type whose successors we want.
+            workflow_type: Tier selector (see ``_resolve_steps``).
+
+        Returns:
+            List of valid next agent_type strings (may include ``"none"`` for
+            terminal steps).  Empty list if the workflow can't be parsed or
+            the agent_type is not found.
+        """
+        try:
+            with open(yaml_path, "r") as f:
+                data = yaml.safe_load(f)
+        except Exception:
+            return []
+
+        steps = WorkflowDefinition._resolve_steps(data, workflow_type)
+        if not steps:
+            return []
+
+        # Build id → step lookup
+        by_id: Dict[str, dict] = {s["id"]: s for s in steps if "id" in s}
+
+        # Find the step(s) matching current_agent_type
+        current_steps = [s for s in steps if s.get("agent_type") == current_agent_type]
+        if not current_steps:
+            return []
+
+        result: List[str] = []
+        for step in current_steps:
+            on_success = step.get("on_success")
+            if step.get("final_step"):
+                result.append("none")
+                continue
+            if not on_success:
+                result.append("none")
+                continue
+
+            target = by_id.get(on_success)
+            if not target:
+                continue
+
+            # If target is a router, expand its routes
+            if target.get("agent_type") == "router":
+                for route in target.get("routes", []):
+                    route_target_id = route.get("then") or route.get("default")
+                    if route_target_id and route_target_id in by_id:
+                        result.append(by_id[route_target_id].get("agent_type", "unknown"))
+                    elif route_target_id:
+                        # route_target_id may itself be an agent_type
+                        result.append(route_target_id)
+                # Also get default route
+                default_route = target.get("default")
+                if default_route and default_route in by_id:
+                    result.append(by_id[default_route].get("agent_type", "unknown"))
+            else:
+                result.append(target.get("agent_type", "unknown"))
+
+        # Deduplicate while preserving order
+        seen: set = set()
+        unique: List[str] = []
+        for agent in result:
+            if agent not in seen:
+                seen.add(agent)
+                unique.append(agent)
+        return unique
+
+    @staticmethod
+    def to_prompt_context(
+        yaml_path: str,
+        current_agent_type: str = "",
+        workflow_type: str = "",
+    ) -> str:
         """Render workflow steps as a prompt-friendly checklist.
 
         Reads the YAML file and returns a Markdown formatted list of steps
         with their ``agent_type`` names, suitable for embedding in agent
         prompts so agents know the full workflow and use correct step names.
 
+        When *current_agent_type* is provided, the returned text includes an
+        explicit directive stating which agent_type(s) are valid for the
+        ``next_agent`` field in the completion summary.
+
         Args:
             yaml_path: Path to the workflow YAML file.
+            current_agent_type: If set, resolves and embeds valid next agents.
+            workflow_type: Tier selector (see ``_resolve_steps``).
 
         Returns:
             Formatted Markdown text, or empty string on error.
@@ -404,12 +567,13 @@ class WorkflowDefinition:
             with open(yaml_path, "r") as f:
                 data = yaml.safe_load(f)
 
-            steps = data.get("steps", [])
+            steps = WorkflowDefinition._resolve_steps(data, workflow_type)
             if not steps:
                 return ""
 
             basename = os.path.basename(yaml_path)
-            lines: List[str] = [f"**Workflow Steps (from {basename}):**\n"]
+            tier_label = f" [{workflow_type}]" if workflow_type else ""
+            lines: List[str] = [f"**Workflow Steps{tier_label} (from {basename}):**\n"]
             for idx, step_data in enumerate(steps, 1):
                 agent_type = step_data.get("agent_type", "unknown")
                 name = step_data.get("name", step_data.get("id", f"Step {idx}"))
@@ -423,6 +587,26 @@ class WorkflowDefinition:
                 "\n**CRITICAL:** Use ONLY the agent_type names listed above. "
                 "DO NOT use old agent names or reference other workflow YAML files."
             )
+
+            # Resolve and embed next-agent constraint
+            if current_agent_type:
+                valid_next = WorkflowDefinition.resolve_next_agents(
+                    yaml_path, current_agent_type, workflow_type=workflow_type
+                )
+                if valid_next:
+                    names = ", ".join(f"`{a}`" for a in valid_next)
+                    if len(valid_next) == 1:
+                        lines.append(
+                            f"\n**YOUR next_agent MUST be:** {names}\n"
+                            f"Do NOT skip ahead or pick a different agent."
+                        )
+                    else:
+                        lines.append(
+                            f"\n**YOUR next_agent MUST be one of:** {names}\n"
+                            f"Choose based on your classification. "
+                            f"Do NOT skip ahead or pick a different agent."
+                        )
+
             return "\n".join(lines)
         except Exception as exc:
             logger.warning(f"Could not render workflow prompt context from {yaml_path}: {exc}")
