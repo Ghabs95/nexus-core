@@ -359,6 +359,50 @@ class GitHubPlatform(GitPlatform):
             # Always switch back to the base branch
             _git(["checkout", resolved_base])
 
+    def get_workflow_type_from_issue(
+        self,
+        issue_number: int,
+        label_prefix: str = "workflow:",
+        default: Optional[str] = None,
+    ) -> Optional[str]:
+        """Extract the workflow type from an issue's labels.
+
+        Looks for labels matching *label_prefix* (e.g. ``workflow:full``,
+        ``workflow:shortened``, ``workflow:fast-track``) and returns the
+        canonical workflow_type via
+        :py:meth:`~nexus.core.workflow.WorkflowDefinition.normalize_workflow_type`.
+
+        Args:
+            issue_number: GitHub issue number.
+            label_prefix: Prefix to match on labels (default ``"workflow:"``).
+            default: Value returned when no matching label is found.
+
+        Returns:
+            Canonical workflow_type string, or *default*.
+        """
+        from nexus.core.workflow import WorkflowDefinition
+
+        try:
+            args = [
+                "issue", "view", str(issue_number),
+                "--json", "labels",
+            ]
+            output = self._run_gh_command(args, timeout=10)
+            data = json.loads(output)
+            labels = [l.get("name", "") for l in data.get("labels", [])]
+
+            for label in labels:
+                if label.startswith(label_prefix):
+                    raw = label[len(label_prefix):]
+                    return WorkflowDefinition.normalize_workflow_type(raw, default=raw)
+
+            return default
+        except Exception as e:
+            logger.error(
+                f"Failed to get workflow_type from issue #{issue_number}: {e}"
+            )
+            return default
+
     def _parse_issue(self, data: dict) -> Issue:
         """Parse issue data from gh CLI JSON output."""
         labels = [label["name"] for label in data.get("labels", [])]

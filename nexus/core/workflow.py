@@ -277,6 +277,40 @@ class WorkflowDefinition:
     into Nexus Core's Workflow/WorkflowStep models.
     """
 
+    # Canonical workflow_type values accepted by the framework.
+    WORKFLOW_TYPES = ("full", "shortened", "fast-track")
+
+    # Maps legacy / alias tier names to canonical workflow_type.
+    _TIER_ALIASES: Dict[str, str] = {
+        # Legacy numeric tiers
+        "tier-1-simple": "fast-track",
+        "tier-2-standard": "shortened",
+        "tier-3-complex": "full",
+        "tier-4-critical": "full",
+        # Underscore variants
+        "fast_track": "fast-track",
+        # Identity (canonical values map to themselves)
+        "fast-track": "fast-track",
+        "shortened": "shortened",
+        "full": "full",
+    }
+
+    @staticmethod
+    def normalize_workflow_type(tier_name: str, default: str = "shortened") -> str:
+        """Normalize a tier name to a canonical workflow_type.
+
+        Accepts both legacy tier names (``tier-1-simple``, ``tier-2-standard``,
+        etc.) and modern names (``full``, ``shortened``, ``fast-track``).
+
+        Args:
+            tier_name: Raw tier or workflow_type string.
+            default: Value returned when *tier_name* is not recognised.
+
+        Returns:
+            One of ``"full"``, ``"shortened"``, or ``"fast-track"``.
+        """
+        return WorkflowDefinition._TIER_ALIASES.get(tier_name, default)
+
     @staticmethod
     def _resolve_steps(data: Dict[str, Any], workflow_type: str = "") -> List[dict]:
         """Resolve the steps list from a workflow definition.
