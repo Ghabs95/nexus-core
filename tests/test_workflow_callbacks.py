@@ -245,3 +245,256 @@ class TestToPromptContext:
         workflow_yaml.write_text("name: Empty\nsteps: []\n")
         result = WorkflowDefinition.to_prompt_context(str(workflow_yaml))
         assert result == ""
+
+
+class TestResolveNextAgents:
+    """Tests for WorkflowDefinition.resolve_next_agents()."""
+
+    def _write_workflow(self, tmp_path):
+        """Write a sample workflow with router for testing."""
+        wf = tmp_path / "workflow.yaml"
+        wf.write_text(
+            "name: Test\n"
+            "steps:\n"
+            "  - id: triage\n"
+            "    agent_type: triage\n"
+            "    on_success: router\n"
+            "  - id: router\n"
+            "    agent_type: router\n"
+            "    routes:\n"
+            "      - when: \"type == 'bug'\"\n"
+            "        then: debug\n"
+            "      - when: \"type == 'feature'\"\n"
+            "        then: design\n"
+            "  - id: debug\n"
+            "    agent_type: debug\n"
+            "    on_success: develop\n"
+            "  - id: design\n"
+            "    agent_type: design\n"
+            "    on_success: develop\n"
+            "  - id: develop\n"
+            "    agent_type: developer\n"
+            "    on_success: close\n"
+            "  - id: close\n"
+            "    agent_type: summarizer\n"
+            "    final_step: true\n"
+        )
+        return str(wf)
+
+    def test_triage_routes_through_router(self, tmp_path):
+        path = self._write_workflow(tmp_path)
+        result = WorkflowDefinition.resolve_next_agents(path, "triage")
+        assert "debug" in result
+        assert "design" in result
+        assert "developer" not in result
+
+    def test_linear_step_single_next(self, tmp_path):
+        path = self._write_workflow(tmp_path)
+        assert WorkflowDefinition.resolve_next_agents(path, "debug") == ["developer"]
+        assert WorkflowDefinition.resolve_next_agents(path, "design") == ["developer"]
+        assert WorkflowDefinition.resolve_next_agents(path, "developer") == ["summarizer"]
+
+    def test_final_step_returns_none(self, tmp_path):
+        path = self._write_workflow(tmp_path)
+        assert WorkflowDefinition.resolve_next_agents(path, "summarizer") == ["none"]
+
+    def test_unknown_agent_returns_empty(self, tmp_path):
+        path = self._write_workflow(tmp_path)
+        assert WorkflowDefinition.resolve_next_agents(path, "nonexistent") == []
+
+    def test_missing_file_returns_empty(self):
+        assert WorkflowDefinition.resolve_next_agents("/no/such/file.yaml", "triage") == []
+
+    def test_prompt_context_includes_constraint(self, tmp_path):
+        path = self._write_workflow(tmp_path)
+        text = WorkflowDefinition.to_prompt_context(path, current_agent_type="debug")
+        assert "MUST be:" in text
+        assert "`developer`" in text
+
+    def test_prompt_context_multi_choice_constraint(self, tmp_path):
+        path = self._write_workflow(tmp_path)
+        text = WorkflowDefinition.to_prompt_context(path, current_agent_type="triage")
+        assert "MUST be one of:" in text
+        assert "`debug`" in text
+        assert "`design`" in text
+
+
+# ---------------------------------------------------------------------------
+# Multi-tier workflow tests
+# ---------------------------------------------------------------------------
+
+TIERED_WORKFLOW = (
+    "name: Tiered Test\n"
+    "workflow_types:\n"
+    "  full: new_feature\n"
+    "  shortened: bug_fix\n"
+    "  fast-track: hotfix\n"
+    "full_workflow:\n"
+    "  steps:\n"
+    "    - id: vision\n"
+    "      agent_type: ceo\n"
+    "      on_success: feasibility\n"
+    "    - id: feasibility\n"
+    "      agent_type: cto\n"
+    "      on_success: implement\n"
+    "    - id: implement\n"
+    "      agent_type: developer\n"
+    "      on_success: qa\n"
+    "    - id: qa\n"
+    "      agent_type: qa\n"
+    "      final_step: true\n"
+    "shortened_workflow:\n"
+    "  steps:\n"
+    "    - id: triage\n"
+    "      agent_type: lead\n"
+    "      on_success: fix\n"
+    "    - id: fix\n"
+    "      agent_type: developer\n"
+    "      on_success: verify\n"
+    "    - id: verify\n"
+    "      agent_type: qa\n"
+    "      final_step: true\n"
+    "fast_track_workflow:\n"
+    "  steps:\n"
+    "    - id: hotfix_triage\n"
+    "      agent_type: lead\n"
+    "      on_success: hotfix_impl\n"
+    "    - id: hotfix_impl\n"
+    "      agent_type: developer\n"
+    "      final_step: true\n"
+)
+
+
+class TestMultiTierWorkflow:
+    """Tests for multi-tier workflow support (_resolve_steps, from_yaml, etc.)."""
+
+    def _write_tiered(self, tmp_path):
+        wf = tmp_path / "tiered.yaml"
+        wf.write_text(TIERED_WORKFLOW)
+        return str(wf)
+
+    # -- _resolve_steps --
+
+    def test_resolve_full_tier(self, tmp_path):
+        import yaml
+        data = yaml.safe_load(TIERED_WORKFLOW)
+        steps = WorkflowDefinition._resolve_steps(data, "full")
+        assert len(steps) == 4
+        assert steps[0]["agent_type"] == "ceo"
+
+    def test_resolve_shortened_tier(self, tmp_path):
+        import yaml
+        data = yaml.safe_load(TIERED_WORKFLOW)
+        steps = WorkflowDefinition._resolve_steps(data, "shortened")
+        assert len(steps) == 3
+        assert steps[0]["agent_type"] == "lead"
+
+    def test_resolve_fast_track_tier(self, tmp_path):
+        import yaml
+        data = yaml.safe_load(TIERED_WORKFLOW)
+        steps = WorkflowDefinition._resolve_steps(data, "fast-track")
+        assert len(steps) == 2
+        assert steps[0]["agent_type"] == "lead"
+
+    def test_resolve_no_type_falls_back_to_first_tier(self, tmp_path):
+        """Without workflow_type and no flat steps, falls back to first tier."""
+        import yaml
+        data = yaml.safe_load(TIERED_WORKFLOW)
+        steps = WorkflowDefinition._resolve_steps(data, "")
+        assert len(steps) == 4  # full_workflow is first
+
+    def test_resolve_invalid_type_returns_empty(self, tmp_path):
+        import yaml
+        data = yaml.safe_load(TIERED_WORKFLOW)
+        steps = WorkflowDefinition._resolve_steps(data, "nonexistent")
+        assert steps == []
+
+    def test_flat_steps_preferred_when_present(self, tmp_path):
+        import yaml
+        data = yaml.safe_load(TIERED_WORKFLOW)
+        data["steps"] = [{"id": "flat", "agent_type": "flat_agent"}]
+        steps = WorkflowDefinition._resolve_steps(data, "")
+        assert len(steps) == 1
+        assert steps[0]["agent_type"] == "flat_agent"
+
+    # -- from_yaml with workflow_type --
+
+    def test_from_yaml_full(self, tmp_path):
+        path = self._write_tiered(tmp_path)
+        wf = WorkflowDefinition.from_yaml(path, workflow_type="full")
+        assert len(wf.steps) == 4
+        assert wf.steps[0].agent.name == "ceo"
+
+    def test_from_yaml_shortened(self, tmp_path):
+        path = self._write_tiered(tmp_path)
+        wf = WorkflowDefinition.from_yaml(path, workflow_type="shortened")
+        assert len(wf.steps) == 3
+        assert wf.steps[0].agent.name == "lead"
+
+    def test_from_yaml_fast_track(self, tmp_path):
+        path = self._write_tiered(tmp_path)
+        wf = WorkflowDefinition.from_yaml(path, workflow_type="fast-track")
+        assert len(wf.steps) == 2
+
+    def test_from_yaml_invalid_tier_raises(self, tmp_path):
+        path = self._write_tiered(tmp_path)
+        with pytest.raises(ValueError, match="non-empty steps"):
+            WorkflowDefinition.from_yaml(path, workflow_type="nonexistent")
+
+    # -- resolve_next_agents with workflow_type --
+
+    def test_resolve_next_in_full_tier(self, tmp_path):
+        path = self._write_tiered(tmp_path)
+        assert WorkflowDefinition.resolve_next_agents(path, "ceo", "full") == ["cto"]
+        assert WorkflowDefinition.resolve_next_agents(path, "cto", "full") == ["developer"]
+        assert WorkflowDefinition.resolve_next_agents(path, "qa", "full") == ["none"]
+
+    def test_resolve_next_in_shortened_tier(self, tmp_path):
+        path = self._write_tiered(tmp_path)
+        assert WorkflowDefinition.resolve_next_agents(path, "lead", "shortened") == ["developer"]
+        assert WorkflowDefinition.resolve_next_agents(path, "developer", "shortened") == ["qa"]
+
+    def test_resolve_next_cross_tier_isolation(self, tmp_path):
+        """Agent types from one tier shouldn't leak into another."""
+        path = self._write_tiered(tmp_path)
+        # 'ceo' only exists in full tier
+        assert WorkflowDefinition.resolve_next_agents(path, "ceo", "shortened") == []
+
+    # -- to_prompt_context with workflow_type --
+
+    def test_prompt_context_includes_tier_label(self, tmp_path):
+        path = self._write_tiered(tmp_path)
+        text = WorkflowDefinition.to_prompt_context(path, workflow_type="shortened")
+        assert "[shortened]" in text
+        assert "`lead`" in text
+
+    def test_prompt_context_constraint_with_tier(self, tmp_path):
+        path = self._write_tiered(tmp_path)
+        text = WorkflowDefinition.to_prompt_context(
+            path, current_agent_type="lead", workflow_type="shortened"
+        )
+        assert "MUST be:" in text
+        assert "`developer`" in text
+
+    # -- org workflow integration (real file) --
+
+    def test_org_workflow_loads_full(self):
+        """Smoke test: load the real org workflow full tier."""
+        org_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "agents", "workflows", "ghabs_org_workflow.yaml"
+        )
+        if not os.path.exists(org_path):
+            pytest.skip("org workflow not in workspace")
+        wf = WorkflowDefinition.from_yaml(org_path, workflow_type="full")
+        assert len(wf.steps) > 5
+        assert wf.steps[0].agent.name in ("Ghabs", "ceo")
+
+    def test_org_workflow_loads_shortened(self):
+        """Smoke test: load the real org workflow shortened tier."""
+        org_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "agents", "workflows", "ghabs_org_workflow.yaml"
+        )
+        if not os.path.exists(org_path):
+            pytest.skip("org workflow not in workspace")
+        wf = WorkflowDefinition.from_yaml(org_path, workflow_type="shortened")
+        assert len(wf.steps) >= 3

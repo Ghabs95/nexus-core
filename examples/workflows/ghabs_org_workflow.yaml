@@ -1,0 +1,461 @@
+name: "Ghabs Organization Workflow"
+description: "Multi-agent workflow for Ghabs organization projects (Case Italia, Wallible, Biome)"
+version: "1.0.0"
+
+# This workflow defines the orchestration for new features, bug fixes, and hotfixes
+# using the actual Ghabs organization agent hierarchy
+
+workflow_types:
+  full: "new_feature"      # Complete feature development process
+  shortened: "bug_fix"     # Expedited bug fix process
+  fast-track: "hotfix"     # Critical hotfix process
+
+timeout_seconds: 7200  # 2 hours default timeout
+
+# --- FULL WORKFLOW (New Features) ---
+full_workflow:
+  steps:
+    - id: "vision_and_scope"
+      name: "Vision & Scope Definition"
+      description: "Ghabs (CEO) defines product vision, requirements, and strategic scope"
+      agent_type: "Ghabs"
+      tools:
+        - github:read_issue
+        - github:add_comment
+        - github:add_label
+        - github:create_milestone
+      inputs:
+        - issue_url: "string"
+        - issue_title: "string"
+        - issue_body: "string"
+      outputs:
+        - scope_definition: "string"
+        - acceptance_criteria: "list[string]"
+        - estimated_complexity: "enum[small|medium|large]"
+        - assigned_milestone: "string"
+      on_success: "technical_feasibility"
+
+    - id: "technical_feasibility"
+      name: "Technical Feasibility Analysis"
+      description: "Atlas (CTO) evaluates technical approach and architecture needs"
+      agent_type: "Atlas"
+      tools:
+        - github:search_codebase
+        - github:add_comment
+        - github:create_branch
+      inputs:
+        - issue_url: "string"
+        - scope_definition: "string"
+      outputs:
+        - technical_approach: "string"
+        - architecture_needed: "boolean"
+        - estimated_effort: "string"
+        - dependencies: "list[string]"
+      on_success: "route_architecture"
+
+    - id: "route_architecture"
+      name: "Route to Architecture Review"
+      description: "Conditional routing based on architecture needs"
+      agent_type: "router"
+      routes:
+        - when: "architecture_needed == true"
+          then: "architecture_design"
+        - default: "ux_design"
+
+    - id: "architecture_design"
+      name: "Architecture Design"
+      description: "Architect creates technical design and patterns"
+      agent_type: "Architect"
+      tools:
+        - github:create_file
+        - github:add_comment
+        - github:create_pr
+      inputs:
+        - issue_url: "string"
+        - technical_approach: "string"
+      outputs:
+        - architecture_doc_url: "string"
+        - design_patterns: "list[string]"
+        - api_contracts: "string"
+      on_success: "ux_design"
+
+    - id: "ux_design"
+      name: "UX Design"
+      description: "ProductDesigner creates user experience and interface designs"
+      agent_type: "ProductDesigner"
+      tools:
+        - github:create_file
+        - github:add_comment
+      inputs:
+        - issue_url: "string"
+        - scope_definition: "string"
+      outputs:
+        - design_doc_url: "string"
+        - wireframes: "string"
+        - user_flows: "string"
+      on_success: "implementation"
+
+    - id: "implementation"
+      name: "Implementation"
+      description: "Tier2Lead implements the feature"
+      agent_type: "Tier2Lead"
+      tools:
+        - github:create_branch
+        - github:commit_changes
+        - github:create_pr
+        - github:add_comment
+      inputs:
+        - issue_url: "string"
+        - architecture_doc_url: "string"
+        - design_doc_url: "string"
+      outputs:
+        - implementation_pr_url: "string"
+        - test_coverage: "string"
+        - implementation_notes: "string"
+      on_success: "quality_gate"
+
+    - id: "quality_gate"
+      name: "Quality Gate Review"
+      description: "QAGuard performs code review and quality checks"
+      agent_type: "QAGuard"
+      tools:
+        - github:review_pr
+        - github:add_comment
+        - github:request_changes
+        - github:approve_pr
+      inputs:
+        - implementation_pr_url: "string"
+      outputs:
+        - review_status: "enum[approved|changes_requested|rejected]"
+        - review_comments: "list[string]"
+        - test_results: "string"
+      on_success: "route_quality"
+
+    - id: "route_quality"
+      name: "Route Based on Quality Review"
+      description: "Handle quality gate results"
+      agent_type: "router"
+      routes:
+        - when: "review_status == 'approved'"
+          then: "compliance_gate"
+        - when: "review_status == 'changes_requested'"
+          then: "implementation"  # Loop back for fixes
+        - default: "close_rejected"
+
+    - id: "compliance_gate"
+      name: "Privacy & Compliance Review"
+      description: "Privacy agent reviews for GDPR, security, and compliance"
+      agent_type: "Privacy"
+      tools:
+        - github:review_pr
+        - github:add_comment
+        - github:add_label
+      inputs:
+        - implementation_pr_url: "string"
+      outputs:
+        - compliance_status: "enum[approved|blocked]"
+        - compliance_issues: "list[string]"
+        - audit_trail: "string"
+      on_success: "route_compliance"
+
+    - id: "route_compliance"
+      name: "Route Based on Compliance"
+      description: "Handle compliance gate results"
+      agent_type: "router"
+      routes:
+        - when: "compliance_status == 'approved'"
+          then: "deployment"
+        - default: "implementation"  # Fix compliance issues
+
+    - id: "deployment"
+      name: "Deployment"
+      description: "OpsCommander handles deployment and infrastructure"
+      agent_type: "OpsCommander"
+      tools:
+        - github:merge_pr
+        - github:create_release
+        - github:add_comment
+      inputs:
+        - implementation_pr_url: "string"
+      outputs:
+        - deployment_status: "string"
+        - release_url: "string"
+        - deployment_notes: "string"
+      on_success: "documentation"
+
+    - id: "documentation"
+      name: "Documentation"
+      description: "Scribe updates documentation and closes the issue"
+      agent_type: "Scribe"
+      tools:
+        - github:create_file
+        - github:edit_file
+        - github:add_comment
+        - github:close_issue
+      inputs:
+        - issue_url: "string"
+        - deployment_notes: "string"
+      outputs:
+        - documentation_url: "string"
+        - changelog_entry: "string"
+      final_step: true
+
+    - id: "close_rejected"
+      name: "Close Rejected Issue"
+      description: "Close issue that failed quality gates"
+      agent_type: "ProjectLead"
+      tools:
+        - github:add_comment
+        - github:close_issue
+      inputs:
+        - issue_url: "string"
+        - review_comments: "list[string]"
+      final_step: true
+
+# --- SHORTENED WORKFLOW (Bug Fixes) ---
+shortened_workflow:
+  steps:
+    - id: "triage"
+      name: "Bug Triage"
+      description: "ProjectLead triages bug severity and priority"
+      agent_type: "ProjectLead"
+      tools:
+        - github:read_issue
+        - github:add_comment
+        - github:add_label
+      inputs:
+        - issue_url: "string"
+      outputs:
+        - severity: "enum[critical|high|medium|low]"
+        - priority: "enum[p0|p1|p2|p3]"
+        - assigned_to: "string"
+      on_success: "root_cause_analysis"
+
+    - id: "root_cause_analysis"
+      name: "Root Cause Analysis"
+      description: "Tier2Lead investigates and identifies root cause"
+      agent_type: "Tier2Lead"
+      tools:
+        - github:search_codebase
+        - github:read_file
+        - github:add_comment
+      inputs:
+        - issue_url: "string"
+        - severity: "string"
+      outputs:
+        - root_cause: "string"
+        - affected_components: "list[string]"
+        - fix_approach: "string"
+      on_success: "fix"
+
+    - id: "fix"
+      name: "Implement Fix"
+      description: "Tier2Lead implements the bug fix"
+      agent_type: "Tier2Lead"
+      tools:
+        - github:create_branch
+        - github:commit_changes
+        - github:create_pr
+      inputs:
+        - issue_url: "string"
+        - root_cause: "string"
+        - fix_approach: "string"
+      outputs:
+        - fix_pr_url: "string"
+        - test_coverage: "string"
+      on_success: "verify"
+
+    - id: "verify"
+      name: "Verify Fix"
+      description: "QAGuard reviews and verifies the fix"
+      agent_type: "QAGuard"
+      tools:
+        - github:review_pr
+        - github:approve_pr
+        - github:add_comment
+      inputs:
+        - fix_pr_url: "string"
+      outputs:
+        - verification_status: "enum[approved|needs_work]"
+        - test_results: "string"
+      on_success: "route_verification"
+
+    - id: "route_verification"
+      name: "Route Based on Verification"
+      agent_type: "router"
+      routes:
+        - when: "verification_status == 'approved'"
+          then: "deploy"
+        - default: "fix"  # Loop back if needs work
+
+    - id: "deploy"
+      name: "Deploy Fix"
+      description: "OpsCommander deploys the bug fix"
+      agent_type: "OpsCommander"
+      tools:
+        - github:merge_pr
+        - github:create_release
+        - github:add_comment
+      inputs:
+        - fix_pr_url: "string"
+      outputs:
+        - deployment_status: "string"
+        - release_notes: "string"
+      on_success: "document"
+
+    - id: "document"
+      name: "Document Fix"
+      description: "Scribe documents the fix and closes the issue"
+      agent_type: "Scribe"
+      tools:
+        - github:add_comment
+        - github:close_issue
+      inputs:
+        - issue_url: "string"
+        - root_cause: "string"
+        - deployment_status: "string"
+      outputs:
+        - postmortem: "string"
+      final_step: true
+
+# --- FAST-TRACK WORKFLOW (Hotfixes) ---
+fast_track_workflow:
+  steps:
+    - id: "emergency_triage"
+      name: "Emergency Triage"
+      description: "ProjectLead performs rapid triage for critical issues"
+      agent_type: "ProjectLead"
+      tools:
+        - github:read_issue
+        - github:add_label
+        - github:add_comment
+      inputs:
+        - issue_url: "string"
+      outputs:
+        - urgency: "enum[critical|urgent]"
+        - impact: "string"
+      on_success: "quick_implementation"
+
+    - id: "quick_implementation"
+      name: "Quick Implementation"
+      description: "Developer implements hotfix rapidly"
+      agent_type: "Developer"
+      tools:
+        - github:create_branch
+        - github:commit_changes
+        - github:create_pr
+        - github:add_comment
+      inputs:
+        - issue_url: "string"
+        - urgency: "string"
+      outputs:
+        - hotfix_pr_url: "string"
+        - fix_description: "string"
+      on_success: "quick_verify"
+
+    - id: "quick_verify"
+      name: "Quick Verification"
+      description: "QAGuard performs rapid verification"
+      agent_type: "QAGuard"
+      tools:
+        - github:review_pr
+        - github:approve_pr
+      inputs:
+        - hotfix_pr_url: "string"
+      outputs:
+        - verification_status: "enum[approved|rejected]"
+      on_success: "route_hotfix"
+
+    - id: "route_hotfix"
+      name: "Route Hotfix Decision"
+      agent_type: "router"
+      routes:
+        - when: "verification_status == 'approved'"
+          then: "emergency_deploy"
+        - default: "quick_implementation"  # Retry if rejected
+
+    - id: "emergency_deploy"
+      name: "Emergency Deploy"
+      description: "OpsCommander performs emergency deployment and closes issue"
+      agent_type: "OpsCommander"
+      tools:
+        - github:merge_pr
+        - github:create_release
+        - github:add_comment
+        - github:close_issue
+      inputs:
+        - hotfix_pr_url: "string"
+      outputs:
+        - deployment_status: "string"
+        - rollback_plan: "string"
+      final_step: true
+
+# --- MONITORING & GOVERNANCE ---
+monitoring:
+  log_all_decisions: true
+  audit_trail: "github_comments"
+  notify_human: true
+  
+  # Human approval gates for critical decisions
+  human_approval_gates:
+    - before: "deployment"         # Full workflow deployments need approval
+    - before: "emergency_deploy"   # Emergency deploys need approval
+    - before: "compliance_gate"    # Privacy reviews always notify human
+  
+  # PR Merge Policy (workflow-level preference)
+  # Only applies when project config policy is 'workflow-based'
+  # When project config is 'always', this is ignored (human approval always enforced)
+  # When project config is 'never', this is ignored (auto-merge always allowed)
+  require_human_merge_approval: true  # Workflow preference: require human approval
+
+  # Step timeouts (override global timeout for specific steps)
+  step_timeouts:
+    vision_and_scope: 1800      # 30 minutes
+    technical_feasibility: 1800  # 30 minutes
+    architecture_design: 3600    # 1 hour
+    implementation: 7200         # 2 hours
+    quality_gate: 1800           # 30 minutes
+    deployment: 1800             # 30 minutes
+    emergency_deploy: 600        # 10 minutes (hotfix)
+    quick_implementation: 900    # 15 minutes (hotfix)
+
+# --- ERROR HANDLING ---
+error_handling:
+  on_timeout:
+    action: "notify_human"
+    fallback_agent: "Ghabs"
+  
+  on_agent_failure:
+    action: "retry"
+    max_retries: 2
+    fallback_agent: "Atlas"  # CTO steps in for critical failures
+  
+  on_validation_failure:
+    action: "loop_back"
+    max_loops: 3
+
+# --- METADATA ---
+metadata:
+  organization: "Ghabs"
+  projects:
+    - case_italia
+    - wallible
+    - biome
+  agent_hierarchy:
+    ceo: Ghabs
+    cto: Atlas
+    tier1_leads:
+      - ProjectLead
+      - Architect
+      - ProductDesigner
+      - Privacy
+      - Scribe
+      - OpsCommander
+    tier2_leads:
+      - Tier2Lead
+      - FrontendLead
+      - BackendLead
+      - MobileLead
+    tier3_agents:
+      - QAGuard
+      - Developer

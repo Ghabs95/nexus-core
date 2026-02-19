@@ -47,7 +47,7 @@ github_issue_triage:
   label_based:
     "triage": "triage"              # Triage workflow
     "good first issue": "triage"    # Beginner-friendly → triage
-    "bug": "debug"                  # Bugs → debug agent
+    "bug": "debug"                   # Bugs → debug agent
     "urgent": "escalation"          # Urgent → escalation agent
     "critical": "escalation"        # Critical → escalation agent
     # "enhancement": "design"       # Features → design agent (optional)
@@ -74,8 +74,9 @@ ai_tool_preferences:
   
   triage: copilot          # Issue classification and analysis
   design: copilot          # Design and architecture proposals
-  debug: copilot           # Root cause analysis for bugs
-  code_reviewer: copilot   # PR reviews and code quality
+  debug: copilot           # Root cause analysis
+  reviewer: copilot        # PR reviews and code quality
+  developer: copilot       # Code implementation
   docs: gemini             # Documentation updates (faster)
   summarizer: gemini       # Workflow summaries (faster)
   escalation: copilot      # High-priority escalation to senior agent
@@ -122,7 +123,8 @@ custom_project:
     triage: copilot          # Triage agent - issue classification
     design: copilot          # Design agent - technical proposals  
     debug: copilot           # Debug agent - root cause analysis
-    code_reviewer: copilot   # Code review agent - PR reviews
+    reviewer: copilot        # Reviewer agent - PR reviews
+    developer: copilot       # Developer agent - code implementation
     docs: gemini             # Docs agent - documentation updates (faster)
     summarizer: gemini       # Summarizer agent - workflow summaries (faster)
     OpsCommander: gemini     # Deployment agent (if using Ghabs org agents)
