@@ -177,9 +177,13 @@ def generate_completion_instructions(
         f"Do NOT use the raw agent_type.\n\n"
         f"## Deliverable 2: Write completion summary JSON\n\n"
         f"Write a JSON file with your structured results. Use this exact command:\n\n"
+        f"**IMPORTANT:** The `{nexus_dir}/` directory lives at the **workspace root** "
+        f"(the top-level directory you were launched in). "
+        f"Do NOT create a new `{nexus_dir}/` folder inside sub-repos or subdirectories.\n\n"
         f"```bash\n"
-        f'LOG_DIR=$(find . -path \'*/{nexus_dir}/tasks/logs\' -type d 2>/dev/null | head -1)\n'
-        f'if [ -z "$LOG_DIR" ]; then LOG_DIR="{nexus_dir}/tasks/logs"; mkdir -p "$LOG_DIR"; fi\n'
+        f'WORKSPACE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n'
+        f'LOG_DIR=$(find "$WORKSPACE_ROOT" -maxdepth 3 -path \'*/{nexus_dir}/tasks/logs\' -type d 2>/dev/null | head -1)\n'
+        f'if [ -z "$LOG_DIR" ]; then LOG_DIR="$WORKSPACE_ROOT/{nexus_dir}/tasks/logs"; mkdir -p "$LOG_DIR"; fi\n'
         f'cat > "$LOG_DIR/completion_summary_{issue_number}.json" << \'NEXUS_EOF\'\n'
         f"{{\n"
         f'  "status": "complete",\n'

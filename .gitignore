@@ -37,9 +37,6 @@ ENV/
 .coverage
 htmlcov/
 
-# Nexus runtime state (created by agents)
-.nexus/
-
 # OS
 .DS_Store
 Thumbs.db
