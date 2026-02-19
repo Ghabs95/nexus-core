@@ -115,6 +115,26 @@ class AIOrchestrator:
         }
         logger.warning("⏸️  %s rate-limited for %ss", tool.value.upper(), self.rate_limit_ttl)
 
+    def _record_rate_limit_with_context(
+        self,
+        tool: AIProvider,
+        error: Exception,
+        retry_count: int = 1,
+        context: str = "",
+    ) -> None:
+        """Record rate-limit cooldown and include root-cause context in logs."""
+        self.record_rate_limit(tool, retry_count=retry_count)
+        message = str(error).strip() or repr(error)
+        if len(message) > 600:
+            message = f"{message[:600]}..."
+        context_prefix = f" ({context})" if context else ""
+        logger.warning(
+            "⚠️  %s rate-limit detail%s: %s",
+            tool.value.upper(),
+            context_prefix,
+            message,
+        )
+
     def record_failure(self, tool: AIProvider):
         if tool.value not in self._rate_limits:
             self._tool_available[tool.value] = False
@@ -169,8 +189,8 @@ class AIOrchestrator:
                 )
                 if pid:
                     return pid, AIProvider.GEMINI
-        except RateLimitedError:
-            self.record_rate_limit(primary)
+        except RateLimitedError as exc:
+            self._record_rate_limit_with_context(primary, exc, context="invoke_agent")
         except Exception as exc:
             logger.error("❌ %s invocation failed: %s", primary.value, exc)
             self.record_failure(primary)
@@ -314,8 +334,8 @@ class AIOrchestrator:
             if text:
                 logger.info("✅ Transcription successful with %s", primary.value)
                 return text
-        except RateLimitedError:
-            self.record_rate_limit(primary)
+        except RateLimitedError as exc:
+            self._record_rate_limit_with_context(primary, exc, context="transcribe")
         except Exception as exc:
             logger.warning("⚠️  %s transcription failed: %s", primary.value, exc)
 
@@ -412,8 +432,8 @@ class AIOrchestrator:
             result = self._run_gemini_cli_analysis(text, task, **kwargs)
             if result:
                 return result
-        except RateLimitedError:
-            self.record_rate_limit(primary)
+        except RateLimitedError as exc:
+            self._record_rate_limit_with_context(primary, exc, context=f"analysis:{task}")
         except Exception as exc:
             logger.warning("⚠️  %s analysis failed: %s", primary.value, exc)
 
@@ -524,8 +544,49 @@ Input:
 
         return text
 
+    @staticmethod
+    def _strip_cli_tool_output(text: str) -> str:
+        """Remove Copilot/Gemini CLI tool-use artifacts from analysis output.
+
+        CLI tools emit lines like::
+
+            ● No-op
+              $ true
+              └ 1 line...
+
+        These are tool-use progress indicators and must not leak into
+        user-facing content.
+        """
+        lines = text.splitlines()
+        cleaned: list[str] = []
+        skip_until_blank = False
+        for line in lines:
+            stripped = line.lstrip()
+            # Tool-use block header (● List directory, ● No-op, ● Read file, etc.)
+            if stripped.startswith("●"):
+                skip_until_blank = True
+                continue
+            # Tool-use command ($ true, $ cd ...)
+            if skip_until_blank and stripped.startswith("$"):
+                continue
+            # Tool-use result (└ 1 line...)
+            if skip_until_blank and stripped.startswith("└"):
+                continue
+            # Blank line ends a tool-use block
+            if not stripped:
+                skip_until_blank = False
+                # Keep blank line only if we have preceding content
+                if cleaned:
+                    cleaned.append(line)
+                continue
+            skip_until_blank = False
+            cleaned.append(line)
+        # Strip leading/trailing blank lines
+        result = "\n".join(cleaned).strip()
+        return result
+
     def _parse_analysis_result(self, output: str, task: str) -> Dict[str, Any]:
-        output = output.strip()
+        output = self._strip_cli_tool_output(output)
 
         try:
             if output.startswith("{"):

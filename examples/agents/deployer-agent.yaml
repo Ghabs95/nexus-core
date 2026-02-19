@@ -55,12 +55,27 @@ spec:
 
     PR: {implementation_pr_url}
 
-    Steps:
+    **MERGE POLICY (CRITICAL):**
+    - Check the project's `require_human_merge_approval` setting in project_config.yaml
+    - If set to `always`: DO NOT merge. Post a comment:
+      `🚀 Deployment ready. PR requires human review before merge.`
+      Then wait — do NOT run `gh pr merge`.
+    - If set to `workflow-based`: Check the workflow step's approval_gates
+    - If set to `never`: Proceed with merge (squash merge preferred)
+    - When in doubt, DO NOT merge. Request human approval.
+
+    Steps (when merge IS allowed):
     1. Merge the approved PR into the target branch
     2. Create a release with proper semantic versioning
     3. Write clear release notes
     4. Verify deployment health
     5. Post deployment status as a comment on the issue
+
+    Steps (when merge is NOT allowed):
+    1. Verify PR is ready (tests pass, reviews approved)
+    2. Post deployment readiness comment on the issue
+    3. Post `🚀 Deployment ready. PR requires human review before merge.`
+    4. Do NOT run any merge command
 
   validation:
     required_outputs: ["deployment_status"]

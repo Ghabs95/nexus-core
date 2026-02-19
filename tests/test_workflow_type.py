@@ -24,6 +24,12 @@ class TestNormalizeWorkflowType:
             ("tier-4-critical", "full"),
             # Underscore variant
             ("fast_track", "fast-track"),
+            # Workflow-name aliases
+            ("new_feature", "full"),
+            ("bug_fix", "shortened"),
+            ("hotfix", "fast-track"),
+            # Whitespace/case normalization
+            (" Full ", "full"),
         ],
     )
     def test_known_tiers(self, input_tier: str, expected: str):

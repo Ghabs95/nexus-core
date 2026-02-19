@@ -48,3 +48,55 @@ def test_copilot_analysis_timeout_respects_config(monkeypatch):
 
     assert captured["timeout"] == 45
     assert result["project"] == "nexus"
+
+
+class TestStripCliToolOutput:
+    """Tests for _strip_cli_tool_output."""
+
+    def test_no_op_true_block(self):
+        text = (
+            "● No-op\n"
+            "  $ true\n"
+            "  └ 1 line...\n"
+            "\n"
+            "Add a dry-run validation mode."
+        )
+        assert AIOrchestrator._strip_cli_tool_output(text) == "Add a dry-run validation mode."
+
+    def test_multiple_tool_blocks(self):
+        text = (
+            "● List directory .\n"
+            "  └ 7 files found\n"
+            "\n"
+            "● Read file.py\n"
+            "  └ 100 lines read\n"
+            "\n"
+            "The answer is 42."
+        )
+        assert AIOrchestrator._strip_cli_tool_output(text) == "The answer is 42."
+
+    def test_no_artifacts_passthrough(self):
+        text = "Clean text\nwith no tool output."
+        assert AIOrchestrator._strip_cli_tool_output(text) == text
+
+    def test_mixed_content(self):
+        text = (
+            "Summary:\n"
+            "● No-op\n"
+            "  $ true\n"
+            "  └ 1 line...\n"
+            "\n"
+            "Details here."
+        )
+        result = AIOrchestrator._strip_cli_tool_output(text)
+        assert "No-op" not in result
+        assert "$ true" not in result
+        assert "Summary:" in result
+        assert "Details here." in result
+
+    def test_empty_string(self):
+        assert AIOrchestrator._strip_cli_tool_output("") == ""
+
+    def test_json_not_stripped(self):
+        text = '{"project": "nexus", "type": "feature"}'
+        assert AIOrchestrator._strip_cli_tool_output(text) == text

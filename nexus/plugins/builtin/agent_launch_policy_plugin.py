@@ -74,12 +74,14 @@ class AgentLaunchPolicyPlugin:
                 )
 
             base_prompt = continuation_prompt or "Please continue with the next step."
+            merge_policy = self._get_merge_policy_block(agent_type)
             return (
                 f"You are a {agent_type} agent. You previously started working on this task:\n\n"
                 f"Issue: {issue_url}\n"
                 f"Tier: {tier_name}\n"
                 f"Workflow: /{workflow_name}\n\n"
                 f"{base_prompt}\n\n"
+                f"{merge_policy}"
                 f"{instructions}\n\n"
                 f"Task content:\n{task_content}"
             )
@@ -102,6 +104,22 @@ class AgentLaunchPolicyPlugin:
             f"❌ Try to implement the feature yourself\n\n"
             f"{instructions}\n\n"
             f"Task details:\n{task_content}"
+        )
+
+    @staticmethod
+    def _get_merge_policy_block(agent_type: str) -> str:
+        """Return merge-policy instructions for deployer agents, empty for others."""
+        if agent_type not in {"deployer", "ops"}:
+            return ""
+        return (
+            "**⛔ PR MERGE POLICY (MANDATORY):**\n"
+            "This project enforces `require_human_merge_approval: always`.\n"
+            "You MUST NOT run `gh pr merge` or any merge command.\n"
+            "Instead:\n"
+            "1. Verify the PR is ready (CI green, reviews approved)\n"
+            "2. Post this comment on the issue:\n"
+            "   `🚀 Deployment ready. PR requires human review before merge.`\n"
+            "3. Do NOT merge. A human will merge after review.\n\n"
         )
 
     def _get_workflow_steps_for_prompt(

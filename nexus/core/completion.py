@@ -166,7 +166,7 @@ def generate_completion_instructions(
         f"- [x] 1. Triage Issue — `triage` : Severity + routing ✅\n"
         f"- [ ] 2. Create Design Proposal — `design`\n"
         f"- [ ] 3. Summarize & Close — `summarizer`\n\n"
-        f"Ready for **@<next_agent_type>**\n"
+        f"Ready for **@<Next Step Name>**\n"
         f"```\n\n"
         f"**IMPORTANT:** The comment must contain real findings from YOUR analysis, "
         f"not placeholder text.\n"
@@ -185,7 +185,7 @@ def generate_completion_instructions(
         f'    "<finding 1>",\n'
         f'    "<finding 2>"\n'
         f"  ],\n"
-        f'  "next_agent": "<agent_type from workflow steps above>"\n'
+        f'  "next_agent": "<agent_type from workflow steps — NOT the step id or display name>"\n'
         f"}}\n"
         f"NEXUS_EOF\n"
         f"```\n\n"

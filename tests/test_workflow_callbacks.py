@@ -318,6 +318,36 @@ class TestResolveNextAgents:
         assert "`debug`" in text
         assert "`design`" in text
 
+    def test_canonicalize_next_agent_exact_match(self, tmp_path):
+        path = self._write_workflow(tmp_path)
+        value = WorkflowDefinition.canonicalize_next_agent(path, "debug", "developer")
+        assert value == "developer"
+
+    def test_canonicalize_next_agent_strips_mention(self, tmp_path):
+        path = self._write_workflow(tmp_path)
+        value = WorkflowDefinition.canonicalize_next_agent(path, "debug", "@developer")
+        assert value == "developer"
+
+    def test_canonicalize_next_agent_maps_step_id(self, tmp_path):
+        path = self._write_workflow(tmp_path)
+        value = WorkflowDefinition.canonicalize_next_agent(path, "debug", "develop")
+        assert value == "developer"
+
+    def test_canonicalize_next_agent_uses_single_successor_fallback(self, tmp_path):
+        path = self._write_workflow(tmp_path)
+        value = WorkflowDefinition.canonicalize_next_agent(path, "debug", "fix")
+        assert value == "developer"
+
+    def test_canonicalize_next_agent_returns_empty_when_ambiguous(self, tmp_path):
+        path = self._write_workflow(tmp_path)
+        value = WorkflowDefinition.canonicalize_next_agent(path, "triage", "fix")
+        assert value == ""
+
+    def test_canonicalize_next_agent_terminal_value(self, tmp_path):
+        path = self._write_workflow(tmp_path)
+        value = WorkflowDefinition.canonicalize_next_agent(path, "developer", "none")
+        assert value == "none"
+
 
 # ---------------------------------------------------------------------------
 # Multi-tier workflow tests
@@ -408,6 +438,14 @@ class TestMultiTierWorkflow:
         data = yaml.safe_load(TIERED_WORKFLOW)
         steps = WorkflowDefinition._resolve_steps(data, "nonexistent")
         assert steps == []
+
+    def test_resolve_workflow_name_alias(self, tmp_path):
+        """workflow_type aliases such as bug_fix map to shortened_workflow."""
+        import yaml
+        data = yaml.safe_load(TIERED_WORKFLOW)
+        steps = WorkflowDefinition._resolve_steps(data, "bug_fix")
+        assert len(steps) == 3
+        assert steps[0]["id"] == "triage"
 
     def test_flat_steps_preferred_when_present(self, tmp_path):
         import yaml
