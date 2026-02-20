@@ -242,6 +242,8 @@ class FileStorage(StorageBackend):
             "started_at": step.started_at.isoformat() if step.started_at else None,
             "completed_at": step.completed_at.isoformat() if step.completed_at else None,
             "error": step.error,
+            "routes": step.routes,
+            "iteration": step.iteration,
         }
 
     def _dict_to_workflow(self, data: Dict[str, Any]) -> Workflow:
@@ -273,6 +275,8 @@ class FileStorage(StorageBackend):
                 started_at=datetime.fromisoformat(step_data["started_at"]) if step_data.get("started_at") else None,
                 completed_at=datetime.fromisoformat(step_data["completed_at"]) if step_data.get("completed_at") else None,
                 error=step_data.get("error"),
+                routes=step_data.get("routes", []),
+                iteration=step_data.get("iteration", 0),
             )
             steps.append(step)
         

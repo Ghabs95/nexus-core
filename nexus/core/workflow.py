@@ -27,6 +27,8 @@ OnStepTransition = Callable[[Workflow, WorkflowStep, dict], Awaitable[None]]
 # on_workflow_complete(workflow, last_step_outputs) -> None
 OnWorkflowComplete = Callable[[Workflow, dict], Awaitable[None]]
 
+_MAX_LOOP_ITERATIONS = 5  # Maximum times a step can be re-activated by a goto before aborting
+
 
 class WorkflowEngine:
     """
@@ -200,12 +202,38 @@ class WorkflowEngine:
         activated_step: Optional[WorkflowStep] = None
 
         if not error:
-            # Build context from all completed steps for condition evaluation
+            # Build context once; walk forward handling routers, conditions, and gotos
             context = self._build_step_context(workflow)
-            
-            # Walk forward, skipping steps whose conditions evaluate to False
             next_step = workflow.get_next_step()
             while next_step:
+                # --- Router step: evaluate routes and jump to target ---
+                if next_step.routes:
+                    next_step.status = StepStatus.SKIPPED
+                    next_step.completed_at = datetime.now(timezone.utc)
+                    await self._audit(workflow_id, "STEP_SKIPPED", {
+                        "step_num": next_step.step_num,
+                        "step_name": next_step.name,
+                        "reason": "router evaluated",
+                    })
+                    workflow.current_step = next_step.step_num
+                    target = self._resolve_route(workflow, next_step, context)
+                    if target is None:
+                        # No route matched and no default — workflow is done
+                        workflow.state = WorkflowState.COMPLETED
+                        workflow.completed_at = datetime.now(timezone.utc)
+                        break
+                    try:
+                        self._reset_step_for_goto(target)
+                    except RuntimeError as exc:
+                        logger.error(str(exc))
+                        workflow.state = WorkflowState.FAILED
+                        workflow.completed_at = datetime.now(timezone.utc)
+                        await self.storage.save_workflow(workflow)
+                        return workflow
+                    next_step = target
+                    continue
+
+                # --- Normal step: evaluate optional condition ---
                 if self._evaluate_condition(next_step.condition, context):
                     # Condition passed (or no condition) – run this step
                     workflow.current_step = next_step.step_num
@@ -289,6 +317,56 @@ class WorkflowEngine:
                 return "{" + key + "}"
 
         return template.format_map(_SafeDict(context))
+
+    def _resolve_route(
+        self, workflow: Workflow, router_step: WorkflowStep, context: Dict[str, Any]
+    ) -> Optional[WorkflowStep]:
+        """Evaluate a router step's routes and return the matching target WorkflowStep.
+
+        Route dict supports either ``goto:`` (YAML convention) or ``then:`` (alias).
+        A ``default: true`` entry is used when no ``when:`` clause matches.
+        """
+        default_target: Optional[str] = None
+        for route in router_step.routes:
+            when: Optional[str] = route.get("when")
+            # Support both "goto" (YAML convention) and "then" (alias)
+            target_name: Optional[str] = route.get("goto") or route.get("then")
+            is_default: bool = bool(route.get("default")) and not when
+            if is_default:
+                default_target = target_name
+                continue
+            if when and target_name and self._evaluate_condition(when, context):
+                return self._find_step_by_name(workflow, target_name)
+        if default_target:
+            return self._find_step_by_name(workflow, default_target)
+        return None
+
+    def _find_step_by_name(self, workflow: Workflow, name: str) -> Optional[WorkflowStep]:
+        """Find a step by its slugified id or agent_type name."""
+        slug = WorkflowDefinition._slugify(name)
+        for step in workflow.steps:
+            if step.name == name or step.name == slug or step.agent.name == name:
+                return step
+        return None
+
+    def _reset_step_for_goto(self, step: WorkflowStep) -> None:
+        """Reset a step so it can be re-executed (loop / goto support).
+
+        Raises RuntimeError if the step has already been re-activated
+        _MAX_LOOP_ITERATIONS times to guard against infinite loops.
+        """
+        if step.iteration >= _MAX_LOOP_ITERATIONS:
+            raise RuntimeError(
+                f"Step '{step.name}' has been re-activated {step.iteration} times "
+                f"(limit {_MAX_LOOP_ITERATIONS}). Aborting to prevent infinite loop."
+            )
+        step.iteration += 1
+        step.status = StepStatus.PENDING
+        step.started_at = None
+        step.completed_at = None
+        step.error = None
+        step.outputs = {}
+        step.retry_count = 0
 
     def _build_step_context(self, workflow: Workflow) -> Dict[str, Any]:
         """Build evaluation context from all completed/skipped step outputs."""
@@ -562,6 +640,7 @@ class WorkflowDefinition:
                         normalized_inputs.update(entry)
                 inputs_data = normalized_inputs
 
+            step_routes = step_data.get("routes", [])
             steps.append(
                 WorkflowStep(
                     step_num=idx,
@@ -570,6 +649,7 @@ class WorkflowDefinition:
                     prompt_template=prompt_template,
                     condition=step_data.get("condition"),
                     inputs=inputs_data,
+                    routes=step_routes,
                 )
             )
 

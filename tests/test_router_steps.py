@@ -1,0 +1,246 @@
+"""Tests for WorkflowEngine router step support (goto/loop behavior)."""
+
+import pytest
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+from unittest.mock import AsyncMock
+
+from nexus.core.models import (
+    Agent,
+    AuditEvent,
+    StepStatus,
+    Workflow,
+    WorkflowState,
+    WorkflowStep,
+)
+from nexus.core.workflow import WorkflowEngine, _MAX_LOOP_ITERATIONS
+from nexus.adapters.storage.base import StorageBackend
+
+
+# ---------------------------------------------------------------------------
+# Minimal in-memory storage reused from test_conditional_steps pattern
+# ---------------------------------------------------------------------------
+
+
+class InMemoryStorage(StorageBackend):
+    def __init__(self) -> None:
+        self._workflows: Dict[str, Workflow] = {}
+        self._audit: List[AuditEvent] = []
+
+    async def save_workflow(self, workflow: Workflow) -> None:
+        self._workflows[workflow.id] = workflow
+
+    async def load_workflow(self, workflow_id: str) -> Optional[Workflow]:
+        return self._workflows.get(workflow_id)
+
+    async def list_workflows(self, state=None, limit: int = 100):
+        return list(self._workflows.values())
+
+    async def delete_workflow(self, workflow_id: str) -> bool:
+        return bool(self._workflows.pop(workflow_id, None))
+
+    async def append_audit_event(self, event: AuditEvent) -> None:
+        self._audit.append(event)
+
+    async def get_audit_log(self, workflow_id: str, since=None) -> List[AuditEvent]:
+        return [e for e in self._audit if e.workflow_id == workflow_id]
+
+    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: Dict[str, Any]) -> None:
+        pass
+
+    async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    async def cleanup_old_workflows(self, older_than_days: int = 30) -> int:
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _agent() -> Agent:
+    return Agent(name="test-agent", display_name="Test Agent", description="test", timeout=60, max_retries=0)
+
+
+def _make_step(step_num: int, name: str, routes=None, condition=None) -> WorkflowStep:
+    return WorkflowStep(
+        step_num=step_num,
+        name=name,
+        agent=_agent(),
+        prompt_template="do {issue_url}",
+        routes=routes or [],
+        condition=condition,
+    )
+
+
+async def _engine_with_workflow(workflow: Workflow) -> tuple:
+    storage = InMemoryStorage()
+    engine = WorkflowEngine(storage=storage)
+    await storage.save_workflow(workflow)
+    return engine, storage
+
+
+def _make_workflow(steps: List[WorkflowStep]) -> Workflow:
+    wf = Workflow(
+        id="wf-test",
+        name="Test Workflow",
+        version="1.0",
+        steps=steps,
+        state=WorkflowState.RUNNING,
+        current_step=1,
+    )
+    steps[0].status = StepStatus.RUNNING
+    steps[0].started_at = datetime.now(timezone.utc)
+    return wf
+
+
+# ---------------------------------------------------------------------------
+# Test 1: Router routes to the correct branch when condition matches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_router_routes_approved_to_deployer():
+    """Router 'approved' condition should activate the deploy step."""
+    develop = _make_step(1, "develop")
+    review = _make_step(2, "review")
+    router = _make_step(3, "route_review", routes=[
+        {"when": "review['decision'] == 'approved'", "goto": "deploy"},
+        {"default": True, "goto": "develop"},
+    ])
+    deploy = _make_step(4, "deploy")
+
+    wf = _make_workflow([develop, review, router, deploy])
+    engine, storage = await _engine_with_workflow(wf)
+
+    # develop → COMPLETED, review activated
+    await engine.complete_step("wf-test", step_num=1, outputs={"pr": "1"})
+    assert wf.steps[1].status == StepStatus.RUNNING
+
+    # review → COMPLETED with approved
+    await engine.complete_step("wf-test", step_num=2, outputs={"decision": "approved"})
+
+    assert deploy.status == StepStatus.RUNNING, "deploy should be activated on approval"
+    assert wf.current_step == deploy.step_num
+    assert wf.state == WorkflowState.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_router_default_routes_to_develop():
+    """Router default route should activate develop when no when-clause matches."""
+    develop = _make_step(1, "develop")
+    review = _make_step(2, "review")
+    router = _make_step(3, "route_review", routes=[
+        {"when": "review['decision'] == 'approved'", "goto": "deploy"},
+        {"default": True, "goto": "develop"},
+    ])
+    deploy = _make_step(4, "deploy")
+
+    wf = _make_workflow([develop, review, router, deploy])
+    engine, _ = await _engine_with_workflow(wf)
+
+    await engine.complete_step("wf-test", step_num=1, outputs={"pr": "1"})
+    await engine.complete_step("wf-test", step_num=2, outputs={"decision": "changes_requested"})
+
+    assert develop.status == StepStatus.RUNNING, "develop should be re-activated on changes_requested"
+    assert wf.current_step == develop.step_num
+    assert develop.iteration == 1
+
+
+# ---------------------------------------------------------------------------
+# Test 2: Full review/develop loop — approved on second pass
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_review_develop_loop_two_passes():
+    """develop → review (changes) → develop → review (approved) → deploy."""
+    develop = _make_step(1, "develop")
+    review = _make_step(2, "review")
+    router = _make_step(3, "route_review", routes=[
+        {"when": "review['decision'] == 'approved'", "goto": "deploy"},
+        {"default": True, "goto": "develop"},
+    ])
+    deploy = _make_step(4, "deploy")
+
+    wf = _make_workflow([develop, review, router, deploy])
+    engine, _ = await _engine_with_workflow(wf)
+
+    # Pass 1: develop completes → review activated
+    await engine.complete_step("wf-test", step_num=1, outputs={"pr": "1"})
+    assert review.status == StepStatus.RUNNING
+
+    # Pass 1: review → changes_requested → develop re-activated
+    await engine.complete_step("wf-test", step_num=2, outputs={"decision": "changes_requested"})
+    assert develop.status == StepStatus.RUNNING
+    assert develop.iteration == 1
+
+    # Pass 2: develop completes → review activated again
+    await engine.complete_step("wf-test", step_num=1, outputs={"pr": "1"})
+    assert review.status == StepStatus.RUNNING
+    # review is re-activated sequentially (not via a router goto), so iteration stays 0
+
+    # Pass 2: review → approved → deploy activated
+    await engine.complete_step("wf-test", step_num=2, outputs={"decision": "approved"})
+    assert deploy.status == StepStatus.RUNNING
+    assert wf.state == WorkflowState.RUNNING
+
+
+# ---------------------------------------------------------------------------
+# Test 3: Max iteration guard fails the workflow
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_max_loop_iteration_fails_workflow():
+    """After _MAX_LOOP_ITERATIONS re-activations, the workflow should FAIL."""
+    develop = _make_step(1, "develop")
+    review = _make_step(2, "review")
+    router = _make_step(3, "route_review", routes=[
+        {"when": "review['decision'] == 'approved'", "goto": "deploy"},
+        {"default": True, "goto": "develop"},
+    ])
+    deploy = _make_step(4, "deploy")
+
+    wf = _make_workflow([develop, review, router, deploy])
+    engine, _ = await _engine_with_workflow(wf)
+
+    # Exhaust all allowed iterations via changes_requested loop
+    for i in range(_MAX_LOOP_ITERATIONS):
+        await engine.complete_step("wf-test", step_num=1, outputs={"pr": str(i)})
+        await engine.complete_step("wf-test", step_num=2, outputs={"decision": "changes_requested"})
+        assert develop.iteration == i + 1
+
+    # At the limit, one more loop attempt should fail the workflow
+    await engine.complete_step("wf-test", step_num=1, outputs={"pr": "x"})
+    await engine.complete_step("wf-test", step_num=2, outputs={"decision": "changes_requested"})
+
+    assert wf.state == WorkflowState.FAILED, "workflow should FAIL after exceeding max iterations"
+    assert deploy.status != StepStatus.RUNNING
+
+
+# ---------------------------------------------------------------------------
+# Test 4: No matching route and no default → workflow completes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_router_no_match_and_no_default_ends_workflow():
+    """If no route matches and there is no default, the workflow should complete."""
+    review = _make_step(1, "review")
+    router = _make_step(2, "route_review", routes=[
+        {"when": "review['decision'] == 'approved'", "goto": "deploy"},
+        # No default
+    ])
+    deploy = _make_step(3, "deploy")
+
+    wf = _make_workflow([review, router, deploy])
+    engine, _ = await _engine_with_workflow(wf)
+
+    await engine.complete_step("wf-test", step_num=1, outputs={"decision": "irrelevant"})
+
+    assert wf.state == WorkflowState.COMPLETED
+    assert deploy.status != StepStatus.RUNNING
+
