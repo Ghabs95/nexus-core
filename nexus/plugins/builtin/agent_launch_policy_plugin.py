@@ -114,14 +114,20 @@ class AgentLaunchPolicyPlugin:
         if agent_type not in {"deployer", "ops"}:
             return ""
         return (
-            "**⛔ PR MERGE POLICY (MANDATORY):**\n"
+            "**⚠️ PR CREATION (REQUIRED if no PR exists):**\n"
+            "First check whether a PR already exists for the issue branch:\n"
+            "  `gh pr list --repo <REPO> --head <branch> --state open`\n"
+            "If none is found, CREATE the PR — this is always allowed:\n"
+            "  `gh pr create --title \"<title>\" --body \"<body>\" --base <base> --head <branch> --repo <REPO>`\n\n"
+            "**⛔ PR MERGE POLICY (applies ONLY to merging, not creation):**\n"
             "This project enforces `require_human_merge_approval: always`.\n"
             "You MUST NOT run `gh pr merge` or any merge command.\n"
             "Instead:\n"
-            "1. Verify the PR is ready (CI green, reviews approved)\n"
-            "2. Post this comment on the issue:\n"
+            "1. Ensure the PR exists (create it if missing)\n"
+            "2. Verify the PR is ready (CI green, reviews approved)\n"
+            "3. Post this comment on the issue:\n"
             "   `🚀 Deployment ready. PR requires human review before merge.`\n"
-            "3. Do NOT merge. A human will merge after review.\n\n"
+            "4. Do NOT merge. A human will merge after review.\n\n"
         )
 
     def _get_workflow_steps_for_prompt(

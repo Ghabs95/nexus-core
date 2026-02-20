@@ -109,6 +109,7 @@ class WorkflowStep:
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     error: Optional[str] = None
+    retry_count: int = 0  # Number of retries attempted so far
     approval_gates: List[ApprovalGate] = field(default_factory=list)  # Approval gates for this step
 
     def __str__(self) -> str:
