@@ -68,6 +68,9 @@ def _load_builtin_notifications(type_name: str) -> Optional[Type[NotificationCha
 
 
 def _load_builtin_ai(type_name: str) -> Optional[Type[AIProvider]]:
+    if type_name == "codex":
+        from nexus.adapters.ai.codex_provider import CodexCLIProvider
+        return CodexCLIProvider
     if type_name == "copilot":
         from nexus.adapters.ai.copilot_provider import CopilotCLIProvider
         return CopilotCLIProvider
@@ -173,7 +176,7 @@ class AdapterRegistry:
         """Instantiate an AIProvider by type name.
 
         Args:
-            type_name: Adapter type (``"copilot"``, ``"gemini"``, ``"openai"``).
+            type_name: Adapter type (``"codex"``, ``"copilot"``, ``"gemini"``, ``"openai"``).
             **kwargs: Constructor keyword arguments forwarded to the class.
         """
         cls = self._resolve("ai", type_name, _load_builtin_ai)
