@@ -148,11 +148,14 @@ def generate_completion_instructions(
     Returns:
         Prompt text to append to the agent's instructions.
     """
+    # Build the completions sub-path, avoiding a double-slash when project_name is empty
+    _project_infix = f"{project_name}/" if project_name else ""
+    _completions_subpath = f"tasks/{_project_infix}completions"
     completions_script = (
         f"```bash\n"
         f'WORKSPACE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n'
-        f'COMPLETIONS_DIR=$(find "$WORKSPACE_ROOT" -maxdepth 4 -path \'*/{nexus_dir}/tasks/{project_name}/completions\' -type d 2>/dev/null | head -1)\n'
-        f'if [ -z "$COMPLETIONS_DIR" ]; then COMPLETIONS_DIR="$WORKSPACE_ROOT/{nexus_dir}/tasks/{project_name}/completions"; mkdir -p "$COMPLETIONS_DIR"; fi\n'
+        f'COMPLETIONS_DIR=$(find "$WORKSPACE_ROOT" -maxdepth 4 -path \'*/{nexus_dir}/{_completions_subpath}\' -type d 2>/dev/null | head -1)\n'
+        f'if [ -z "$COMPLETIONS_DIR" ]; then COMPLETIONS_DIR="$WORKSPACE_ROOT/{nexus_dir}/{_completions_subpath}"; mkdir -p "$COMPLETIONS_DIR"; fi\n'
     )
 
     return (
@@ -246,6 +249,11 @@ def scan_for_completions(
     results: List[DetectedCompletion] = []
     seen_basenames: set[str] = set()
     patterns = [
+        # Direct path — no project subdirectory (e.g. .nexus/tasks/completions/)
+        os.path.join(base_dir, nexus_dir, "tasks", "completions", "completion_summary_*.json"),
+        # Legacy path — tasks/logs/ (backward compat)
+        os.path.join(base_dir, nexus_dir, "tasks", "logs", "completion_summary_*.json"),
+        # With project subdirectory: .nexus/tasks/<project>/completions/
         os.path.join(
             base_dir, "**", nexus_dir, "tasks", "*", "completions",
             "completion_summary_*.json",
