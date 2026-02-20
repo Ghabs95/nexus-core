@@ -31,6 +31,7 @@ class AgentLaunchPolicyPlugin:
         continuation_prompt: Optional[str] = None,
         workflow_path: str = "",
         nexus_dir: str = ".nexus",
+        project_name: str = "",
     ) -> str:
         """Build launch prompt used by orchestrator agent invocation."""
         workflow_name = self.get_workflow_name(tier_name)
@@ -41,6 +42,7 @@ class AgentLaunchPolicyPlugin:
             workflow_path=workflow_path,
             workflow_type=workflow_type,
             nexus_dir=nexus_dir,
+            project_name=project_name,
         )
 
         if continuation:
@@ -159,6 +161,7 @@ class AgentLaunchPolicyPlugin:
         workflow_path: str,
         workflow_type: str,
         nexus_dir: str,
+        project_name: str = "",
     ) -> str:
         """Return instructions for GitHub completion comment and summary file."""
         issue_match = re.search(r"/issues/(\d+)", issue_url or "")
@@ -175,6 +178,7 @@ class AgentLaunchPolicyPlugin:
             agent_type=agent_type,
             workflow_steps_text=workflow_steps,
             nexus_dir=nexus_dir,
+            project_name=project_name,
         )
 
 

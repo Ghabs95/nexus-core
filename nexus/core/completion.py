@@ -129,6 +129,7 @@ def generate_completion_instructions(
     agent_type: str,
     workflow_steps_text: str = "",
     nexus_dir: str = ".nexus",
+    project_name: str = "",
 ) -> str:
     """Generate prompt instructions that tell an agent how to produce output.
 
@@ -141,10 +142,19 @@ def generate_completion_instructions(
         agent_type: The agent_type running this step.
         workflow_steps_text: Pre-formatted workflow steps text for context.
         nexus_dir: Name of the .nexus directory (default ".nexus").
+        project_name: Project subdirectory name (e.g. "nexus"). Completions are
+            written to ``tasks/<project_name>/completions/``.
 
     Returns:
         Prompt text to append to the agent's instructions.
     """
+    completions_script = (
+        f"```bash\n"
+        f'WORKSPACE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n'
+        f'COMPLETIONS_DIR=$(find "$WORKSPACE_ROOT" -maxdepth 4 -path \'*/{nexus_dir}/tasks/{project_name}/completions\' -type d 2>/dev/null | head -1)\n'
+        f'if [ -z "$COMPLETIONS_DIR" ]; then COMPLETIONS_DIR="$WORKSPACE_ROOT/{nexus_dir}/tasks/{project_name}/completions"; mkdir -p "$COMPLETIONS_DIR"; fi\n'
+    )
+
     return (
         f"**WHEN YOU FINISH — TWO MANDATORY DELIVERABLES:**\n\n"
         f"{workflow_steps_text}\n\n"
@@ -180,10 +190,7 @@ def generate_completion_instructions(
         f"**IMPORTANT:** The `{nexus_dir}/` directory lives at the **workspace root** "
         f"(the top-level directory you were launched in). "
         f"Do NOT create a new `{nexus_dir}/` folder inside sub-repos or subdirectories.\n\n"
-        f"```bash\n"
-        f'WORKSPACE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n'
-        f'COMPLETIONS_DIR=$(find "$WORKSPACE_ROOT" -maxdepth 3 -path \'*/{nexus_dir}/tasks/completions\' -type d 2>/dev/null | head -1)\n'
-        f'if [ -z "$COMPLETIONS_DIR" ]; then COMPLETIONS_DIR="$WORKSPACE_ROOT/{nexus_dir}/tasks/completions"; mkdir -p "$COMPLETIONS_DIR"; fi\n'
+        + completions_script +
         f'cat > "$COMPLETIONS_DIR/completion_summary_{issue_number}.json" << \'NEXUS_EOF\'\n'
         f"{{\n"
         f'  "status": "complete",\n'
@@ -240,11 +247,7 @@ def scan_for_completions(
     seen_basenames: set[str] = set()
     patterns = [
         os.path.join(
-            base_dir, "**", nexus_dir, "tasks", "completions", "**",
-            "completion_summary_*.json",
-        ),
-        os.path.join(
-            base_dir, "**", nexus_dir, "tasks", "logs", "**",
+            base_dir, "**", nexus_dir, "tasks", "*", "completions",
             "completion_summary_*.json",
         ),
     ]
