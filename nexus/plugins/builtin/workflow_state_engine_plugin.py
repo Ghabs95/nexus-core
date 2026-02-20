@@ -244,6 +244,88 @@ class WorkflowStateEnginePlugin:
             logger.error("Failed to deny workflow for issue #%s: %s", issue_number, exc)
             return False
 
+    async def complete_step_for_issue(
+        self,
+        issue_number: str,
+        completed_agent_type: str,
+        outputs: Dict[str, Any],
+    ) -> Optional[Any]:
+        """Mark the current running step for *issue_number* as complete.
+
+        Locates the RUNNING step whose ``agent.name`` matches
+        *completed_agent_type*, then calls
+        ``WorkflowEngine.complete_step()`` to advance the workflow.
+        Router steps are evaluated automatically, handling loops and
+        conditional branches.
+
+        Args:
+            issue_number: GitHub issue number (or any issue id).
+            completed_agent_type: The ``agent_type`` of the step that just
+                finished (matches the agent's own completion summary field).
+            outputs: Structured outputs from the completion summary to record
+                against the step and expose to subsequent route conditions.
+
+        Returns:
+            The updated :class:`~nexus.core.models.Workflow` (inspect
+            ``.state`` and ``.active_agent_type`` for next steps), or
+            ``None`` when no workflow is mapped to *issue_number* or the
+            workflow cannot be loaded from storage.
+        """
+        from nexus.core.models import StepStatus  # local import to avoid circular
+
+        workflow_id = self._resolve_workflow_id(issue_number)
+        if not workflow_id:
+            logger.debug("complete_step_for_issue: no workflow mapping for issue #%s", issue_number)
+            return None
+
+        engine = self._get_engine()
+        workflow = await engine.get_workflow(workflow_id)
+        if not workflow:
+            logger.debug(
+                "complete_step_for_issue: workflow %s not found (issue #%s)",
+                workflow_id,
+                issue_number,
+            )
+            return None
+
+        # Find the RUNNING step whose agent_type matches the completed agent
+        running_step = None
+        for step in workflow.steps:
+            if step.status == StepStatus.RUNNING and step.agent.name == completed_agent_type:
+                running_step = step
+                break
+
+        if not running_step:
+            # Fallback: use the last RUNNING step (handles re-activated loops where
+            # agent_type mis-match is possible due to parallel retries)
+            for step in reversed(workflow.steps):
+                if step.status == StepStatus.RUNNING:
+                    running_step = step
+                    logger.warning(
+                        "complete_step_for_issue: no RUNNING step matching agent_type '%s' "
+                        "for issue #%s; using step %d (%s) as fallback",
+                        completed_agent_type,
+                        issue_number,
+                        step.step_num,
+                        step.agent.name,
+                    )
+                    break
+
+        if not running_step:
+            logger.warning(
+                "complete_step_for_issue: no RUNNING step in workflow %s (issue #%s); "
+                "returning workflow unchanged",
+                workflow_id,
+                issue_number,
+            )
+            return workflow
+
+        return await engine.complete_step(
+            workflow_id=workflow_id,
+            step_num=running_step.step_num,
+            outputs=outputs,
+        )
+
     async def request_approval_gate(
         self,
         workflow_id: str,

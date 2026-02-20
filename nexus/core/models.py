@@ -166,6 +166,18 @@ class Workflow:
     def is_complete(self) -> bool:
         """Check if workflow is complete."""
         return self.state in (WorkflowState.COMPLETED, WorkflowState.FAILED, WorkflowState.CANCELLED)
+
+    @property
+    def active_agent_type(self) -> Optional[str]:
+        """Return the agent_type of the currently RUNNING step, or None.
+
+        Useful after ``WorkflowEngine.complete_step()`` to discover which agent
+        should run next without inspecting individual steps.
+        """
+        step = self.get_step(self.current_step)
+        if step and step.status == StepStatus.RUNNING:
+            return step.agent.name
+        return None
     
     def apply_approval_gates(self) -> None:
         """Apply workflow-level approval gates to all steps.

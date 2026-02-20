@@ -333,7 +333,10 @@ class WorkflowEngine:
             target_name: Optional[str] = route.get("goto") or route.get("then")
             is_default: bool = bool(route.get("default")) and not when
             if is_default:
-                default_target = target_name
+                # "default" can be a step name directly (``default: "develop"``)
+                # or a boolean flag alongside ``goto:``/``then:`` (``default: true, goto: "develop"``).
+                default_val = route.get("default")
+                default_target = target_name or (default_val if isinstance(default_val, str) else None)
                 continue
             if when and target_name and self._evaluate_condition(when, context):
                 return self._find_step_by_name(workflow, target_name)
@@ -369,7 +372,15 @@ class WorkflowEngine:
         step.retry_count = 0
 
     def _build_step_context(self, workflow: Workflow) -> Dict[str, Any]:
-        """Build evaluation context from all completed/skipped step outputs."""
+        """Build evaluation context from all completed/skipped step outputs.
+
+        The context contains:
+        - ``<step_id>``: the outputs dict for that step (keyed by step id)
+        - ``result``: alias for the most-recently-completed step's outputs
+        - top-level keys from the most-recently-completed step's outputs,
+          so simple YAML conditions like ``approval_status == 'approved'``
+          work without needing to qualify the key with the step id.
+        """
         context: Dict[str, Any] = {}
         for step in workflow.steps:
             if step.status in (StepStatus.COMPLETED, StepStatus.SKIPPED):
@@ -377,6 +388,10 @@ class WorkflowEngine:
                 # Expose the most-recently-completed step as `result`
                 if step.status == StepStatus.COMPLETED:
                     context["result"] = step.outputs
+                    # Also flatten keys at the top level for ergonomic conditions
+                    # e.g. `approval_status == 'approved'` instead of
+                    # `result['approval_status'] == 'approved'`
+                    context.update(step.outputs)
         return context
 
     def _evaluate_condition(self, condition: Optional[str], context: Dict[str, Any]) -> bool:
