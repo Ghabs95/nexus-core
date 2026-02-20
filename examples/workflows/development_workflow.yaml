@@ -106,12 +106,22 @@ steps:
       - github:review_pr
       - github:suggest_changes
       - github:add_comment
+      - github:request_changes
+      - github:approve_pr
     inputs:
       - pr_url: "string"
     outputs:
       - review_comments: "list[string]"
-      - approval_status: "enum[approved|changes_requested|commented]"
-    on_success: "close_loop"
+      - approval_status: "enum[approved|changes_requested]"
+    on_success: "route_review"
+
+  - id: "route_review"
+    name: "Route After Review"
+    agent_type: "router"
+    routes:
+      - when: "approval_status == 'approved'"
+        then: "close_loop"
+      - default: "develop"   # Loop back if changes requested
 
   - id: "docs_update"
     name: "Update Documentation"

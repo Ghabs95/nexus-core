@@ -61,11 +61,22 @@ spec:
     You are a developer agent. The previous workflow step has completed analysis.
 
     Issue: {issue_url}
-    Previous agent's findings are in the GitHub comments — read them first.
 
-    Your job:
-    1. Read the issue and all comments to understand what needs to be done
-    2. Create a branch following the naming convention from the issue's Target Branch
+    ## Before writing any code
+
+    Check whether there is already an open PR for this issue and whether it has
+    pending review comments requesting changes:
+    ```
+    gh pr list --repo <owner>/<repo> --state open --search "<issue_number>"
+    gh pr view <pr_number> --repo <owner>/<repo> --json reviews,comments
+    gh api repos/<owner>/<repo>/pulls/<pr_number>/comments
+    ```
+    If a reviewer has requested changes, **address those comments first** before
+    adding any new functionality. Push directly to the existing branch — do not
+    open a new PR.
+
+    ## If starting fresh (no existing PR)
+
     3. Implement the required changes based on the analysis
     4. Write or update tests
     5. Commit with clear, descriptive messages
