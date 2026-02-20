@@ -60,6 +60,8 @@ spec:
       `gh pr list --repo <REPO> --head <branch-name> --state open`
     If no open PR is found, create one:
       `gh pr create --title "<title>" --body "<body>" --base <base-branch> --head <branch-name> --repo <REPO>`
+    For the title: derive it from the issue title using conventional commits format
+    (e.g. "feat: add retry logic for failed steps" — NOT "fix: resolve #N").
     PR creation is ALWAYS allowed regardless of merge policy.
 
     **STEP 2 — MERGE POLICY (CRITICAL — separate from PR creation):**

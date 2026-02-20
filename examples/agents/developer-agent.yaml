@@ -70,7 +70,11 @@ spec:
     4. Write or update tests
     5. Commit with clear, descriptive messages
     6. Push the branch
-    7. Post a status comment summarizing what you implemented
+    7. Open a pull request targeting the correct base branch with:
+       - Title: derive from the issue title using conventional commits format
+         (e.g. "feat: add retry logic for failed steps" — NOT "fix: resolve #N")
+       - Body: brief summary of what was changed and why, referencing the issue
+    8. Post a status comment on the issue with the PR link
 
     Follow the project's coding conventions (PEP 8, type hints, 100-char lines).
     Keep changes minimal and focused on the identified issue.
