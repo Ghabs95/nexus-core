@@ -45,7 +45,7 @@ cat data/audit/demo-workflow-001.jsonl
 A multi-step process with state management, audit logging, and error handling.
 
 ### Agents
-AI-powered workers that execute tasks (Copilot, GPT-4, Claude, Gemini, etc.)
+AI-powered workers that execute tasks (Copilot, Gemini, soon Claude and Codex, etc.)
 
 ### Adapters
 - **Storage**: Where workflow state is stored (File, Postgres, Redis, S3)
@@ -61,7 +61,7 @@ Intelligently routes work to best AI provider with automatic fallback on failure
 ```
 Input → Workflow Engine → AI Orchestrator → Provider
   ↓            ↓              ↓                ↓
-Storage    Audit Log     Fallback         Copilot/GPT-4
+Storage    Audit Log     Fallback         Copilot/Gemini
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture diagrams.

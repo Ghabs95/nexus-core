@@ -26,7 +26,7 @@ Every agent action becomes part of your development history:
 
 - ✅ **Reliability**: Auto-retry, timeout detection, graceful failure handling
 - ✅ **State Management**: Persistent workflow state with audit trails
-- ✅ **AI Orchestration**: Route work to the best AI tool (Copilot, GPT-4, Claude, Gemini, local models)
+- ✅ **AI Orchestration**: Route work to the best AI tool (Copilot, Gemini, soon Claude and Codex)
 - ✅ **Fallback Support**: Automatic failover when tools are rate-limited or unavailable
 - ✅ **Pluggable Architecture**: Bring your own storage, git platform, notification system
 
@@ -45,7 +45,14 @@ Every agent action becomes part of your development history:
 ### Installation
 
 ```bash
-pip install nexus-core
+# Coming soon to PyPI!
+# pip install nexus-core
+
+# For now, install from source:
+git clone https://github.com/Ghabs95/nexus-core
+cd nexus-core
+pip install -e .
+```
 
 # With optional adapters
 pip install nexus-core[telegram,postgres,openai]
@@ -133,7 +140,7 @@ from nexus.adapters.ai import CopilotCLI, OpenAIProvider, GeminiCLI
 orchestrator = AIOrchestrator(
     providers=[
         CopilotCLI(preference="code_generation"),
-        OpenAIProvider(preference="reasoning", model="gpt-4"),
+        AnthropicProvider(preference="reasoning", model="claude-3"), # Coming soon
         GeminiCLI(preference="fast_analysis"),
     ],
     fallback_enabled=True
@@ -218,8 +225,8 @@ engine.add_observer(exporter)
              │
     ┌────────▼─────────────────────┐
     │     AI Providers             │
-    │  (Copilot, GPT-4, Claude,    │
-    │   Gemini, Local Models)      │
+    │  (Copilot, Gemini, soon      │
+    │   Claude & Codex)            │
     └──────────────────────────────┘
              │
     ┌────────▼────────┐
@@ -315,15 +322,12 @@ adapters:
     token: ${GITHUB_TOKEN}
   
   ai_providers:
-    - type: openai
-      api_key: ${OPENAI_API_KEY}
-      models: [gpt-4, gpt-3.5-turbo]
-      preference: reasoning
-    
     - type: copilot_cli
       path: /usr/local/bin/copilot
       preference: code_generation
 
+    - type: gemini_cli
+      preference: reasoning
 workflows:
   - name: feature_dev
     file: ./workflows/feature_dev.yaml
@@ -421,7 +425,7 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 
 ## Support
 
-- **Documentation**: https://nexus-core.readthedocs.io
+- **Documentation**: https://nexus-core.readthedocs.io *(Coming Soon! For now, see the `docs/` directory)*
 - **Comparison Guide**: [vs Google ADK, LangChain, CrewAI](docs/COMPARISON.md)
 - **Issues**: https://github.com/Ghabs95/nexus-core/issues
 - **Discord**: https://discord.gg/nexus-core

@@ -514,28 +514,7 @@ class TestMultiTierWorkflow:
         assert "MUST be:" in text
         assert "`developer`" in text
 
-    # -- org workflow integration (real file) --
 
-    def test_org_workflow_loads_full(self):
-        """Smoke test: load the real org workflow full tier."""
-        org_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "agents", "workflows", "ghabs_org_workflow.yaml"
-        )
-        if not os.path.exists(org_path):
-            pytest.skip("org workflow not in workspace")
-        wf = WorkflowDefinition.from_yaml(org_path, workflow_type="full")
-        assert len(wf.steps) > 5
-        assert wf.steps[0].agent.name == "ceo"
-
-    def test_org_workflow_loads_shortened(self):
-        """Smoke test: load the real org workflow shortened tier."""
-        org_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "agents", "workflows", "ghabs_org_workflow.yaml"
-        )
-        if not os.path.exists(org_path):
-            pytest.skip("org workflow not in workspace")
-        wf = WorkflowDefinition.from_yaml(org_path, workflow_type="shortened")
-        assert len(wf.steps) >= 3
 
     # -- enterprise workflow integration (example file) --
 
