@@ -82,7 +82,8 @@ ai_tool_preferences:
   escalation: copilot      # High-priority escalation to senior agent
 
 # --- PROJECT CONFIGURATIONS ---
-# Each project must have: agents_dir, workspace, github_repo
+# Each project must have: agents_dir, workspace
+# Recommended: git_repo (primary). Optional: git_repos for multi-repo projects.
 # Optional: workflow_definition_path, ai_tool_preferences
 # Paths (agents_dir, workspace, workflow_definition_path) can be relative to BASE_DIR
 
@@ -90,26 +91,26 @@ ai_tool_preferences:
 project_a:
   agents_dir: project-a/agents
   workspace: project_a
-  github_repo: acme/project-a
+  git_repo: acme/project-a
 
 # Example: Project B (uses global defaults)
 project_b:
   agents_dir: project-b/agents
   workspace: project_b
-  github_repo: acme/project-b
+  git_repo: acme/project-b
 
 # Example: Project C (uses global defaults)
 project_c:
   agents_dir: project-c/agents
   workspace: project_c
-  github_repo: acme/project-c
+  git_repo: acme/project-c
 
 # Example: Custom Project (CUSTOM AI TOOLS - OVERRIDES global defaults)
 # This shows how to customize AI tool preferences for specific agents
 custom_project:
   agents_dir: custom-project/agents
   workspace: custom_project
-  github_repo: acme/custom-project
+  git_repo: acme/custom-project
   
   # Use a different workflow YAML file for this project  
   # (defaults to global workflow_definition_path if not specified)

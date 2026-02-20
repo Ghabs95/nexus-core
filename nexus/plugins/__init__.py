@@ -11,7 +11,7 @@ from nexus.plugins.builtin import (
     RuntimeOpsPlugin,
     TelegramNotificationPlugin,
     ToolUnavailableError,
-    GithubWorkflowPolicyPlugin,
+    WorkflowMonitorPolicyPlugin,
     WorkflowPolicyPlugin,
     WorkflowStateEnginePlugin,
 )
@@ -34,7 +34,7 @@ __all__ = [
     "JsonStateStorePlugin",
     "RuntimeOpsPlugin",
     "TelegramNotificationPlugin",
-    "GithubWorkflowPolicyPlugin",
+    "WorkflowMonitorPolicyPlugin",
     "WorkflowPolicyPlugin",
     "WorkflowStateEnginePlugin",
     "PluginRegistry",

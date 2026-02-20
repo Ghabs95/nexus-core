@@ -35,9 +35,9 @@ from nexus.plugins.builtin.workflow_state_engine_plugin import (
     WorkflowStateEnginePlugin,
     register_plugins as register_workflow_state_engine_plugins,
 )
-from nexus.plugins.builtin.github_workflow_policy_plugin import (
-    GithubWorkflowPolicyPlugin,
-    register_plugins as register_github_workflow_policy_plugins,
+from nexus.plugins.builtin.workflow_monitor_policy_plugin import (
+    WorkflowMonitorPolicyPlugin,
+    register_plugins as register_workflow_monitor_policy_plugins,
 )
 from nexus.plugins.builtin.github_webhook_policy_plugin import (
     GithubWebhookPolicyPlugin,
@@ -56,7 +56,7 @@ __all__ = [
     "RuntimeOpsPlugin",
     "WorkflowPolicyPlugin",
     "WorkflowStateEnginePlugin",
-    "GithubWorkflowPolicyPlugin",
+    "WorkflowMonitorPolicyPlugin",
     "GithubWebhookPolicyPlugin",
     "register_ai_runtime_plugins",
     "register_agent_launch_policy_plugins",
@@ -66,6 +66,6 @@ __all__ = [
     "register_runtime_ops_plugins",
     "register_workflow_policy_plugins",
     "register_workflow_state_engine_plugins",
-    "register_github_workflow_policy_plugins",
+    "register_workflow_monitor_policy_plugins",
     "register_github_webhook_policy_plugins",
 ]

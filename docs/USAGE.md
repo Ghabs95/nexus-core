@@ -201,7 +201,7 @@ async def create_workflow_for_issue(
             "project": project_name,           # YOUR metadata
             "tier": tier_name,                 # YOUR metadata
             "task_type": task_type,            # YOUR metadata
-            "github_issue_url": f"https://github.com/{get_github_repo(project_name)}/issues/{issue_number}"
+            "issue_url": f"https://git-host/{get_repo_slug(project_name)}/issues/{issue_number}"
         }
     )
     
@@ -661,7 +661,7 @@ async def create_security_audit_workflow(
             "workflow_type": "security-audit",
             "severity": severity,
             "requires_penetration_test": severity in ["critical", "high"],
-            "github_issue_url": f"https://github.com/{get_github_repo(project_name)}/issues/{issue_number}"
+            "issue_url": f"https://git-host/{get_repo_slug(project_name)}/issues/{issue_number}"
         }
     )
     

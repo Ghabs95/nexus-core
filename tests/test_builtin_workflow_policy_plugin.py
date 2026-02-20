@@ -32,12 +32,13 @@ def test_workflow_policy_builders():
 
 
 def test_workflow_policy_finalize_workflow():
-    captured = {"notify": None}
+    captured = {"notify": None, "pr_kwargs": None}
 
     def _resolve_git_dir(_project_name):
         return "/tmp/repo"
 
     def _create_pr_from_changes(**_kwargs):
+        captured["pr_kwargs"] = _kwargs
         return "https://github.com/org/repo/pull/10"
 
     def _close_issue(**_kwargs):
@@ -66,3 +67,4 @@ def test_workflow_policy_finalize_workflow():
     assert result["issue_closed"] is True
     assert result["notification_sent"] is True
     assert "Workflow Complete" in captured["notify"]
+    assert captured["pr_kwargs"]["issue_repo"] == "org/repo"

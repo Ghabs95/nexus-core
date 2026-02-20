@@ -131,7 +131,15 @@ class GithubWebhookPolicyPlugin:
     ) -> str:
         """Resolve project key from repository full name."""
         for project_key, project_cfg in (project_config or {}).items():
-            if isinstance(project_cfg, dict) and project_cfg.get("github_repo") == repo_name:
+            if not isinstance(project_cfg, dict):
+                continue
+
+            single_repo = project_cfg.get("git_repo")
+            if isinstance(single_repo, str) and single_repo == repo_name:
+                return project_key
+
+            repo_list = project_cfg.get("git_repos")
+            if isinstance(repo_list, list) and repo_name in repo_list:
                 return project_key
         return default_project
 

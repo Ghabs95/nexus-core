@@ -51,6 +51,18 @@ class GitLabPlatform(GitPlatform):
     # GitPlatform interface
     # ------------------------------------------------------------------
 
+    async def list_open_issues(
+        self,
+        limit: int = 100,
+        labels: Optional[List[str]] = None,
+    ) -> List[Issue]:
+        query = f"state=opened&per_page={max(1, min(limit, 100))}&order_by=updated_at&sort=desc"
+        if labels:
+            query += "&labels=" + urllib.parse.quote(",".join(labels), safe="")
+        items = await self._get(f"projects/{self._encoded_repo}/issues?{query}")
+        issues = [self._to_issue(item) for item in items]
+        return issues[:limit]
+
     async def create_issue(
         self, title: str, body: str, labels: Optional[List[str]] = None
     ) -> Issue:
@@ -133,11 +145,30 @@ class GitLabPlatform(GitPlatform):
         issue_number: str,
         title: str,
         body: str,
+        issue_repo: Optional[str] = None,
         base_branch: str = "main",
         branch_prefix: str = "nexus",
     ) -> Optional[PullRequest]:
         """Push local changes and open a GitLab merge request."""
         import subprocess
+
+        issue_repo_ref = (issue_repo or self._repo or "").strip()
+        same_repo_issue = not issue_repo_ref or issue_repo_ref == self._repo
+        if same_repo_issue:
+            issue_ref = f"#{issue_number}"
+        else:
+            issue_ref = f"{issue_repo_ref}#{issue_number}"
+
+        import re as _re
+
+        issue_url = rf"https?://[^\s]+/{_re.escape(issue_repo_ref)}/-/issues/{_re.escape(issue_number)}"
+        closing_pattern = _re.compile(
+            rf"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+"
+            rf"(?:{_re.escape(issue_ref)}|{issue_url})\b",
+            _re.IGNORECASE,
+        )
+        if issue_number and not closing_pattern.search(body):
+            body = f"{body}\n\nCloses {issue_ref}"
 
         branch_name = f"{branch_prefix}/issue-{issue_number}"
 

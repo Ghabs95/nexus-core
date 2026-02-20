@@ -1,13 +1,13 @@
-"""Tests for GitHub workflow policy plugin."""
+"""Tests for workflow monitor policy plugin."""
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from nexus.adapters.git.base import Issue
-from nexus.plugins.builtin.github_workflow_policy_plugin import WorkflowMonitorPolicyPlugin
+from nexus.plugins.builtin.workflow_monitor_policy_plugin import WorkflowMonitorPolicyPlugin
 
 
-def test_github_workflow_policy_list_and_comments_and_pr():
+def test_workflow_monitor_policy_list_and_comments_and_pr():
     def _list_issues(**_kwargs):
         return [
             {"number": 10, "labels": [{"name": "workflow:full"}]},
@@ -47,7 +47,7 @@ def test_github_workflow_policy_list_and_comments_and_pr():
     assert pr.number == 9
 
 
-def test_github_workflow_policy_resolve_repo_for_issue():
+def test_workflow_monitor_policy_resolve_repo_for_issue():
     def _get_issue(**_kwargs):
         return SimpleNamespace(body="**Task File:** `/tmp/ws-a/.nexus/tasks/active/task.md`")
 

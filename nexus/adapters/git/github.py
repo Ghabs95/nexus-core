@@ -70,6 +70,28 @@ class GitHubPlatform(GitPlatform):
             logger.error(f"gh command timed out after {timeout}s")
             raise RuntimeError(f"GitHub CLI command timed out")
 
+    async def list_open_issues(
+        self,
+        limit: int = 100,
+        labels: Optional[List[str]] = None,
+    ) -> List[Issue]:
+        """List open issues with optional label filtering."""
+        args = [
+            "issue", "list",
+            "--state", "open",
+            "--limit", str(limit),
+            "--json", "number,title,body,state,labels,createdAt,updatedAt,url",
+        ]
+        if labels:
+            args.extend(["--label", ",".join(labels)])
+
+        try:
+            output = self._run_gh_command(args)
+            data = json.loads(output)
+            return [self._parse_issue(item) for item in data]
+        except RuntimeError:
+            return []
+
     async def create_issue(
         self, title: str, body: str, labels: Optional[List[str]] = None
     ) -> Issue:
@@ -241,15 +263,17 @@ class GitHubPlatform(GitPlatform):
         issue_number: str,
         title: str,
         body: str,
+        issue_repo: Optional[str] = None,
         base_branch: str = "main",
         branch_prefix: str = "nexus",
     ) -> Optional[PullRequest]:
         """Create a PR from uncommitted changes in a local repository.
 
         Performs: detect changes → create branch → stage → commit → push → open PR.
-        Automatically appends ``Closes #<issue_number>`` to the PR body when
-        the body does not already contain a GitHub closing keyword for the
-        issue, ensuring every PR is linked to its originating issue.
+        Automatically appends a GitHub closing keyword reference when the body
+        does not already contain one:
+        - same repo: ``Closes #<issue_number>``
+        - cross repo: ``Closes <owner/repo>#<issue_number>``
         Returns None if no changes are detected.
         """
         import os
@@ -259,13 +283,22 @@ class GitHubPlatform(GitPlatform):
             logger.warning(f"Not a git repo: {repo_dir}")
             return None
 
-        # Auto-link PR to issue if not already referenced with a closing keyword
+        issue_repo_ref = (issue_repo or self.repo or "").strip()
+        same_repo_issue = not issue_repo_ref or issue_repo_ref == self.repo
+        if same_repo_issue:
+            issue_ref = f"#{issue_number}"
+            closing_ref_pattern = rf"(?:#{_re.escape(issue_number)}|{_re.escape(self.repo)}#{_re.escape(issue_number)})"
+        else:
+            issue_ref = f"{issue_repo_ref}#{issue_number}"
+            issue_url = rf"https?://github\.com/{_re.escape(issue_repo_ref)}/issues/{_re.escape(issue_number)}"
+            closing_ref_pattern = rf"(?:{_re.escape(issue_repo_ref)}#{_re.escape(issue_number)}|{issue_url})"
+
         closing_pattern = _re.compile(
-            rf"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#?{_re.escape(issue_number)}\b",
+            rf"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+{closing_ref_pattern}\b",
             _re.IGNORECASE,
         )
         if issue_number and not closing_pattern.search(body):
-            body = f"{body}\n\nCloses #{issue_number}"
+            body = f"{body}\n\nCloses {issue_ref}"
 
         def _git(args: list, timeout: int = 30) -> subprocess.CompletedProcess:
             return subprocess.run(

@@ -50,6 +50,15 @@ class GitPlatform(ABC):
     """Abstract interface for Git platform operations."""
 
     @abstractmethod
+    async def list_open_issues(
+        self,
+        limit: int = 100,
+        labels: Optional[List[str]] = None,
+    ) -> List[Issue]:
+        """List open issues, optionally filtered by labels."""
+        pass
+
+    @abstractmethod
     async def create_issue(
         self, title: str, body: str, labels: Optional[List[str]] = None
     ) -> Issue:
@@ -105,6 +114,7 @@ class GitPlatform(ABC):
         issue_number: str,
         title: str,
         body: str,
+        issue_repo: Optional[str] = None,
         base_branch: str = "main",
         branch_prefix: str = "nexus",
     ) -> Optional[PullRequest]:
@@ -118,6 +128,8 @@ class GitPlatform(ABC):
             issue_number: Issue number this PR addresses.
             title: PR title.
             body: PR body (Markdown).
+            issue_repo: Repository where the issue lives ("owner/repo").
+                When omitted, implementations assume the PR repository.
             base_branch: Branch to merge into (default "main").
             branch_prefix: Prefix for the new branch name.
 

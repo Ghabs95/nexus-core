@@ -299,6 +299,77 @@ class TestGitLabPlatform:
             result = asyncio.get_event_loop().run_until_complete(platform.get_issue("999"))
         assert result is None
 
+    def test_list_open_issues_with_labels(self):
+        platform = self._make_platform()
+        response = [
+            {
+                "id": 101,
+                "iid": 5,
+                "title": "Bug report",
+                "description": "Something broke",
+                "state": "opened",
+                "labels": ["workflow:shortened", "bug"],
+                "created_at": "2026-02-01T10:00:00Z",
+                "updated_at": "2026-02-02T10:00:00Z",
+                "web_url": "https://gitlab.com/mygroup/myproject/-/issues/5",
+            }
+        ]
+        with patch.object(platform, "_get", new=AsyncMock(return_value=response)) as mock_get:
+            issues = asyncio.get_event_loop().run_until_complete(
+                platform.list_open_issues(limit=25, labels=["workflow:shortened", "workflow:full"])
+            )
+
+        assert len(issues) == 1
+        assert issues[0].number == 5
+        called_path = mock_get.await_args.args[0]
+        assert "state=opened" in called_path
+        assert "per_page=25" in called_path
+        assert "labels=" in called_path
+
+    def test_create_pr_from_changes_cross_repo_appends_fully_qualified_reference(self, tmp_path):
+        platform = self._make_platform()
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+
+        def fake_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            if cmd[:3] == ["git", "status", "--porcelain"]:
+                result.stdout = " M file.py\n"
+            return result
+
+        mr_response = {
+            "id": 200,
+            "iid": 12,
+            "title": "Fix regression",
+            "state": "opened",
+            "source_branch": "nexus/issue-42",
+            "target_branch": "main",
+            "web_url": "https://gitlab.com/mygroup/myproject/-/merge_requests/12",
+        }
+
+        with patch("subprocess.run", side_effect=fake_run), patch.object(
+            platform,
+            "_post",
+            new=AsyncMock(return_value=mr_response),
+        ) as mock_post:
+            pr = asyncio.get_event_loop().run_until_complete(
+                platform.create_pr_from_changes(
+                    repo_dir=str(repo_dir),
+                    issue_number="42",
+                    title="Fix regression",
+                    body="Automated change",
+                    issue_repo="mygroup/workflow-repo",
+                )
+            )
+
+        assert pr is not None
+        assert pr.number == 12
+        payload = mock_post.await_args.args[1]
+        assert payload["description"].endswith("Closes mygroup/workflow-repo#42")
+
 
 # ---------------------------------------------------------------------------
 # OpenAIProvider

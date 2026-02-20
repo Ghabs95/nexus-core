@@ -290,7 +290,7 @@ PROJECT_CONFIG = {
     "case_italia": {
         "agents_dir": "ghabs/agents/casit-agents",
         "workspace": "case_italia",
-        "github_repo": "Ghabs95/agents",
+        "git_repo": "Ghabs95/agents",
     }
 }
 

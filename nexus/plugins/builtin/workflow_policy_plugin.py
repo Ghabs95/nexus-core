@@ -97,6 +97,7 @@ class WorkflowPolicyPlugin:
             issue_number=str(issue_number),
             title=title,
             body=body,
+            issue_repo=repo,
         )
         return str(pr_url) if pr_url else None
 
