@@ -27,15 +27,21 @@ class JsonStateStorePlugin:
             return default
 
     def save_json(self, path: str, data: Any) -> bool:
-        """Save JSON payload to file path."""
+        """Save JSON payload to file path atomically (write-then-rename)."""
         resolved = self._resolve(path)
+        tmp = resolved + ".tmp"
         try:
             self._ensure_parent_dir(resolved)
-            with open(resolved, "w", encoding="utf-8") as file_handle:
+            with open(tmp, "w", encoding="utf-8") as file_handle:
                 json.dump(data, file_handle, indent=2)
+            os.replace(tmp, resolved)
             return True
         except Exception as exc:
             logger.error("Failed to save JSON state to %s: %s", resolved, exc)
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
             return False
 
     def append_line(self, path: str, line: str) -> bool:
