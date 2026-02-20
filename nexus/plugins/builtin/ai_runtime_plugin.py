@@ -107,6 +107,40 @@ class AIOrchestrator:
         logger.error("❌ Fallback %s unavailable", fallback.value)
         return None
 
+    def _get_tool_order(self, agent_name: Optional[str] = None, use_gemini: bool = False) -> list:
+        """Return all known tools in priority order for this agent.
+
+        The preferred tool goes first; the rest follow in enum declaration order.
+        Adding a new provider (Claude, Codex, …) only requires extending AIProvider
+        and implementing _invoke_tool dispatch — no other changes needed.
+        """
+        preferred = AIProvider.GEMINI if use_gemini else self.get_primary_tool(agent_name)
+        all_tools = list(AIProvider)
+        return [preferred] + [t for t in all_tools if t != preferred]
+
+    def _invoke_tool(
+        self,
+        tool: AIProvider,
+        agent_prompt: str,
+        workspace_dir: str,
+        agents_dir: str,
+        base_dir: str,
+        issue_num: Optional[str] = None,
+        log_subdir: Optional[str] = None,
+    ) -> Optional[int]:
+        """Dispatch to the correct CLI for *tool*. Extend here when adding new providers."""
+        if tool == AIProvider.COPILOT:
+            return self._invoke_copilot(
+                agent_prompt, workspace_dir, agents_dir, base_dir,
+                issue_num=issue_num, log_subdir=log_subdir,
+            )
+        if tool == AIProvider.GEMINI:
+            return self._invoke_gemini_agent(
+                agent_prompt, workspace_dir, agents_dir, base_dir,
+                issue_num=issue_num, log_subdir=log_subdir,
+            )
+        raise ToolUnavailableError(f"No invoker implemented for tool: {tool.value}")
+
     def record_rate_limit(self, tool: AIProvider, retry_count: int = 1):
         self._rate_limits[tool.value] = {
             "until": time.time() + self.rate_limit_ttl,
@@ -155,77 +189,58 @@ class AIOrchestrator:
         issue_url: Optional[str] = None,
         agent_name: Optional[str] = None,
         use_gemini: bool = False,
+        exclude_tools: Optional[list] = None,
         log_subdir: Optional[str] = None,
     ) -> Tuple[Optional[int], AIProvider]:
+        """Try each available tool in priority order, skipping any in *exclude_tools*.
+
+        *exclude_tools* is a list of tool value strings (e.g. ["gemini"]) that should
+        be skipped entirely — used by the retry path so a crashed tool is not retried.
+        Adding a new provider only requires extending AIProvider + _invoke_tool.
+        """
         issue_num = None
         if issue_url:
             match = re.search(r"/issues/(\d+)", issue_url)
             issue_num = match.group(1) if match else None
 
-        primary = AIProvider.GEMINI if use_gemini else self.get_primary_tool(agent_name)
-        fallback = self.get_fallback_tool(primary)
+        excluded = set(exclude_tools or [])
+        ordered = self._get_tool_order(agent_name, use_gemini)
+        candidates = [t for t in ordered if t.value not in excluded]
 
-        try:
-            if primary == AIProvider.COPILOT:
-                pid = self._invoke_copilot(
-                    agent_prompt,
-                    workspace_dir,
-                    agents_dir,
-                    base_dir,
-                    issue_num=issue_num,
-                    log_subdir=log_subdir,
-                )
-                if pid:
-                    return pid, AIProvider.COPILOT
-            else:
-                pid = self._invoke_gemini_agent(
-                    agent_prompt,
-                    workspace_dir,
-                    agents_dir,
-                    base_dir,
-                    issue_num=issue_num,
-                    log_subdir=log_subdir,
-                )
-                if pid:
-                    return pid, AIProvider.GEMINI
-        except RateLimitedError as exc:
-            self._record_rate_limit_with_context(primary, exc, context="invoke_agent")
-        except Exception as exc:
-            logger.error("❌ %s invocation failed: %s", primary.value, exc)
-            self.record_failure(primary)
+        if not candidates:
+            raise ToolUnavailableError(
+                f"All tools excluded. Order: {[t.value for t in ordered]}, "
+                f"Excluded: {list(excluded)}"
+            )
 
-        if fallback:
+        tried: list = []
+        for tool in candidates:
+            if not self.check_tool_available(tool):
+                logger.warning("⏭️  Skipping unavailable tool: %s", tool.value)
+                tried.append(f"{tool.value}(unavailable)")
+                continue
             try:
-                if fallback == AIProvider.COPILOT:
-                    pid = self._invoke_copilot(
-                        agent_prompt,
-                        workspace_dir,
-                        agents_dir,
-                        base_dir,
-                        issue_num=issue_num,
-                        log_subdir=log_subdir,
-                    )
-                    if pid:
-                        logger.info("✅ Fallback %s succeeded", fallback.value)
-                        return pid, AIProvider.COPILOT
-                else:
-                    pid = self._invoke_gemini_agent(
-                        agent_prompt,
-                        workspace_dir,
-                        agents_dir,
-                        base_dir,
-                        issue_num=issue_num,
-                        log_subdir=log_subdir,
-                    )
-                    if pid:
-                        logger.info("✅ Fallback %s succeeded", fallback.value)
-                        return pid, AIProvider.GEMINI
+                if tried:
+                    logger.info("🔄 Trying next tool %s (previously tried: %s)", tool.value, tried)
+                pid = self._invoke_tool(
+                    tool, agent_prompt, workspace_dir, agents_dir, base_dir,
+                    issue_num=issue_num, log_subdir=log_subdir,
+                )
+                if pid:
+                    if tried:
+                        logger.info("✅ %s succeeded after: %s", tool.value, tried)
+                    return pid, tool
+                tried.append(f"{tool.value}(no-pid)")
+            except RateLimitedError as exc:
+                self._record_rate_limit_with_context(tool, exc, context="invoke_agent")
+                tried.append(f"{tool.value}(rate-limited)")
             except Exception as exc:
-                logger.error("❌ Fallback %s also failed: %s", fallback.value, exc)
-                self.record_failure(fallback)
+                logger.error("❌ %s invocation failed: %s", tool.value, exc)
+                self.record_failure(tool)
+                tried.append(f"{tool.value}(error)")
 
         raise ToolUnavailableError(
-            f"All AI tools unavailable. Primary: {primary.value}, Fallback: {fallback.value if fallback else 'None'}"
+            f"All AI tools exhausted. Tried: {tried}, Excluded: {list(excluded)}"
         )
 
     def _invoke_copilot(
@@ -292,13 +307,11 @@ class AIOrchestrator:
 
         cmd = [
             self.gemini_cli_path,
-            "generate",
             "--prompt",
             agent_prompt,
-            "--project-dir",
-            workspace_dir,
-            "--context-dir",
+            "--include-directories",
             agents_dir,
+            "--yolo",
         ]
 
         timestamp = time.strftime("%Y%m%d_%H%M%S")

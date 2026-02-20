@@ -182,9 +182,9 @@ def generate_completion_instructions(
         f"Do NOT create a new `{nexus_dir}/` folder inside sub-repos or subdirectories.\n\n"
         f"```bash\n"
         f'WORKSPACE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n'
-        f'LOG_DIR=$(find "$WORKSPACE_ROOT" -maxdepth 3 -path \'*/{nexus_dir}/tasks/logs\' -type d 2>/dev/null | head -1)\n'
-        f'if [ -z "$LOG_DIR" ]; then LOG_DIR="$WORKSPACE_ROOT/{nexus_dir}/tasks/logs"; mkdir -p "$LOG_DIR"; fi\n'
-        f'cat > "$LOG_DIR/completion_summary_{issue_number}.json" << \'NEXUS_EOF\'\n'
+        f'COMPLETIONS_DIR=$(find "$WORKSPACE_ROOT" -maxdepth 3 -path \'*/{nexus_dir}/tasks/completions\' -type d 2>/dev/null | head -1)\n'
+        f'if [ -z "$COMPLETIONS_DIR" ]; then COMPLETIONS_DIR="$WORKSPACE_ROOT/{nexus_dir}/tasks/completions"; mkdir -p "$COMPLETIONS_DIR"; fi\n'
+        f'cat > "$COMPLETIONS_DIR/completion_summary_{issue_number}.json" << \'NEXUS_EOF\'\n'
         f"{{\n"
         f'  "status": "complete",\n'
         f'  "agent_type": "{agent_type}",\n'
@@ -236,29 +236,42 @@ def scan_for_completions(
     Returns:
         List of detected completion summaries, each parsed and validated.
     """
-    pattern = os.path.join(
-        base_dir, "**", nexus_dir, "tasks", "logs", "**",
-        "completion_summary_*.json",
-    )
     results: List[DetectedCompletion] = []
+    seen_basenames: set[str] = set()
+    patterns = [
+        os.path.join(
+            base_dir, "**", nexus_dir, "tasks", "completions", "**",
+            "completion_summary_*.json",
+        ),
+        os.path.join(
+            base_dir, "**", nexus_dir, "tasks", "logs", "**",
+            "completion_summary_*.json",
+        ),
+    ]
 
-    for path in glob.glob(pattern, recursive=True):
-        match = re.search(r"completion_summary_(\d+)\.json$", path)
-        if not match:
-            continue
-        issue_number = match.group(1)
-        try:
-            with open(path, "r") as f:
-                data = json.load(f)
-            summary = CompletionSummary.from_dict(data)
-            results.append(DetectedCompletion(
-                file_path=path,
-                issue_number=issue_number,
-                summary=summary,
-            ))
-        except json.JSONDecodeError as exc:
-            logger.warning(f"Invalid JSON in {path}: {exc}")
-        except Exception as exc:
-            logger.warning(f"Error reading completion file {path}: {exc}")
+    for pattern in patterns:
+        for path in glob.glob(pattern, recursive=True):
+            basename = os.path.basename(path)
+            if basename in seen_basenames:
+                continue
+
+            match = re.search(r"completion_summary_(\d+)\.json$", path)
+            if not match:
+                continue
+            issue_number = match.group(1)
+            try:
+                with open(path, "r") as f:
+                    data = json.load(f)
+                summary = CompletionSummary.from_dict(data)
+                results.append(DetectedCompletion(
+                    file_path=path,
+                    issue_number=issue_number,
+                    summary=summary,
+                ))
+                seen_basenames.add(basename)
+            except json.JSONDecodeError as exc:
+                logger.warning(f"Invalid JSON in {path}: {exc}")
+            except Exception as exc:
+                logger.warning(f"Error reading completion file {path}: {exc}")
 
     return results

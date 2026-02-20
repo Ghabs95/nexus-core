@@ -55,7 +55,14 @@ spec:
 
     PR: {implementation_pr_url}
 
-    **MERGE POLICY (CRITICAL):**
+    **STEP 1 — ENSURE A PR EXISTS (always required):**
+    Check whether a PR already exists for this issue/branch:
+      `gh pr list --repo <REPO> --head <branch-name> --state open`
+    If no open PR is found, create one:
+      `gh pr create --title "<title>" --body "<body>" --base <base-branch> --head <branch-name> --repo <REPO>`
+    PR creation is ALWAYS allowed regardless of merge policy.
+
+    **STEP 2 — MERGE POLICY (CRITICAL — separate from PR creation):**
     - Check the project's `require_human_merge_approval` setting in project_config.yaml
     - If set to `always`: DO NOT merge. Post a comment:
       `🚀 Deployment ready. PR requires human review before merge.`
@@ -65,16 +72,17 @@ spec:
     - When in doubt, DO NOT merge. Request human approval.
 
     Steps (when merge IS allowed):
-    1. Merge the approved PR into the target branch
-    2. Create a release with proper semantic versioning
-    3. Write clear release notes
-    4. Verify deployment health
-    5. Post deployment status as a comment on the issue
+    1. Ensure PR exists (create if missing)
+    2. Merge the approved PR into the target branch
+    3. Create a release with proper semantic versioning
+    4. Write clear release notes
+    5. Verify deployment health
+    6. Post deployment status as a comment on the issue
 
     Steps (when merge is NOT allowed):
-    1. Verify PR is ready (tests pass, reviews approved)
-    2. Post deployment readiness comment on the issue
-    3. Post `🚀 Deployment ready. PR requires human review before merge.`
+    1. Ensure PR exists (create if missing)
+    2. Verify PR is ready (tests pass, reviews approved)
+    3. Post `🚀 Deployment ready. PR requires human review before merge.` on the issue
     4. Do NOT run any merge command
 
   validation:

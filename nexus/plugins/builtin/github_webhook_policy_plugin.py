@@ -51,6 +51,49 @@ class GithubWebhookPolicyPlugin:
             "repo": repository.get("full_name", "unknown"),
         }
 
+    def parse_issue_comment_event(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return normalized issue_comment event data."""
+        comment = payload.get("comment", {}) or {}
+        issue = payload.get("issue", {}) or {}
+
+        return {
+            "action": payload.get("action"),
+            "comment_id": comment.get("id"),
+            "comment_body": comment.get("body", ""),
+            "comment_author": (comment.get("user", {}) or {}).get("login", ""),
+            "issue_number": str(issue.get("number", "")),
+            "issue": issue,
+        }
+
+    def parse_pull_request_review_event(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return normalized pull_request_review event data."""
+        review = payload.get("review", {}) or {}
+        pr = payload.get("pull_request", {}) or {}
+
+        return {
+            "action": payload.get("action"),
+            "pr_number": pr.get("number"),
+            "review_state": review.get("state"),
+            "reviewer": (review.get("user", {}) or {}).get("login", ""),
+        }
+
+    def dispatch_event(self, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Dispatch raw GitHub event type to normalized route + event payload."""
+        if event_type == "issues":
+            return {"route": "issues", "event": self.parse_issue_event(payload)}
+        if event_type == "issue_comment":
+            return {"route": "issue_comment", "event": self.parse_issue_comment_event(payload)}
+        if event_type == "pull_request":
+            return {"route": "pull_request", "event": self.parse_pull_request_event(payload)}
+        if event_type == "pull_request_review":
+            return {
+                "route": "pull_request_review",
+                "event": self.parse_pull_request_review_event(payload),
+            }
+        if event_type == "ping":
+            return {"route": "ping", "event": {}}
+        return {"route": "unhandled", "event": {"event_type": event_type}}
+
     def should_notify_pr_merged(self, merge_policy: str) -> bool:
         """Return True when PR merge notifications should be emitted."""
         return str(merge_policy or "always") != "always"
@@ -150,6 +193,33 @@ class GithubWebhookPolicyPlugin:
             f"Policy: `{merge_policy}`\n\n"
             f"🔗 {event.get('url', '')}"
         )
+
+    def determine_project_from_issue(self, issue: dict[str, Any]) -> str:
+        """Best-effort project key detection from issue labels/body."""
+        labels = issue.get("labels", []) or []
+        for label in labels:
+            label_name = ""
+            if isinstance(label, dict):
+                label_name = str(label.get("name", "")).lower()
+            elif isinstance(label, str):
+                label_name = label.lower()
+
+            if "casit" in label_name or "caseitalia" in label_name:
+                return "casit"
+            if "wlbl" in label_name or "wallible" in label_name:
+                return "wlbl"
+            if "bm" in label_name or "biome" in label_name:
+                return "bm"
+
+        body = str(issue.get("body", "")).lower()
+        if "caseitalia" in body or "case-italia" in body:
+            return "casit"
+        if "wallible" in body or "wlbl" in body:
+            return "wlbl"
+        if "biome" in body or "biomejs" in body:
+            return "bm"
+
+        return "casit"
 
 
 def register_plugins(registry) -> None:
