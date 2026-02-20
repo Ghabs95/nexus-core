@@ -268,6 +268,7 @@ class AIOrchestrator:
             process = subprocess.Popen(
                 cmd,
                 cwd=workspace_dir,
+                stdin=subprocess.DEVNULL,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
             )
@@ -315,6 +316,7 @@ class AIOrchestrator:
             process = subprocess.Popen(
                 cmd,
                 cwd=workspace_dir,
+                stdin=subprocess.DEVNULL,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
             )
