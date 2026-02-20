@@ -21,6 +21,7 @@ from nexus.core.models import (
     WorkflowStep,
 )
 from nexus.core.orchestrator import AIOrchestrator
+from nexus.core.process_orchestrator import AgentRuntime, ProcessOrchestrator
 from nexus.core.workflow import WorkflowDefinition, WorkflowEngine
 
 __all__ = [
@@ -32,6 +33,9 @@ __all__ = [
     "WorkflowEngine",
     "WorkflowDefinition",
     "AIOrchestrator",
+    # Process Orchestration
+    "AgentRuntime",
+    "ProcessOrchestrator",
     # Completion Protocol
     "CompletionSummary",
     "DetectedCompletion",
