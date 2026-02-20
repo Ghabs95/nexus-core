@@ -30,7 +30,7 @@
 
 ### 3. Open & Pluggable
 - Apache 2.0 license (corporate-friendly)
-- Works with any AI provider (GPT-4, Claude, Gemini, Copilot, local models)
+- Works with any AI provider (Copilot, Gemini, soon Claude and Codex)
 - Pluggable storage (File, PostgreSQL, Redis, S3)
 - Multi-platform (GitHub, GitLab, Bitbucket)
 
@@ -155,7 +155,7 @@
 **"Nexus Core is the only AI workflow framework that treats Git as the system of record. Every agent decision becomes an issue, every implementation becomes a PR. Get complete traceability, reliability, and integration with your existing development workflow. Open source (Apache 2.0)."**
 
 ### Long (Blog post intro)
-**"Most AI frameworks log agent actions to files or databases — ephemeral records that disappear or require custom queries. Nexus Core takes a different approach: every agent action creates a permanent artifact in your Git platform. Issues track decisions, comments preserve reasoning, PRs link to implementations. The result is complete traceability integrated with your existing development workflow. Battle-tested reliability features (retry, timeout, fallback) ensure production readiness. Works with any AI provider (GPT-4, Claude, Gemini, Copilot, local models). Apache 2.0 licensed."**
+**"Most AI frameworks log agent actions to files or databases — ephemeral records that disappear or require custom queries. Nexus Core takes a different approach: every agent action creates a permanent artifact in your Git platform. Issues track decisions, comments preserve reasoning, PRs link to implementations. The result is complete traceability integrated with your existing development workflow. Battle-tested reliability features (retry, timeout, fallback) ensure production readiness. Works with any AI provider (Copilot, Gemini, soon Claude and Codex). Apache 2.0 licensed."**
 
 ---
 
@@ -184,7 +184,7 @@
 **Features:**
 - ✅ Git-native workflows (issues, PRs, comments)
 - ✅ Production reliability (retry, timeout, fallback)
-- ✅ Multi-provider AI (GPT-4, Claude, Gemini, Copilot)
+- ✅ Multi-provider AI (Copilot, Gemini, soon Claude and Codex)
 - ✅ Pluggable architecture (storage, platforms, notifications)
 - ✅ Apache 2.0 license (corporate-friendly)
 
@@ -195,8 +195,8 @@
 - CI/CD orchestration
 
 **Call to Action:**
-- Try it: `pip install nexus-core`
-- Docs: https://nexus-core.readthedocs.io
+- Try it: `pip install nexus-core` *(Coming soon to PyPI)*
+- Docs: https://nexus-core.readthedocs.io *(Coming soon!)*
 - GitHub: https://github.com/Ghabs95/nexus-core
 
 ---

@@ -193,7 +193,7 @@ Searchable forever in Git ✅
      ▼          ▼
 ┌─────────┐  ┌──────────┐
 │Git API  │  │ AI APIs  │
-│Issues   │  │GPT/Claude│
+│Issues   │  │Copilot/Gemini│
 │PRs      │  │Gemini    │
 │Comments │  │Copilot   │
 └─────────┘  └──────────┘

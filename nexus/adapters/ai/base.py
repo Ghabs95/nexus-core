@@ -21,7 +21,7 @@ class ExecutionContext:
 
 
 class AIProvider(ABC):
-    """Abstract interface for AI providers (Copilot, OpenAI, Claude, etc.)."""
+    """Abstract interface for AI providers (Copilot, Gemini, etc.)."""
 
     @abstractmethod
     async def execute_agent(self, context: ExecutionContext) -> AgentResult:

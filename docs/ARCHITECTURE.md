@@ -34,7 +34,7 @@
 **Problems:**
 - ❌ Can't use Slack, Discord, web interface
 - ❌ Can't switch from GitHub to GitLab
-- ❌ Can't use OpenAI API, Claude API
+- ❌ Can't use Claude API, Codex API
 - ❌ Can't scale to PostgreSQL
 - ❌ Hard to test (tightly coupled)
 - ❌ Not reusable by other teams
@@ -105,7 +105,7 @@
 - ✅ **Multi-channel input**: Telegram, Slack, Webhook, CLI
 - ✅ **Storage flexibility**: File → Postgres → Redis as you grow
 - ✅ **Git platform agnostic**: GitHub, GitLab, Bitbucket
-- ✅ **AI provider choice**: Copilot, GPT-4, Claude, Gemini, local
+- ✅ **AI provider choice**: Copilot, Gemini, soon Claude and Codex
 - ✅ **Testable**: Mock any adapter
 - ✅ **Reusable**: Ship as library, deploy anywhere
 - ✅ **Horizontally scalable**: Distributed workflows
@@ -256,8 +256,8 @@ class AIProvider(ABC):
 
 **Implementations**:
 - `CopilotCLIProvider` - GitHub Copilot CLI
-- `OpenAIProvider` - GPT-4 API
-- `AnthropicProvider` - Claude API
+- `OpenAIProvider` - GPT-4 API (Coming soon)
+- `AnthropicProvider` - Claude API (Coming soon)
 - `GeminiCLIProvider` - Google Gemini CLI
 - `LocalModelProvider` - Ollama, LM Studio
 
