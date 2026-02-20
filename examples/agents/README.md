@@ -49,7 +49,7 @@ python ../translator/to_markdown.py triage-agent.yaml > TRIAGE-AGENT.md
 
 When an agent completes its work, it should write a `completion_summary.json` file in the task logs directory. This file provides structured information about the work completed and recommendations for the next step.
 
-**File location:** `.nexus/tasks/logs/completion_summary_{issue_number}.json`
+**File location:** `.nexus/tasks/completions/completion_summary_{issue_number}.json`
 
 **Schema:**
 
@@ -103,10 +103,10 @@ completion_data = {
     "next_agent": "code_reviewer"
 }
 
-# Write to logs directory
-log_dir = os.path.expandvars("$HOME/.nexus/tasks/logs")
-os.makedirs(log_dir, exist_ok=True)
-with open(os.path.join(log_dir, f"completion_summary_{issue_id}.json"), "w") as f:
+# Write to completions directory
+completion_dir = os.path.expandvars("$HOME/.nexus/tasks/completions")
+os.makedirs(completion_dir, exist_ok=True)
+with open(os.path.join(completion_dir, f"completion_summary_{issue_id}.json"), "w") as f:
     json.dump(completion_data, f, indent=2)
 ```
 

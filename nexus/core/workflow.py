@@ -1,5 +1,6 @@
 """Basic workflow engine - simplified version for MVP."""
 import logging
+import math
 import os
 import re
 from datetime import datetime, timezone
@@ -132,6 +133,25 @@ class WorkflowEngine:
         logger.info(f"Resumed workflow {workflow_id}")
         return workflow
 
+    async def cancel_workflow(self, workflow_id: str) -> Workflow:
+        """Cancel workflow execution."""
+        workflow = await self.storage.load_workflow(workflow_id)
+        if not workflow:
+            raise ValueError(f"Workflow {workflow_id} not found")
+
+        if workflow.state not in (WorkflowState.RUNNING, WorkflowState.PAUSED):
+            raise ValueError(f"Cannot cancel workflow in state {workflow.state.value}")
+
+        workflow.state = WorkflowState.CANCELLED
+        workflow.updated_at = datetime.now(timezone.utc)
+        workflow.completed_at = datetime.now(timezone.utc)
+
+        await self.storage.save_workflow(workflow)
+        await self._audit(workflow_id, "WORKFLOW_CANCELLED", {})
+
+        logger.info(f"Cancelled workflow {workflow_id}")
+        return workflow
+
     async def complete_step(
         self, workflow_id: str, step_num: int, outputs: dict, error: Optional[str] = None
     ) -> Workflow:
@@ -148,7 +168,34 @@ class WorkflowEngine:
         step.completed_at = datetime.now(timezone.utc)
         step.outputs = outputs
         step.error = error
-        step.status = StepStatus.FAILED if error else StepStatus.COMPLETED
+
+        if error:
+            # Determine effective max retries (step-level overrides agent-level)
+            max_retries = step.retry if step.retry is not None else step.agent.max_retries
+            if step.retry_count < max_retries:
+                step.retry_count += 1
+                step.status = StepStatus.PENDING
+                step.completed_at = None
+                step.error = None
+                # Exponential backoff delay (seconds): 2^(retry_count-1), capped at 60 s
+                backoff = min(2 ** (step.retry_count - 1), 60)
+                workflow.updated_at = datetime.now(timezone.utc)
+                await self.storage.save_workflow(workflow)
+                await self._audit(workflow_id, "STEP_RETRY", {
+                    "step_num": step_num,
+                    "step_name": step.name,
+                    "retry_count": step.retry_count,
+                    "backoff_seconds": backoff,
+                    "error": error,
+                })
+                logger.info(
+                    f"Retrying step {step_num} in workflow {workflow_id} "
+                    f"(attempt {step.retry_count}/{max_retries}, backoff {backoff}s)"
+                )
+                return workflow
+            step.status = StepStatus.FAILED
+        else:
+            step.status = StepStatus.COMPLETED
         
         activated_step: Optional[WorkflowStep] = None
 
@@ -221,6 +268,27 @@ class WorkflowEngine:
                 )
 
         return workflow
+
+    @staticmethod
+    def render_prompt(template: str, context: Dict[str, Any]) -> str:
+        """Substitute ``{variable}`` placeholders in *template* with values from *context*.
+
+        Uses :py:meth:`str.format_map` with a safe mapping so that unknown
+        placeholders are left intact rather than raising :py:exc:`KeyError`.
+
+        Args:
+            template: Prompt template string, e.g. ``"Fix issue: {description}"``.
+            context: Mapping of variable names to replacement values.
+
+        Returns:
+            The rendered string with known placeholders replaced.
+        """
+
+        class _SafeDict(dict):  # type: ignore[type-arg]
+            def __missing__(self, key: str) -> str:
+                return "{" + key + "}"
+
+        return template.format_map(_SafeDict(context))
 
     def _build_step_context(self, workflow: Workflow) -> Dict[str, Any]:
         """Build evaluation context from all completed/skipped step outputs."""

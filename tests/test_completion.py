@@ -131,7 +131,7 @@ class TestGenerateCompletionInstructions:
 
     def test_custom_nexus_dir(self):
         text = generate_completion_instructions("1", "triage", nexus_dir=".custom")
-        assert ".custom/tasks/logs" in text
+        assert ".custom/tasks/completions" in text
 
 
 # ---------------------------------------------------------------------------
@@ -141,11 +141,11 @@ class TestGenerateCompletionInstructions:
 
 class TestScanForCompletions:
     def test_finds_completion_files(self, tmp_path):
-        # Create valid structure: base/.nexus/tasks/logs/completion_summary_42.json
-        log_dir = tmp_path / ".nexus" / "tasks" / "logs"
-        log_dir.mkdir(parents=True)
+        # Create valid structure: base/.nexus/tasks/completions/completion_summary_42.json
+        completion_dir = tmp_path / ".nexus" / "tasks" / "completions"
+        completion_dir.mkdir(parents=True)
         data = {"status": "complete", "agent_type": "debug", "summary": "done"}
-        (log_dir / "completion_summary_42.json").write_text(json.dumps(data))
+        (completion_dir / "completion_summary_42.json").write_text(json.dumps(data))
 
         results = scan_for_completions(str(tmp_path))
         assert len(results) == 1
@@ -153,31 +153,41 @@ class TestScanForCompletions:
         assert results[0].summary.agent_type == "debug"
 
     def test_ignores_invalid_json(self, tmp_path):
-        log_dir = tmp_path / ".nexus" / "tasks" / "logs"
-        log_dir.mkdir(parents=True)
-        (log_dir / "completion_summary_99.json").write_text("not json{")
+        completion_dir = tmp_path / ".nexus" / "tasks" / "completions"
+        completion_dir.mkdir(parents=True)
+        (completion_dir / "completion_summary_99.json").write_text("not json{")
 
         results = scan_for_completions(str(tmp_path))
         assert len(results) == 0
 
     def test_custom_nexus_dir(self, tmp_path):
-        log_dir = tmp_path / ".custom" / "tasks" / "logs"
-        log_dir.mkdir(parents=True)
+        completion_dir = tmp_path / ".custom" / "tasks" / "completions"
+        completion_dir.mkdir(parents=True)
         data = {"status": "complete", "agent_type": "triage"}
-        (log_dir / "completion_summary_7.json").write_text(json.dumps(data))
+        (completion_dir / "completion_summary_7.json").write_text(json.dumps(data))
 
         results = scan_for_completions(str(tmp_path), nexus_dir=".custom")
         assert len(results) == 1
         assert results[0].issue_number == "7"
 
     def test_dedup_key_includes_agent_type(self, tmp_path):
-        log_dir = tmp_path / ".nexus" / "tasks" / "logs"
-        log_dir.mkdir(parents=True)
+        completion_dir = tmp_path / ".nexus" / "tasks" / "completions"
+        completion_dir.mkdir(parents=True)
         data = {"status": "complete", "agent_type": "debug"}
-        (log_dir / "completion_summary_10.json").write_text(json.dumps(data))
+        (completion_dir / "completion_summary_10.json").write_text(json.dumps(data))
 
         results = scan_for_completions(str(tmp_path))
         assert results[0].dedup_key == "10:debug:completion_summary_10.json"
+
+    def test_reads_legacy_logs_path_for_backward_compat(self, tmp_path):
+        log_dir = tmp_path / ".nexus" / "tasks" / "logs"
+        log_dir.mkdir(parents=True)
+        data = {"status": "complete", "agent_type": "debug", "summary": "legacy"}
+        (log_dir / "completion_summary_88.json").write_text(json.dumps(data))
+
+        results = scan_for_completions(str(tmp_path))
+        assert len(results) == 1
+        assert results[0].issue_number == "88"
 
 
 # ---------------------------------------------------------------------------
