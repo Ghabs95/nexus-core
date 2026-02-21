@@ -424,6 +424,15 @@ class ProcessOrchestrator:
                     self._runtime.send_alert(fail_msg)
 
             except Exception as exc:
+                if isinstance(exc, ValueError) and "Completion agent mismatch" in str(exc):
+                    dedup_seen.add(comment_key)
+                    logger.info(
+                        "Skipping stale completion for issue #%s (%s): %s",
+                        detection.issue_number,
+                        detection.summary.agent_type,
+                        exc,
+                    )
+                    continue
                 logger.warning(
                     f"Error processing completion for issue "
                     f"#{detection.issue_number}: {exc}",

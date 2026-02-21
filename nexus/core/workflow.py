@@ -344,7 +344,11 @@ class WorkflowEngine:
                 default_val = route.get("default")
                 default_target = target_name or (default_val if isinstance(default_val, str) else None)
                 continue
-            if when and target_name and self._evaluate_condition(when, context):
+            if when and target_name and self._evaluate_condition(
+                when,
+                context,
+                default_on_error=False,
+            ):
                 return self._find_step_by_name(workflow, target_name)
         if default_target:
             return self._find_step_by_name(workflow, default_target)
@@ -400,7 +404,12 @@ class WorkflowEngine:
                     context.update(step.outputs)
         return context
 
-    def _evaluate_condition(self, condition: Optional[str], context: Dict[str, Any]) -> bool:
+    def _evaluate_condition(
+        self,
+        condition: Optional[str],
+        context: Dict[str, Any],
+        default_on_error: bool = True,
+    ) -> bool:
         """
         Evaluate a Python expression against the step context.
 
@@ -409,18 +418,25 @@ class WorkflowEngine:
         - the expression evaluates to a truthy value
 
         Returns False when the expression evaluates to a falsy value.
-        Logs a warning and returns True (safe default) if the expression raises.
+        Logs a warning and returns *default_on_error* if the expression raises.
         """
         if not condition:
             return True
         try:
-            result = eval(condition, {"__builtins__": {}}, context)  # noqa: S307
+            eval_locals = dict(context)
+            eval_locals.setdefault("true", True)
+            eval_locals.setdefault("false", False)
+            eval_locals.setdefault("null", None)
+            result = eval(condition, {"__builtins__": {}}, eval_locals)  # noqa: S307
             return bool(result)
         except Exception as exc:
             logger.warning(
-                f"Condition evaluation error for '{condition}': {exc}. Defaulting to True."
+                "Condition evaluation error for '%s': %s. Defaulting to %s.",
+                condition,
+                exc,
+                default_on_error,
             )
-            return True
+            return default_on_error
 
     async def get_audit_log(self, workflow_id: str) -> list:
         """Get audit log for a workflow."""

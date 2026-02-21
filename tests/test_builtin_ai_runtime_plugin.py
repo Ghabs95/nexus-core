@@ -40,7 +40,7 @@ def test_copilot_analysis_timeout_respects_config(monkeypatch):
 
     def _fake_run(*_args, **kwargs):
         captured["timeout"] = kwargs.get("timeout")
-        return _FakeCompletedProcess('{"project": "nexus", "type": "feature", "issue_name": "abc"}')
+        return _FakeCompletedProcess('{"project": "nexus", "type": "feature", "task_name": "abc"}')
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
 
@@ -48,6 +48,36 @@ def test_copilot_analysis_timeout_respects_config(monkeypatch):
 
     assert captured["timeout"] == 45
     assert result["project"] == "nexus"
+
+
+def test_gemini_agent_launch_uses_configured_model(monkeypatch, tmp_path):
+    orchestrator = AIOrchestrator({"gemini_model": "gemini-3-pro"})
+    captured = {"cmd": None}
+
+    monkeypatch.setattr(orchestrator, "check_tool_available", lambda _tool: True)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+
+    class _FakePopen:
+        def __init__(self, cmd, **_kwargs):
+            captured["cmd"] = cmd
+            self.pid = 12345
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(subprocess, "Popen", _FakePopen)
+
+    pid = orchestrator._invoke_gemini_agent(
+        agent_prompt="hello",
+        workspace_dir=str(tmp_path),
+        agents_dir=str(tmp_path),
+        base_dir=str(tmp_path),
+        issue_num="55",
+    )
+
+    assert pid == 12345
+    assert "--model" in captured["cmd"]
+    assert "gemini-3-pro" in captured["cmd"]
 
 
 class TestStripCliToolOutput:
@@ -100,3 +130,170 @@ class TestStripCliToolOutput:
     def test_json_not_stripped(self):
         text = '{"project": "nexus", "type": "feature"}'
         assert AIOrchestrator._strip_cli_tool_output(text) == text
+
+
+class TestParseAnalysisResult:
+    def test_parses_fenced_json_result(self):
+        orchestrator = AIOrchestrator()
+
+        output = (
+            "```json\n"
+            '{"project": "nexus", "type": "feature", "task_name": "add-audio-transcription-support"}'
+            "\n```"
+        )
+
+        parsed = orchestrator._parse_analysis_result(output, task="classify")
+
+        assert parsed["project"] == "nexus"
+        assert parsed["type"] == "feature"
+        assert parsed["task_name"] == "add-audio-transcription-support"
+
+    def test_parses_json_embedded_in_text(self):
+        orchestrator = AIOrchestrator()
+
+        output = (
+            "Analysis result:\n"
+            '{"project": "nexus", "type": "feature", "task_name": "abc"}'
+            "\nDone."
+        )
+
+        parsed = orchestrator._parse_analysis_result(output, task="classify")
+
+        assert parsed == {"project": "nexus", "type": "feature", "task_name": "abc"}
+
+
+def test_refusal_text_is_not_accepted_as_transcription(monkeypatch):
+    orchestrator = AIOrchestrator()
+
+    monkeypatch.setattr(orchestrator, "check_tool_available", lambda _tool: True)
+    monkeypatch.setattr("os.path.exists", lambda _path: True)
+    monkeypatch.setattr("shutil.copy2", lambda _src, _dst: None)
+
+    def _fake_run(*_args, **_kwargs):
+        return _FakeCompletedProcess(
+            "I am sorry, but I cannot directly transcribe audio files. "
+            "My capabilities are limited to text-based interactions."
+        )
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    try:
+        orchestrator._transcribe_with_copilot_cli("temp_voice.ogg")
+        assert False, "Expected refusal text to be rejected"
+    except Exception as exc:
+        assert "non-transcription content" in str(exc)
+
+
+def test_detects_common_transcription_refusal_markers():
+    refusal = "My capabilities are limited to text-based interactions and I cannot transcribe audio."
+    assert AIOrchestrator._is_transcription_refusal(refusal) is True
+    assert AIOrchestrator._is_transcription_refusal("ship issue 53 fix now") is False
+
+
+def test_gemini_file_reference_echo_is_rejected(monkeypatch):
+    orchestrator = AIOrchestrator()
+
+    monkeypatch.setattr(orchestrator, "check_tool_available", lambda _tool: True)
+    monkeypatch.setattr("os.path.exists", lambda _path: True)
+
+    def _fake_run(*_args, **_kwargs):
+        return _FakeCompletedProcess("File: temp_voice.ogg")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    try:
+        orchestrator._transcribe_with_gemini_cli("temp_voice.ogg")
+        assert False, "Expected file-reference echo to be rejected"
+    except Exception as exc:
+        assert "non-transcription content" in str(exc)
+
+
+def test_copilot_tool_debug_output_is_rejected(monkeypatch):
+    orchestrator = AIOrchestrator()
+
+    monkeypatch.setattr(orchestrator, "check_tool_available", lambda _tool: True)
+    monkeypatch.setattr("os.path.exists", lambda _path: True)
+    monkeypatch.setattr("shutil.copy2", lambda _src, _dst: None)
+
+    debug_output = (
+        "✗ Check whisper availability\n"
+        "$ python3 -c \"import whisper\"\n"
+        "Permission denied and could not request permission from user\n"
+        "I'm unable to transcribe the audio file."
+    )
+
+    def _fake_run(*_args, **_kwargs):
+        return _FakeCompletedProcess(debug_output)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    try:
+        orchestrator._transcribe_with_copilot_cli("temp_voice.ogg")
+        assert False, "Expected tool-debug output to be rejected"
+    except Exception as exc:
+        assert "non-transcription content" in str(exc)
+
+
+def test_copilot_transcription_uses_add_dir(monkeypatch):
+    orchestrator = AIOrchestrator()
+    captured = {"cmd": None}
+
+    monkeypatch.setattr(orchestrator, "check_tool_available", lambda _tool: True)
+    monkeypatch.setattr("os.path.exists", lambda _path: True)
+    monkeypatch.setattr("shutil.copy2", lambda _src, _dst: None)
+
+    def _fake_run(cmd, **_kwargs):
+        captured["cmd"] = cmd
+        return _FakeCompletedProcess("hello from audio")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    text = orchestrator._transcribe_with_copilot_cli("temp_voice.ogg")
+
+    assert text == "hello from audio"
+    assert "--add-dir" in captured["cmd"]
+    assert "--add-file" not in captured["cmd"]
+
+
+def test_transcription_primary_uses_gemini_by_default(monkeypatch):
+    orchestrator = AIOrchestrator()
+    called = {"copilot": False, "gemini": False}
+
+    monkeypatch.setattr(orchestrator, "get_fallback_tool", lambda _primary: None)
+
+    def _copilot(_path):
+        called["copilot"] = True
+        return "transcribed"
+
+    def _gemini(_path):
+        called["gemini"] = True
+        return "transcribed"
+
+    monkeypatch.setattr(orchestrator, "_transcribe_with_copilot_cli", _copilot)
+    monkeypatch.setattr(orchestrator, "_transcribe_with_gemini_cli", _gemini)
+
+    result = orchestrator.transcribe_audio_cli("temp_voice.ogg")
+
+    assert result == "transcribed"
+    assert called["copilot"] is False
+    assert called["gemini"] is True
+
+
+def test_copilot_transcription_timeout_respects_config(monkeypatch):
+    orchestrator = AIOrchestrator({"copilot_transcription_timeout": 150})
+    captured = {"timeout": None}
+
+    monkeypatch.setattr(orchestrator, "check_tool_available", lambda _tool: True)
+    monkeypatch.setattr("os.path.exists", lambda _path: True)
+    monkeypatch.setattr("shutil.copy2", lambda _src, _dst: None)
+
+    def _fake_run(*_args, **kwargs):
+        captured["timeout"] = kwargs.get("timeout")
+        return _FakeCompletedProcess("voice transcript")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    text = orchestrator._transcribe_with_copilot_cli("temp_voice.ogg")
+
+    assert text == "voice transcript"
+    assert captured["timeout"] == 150

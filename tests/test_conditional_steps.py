@@ -24,13 +24,19 @@ def make_agent(name: str = "test_agent") -> Agent:
     return Agent(name=name, display_name=name, description="test", timeout=60, max_retries=1)
 
 
-def make_step(step_num: int, name: str, condition: Optional[str] = None) -> WorkflowStep:
+def make_step(
+    step_num: int,
+    name: str,
+    condition: Optional[str] = None,
+    routes: Optional[List[Dict[str, Any]]] = None,
+) -> WorkflowStep:
     return WorkflowStep(
         step_num=step_num,
         name=name,
         agent=make_agent(),
         prompt_template="do something",
         condition=condition,
+        routes=routes or [],
     )
 
 
@@ -126,6 +132,10 @@ class TestEvaluateCondition:
 
     def test_falsy_zero(self):
         assert self.engine._evaluate_condition("0", {}) is False
+
+    def test_yaml_style_boolean_literals_supported(self):
+        assert self.engine._evaluate_condition("flag == true", {"flag": True}) is True
+        assert self.engine._evaluate_condition("flag == false", {"flag": False}) is True
 
 
 # ---------------------------------------------------------------------------
@@ -233,3 +243,28 @@ async def test_condition_skips_middle_step_runs_last():
     assert result.steps[1].status == StepStatus.SKIPPED
     assert result.steps[2].status == StepStatus.RUNNING
     assert result.state == WorkflowState.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_router_condition_error_does_not_match_first_branch():
+    """Missing route vars should not be treated as True for router branches."""
+    step1 = make_step(1, "review")
+    route = make_step(
+        2,
+        "route_review",
+        routes=[
+            {"when": "review_status == 'approved'", "then": "compliance"},
+            {"default": "develop"},
+        ],
+    )
+    compliance = make_step(3, "compliance")
+    develop = make_step(4, "develop")
+    wf = make_workflow([step1, route, compliance, develop])
+    engine, _ = await engine_with_workflow(wf)
+
+    result = await engine.complete_step("wf-test", step_num=1, outputs={"next_agent": "developer"})
+
+    assert result.steps[1].status == StepStatus.SKIPPED
+    assert result.steps[2].status == StepStatus.PENDING
+    assert result.steps[3].status == StepStatus.RUNNING
+    assert result.current_step == 4
