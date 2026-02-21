@@ -79,17 +79,17 @@ spec:
     2. Merge the approved PR into the target branch
     3. Create a release with proper semantic versioning
     4. Write clear release notes
-     5. Verify validation evidence exists for implementation changes:
+    5. Verify validation evidence exists for implementation changes:
        - at least syntax/static checks appropriate to the stack
-        (examples: `python3 -m py_compile ...`, `pytest -q`, `npm run lint`, `flutter analyze`)
+         (examples: `python3 -m py_compile ...`, `pytest -q`, `npm run lint`, `flutter analyze`)
        - if evidence is missing or failing, stop and route back to implementation (do not close/deploy as complete)
-     6. Verify deployment health
-     7. Post deployment status as a comment on the issue and include validation evidence source
+    6. Verify deployment health
+    7. Post deployment status as a comment on the issue and include validation evidence source
        (CI/check logs and outcome summary)
 
     Steps (when merge is NOT allowed):
     1. Ensure PR exists (create if missing)
-     2. Verify PR is ready (tests pass/reviews approved and validation evidence present)
+    2. Verify PR is ready (tests pass/reviews approved and validation evidence present)
     3. Post `🚀 Deployment ready. PR requires human review before merge.` on the issue
     4. Do NOT run any merge command
 

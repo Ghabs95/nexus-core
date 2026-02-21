@@ -255,7 +255,9 @@ def scan_for_completions(
             issue_number = match.group(1)
             candidates_by_issue.setdefault(issue_number, []).append(path)
 
-    for issue_number, candidate_paths in sorted(candidates_by_issue.items(), key=lambda item: int(item[0])):
+    for issue_number, candidate_paths in sorted(
+        candidates_by_issue.items(), key=lambda item: int(item[0])
+    ):
         sorted_paths = sorted(candidate_paths, key=os.path.getmtime, reverse=True)
         parsed = False
         for path in sorted_paths:
