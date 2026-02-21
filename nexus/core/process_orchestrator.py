@@ -242,10 +242,9 @@ class ProcessOrchestrator:
     Args:
         runtime: Host-provided implementation of :class:`AgentRuntime`.
         complete_step_fn: Async callable with signature
-            ``(issue_number: str, agent_type: str, outputs: dict) -> Optional[Workflow]``.
+            ``(issue_number: str, agent_type: str, outputs: dict,
+            event_id: str = "") -> Optional[Workflow]``.
             Typically ``WorkflowStateEnginePlugin.complete_step_for_issue``.
-            Signature: ``(issue_number: str, agent_type: str, outputs: dict,
-            event_id: str) -> Optional[Workflow]``.
         stuck_threshold_seconds: Seconds of inactivity before an agent is
             considered stuck.  Defaults to 3600 (1 hour).
         nexus_dir: Name of the hidden nexus directory inside project roots.
@@ -651,9 +650,13 @@ class ProcessOrchestrator:
         age = time.time() - os.path.getmtime(log_file)
 
         # True orphan: workflow expects a RUNNING step but there is no tracker/runtime PID.
-        # If we do have a PID but it's dead, let detect_dead_agents() handle it consistently.
+        # If we have a dead PID from the tracker, let detect_dead_agents() handle it.
+        # If the dead PID came only from check_log_timeout() (no tracker entry),
+        # fall through to the orphan-handling logic so the issue is not silently dropped.
         if effective_pid and not self._runtime.is_pid_alive(effective_pid):
-            return
+            if tracker_pid:
+                return
+            effective_pid = None
 
         if not effective_pid:
             expected_agent = self._runtime.get_expected_running_agent(str(issue_num))

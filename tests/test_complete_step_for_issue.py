@@ -312,6 +312,7 @@ async def test_complete_step_for_issue_idempotency_duplicate_suppressed(tmp_path
     updated2 = await plugin.complete_step_for_issue("idem", "triage", {}, event_id="ev-001")
     # step1 must still be RUNNING (the ledger blocked the advancement).
     assert step1.status == StepStatus.RUNNING
+    assert updated2 is not None
 
 
 @pytest.mark.asyncio
