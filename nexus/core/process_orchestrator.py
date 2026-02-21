@@ -187,6 +187,14 @@ class AgentRuntime(ABC):
         """
         return True
 
+    def get_latest_issue_log(self, issue_number: str) -> Optional[str]:
+        """Return latest session log path for *issue_number*, if available.
+
+        Host runtimes can override this to expose issue-scoped task/session log
+        locations for richer operator alerts.
+        """
+        return None
+
     # --- Default OS-level process helpers (rarely need overriding) ---
 
     def is_pid_alive(self, pid: int) -> bool:
@@ -532,6 +540,8 @@ class ProcessOrchestrator:
             crashed_tool = agent_data.get("tool", "")
             age_min = (now - launch_ts) / 60
             will_retry = self._runtime.should_retry(issue_num, agent_type)
+            latest_log = self._runtime.get_latest_issue_log(str(issue_num))
+            log_suffix = f"\nLog: {latest_log}" if latest_log else ""
 
             logger.warning(
                 f"💀 Dead agent: issue #{issue_num} ({agent_type}, "
@@ -550,6 +560,7 @@ class ProcessOrchestrator:
                     f"Issue: #{issue_num}\n"
                     f"Agent: {agent_type} (PID {pid}, tool: {crashed_tool})\n"
                     f"Status: Process exited without completion, retry scheduled"
+                    f"{log_suffix}"
                 )
                 if not self._runtime.send_alert(msg):
                     # Alert failed — retry on next poll without mutating state.
@@ -587,6 +598,7 @@ class ProcessOrchestrator:
                     f"Agent: {agent_type} (PID {pid})\n"
                     f"Status: Process exited without completion, "
                     f"max retries reached\n\n"
+                    f"{f'Log: {latest_log}\\n' if latest_log else ''}"
                     f"Use /reprocess to retry"
                 )
                 if not self._runtime.send_alert(msg):

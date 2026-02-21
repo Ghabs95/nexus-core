@@ -185,6 +185,51 @@ class TestScanForCompletions:
         results = scan_for_completions(str(tmp_path))
         assert results[0].dedup_key == "10:debug:completion_summary_10.json"
 
+    def test_uses_newest_completion_per_issue_across_paths(self, tmp_path):
+        older_dir = tmp_path / ".nexus" / "tasks" / "project_a" / "completions"
+        newer_dir = tmp_path / "repo" / ".nexus" / "tasks" / "project_b" / "completions"
+        older_dir.mkdir(parents=True)
+        newer_dir.mkdir(parents=True)
+
+        older = older_dir / "completion_summary_44.json"
+        newer = newer_dir / "completion_summary_44.json"
+
+        older.write_text(json.dumps({"status": "complete", "agent_type": "deployer"}))
+        newer.write_text(json.dumps({"status": "complete", "agent_type": "writer"}))
+
+        older_ts = 1_700_000_000
+        newer_ts = 1_700_000_100
+        os.utime(older, (older_ts, older_ts))
+        os.utime(newer, (newer_ts, newer_ts))
+
+        results = scan_for_completions(str(tmp_path))
+        assert len(results) == 1
+        assert results[0].issue_number == "44"
+        assert results[0].summary.agent_type == "writer"
+        assert str(results[0].file_path).endswith("repo/.nexus/tasks/project_b/completions/completion_summary_44.json")
+
+    def test_falls_back_to_older_valid_when_newest_invalid(self, tmp_path):
+        older_dir = tmp_path / ".nexus" / "tasks" / "project_a" / "completions"
+        newer_dir = tmp_path / "repo" / ".nexus" / "tasks" / "project_b" / "completions"
+        older_dir.mkdir(parents=True)
+        newer_dir.mkdir(parents=True)
+
+        older = older_dir / "completion_summary_52.json"
+        newer = newer_dir / "completion_summary_52.json"
+
+        older.write_text(json.dumps({"status": "complete", "agent_type": "reviewer"}))
+        newer.write_text("not-json")
+
+        older_ts = 1_700_000_000
+        newer_ts = 1_700_000_100
+        os.utime(older, (older_ts, older_ts))
+        os.utime(newer, (newer_ts, newer_ts))
+
+        results = scan_for_completions(str(tmp_path))
+        assert len(results) == 1
+        assert results[0].issue_number == "52"
+        assert results[0].summary.agent_type == "reviewer"
+
 
 # ---------------------------------------------------------------------------
 # DetectedCompletion
