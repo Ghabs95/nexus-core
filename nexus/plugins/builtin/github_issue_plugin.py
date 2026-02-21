@@ -126,7 +126,21 @@ class GitHubIssueCLIPlugin:
             result = self._run_with_retry(cmd, max_attempts=self.max_attempts)
             return json.loads(result.stdout or "{}")
         except Exception as exc:
-            logger.error("Failed to read issue %s: %s", issue_number, exc)
+            message = str(exc)
+            not_found_markers = [
+                "returned non-zero exit status 1",
+                "Could not resolve to an issue",
+                "not found",
+            ]
+            if any(marker in message for marker in not_found_markers):
+                logger.debug(
+                    "Issue %s not found in repo %s while probing: %s",
+                    issue_number,
+                    self.repo,
+                    message,
+                )
+            else:
+                logger.error("Failed to read issue %s: %s", issue_number, exc)
             return None
 
     def update_issue_body(self, issue_number: str, body: str) -> bool:

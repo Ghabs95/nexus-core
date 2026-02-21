@@ -8,6 +8,7 @@ from nexus.adapters.ai.base import AIProvider
 from nexus.adapters.git.base import GitPlatform
 from nexus.adapters.notifications.base import NotificationChannel
 from nexus.adapters.storage.base import StorageBackend
+from nexus.adapters.transcription.base import TranscriptionProvider
 
 
 class PluginKind(Enum):
@@ -18,6 +19,7 @@ class PluginKind(Enum):
     NOTIFICATION_CHANNEL = "notification_channel"
     STORAGE_BACKEND = "storage_backend"
     INPUT_ADAPTER = "input_adapter"
+    TRANSCRIPTION_PROVIDER = "transcription_provider"
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,14 @@ class StorageBackendPlugin(Protocol):
 
     def __call__(self, config: Dict[str, Any]) -> StorageBackend:
         """Build and return a StorageBackend implementation."""
+
+
+@runtime_checkable
+class TranscriptionProviderPlugin(Protocol):
+    """Protocol for transcription provider plugin factories."""
+
+    def __call__(self, config: Dict[str, Any]) -> TranscriptionProvider:
+        """Build and return a TranscriptionProvider implementation."""
 
 
 def normalize_plugin_name(name: str) -> str:

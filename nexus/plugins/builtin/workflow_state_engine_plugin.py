@@ -1,12 +1,14 @@
 """Built-in plugin: workflow state engine adapter for issue-centric operations."""
 
+import ast
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
 from nexus.adapters.storage.file import FileStorage
 from nexus.core.workflow import WorkflowDefinition, WorkflowEngine
-from nexus.core.models import WorkflowState
+from nexus.core.models import StepStatus, WorkflowState
 from nexus.core.idempotency import IdempotencyKey, IdempotencyLedger
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,110 @@ class WorkflowStateEnginePlugin:
             return int(str(issue_number))
         except Exception:
             return None
+
+    @staticmethod
+    def _normalize_ref(value: str) -> str:
+        return str(value or "").strip().lstrip("@").lower()
+
+    @staticmethod
+    def _match_step_by_ref(workflow, step_ref: str):
+        normalized_ref = WorkflowStateEnginePlugin._normalize_ref(step_ref)
+        if not normalized_ref:
+            return None
+        slug_ref = WorkflowDefinition._slugify(normalized_ref)
+        for step in workflow.steps:
+            step_name = WorkflowStateEnginePlugin._normalize_ref(step.name)
+            agent_name = WorkflowStateEnginePlugin._normalize_ref(step.agent.name)
+            if normalized_ref in {step_name, agent_name}:
+                return step
+            if slug_ref and slug_ref in {step_name, agent_name}:
+                return step
+        return None
+
+    @staticmethod
+    def _route_target_ref(route: Dict[str, Any]) -> str:
+        target = route.get("goto") or route.get("then")
+        if target:
+            return str(target)
+        default_val = route.get("default")
+        return str(default_val) if isinstance(default_val, str) else ""
+
+    @staticmethod
+    def _refs_match(left: str, right: str) -> bool:
+        left_norm = WorkflowStateEnginePlugin._normalize_ref(left)
+        right_norm = WorkflowStateEnginePlugin._normalize_ref(right)
+        if not left_norm or not right_norm:
+            return False
+        if left_norm == right_norm:
+            return True
+        return WorkflowDefinition._slugify(left_norm) == WorkflowDefinition._slugify(right_norm)
+
+    @staticmethod
+    def _infer_simple_condition_assignment(condition: str):
+        """Infer variable assignment from simple conditions like `x == 'value'`."""
+        try:
+            node = ast.parse(condition, mode="eval").body
+        except Exception:
+            return None
+
+        if not isinstance(node, ast.Compare):
+            return None
+        if len(node.ops) != 1 or len(node.comparators) != 1:
+            return None
+        if not isinstance(node.ops[0], ast.Eq):
+            return None
+        if not isinstance(node.left, ast.Name):
+            return None
+        comparator = node.comparators[0]
+        if not isinstance(comparator, ast.Constant):
+            return None
+
+        return node.left.id, comparator.value
+
+    @staticmethod
+    def _normalize_completion_outputs(
+        workflow,
+        completed_step,
+        outputs: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        normalized = dict(outputs or {})
+        next_agent = WorkflowStateEnginePlugin._normalize_ref(normalized.get("next_agent", ""))
+        if not next_agent:
+            return normalized
+
+        router_step = workflow.get_step(completed_step.step_num + 1)
+        if not router_step or not router_step.routes:
+            return normalized
+
+        for route in router_step.routes:
+            target_ref = WorkflowStateEnginePlugin._route_target_ref(route)
+            if not target_ref:
+                continue
+            target_step = WorkflowStateEnginePlugin._match_step_by_ref(workflow, target_ref)
+
+            route_points_to_next = WorkflowStateEnginePlugin._refs_match(target_ref, next_agent)
+            if not route_points_to_next and target_step:
+                route_points_to_next = WorkflowStateEnginePlugin._refs_match(target_step.name, next_agent)
+                if not route_points_to_next:
+                    route_points_to_next = WorkflowStateEnginePlugin._refs_match(
+                        target_step.agent.name,
+                        next_agent,
+                    )
+
+            if not route_points_to_next:
+                continue
+
+            when = route.get("when")
+            if not isinstance(when, str) or not when.strip():
+                return normalized
+            inferred = WorkflowStateEnginePlugin._infer_simple_condition_assignment(when)
+            if not inferred:
+                return normalized
+            key, value = inferred
+            normalized.setdefault(key, value)
+            return normalized
+
+        return normalized
 
     def _resolve_workflow_definition_path(self, project_name: str) -> Optional[str]:
         resolver = self.config.get("workflow_definition_path_resolver")
@@ -401,16 +507,82 @@ class WorkflowStateEnginePlugin:
                 )
                 return workflow
 
+        normalized_outputs = self._normalize_completion_outputs(workflow, running_step, outputs)
+
         result = await engine.complete_step(
             workflow_id=workflow_id,
             step_num=running_step.step_num,
-            outputs=outputs,
+            outputs=normalized_outputs,
         )
 
         if event_id:
             ledger.record(idem_key)
 
         return result
+
+    async def reset_to_agent_for_issue(self, issue_number: str, agent_ref: str) -> bool:
+        """Reset workflow to a specific step/agent and mark it RUNNING.
+
+        This is used by manual recovery flows (e.g. /continue with forced agent)
+        to rewind an already-completed or drifted workflow to a known step.
+        """
+        workflow_id = self._resolve_workflow_id(issue_number)
+        if not workflow_id:
+            logger.warning("No workflow mapping found for issue #%s", issue_number)
+            return False
+
+        engine = self._get_engine()
+        workflow = await engine.get_workflow(workflow_id)
+        if not workflow:
+            logger.warning(
+                "reset_to_agent_for_issue: workflow %s not found (issue #%s)",
+                workflow_id,
+                issue_number,
+            )
+            return False
+
+        target_step = self._match_step_by_ref(workflow, agent_ref)
+        if not target_step:
+            logger.warning(
+                "reset_to_agent_for_issue: could not resolve target '%s' for issue #%s",
+                agent_ref,
+                issue_number,
+            )
+            return False
+
+        now = datetime.now(timezone.utc)
+        for step in workflow.steps:
+            if step.step_num < target_step.step_num:
+                step.status = StepStatus.COMPLETED
+                if step.completed_at is None:
+                    step.completed_at = now
+            elif step.step_num == target_step.step_num:
+                step.status = StepStatus.RUNNING
+                step.started_at = now
+                step.completed_at = None
+                step.error = None
+            else:
+                step.status = StepStatus.PENDING
+                step.started_at = None
+                step.completed_at = None
+                step.error = None
+                step.outputs = {}
+                step.retry_count = 0
+
+        workflow.state = WorkflowState.RUNNING
+        workflow.current_step = target_step.step_num
+        workflow.completed_at = None
+        workflow.updated_at = now
+        await engine.storage.save_workflow(workflow)
+
+        logger.info(
+            "reset_to_agent_for_issue: rewound issue #%s workflow %s to step %s (%s)",
+            issue_number,
+            workflow_id,
+            target_step.step_num,
+            target_step.agent.name,
+        )
+        return True
 
     async def request_approval_gate(
         self,

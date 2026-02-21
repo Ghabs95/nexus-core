@@ -346,12 +346,14 @@ class TestScanAndProcessCompletions:
 
         orc = _orchestrator(runtime, complete)
         det = self._fake_detection(agent_type="developer", next_agent="debug")
+        dedup_seen = set()
 
         with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
-            orc.scan_and_process_completions("/base", set())
+            orc.scan_and_process_completions("/base", dedup_seen)
 
         assert len(runtime.posted_comments) == 1
         assert runtime.launched == []
+        assert det.dedup_key in dedup_seen
 
     def test_failed_launch_sends_autochain_failed_alert(self):
         """When launch returns (None, None), an alert about the failure is sent."""

@@ -4,7 +4,9 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import time
 from enum import Enum
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -44,6 +46,7 @@ class AIOrchestrator:
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
         self.gemini_cli_path = self.config.get("gemini_cli_path", "gemini")
+        self.gemini_model = str(self.config.get("gemini_model", "")).strip()
         self.copilot_cli_path = self.config.get("copilot_cli_path", "copilot")
         self.tool_preferences = self.config.get("tool_preferences", {})
         self.fallback_enabled = self.config.get("fallback_enabled", True)
@@ -51,6 +54,10 @@ class AIOrchestrator:
         self.max_retries = self.config.get("max_retries", 2)
         self.analysis_timeout = self.config.get("analysis_timeout", 30)
         self.refine_description_timeout = self.config.get("refine_description_timeout", 90)
+        self.gemini_transcription_timeout = self.config.get("gemini_transcription_timeout", 60)
+        self.copilot_transcription_timeout = self.config.get("copilot_transcription_timeout", 120)
+        primary = str(self.config.get("transcription_primary", "gemini")).strip().lower()
+        self.transcription_primary = AIProvider.GEMINI if primary == "gemini" else AIProvider.COPILOT
         self.get_tasks_logs_dir: Callable[[str, Optional[str]], str] = self.config.get(
             "tasks_logs_dir_resolver",
             _default_tasks_logs_dir,
@@ -113,7 +120,7 @@ class AIOrchestrator:
 
         fallback = AIProvider.GEMINI if primary == AIProvider.COPILOT else AIProvider.COPILOT
         if self.check_tool_available(fallback):
-            logger.info("🔄 Attempting fallback from %s → %s", primary.value, fallback.value)
+            logger.info("🔄 Fallback ready from %s → %s (will use only if primary fails)", primary.value, fallback.value)
             return fallback
 
         logger.error("❌ Fallback %s unavailable", fallback.value)
@@ -325,6 +332,8 @@ class AIOrchestrator:
             agents_dir,
             "--yolo",
         ]
+        if self.gemini_model:
+            cmd.extend(["--model", self.gemini_model])
 
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         log_dir = self.get_tasks_logs_dir(workspace_dir, log_subdir)
@@ -336,6 +345,16 @@ class AIOrchestrator:
         logger.info("   Workspace: %s", workspace_dir)
         logger.info("   Log: %s", log_path)
 
+        def _read_log_excerpt(max_chars: int = 2000) -> str:
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+                    data = handle.read()
+                if len(data) <= max_chars:
+                    return data
+                return data[-max_chars:]
+            except Exception:
+                return ""
+
         try:
             log_file = open(log_path, "w", encoding="utf-8")
             process = subprocess.Popen(
@@ -346,17 +365,39 @@ class AIOrchestrator:
                 stderr=subprocess.STDOUT,
             )
             logger.info("🚀 Gemini launched (PID: %s)", process.pid)
+
+            # Detect immediate startup failure so invoke_agent can fallback to the next tool.
+            time.sleep(1.5)
+            exit_code = process.poll()
+            if exit_code is not None:
+                log_excerpt = _read_log_excerpt().lower()
+                if (
+                    "ratelimitexceeded" in log_excerpt
+                    or "status 429" in log_excerpt
+                    or "no capacity available" in log_excerpt
+                ):
+                    raise RateLimitedError(
+                        f"Gemini exited immediately with rate limit (exit={exit_code})"
+                    )
+                raise ToolUnavailableError(
+                    f"Gemini exited immediately (exit={exit_code})"
+                )
+
             return process.pid
         except Exception as exc:
             logger.error("❌ Gemini launch failed: %s", exc)
             raise
 
     def transcribe_audio_cli(self, audio_file_path: str) -> Optional[str]:
-        primary = AIProvider.GEMINI
+        primary = self.transcription_primary
         fallback = self.get_fallback_tool(primary)
 
         try:
-            text = self._transcribe_with_gemini_cli(audio_file_path)
+            text = (
+                self._transcribe_with_gemini_cli(audio_file_path)
+                if primary == AIProvider.GEMINI
+                else self._transcribe_with_copilot_cli(audio_file_path)
+            )
             if text:
                 logger.info("✅ Transcription successful with %s", primary.value)
                 return text
@@ -367,7 +408,11 @@ class AIOrchestrator:
 
         if fallback:
             try:
-                text = self._transcribe_with_copilot_cli(audio_file_path)
+                text = (
+                    self._transcribe_with_gemini_cli(audio_file_path)
+                    if fallback == AIProvider.GEMINI
+                    else self._transcribe_with_copilot_cli(audio_file_path)
+                )
                 if text:
                     logger.info("✅ Fallback transcription succeeded with %s", fallback.value)
                     return text
@@ -376,6 +421,73 @@ class AIOrchestrator:
 
         logger.error("❌ All transcription tools failed")
         return None
+
+    @staticmethod
+    def _is_transcription_refusal(text: str) -> bool:
+        normalized = (text or "").lower().strip()
+        if not normalized:
+            return True
+
+        refusal_markers = [
+            "cannot directly transcribe audio",
+            "can't directly transcribe audio",
+            "cannot transcribe audio",
+            "can't transcribe audio",
+            "unable to transcribe audio",
+            "capabilities are limited to text-based",
+            "i do not have the ability to listen",
+            "as a text-based ai",
+            "i can't access audio",
+            "i cannot access audio",
+        ]
+        return any(marker in normalized for marker in refusal_markers)
+
+    @staticmethod
+    def _is_non_transcription_artifact(text: str, audio_file_path: str) -> bool:
+        normalized = (text or "").strip()
+        if not normalized:
+            return True
+
+        if AIOrchestrator._is_transcription_refusal(normalized):
+            return True
+
+        audio_basename = os.path.basename(audio_file_path).lower()
+        lowered = normalized.lower()
+
+        if lowered == audio_basename:
+            return True
+
+        if lowered == f"file: {audio_basename}":
+            return True
+
+        if re.fullmatch(r"file:\s*[^\n\r]+\.(ogg|mp3|wav|m4a)\s*", lowered):
+            return True
+
+        if "permission denied and could not request permission from user" in lowered:
+            return True
+
+        if "i'm unable to transcribe the audio file" in lowered:
+            return True
+
+        if re.search(r"(?m)^\$\s", normalized):
+            return True
+
+        if re.search(r"(?m)^✗\s", normalized):
+            return True
+
+        debug_markers = [
+            "check for transcription tools",
+            "check whisper availability",
+            "transcribe with whisper",
+            "install whisper",
+            "pip install openai-whisper",
+            "which whisper",
+            "which ffmpeg",
+        ]
+        if any(marker in lowered for marker in debug_markers):
+            return True
+
+        return False
 
     def _transcribe_with_gemini_cli(self, audio_file_path: str) -> Optional[str]:
         if not self.check_tool_available(AIProvider.GEMINI):
@@ -386,13 +498,22 @@ class AIOrchestrator:
 
         logger.info("🎧 Transcribing with Gemini: %s", audio_file_path)
 
-        prompt = f"Transcribe this audio file exactly. Return ONLY the text.\nFile: {audio_file_path}"
+        prompt = (
+            "You are a speech-to-text (STT) transcriber. "
+            "Transcribe only the spoken words from the provided audio file.\n"
+            "Output rules:\n"
+            "- Return ONLY the transcript text\n"
+            "- Do NOT summarize, explain, or describe the file\n"
+            "- Do NOT include labels like 'File:' or any metadata\n"
+            "- Do NOT include apologies or capability statements\n"
+            f"Audio file path: {audio_file_path}"
+        )
         try:
             result = subprocess.run(
                 [self.gemini_cli_path, "-p", prompt],
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=self.gemini_transcription_timeout,
             )
 
             if result.returncode != 0:
@@ -400,13 +521,15 @@ class AIOrchestrator:
                     raise RateLimitedError(f"Gemini rate-limited: {result.stderr}")
                 raise Exception(f"Gemini error: {result.stderr}")
 
-            text = result.stdout.strip()
+            text = self._strip_cli_tool_output(result.stdout).strip()
             if text:
+                if self._is_non_transcription_artifact(text, audio_file_path):
+                    raise Exception("Gemini returned non-transcription content")
                 return text
             raise Exception("Gemini returned empty transcription")
 
         except subprocess.TimeoutExpired as exc:
-            raise Exception("Gemini transcription timed out (>60s)") from exc
+            raise Exception(f"Gemini transcription timed out (>{self.gemini_transcription_timeout}s)") from exc
 
     def _transcribe_with_copilot_cli(self, audio_file_path: str) -> Optional[str]:
         if not self.check_tool_available(AIProvider.COPILOT):
@@ -418,29 +541,47 @@ class AIOrchestrator:
         logger.info("🎧 Transcribing with Copilot (fallback): %s", audio_file_path)
 
         try:
-            result = subprocess.run(
-                [
-                    self.copilot_cli_path,
-                    "-p",
-                    "Transcribe this audio exactly. Return ONLY the text.",
-                    "--add-file",
-                    audio_file_path,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
+            with tempfile.TemporaryDirectory(prefix="nexus_audio_") as temp_dir:
+                audio_basename = os.path.basename(audio_file_path)
+                staged_audio_path = os.path.join(temp_dir, audio_basename)
+                shutil.copy2(audio_file_path, staged_audio_path)
+
+                prompt = (
+                    "You are a speech-to-text (STT) transcriber. "
+                    "Transcribe only the spoken words from the attached audio file.\n"
+                    "Output rules:\n"
+                    "- Return ONLY the transcript text\n"
+                    "- Do NOT summarize, explain, or describe the file\n"
+                    "- Do NOT include labels like 'File:' or any metadata\n"
+                    "- Do NOT include apologies or capability statements\n"
+                    f"Audio file name: {audio_basename}"
+                )
+
+                result = subprocess.run(
+                    [
+                        self.copilot_cli_path,
+                        "-p",
+                        prompt,
+                        "--add-dir",
+                        temp_dir,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=self.copilot_transcription_timeout,
+                )
 
             if result.returncode != 0:
                 raise Exception(f"Copilot error: {result.stderr}")
 
-            text = result.stdout.strip()
+            text = self._strip_cli_tool_output(result.stdout).strip()
             if text:
+                if self._is_non_transcription_artifact(text, audio_file_path):
+                    raise Exception("Copilot returned non-transcription content")
                 return text
             raise Exception("Copilot returned empty transcription")
 
         except subprocess.TimeoutExpired as exc:
-            raise Exception("Copilot transcription timed out (>60s)") from exc
+            raise Exception(f"Copilot transcription timed out (>{self.copilot_transcription_timeout}s)") from exc
 
     def run_text_to_speech_analysis(self, text: str, task: str = "classify", **kwargs) -> Dict[str, Any]:
         primary = AIProvider.GEMINI
@@ -523,8 +664,8 @@ Text: {text[:500]}
 
 1. Map to project (one of: {", ".join(projects)}). Use key format.
 2. Classify type (one of: {", ".join(types)}).
-3. Generate concise issue name (3-6 words, kebab-case).
-4. Return JSON: {{"project": "key", "type": "type_key", "issue_name": "name"}}
+3. Generate concise task name (3-6 words, kebab-case).
+4. Return JSON: {{"project": "key", "type": "type_key", "task_name": "name"}}
 
 Return ONLY valid JSON."""
 
@@ -541,7 +682,7 @@ Return ONLY valid JSON."""
 
         if task == "generate_name":
             project = kwargs.get("project_name", "")
-            return f"""Generate a concise issue name (3-6 words, kebab-case):
+            return f"""Generate a concise task name (3-6 words, kebab-case):
 {text[:300]}
 Project: {project}
 
@@ -603,20 +744,47 @@ Input:
     def _parse_analysis_result(self, output: str, task: str) -> Dict[str, Any]:
         output = self._strip_cli_tool_output(output)
 
-        try:
-            if output.startswith("{"):
-                return json.loads(output)
-            return {"text": output}
-        except json.JSONDecodeError:
+        def _parse_json_candidates(text: str) -> Optional[Dict[str, Any]]:
+            candidates: list[str] = [text.strip()]
+
+            fenced_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE)
+            candidates.extend(block.strip() for block in fenced_blocks if block.strip())
+
+            first_brace = text.find("{")
+            last_brace = text.rfind("}")
+            if first_brace != -1 and last_brace > first_brace:
+                candidates.append(text[first_brace:last_brace + 1].strip())
+
+            seen: set[str] = set()
+            for candidate in candidates:
+                if not candidate or candidate in seen:
+                    continue
+                seen.add(candidate)
+                try:
+                    parsed = json.loads(candidate)
+                    if isinstance(parsed, dict):
+                        return parsed
+                except json.JSONDecodeError:
+                    continue
+            return None
+
+        parsed_json = _parse_json_candidates(output)
+        if parsed_json is not None:
+            return parsed_json
+
+        looks_like_json = "{" in output and "}" in output
+        if looks_like_json or "```" in output:
             logger.warning("Failed to parse %s result as JSON: %s", task, output[:100])
             return {"text": output, "parse_error": True}
+
+        return {"text": output}
 
     def _get_default_analysis_result(self, task: str, **kwargs) -> Dict[str, Any]:
         if task == "classify":
             return {
                 "project": kwargs.get("projects", ["case-italia"])[0],
                 "type": kwargs.get("types", ["feature"])[0],
-                "issue_name": "generic-task",
+                "task_name": "generic-task",
             }
         if task == "route":
             return {"agent": "ProjectLead", "type": "routing", "confidence": 0}
