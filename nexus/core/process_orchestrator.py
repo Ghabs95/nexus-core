@@ -178,6 +178,19 @@ class AgentRuntime(ABC):
         """
         return None
 
+    def get_agent_timeout_seconds(
+        self,
+        issue_number: str,
+        agent_type: Optional[str] = None,
+    ) -> Optional[int]:
+        """Return timeout for an issue/agent from workflow metadata, if available.
+
+        Hosts can override this to source timeout from the active workflow step
+        (e.g. ``step.timeout`` or ``step.agent.timeout``). Returning ``None``
+        falls back to orchestrator's configured global threshold.
+        """
+        return None
+
     def post_completion_comment(self, issue_number: str, repo: str, body: str) -> bool:
         """Post a workflow completion comment to the issue.
 
@@ -447,6 +460,7 @@ class ProcessOrchestrator:
             base_dir, "**", self._nexus_dir, "tasks", "*", "logs", "*_*.log"
         )
         log_files = glob.glob(log_pattern, recursive=True)
+        launched = self._runtime.load_launched_agents(recent_only=False)
 
         for log_file in log_files:
             match = re.search(
@@ -471,16 +485,19 @@ class ProcessOrchestrator:
             if issue_logs and log_file != issue_logs[0]:
                 continue
 
-            timed_out, pid = self._runtime.check_log_timeout(issue_num, log_file)
-            # Also honour stuck_threshold_seconds as an override of the default
-            # base-class behaviour (which hard-codes 3600).
-            if not timed_out:
-                # Recheck using our configurable threshold if no override is present.
-                age = time.time() - os.path.getmtime(log_file)
-                timed_out = age > self._stuck_threshold
+            agent_data = launched.get(str(issue_num), {}) if isinstance(launched, dict) else {}
+            if not isinstance(agent_data, dict):
+                agent_data = {}
+            tracked_agent = agent_data.get("agent_type")
+            expected_agent = self._runtime.get_expected_running_agent(str(issue_num))
+            effective_agent = tracked_agent or expected_agent
 
-            if not timed_out:
+            age = time.time() - os.path.getmtime(log_file)
+            timeout_seconds = self._resolve_timeout_seconds(issue_num, effective_agent)
+            if age <= timeout_seconds:
                 continue
+
+            _, pid = self._runtime.check_log_timeout(issue_num, log_file)
 
             self._handle_timeout(issue_num, log_file, pid)
 
@@ -509,8 +526,9 @@ class ProcessOrchestrator:
             if not pid:
                 continue
 
+            grace_seconds = self._resolve_timeout_seconds(issue_num, agent_type)
             # Grace period — let completion scanner run first.
-            if (now - launch_ts) < self._stuck_threshold:
+            if (now - launch_ts) < grace_seconds:
                 continue
 
             if self._runtime.is_pid_alive(pid):
@@ -747,6 +765,15 @@ class ProcessOrchestrator:
                 logger.error(
                     f"Timeout retry exception for issue #{issue_num}: {exc}"
                 )
+
+    def _resolve_timeout_seconds(self, issue_num: str, agent_type: Optional[str]) -> int:
+        """Resolve timeout for issue/agent from runtime, fallback to global threshold."""
+        timeout = self._runtime.get_agent_timeout_seconds(str(issue_num), agent_type)
+        if isinstance(timeout, (int, float)):
+            value = int(timeout)
+            if value > 0:
+                return value
+        return int(self._stuck_threshold)
 
 
 # ---------------------------------------------------------------------------
