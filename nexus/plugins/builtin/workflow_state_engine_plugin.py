@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, Optional
 from nexus.adapters.storage.file import FileStorage
 from nexus.core.workflow import WorkflowDefinition, WorkflowEngine
 from nexus.core.models import WorkflowState
+from nexus.core.idempotency import IdempotencyKey, IdempotencyLedger
 
 logger = logging.getLogger(__name__)
 
@@ -282,11 +283,22 @@ class WorkflowStateEnginePlugin:
             logger.error("Failed to deny workflow for issue #%s: %s", issue_number, exc)
             return False
 
+    def _get_ledger(self) -> IdempotencyLedger:
+        """Return the shared IdempotencyLedger, lazily initialised."""
+        if not hasattr(self, "_idempotency_ledger"):
+            ledger_path = self.config.get(
+                "idempotency_ledger_path",
+                os.path.join(self.storage_dir or ".", ".nexus_idempotency_ledger.json"),
+            )
+            self._idempotency_ledger = IdempotencyLedger(ledger_path)
+        return self._idempotency_ledger  # type: ignore[return-value]
+
     async def complete_step_for_issue(
         self,
         issue_number: str,
         completed_agent_type: str,
         outputs: Dict[str, Any],
+        event_id: str = "",
     ) -> Optional[Any]:
         """Mark the current running step for *issue_number* as complete.
 
@@ -296,12 +308,20 @@ class WorkflowStateEnginePlugin:
         Router steps are evaluated automatically, handling loops and
         conditional branches.
 
+        An idempotency check is performed before advancing the state machine.
+        If the composite key ``(issue_number, step_num, completed_agent_type,
+        event_id)`` was already processed, the call is a no-op and the current
+        workflow is returned unchanged.
+
         Args:
             issue_number: GitHub issue number (or any issue id).
             completed_agent_type: The ``agent_type`` of the step that just
                 finished (matches the agent's own completion summary field).
             outputs: Structured outputs from the completion summary to record
                 against the step and expose to subsequent route conditions.
+            event_id: Caller-supplied deduplication token — typically a GitHub
+                comment ID or a hash of the completion file path/content.
+                An empty string disables the ledger check.
 
         Returns:
             The updated :class:`~nexus.core.models.Workflow` (inspect
@@ -370,11 +390,36 @@ class WorkflowStateEnginePlugin:
             )
             return workflow
 
-        return await engine.complete_step(
+        # Idempotency guard — reject duplicate step-completion signals.
+        if event_id:
+            idem_key = IdempotencyKey(
+                issue_id=str(issue_number),
+                step_num=running_step.step_num,
+                agent_type=completed_agent_type,
+                event_id=event_id,
+            )
+            ledger = self._get_ledger()
+            if ledger.is_duplicate(idem_key):
+                logger.info(
+                    "complete_step_for_issue: duplicate event suppressed for issue #%s "
+                    "(step=%s, agent=%s, event_id=%s)",
+                    issue_number,
+                    running_step.step_num,
+                    completed_agent_type,
+                    event_id,
+                )
+                return workflow
+
+        result = await engine.complete_step(
             workflow_id=workflow_id,
             step_num=running_step.step_num,
             outputs=outputs,
         )
+
+        if event_id:
+            ledger.record(idem_key)
+
+        return result
 
     async def request_approval_gate(
         self,

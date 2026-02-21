@@ -278,3 +278,71 @@ async def test_complete_step_for_issue_routes_loop_back_to_develop():
     assert updated is not None
     assert updated.active_agent_type == "developer"
     assert develop.iteration == 1
+
+
+# ---------------------------------------------------------------------------
+# Idempotency ledger tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_complete_step_for_issue_idempotency_duplicate_suppressed(tmp_path):
+    """Calling complete_step_for_issue with a duplicate event_id must be a no-op.
+
+    Simulates a re-delivered signal: after the first call advances the workflow,
+    we reset step 1 back to RUNNING and replay the same event_id.  The ledger
+    must suppress the second advancement.
+    """
+    step1 = _step(1, "triage", "triage")
+    step2 = _step(2, "dev", "developer")
+    wf = _make_workflow("wf-idem", [step1, step2])
+    plugin, _ = await _plugin_with_workflow(wf, "idem")
+    ledger_path = str(tmp_path / "ledger.json")
+    plugin.config["idempotency_ledger_path"] = ledger_path
+
+    # First call advances the workflow (step1 → COMPLETED, step2 → RUNNING).
+    updated = await plugin.complete_step_for_issue("idem", "triage", {}, event_id="ev-001")
+    assert updated is not None
+    assert updated.active_agent_type == "developer"
+
+    # Simulate re-delivery: reset step1 back to RUNNING.
+    step1.status = StepStatus.RUNNING
+    step2.status = StepStatus.PENDING
+
+    # Second call with the same composite key must be suppressed by the ledger.
+    updated2 = await plugin.complete_step_for_issue("idem", "triage", {}, event_id="ev-001")
+    # step1 must still be RUNNING (the ledger blocked the advancement).
+    assert step1.status == StepStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_complete_step_for_issue_different_event_ids_advance_independently(tmp_path):
+    """Two distinct event_ids for different steps should both advance normally."""
+    step1 = _step(1, "triage", "triage")
+    step2 = _step(2, "dev", "developer")
+    wf = _make_workflow("wf-idem2", [step1, step2])
+    plugin, _ = await _plugin_with_workflow(wf, "idem2")
+    ledger_path = str(tmp_path / "ledger2.json")
+    plugin.config["idempotency_ledger_path"] = ledger_path
+
+    await plugin.complete_step_for_issue("idem2", "triage", {}, event_id="ev-aaa")
+    updated = await plugin.complete_step_for_issue("idem2", "developer", {}, event_id="ev-bbb")
+    assert updated is not None
+    from nexus.core.models import WorkflowState as WS
+    assert updated.state == WS.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_complete_step_for_issue_no_event_id_always_advances(tmp_path):
+    """Without an event_id the ledger is skipped and calls advance as normal."""
+    step1 = _step(1, "triage", "triage")
+    step2 = _step(2, "dev", "developer")
+    wf = _make_workflow("wf-idem3", [step1, step2])
+    plugin, _ = await _plugin_with_workflow(wf, "idem3")
+    ledger_path = str(tmp_path / "ledger3.json")
+    plugin.config["idempotency_ledger_path"] = ledger_path
+
+    await plugin.complete_step_for_issue("idem3", "triage", {})
+    updated = await plugin.complete_step_for_issue("idem3", "developer", {})
+    assert updated is not None
+    from nexus.core.models import WorkflowState as WS
+    assert updated.state == WS.COMPLETED
