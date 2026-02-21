@@ -16,7 +16,7 @@ timeout_seconds: 3600
 
 steps:
   - id: "triage"
-    name: "Triage Issue"
+    name: "Initial Routing"
     description: "Analyze issue and classify as bug/feature/doc, suggest priority"
     agent_type: "triage"
     tools:

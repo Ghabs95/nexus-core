@@ -180,15 +180,52 @@ class WorkflowStateEnginePlugin:
             if not workflow:
                 return None
 
-            current_step = workflow.steps[workflow.current_step]
+            steps = list(workflow.steps or [])
+            total_steps = len(steps)
+            current_step_obj = None
+            current_step_display = 0
+
+            if total_steps > 0:
+                raw_current = int(workflow.current_step or 0)
+
+                # Prefer explicit step_num match (works regardless of index base).
+                for idx, step in enumerate(steps):
+                    if getattr(step, "step_num", None) == raw_current:
+                        current_step_obj = step
+                        current_step_display = idx + 1
+                        break
+
+                # Fallback to index interpretations.
+                if current_step_obj is None and 0 <= raw_current < total_steps:
+                    current_step_obj = steps[raw_current]
+                    current_step_display = raw_current + 1
+                elif current_step_obj is None and 1 <= raw_current <= total_steps:
+                    idx = raw_current - 1
+                    current_step_obj = steps[idx]
+                    current_step_display = idx + 1
+
+                # Final fallback: first RUNNING step, otherwise first step.
+                if current_step_obj is None:
+                    for idx, step in enumerate(steps):
+                        if str(getattr(step, "status", "")).strip().upper() == "RUNNING":
+                            current_step_obj = step
+                            current_step_display = idx + 1
+                            break
+                if current_step_obj is None:
+                    current_step_obj = steps[0]
+                    current_step_display = 1
+
             return {
                 "workflow_id": workflow.id,
                 "name": workflow.name,
                 "state": workflow.state.value,
-                "current_step": workflow.current_step + 1,
-                "total_steps": len(workflow.steps),
-                "current_step_name": current_step.name,
-                "current_agent": current_step.agent.display_name,
+                "current_step": current_step_display,
+                "total_steps": total_steps,
+                "current_step_name": getattr(current_step_obj, "name", "unknown"),
+                "current_agent": (
+                    getattr(getattr(current_step_obj, "agent", None), "display_name", "")
+                    or getattr(getattr(current_step_obj, "agent", None), "name", "unknown")
+                ),
                 "created_at": workflow.created_at.isoformat() if workflow.created_at else None,
                 "updated_at": workflow.updated_at.isoformat() if workflow.updated_at else None,
                 "metadata": workflow.metadata,

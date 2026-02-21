@@ -237,7 +237,8 @@ def scan_for_completions(
         List of detected completion summaries, each parsed and validated.
     """
     results: List[DetectedCompletion] = []
-    seen_basenames: set[str] = set()
+    candidates_by_issue: Dict[str, List[str]] = {}
+    seen_paths: set[str] = set()
     patterns = [
         os.path.join(
             base_dir, "**", nexus_dir, "tasks", "*", "completions",
@@ -247,16 +248,25 @@ def scan_for_completions(
 
     for pattern in patterns:
         for path in glob.glob(pattern, recursive=True):
-            basename = os.path.basename(path)
-            if basename in seen_basenames:
+            normalized = os.path.abspath(path)
+            if normalized in seen_paths:
                 continue
+            seen_paths.add(normalized)
 
             match = re.search(r"completion_summary_(\d+)\.json$", path)
             if not match:
                 continue
             issue_number = match.group(1)
+            candidates_by_issue.setdefault(issue_number, []).append(path)
+
+    for issue_number, candidate_paths in sorted(
+        candidates_by_issue.items(), key=lambda item: int(item[0])
+    ):
+        sorted_paths = sorted(candidate_paths, key=os.path.getmtime, reverse=True)
+        parsed = False
+        for path in sorted_paths:
             try:
-                with open(path, "r") as f:
+                with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 summary = CompletionSummary.from_dict(data)
                 results.append(DetectedCompletion(
@@ -264,10 +274,18 @@ def scan_for_completions(
                     issue_number=issue_number,
                     summary=summary,
                 ))
-                seen_basenames.add(basename)
+                parsed = True
+                break
             except json.JSONDecodeError as exc:
                 logger.warning(f"Invalid JSON in {path}: {exc}")
             except Exception as exc:
                 logger.warning(f"Error reading completion file {path}: {exc}")
+
+        if not parsed:
+            logger.warning(
+                "No valid completion summary could be parsed for issue %s from %d file(s)",
+                issue_number,
+                len(sorted_paths),
+            )
 
     return results
