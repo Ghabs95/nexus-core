@@ -77,9 +77,21 @@ class AIOrchestrator:
 
         try:
             path = self.gemini_cli_path if tool == AIProvider.GEMINI else self.copilot_cli_path
-            subprocess.run([path, "--version"], capture_output=True, timeout=5, check=False)
-            available = True
-            logger.info("✅ %s available", tool.value.upper())
+            result = subprocess.run(
+                [path, "--version"],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+            available = result.returncode == 0
+            if available:
+                logger.info("✅ %s available", tool.value.upper())
+            else:
+                logger.warning(
+                    "⚠️  %s unavailable: version check failed (exit=%s)",
+                    tool.value.upper(),
+                    result.returncode,
+                )
         except Exception as exc:
             available = False
             logger.warning("⚠️  %s unavailable: %s", tool.value.upper(), exc)

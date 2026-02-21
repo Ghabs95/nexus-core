@@ -8,41 +8,33 @@ from nexus.adapters.git.github import GitHubPlatform
 
 
 class TestNormalizeWorkflowType:
-    """Verify WorkflowDefinition.normalize_workflow_type() mappings."""
+    """Verify WorkflowDefinition.normalize_workflow_type() — passthrough with strip/lower."""
 
     @pytest.mark.parametrize(
         "input_tier, expected",
         [
-            # Canonical values pass through
             ("full", "full"),
             ("shortened", "shortened"),
             ("fast-track", "fast-track"),
-            # Legacy numeric tiers
-            ("tier-1-simple", "fast-track"),
-            ("tier-2-standard", "shortened"),
-            ("tier-3-complex", "full"),
-            ("tier-4-critical", "full"),
-            # Underscore variant
-            ("fast_track", "fast-track"),
-            # Workflow-name aliases
-            ("new_feature", "full"),
-            ("bug_fix", "shortened"),
-            ("hotfix", "fast-track"),
             # Whitespace/case normalization
             (" Full ", "full"),
+            # User-defined types pass through unchanged
+            ("custom-pipeline", "custom-pipeline"),
+            ("my_workflow", "my_workflow"),
         ],
     )
-    def test_known_tiers(self, input_tier: str, expected: str):
+    def test_passthrough(self, input_tier: str, expected: str):
         assert WorkflowDefinition.normalize_workflow_type(input_tier) == expected
 
-    def test_unknown_tier_returns_default(self):
-        assert WorkflowDefinition.normalize_workflow_type("unknown") == "shortened"
-
-    def test_unknown_tier_custom_default(self):
-        assert WorkflowDefinition.normalize_workflow_type("unknown", default="full") == "full"
+    def test_unknown_tier_passes_through(self):
+        """Any non-empty string is returned as-is (strip + lower)."""
+        assert WorkflowDefinition.normalize_workflow_type("unknown") == "unknown"
 
     def test_empty_string_returns_default(self):
         assert WorkflowDefinition.normalize_workflow_type("") == "shortened"
+
+    def test_empty_string_custom_default(self):
+        assert WorkflowDefinition.normalize_workflow_type("", default="full") == "full"
 
 
 class TestGetWorkflowTypeFromIssue:
@@ -84,10 +76,10 @@ class TestGetWorkflowTypeFromIssue:
         self._mock_gh_labels(platform, ["tier:full"])
         assert platform.get_workflow_type_from_issue(42, label_prefix="tier:") == "full"
 
-    def test_legacy_tier_label_normalized(self, platform):
-        """A label like workflow:tier-2-standard gets normalized to shortened."""
+    def test_userdefined_tier_label_passes_through(self, platform):
+        """User-defined labels are passed through — the YAML is the source of truth."""
         self._mock_gh_labels(platform, ["workflow:tier-2-standard"])
-        assert platform.get_workflow_type_from_issue(42) == "shortened"
+        assert platform.get_workflow_type_from_issue(42) == "tier-2-standard"
 
     def test_gh_command_failure_returns_default(self, platform):
         platform._run_gh_command = MagicMock(side_effect=RuntimeError("network error"))

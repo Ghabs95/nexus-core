@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, Optional
 
 from nexus.adapters.storage.file import FileStorage
 from nexus.core.workflow import WorkflowDefinition, WorkflowEngine
+from nexus.core.models import WorkflowState
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +289,20 @@ class WorkflowStateEnginePlugin:
             )
             return None
 
+        if workflow.state == WorkflowState.PENDING:
+            try:
+                await engine.start_workflow(workflow_id)
+                workflow = await engine.get_workflow(workflow_id)
+            except Exception as exc:
+                logger.warning(
+                    "complete_step_for_issue: failed to auto-start pending workflow %s "
+                    "(issue #%s): %s",
+                    workflow_id,
+                    issue_number,
+                    exc,
+                )
+                return workflow
+
         # Find the RUNNING step whose agent_type matches the completed agent
         running_step = None
         for step in workflow.steps:
@@ -296,20 +311,18 @@ class WorkflowStateEnginePlugin:
                 break
 
         if not running_step:
-            # Fallback: use the last RUNNING step (handles re-activated loops where
-            # agent_type mis-match is possible due to parallel retries)
-            for step in reversed(workflow.steps):
-                if step.status == StepStatus.RUNNING:
-                    running_step = step
-                    logger.warning(
-                        "complete_step_for_issue: no RUNNING step matching agent_type '%s' "
-                        "for issue #%s; using step %d (%s) as fallback",
-                        completed_agent_type,
-                        issue_number,
-                        step.step_num,
-                        step.agent.name,
-                    )
-                    break
+            active_agent = workflow.active_agent_type
+            logger.error(
+                "complete_step_for_issue: completion mismatch for issue #%s: "
+                "completed_agent=%s, active_agent=%s",
+                issue_number,
+                completed_agent_type,
+                active_agent,
+            )
+            raise ValueError(
+                f"Completion agent mismatch for issue #{issue_number}: "
+                f"completed_agent={completed_agent_type}, active_agent={active_agent}"
+            )
 
         if not running_step:
             logger.warning(

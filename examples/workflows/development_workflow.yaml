@@ -100,7 +100,7 @@ steps:
 
   - id: "review"
     name: "Review Implementation"
-    description: "Review the implementation for code quality and correctness"
+    description: "Review the implementation for code quality and correctness; approve only after full regression (or equivalent full CI suite) passes"
     agent_type: "reviewer"
     tools:
       - github:review_pr

@@ -92,6 +92,12 @@ class WorkflowEngine:
         workflow.state = WorkflowState.RUNNING
         workflow.updated_at = datetime.now(timezone.utc)
         workflow.current_step = 0
+
+        first_step = workflow.get_step(1)
+        if first_step and first_step.status == StepStatus.PENDING:
+            first_step.status = StepStatus.RUNNING
+            first_step.started_at = datetime.now(timezone.utc)
+            workflow.current_step = first_step.step_num
         
         await self.storage.save_workflow(workflow)
         await self._audit(workflow_id, "WORKFLOW_STARTED", {})
@@ -439,24 +445,6 @@ class WorkflowDefinition:
     into Nexus Core's Workflow/WorkflowStep models.
     """
 
-    # Canonical workflow_type values accepted by the framework.
-    WORKFLOW_TYPES = ("full", "shortened", "fast-track")
-
-    # Maps legacy / alias tier names to canonical workflow_type.
-    _TIER_ALIASES: Dict[str, str] = {
-        # Legacy numeric tiers
-        "tier-1-simple": "fast-track",
-        "tier-2-standard": "shortened",
-        "tier-3-complex": "full",
-        "tier-4-critical": "full",
-        # Underscore variants
-        "fast_track": "fast-track",
-        # Identity (canonical values map to themselves)
-        "fast-track": "fast-track",
-        "shortened": "shortened",
-        "full": "full",
-    }
-
     _TERMINAL_NEXT_AGENT_VALUES = {
         "none",
         "n/a",
@@ -471,33 +459,14 @@ class WorkflowDefinition:
 
     @staticmethod
     def normalize_workflow_type(tier_name: str, default: str = "shortened") -> str:
-        """Normalize a tier name to a canonical workflow_type.
+        """Normalize a workflow type string.
 
-        Accepts both legacy tier names (``tier-1-simple``, ``tier-2-standard``,
-        etc.) and modern names (``full``, ``shortened``, ``fast-track``).
-
-        Args:
-            tier_name: Raw tier or workflow_type string.
-            default: Value returned when *tier_name* is not recognised.
-
-        Returns:
-            One of ``"full"``, ``"shortened"``, or ``"fast-track"``.
+        Strips whitespace and lowercases.  Returns *default* when the
+        input is empty.  No validation against a fixed list — the
+        workflow definition YAML is the source of truth for valid types.
         """
-        if not tier_name:
-            return default
-
-        normalized = str(tier_name).strip().lower()
-
-        # Support common workflow-name aliases found in workflow_types mappings.
-        workflow_aliases = {
-            "new_feature": "full",
-            "bug_fix": "shortened",
-            "hotfix": "fast-track",
-        }
-        if normalized in workflow_aliases:
-            return workflow_aliases[normalized]
-
-        return WorkflowDefinition._TIER_ALIASES.get(normalized, default)
+        cleaned = tier_name.strip().lower()
+        return cleaned if cleaned else default
 
     @staticmethod
     def _resolve_steps(data: Dict[str, Any], workflow_type: str = "") -> List[dict]:
@@ -505,13 +474,18 @@ class WorkflowDefinition:
 
         Supports two layouts:
         - **Flat**: a top-level ``steps`` list.
-        - **Tiered**: keyed under ``full_workflow.steps``,
-          ``shortened_workflow.steps``, or ``fast_track_workflow.steps``.
+        - **Tiered**: keyed under ``<type>_workflow.steps`` sections
+          (e.g. ``full_workflow``, ``shortened_workflow``, etc.).
 
-        When *workflow_type* is provided (e.g. ``"full"``, ``"shortened"``,
-        ``"fast-track"``), the corresponding tier is selected.  When empty,
-        the flat ``steps`` list is used; if that is absent, the first
-        available tier is returned as a fallback.
+        When *workflow_type* is provided, the engine first consults the
+        optional ``workflow_types`` mapping in the YAML to resolve the
+        external label to a section key prefix, then looks for the
+        corresponding ``<prefix>_workflow`` section.  Hyphens in the
+        resolved prefix are normalised to underscores for key lookup.
+
+        When empty, the flat ``steps`` list is used; if that is absent,
+        the first available ``*_workflow`` section is returned as a
+        fallback.
 
         Args:
             data: Parsed workflow YAML dict.
@@ -520,24 +494,28 @@ class WorkflowDefinition:
         Returns:
             The resolved list of step dicts (may be empty).
         """
-        tier_keys = {
-            "full": "full_workflow",
-            "shortened": "shortened_workflow",
-            "fast-track": "fast_track_workflow",
-            "fast_track": "fast_track_workflow",
-        }
-
         if workflow_type:
-            workflow_type = WorkflowDefinition.normalize_workflow_type(workflow_type, default=workflow_type)
+            # 1. Consult the optional workflow_types mapping in the YAML
+            workflow_types_mapping = data.get("workflow_types", {})
+            mapped_type = workflow_types_mapping.get(workflow_type, workflow_type)
 
-            key = tier_keys.get(workflow_type, f"{workflow_type}_workflow")
-            tier = data.get(key, {})
-            if isinstance(tier, dict) and tier.get("steps"):
-                return tier["steps"]
-            # Fallback: maybe the caller passed the full key name directly
-            tier = data.get(workflow_type, {})
-            if isinstance(tier, dict) and tier.get("steps"):
-                return tier["steps"]
+            # 2. Normalise hyphens → underscores for YAML key lookup
+            key_prefix = mapped_type.replace("-", "_")
+            keys_to_try = [
+                f"{key_prefix}_workflow",
+                key_prefix,
+                f"{mapped_type}_workflow",
+                mapped_type,
+            ]
+            seen: set = set()
+            for key in keys_to_try:
+                if key in seen:
+                    continue
+                seen.add(key)
+                tier = data.get(key, {})
+                if isinstance(tier, dict) and tier.get("steps"):
+                    return tier["steps"]
+
             return []
 
         # No workflow_type specified — prefer flat steps
@@ -545,11 +523,14 @@ class WorkflowDefinition:
         if flat:
             return flat
 
-        # Fallback: pick the first available tier
-        for key in ["full_workflow", "shortened_workflow", "fast_track_workflow"]:
-            tier = data.get(key, {})
-            if isinstance(tier, dict) and tier.get("steps"):
-                return tier["steps"]
+        # Fallback: pick the first available *_workflow section
+        for key, value in data.items():
+            if (
+                key.endswith("_workflow")
+                and isinstance(value, dict)
+                and value.get("steps")
+            ):
+                return value["steps"]
 
         return []
 

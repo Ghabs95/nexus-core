@@ -3,12 +3,19 @@
 from nexus.plugins.builtin.agent_launch_policy_plugin import AgentLaunchPolicyPlugin
 
 
-def test_get_workflow_name_mapping():
+def test_build_agent_prompt_uses_canonical_workflow_tier():
     plugin = AgentLaunchPolicyPlugin()
+    prompt = plugin.build_agent_prompt(
+        issue_url="https://github.com/org/repo/issues/123",
+        tier_name="fast-track",
+        task_content="Implement endpoint",
+        agent_type="triage",
+        continuation=False,
+        workflow_path="",
+        nexus_dir=".nexus",
+    )
 
-    assert plugin.get_workflow_name("fast-track") == "fast_track"
-    assert plugin.get_workflow_name("shortened") == "bug_fix"
-    assert plugin.get_workflow_name("full") == "new_feature"
+    assert "Workflow Tier: fast-track" in prompt
 
 
 def test_build_agent_prompt_contains_issue_context():

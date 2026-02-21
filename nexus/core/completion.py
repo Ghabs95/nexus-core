@@ -191,18 +191,7 @@ def generate_completion_instructions(
         f"(the top-level directory you were launched in). "
         f"Do NOT create a new `{nexus_dir}/` folder inside sub-repos or subdirectories.\n\n"
         + completions_script +
-        f'cat > "$COMPLETIONS_DIR/completion_summary_{issue_number}.json" << \'NEXUS_EOF\'\n'
-        f"{{\n"
-        f'  "status": "complete",\n'
-        f'  "agent_type": "{agent_type}",\n'
-        f'  "summary": "<one-line summary of what you did>",\n'
-        f'  "key_findings": [\n'
-        f'    "<finding 1>",\n'
-        f'    "<finding 2>"\n'
-        f"  ],\n"
-        f'  "next_agent": "<agent_type from workflow steps — NOT the step id or display name>"\n'
-        f"}}\n"
-        f"NEXUS_EOF\n"
+        f"python3 -c 'import json,os; p=os.path.join(os.environ[\"COMPLETIONS_DIR\"], \"completion_summary_{issue_number}.json\"); d={{\"status\":\"complete\",\"agent_type\":\"{agent_type}\",\"summary\":\"<one-line summary of what you did>\",\"key_findings\":[\"<finding 1>\",\"<finding 2>\"],\"next_agent\":\"<agent_type from workflow steps — NOT the step id or display name>\"}}; open(p, \"w\", encoding=\"utf-8\").write(json.dumps(d, indent=2))'\n"
         f"```\n\n"
         f"Replace the `<placeholder>` values with real data from your analysis.\n\n"
         f"After posting the comment and writing the JSON, **EXIT immediately**.\n"

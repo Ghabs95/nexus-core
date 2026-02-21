@@ -177,23 +177,46 @@ async def test_complete_step_for_issue_returns_none_when_no_mapping():
 
 
 @pytest.mark.asyncio
-async def test_complete_step_for_issue_falls_back_to_last_running_step():
-    """When agent_type doesn't match, fallback to the last RUNNING step."""
+async def test_complete_step_for_issue_noop_when_agent_type_mismatch():
+    """When agent_type doesn't match RUNNING step, plugin raises mismatch error."""
     develop = _step(1, "develop", "developer")
     review = _step(2, "review", "reviewer")
     wf = _make_workflow("wf-fallback", [develop, review])
     plugin, _ = await _plugin_with_workflow(wf, "fallback")
 
-    # Pass wrong agent_type that doesn't match "developer"
+    # Pass wrong agent_type that doesn't match RUNNING "developer"
+    with pytest.raises(ValueError, match="Completion agent mismatch"):
+        await plugin.complete_step_for_issue(
+            issue_number="fallback",
+            completed_agent_type="unknown-agent",
+            outputs={"done": True},
+        )
+
+
+@pytest.mark.asyncio
+async def test_complete_step_for_issue_autostarts_pending_workflow():
+    """Pending workflows auto-start so first completion can advance chain."""
+    triage = _step(1, "triage", "triage")
+    debug = _step(2, "debug", "debug")
+    wf = Workflow(
+        id="wf-pending",
+        name="test",
+        version="1.0",
+        steps=[triage, debug],
+        state=WorkflowState.PENDING,
+        current_step=0,
+    )
+    plugin, _ = await _plugin_with_workflow(wf, "pending")
+
     updated = await plugin.complete_step_for_issue(
-        issue_number="fallback",
-        completed_agent_type="unknown-agent",
-        outputs={"done": True},
+        issue_number="pending",
+        completed_agent_type="triage",
+        outputs={"priority": "p2"},
     )
 
     assert updated is not None
-    # Fallback should have completed the first RUNNING step (developer)
-    assert updated.active_agent_type == "reviewer"
+    assert updated.state == WorkflowState.RUNNING
+    assert updated.active_agent_type == "debug"
 
 
 # ---------------------------------------------------------------------------

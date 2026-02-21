@@ -356,9 +356,9 @@ class TestResolveNextAgents:
 TIERED_WORKFLOW = (
     "name: Tiered Test\n"
     "workflow_types:\n"
-    "  full: new_feature\n"
-    "  shortened: bug_fix\n"
-    "  fast-track: hotfix\n"
+    "  full: full\n"
+    "  shortened: shortened\n"
+    "  fast-track: fast-track\n"
     "full_workflow:\n"
     "  steps:\n"
     "    - id: vision\n"
@@ -439,13 +439,12 @@ class TestMultiTierWorkflow:
         steps = WorkflowDefinition._resolve_steps(data, "nonexistent")
         assert steps == []
 
-    def test_resolve_workflow_name_alias(self, tmp_path):
-        """workflow_type aliases such as bug_fix map to shortened_workflow."""
+    def test_resolve_noncanonical_type_returns_empty(self, tmp_path):
+        """Non-canonical workflow_type values are not resolved."""
         import yaml
         data = yaml.safe_load(TIERED_WORKFLOW)
         steps = WorkflowDefinition._resolve_steps(data, "bug_fix")
-        assert len(steps) == 3
-        assert steps[0]["id"] == "triage"
+        assert steps == []
 
     def test_flat_steps_preferred_when_present(self, tmp_path):
         import yaml

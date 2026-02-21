@@ -11,15 +11,6 @@ from nexus.core.workflow import WorkflowDefinition
 class AgentLaunchPolicyPlugin:
     """Compose workflow/agent prompts for launch and continuation flows."""
 
-    @staticmethod
-    def get_workflow_name(tier_name: str) -> str:
-        """Return workflow slash-command name for a tier."""
-        if tier_name == "fast-track":
-            return "fast_track"
-        if tier_name == "shortened":
-            return "bug_fix"
-        return "new_feature"
-
     def build_agent_prompt(
         self,
         *,
@@ -34,7 +25,6 @@ class AgentLaunchPolicyPlugin:
         project_name: str = "",
     ) -> str:
         """Build launch prompt used by orchestrator agent invocation."""
-        workflow_name = self.get_workflow_name(tier_name)
         workflow_type = WorkflowDefinition.normalize_workflow_type(tier_name)
         instructions = self._get_comment_and_summary_instructions(
             issue_url=issue_url,
@@ -51,7 +41,7 @@ class AgentLaunchPolicyPlugin:
                     f"{continuation_prompt}\n\n"
                     f"Issue: {issue_url}\n"
                     f"Tier: {tier_name}\n"
-                    f"Workflow: /{workflow_name}\n\n"
+                    f"Workflow Tier: {workflow_type}\n\n"
                     f"Review the previous work in the GitHub comments and task file, then complete your step.\n\n"
                     f"**GIT WORKFLOW (CRITICAL):**\n"
                     f"1. Check the issue body for **Target Branch** field (e.g., `feat/surveyor-plan`)\n"
@@ -83,7 +73,7 @@ class AgentLaunchPolicyPlugin:
                 f"You are a {agent_type} agent. You previously started working on this task:\n\n"
                 f"Issue: {issue_url}\n"
                 f"Tier: {tier_name}\n"
-                f"Workflow: /{workflow_name}\n\n"
+                f"Workflow Tier: {workflow_type}\n\n"
                 f"{base_prompt}\n\n"
                 f"{merge_policy}"
                 f"{instructions}\n\n"
@@ -94,7 +84,7 @@ class AgentLaunchPolicyPlugin:
             f"You are a {agent_type} agent. A new task has arrived and a GitHub issue has been created.\n\n"
             f"Issue: {issue_url}\n"
             f"Tier: {tier_name}\n"
-            f"Workflow: /{workflow_name}\n\n"
+            f"Workflow Tier: {workflow_type}\n\n"
             f"**YOUR JOB:** Analyze, triage, and route. DO NOT try to implement or invoke other agents.\n\n"
             f"REQUIRED ACTIONS:\n"
             f"1. Read the GitHub issue body and understand the task\n"

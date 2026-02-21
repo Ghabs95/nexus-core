@@ -402,8 +402,12 @@ class GitHubPlatform(GitPlatform):
 
         Looks for labels matching *label_prefix* (e.g. ``workflow:full``,
         ``workflow:shortened``, ``workflow:fast-track``) and returns the
-        canonical workflow_type via
+        normalised workflow_type string via
         :py:meth:`~nexus.core.workflow.WorkflowDefinition.normalize_workflow_type`.
+
+        The engine does **not** validate the extracted type against a
+        hardcoded list — the workflow definition YAML is the source of
+        truth for valid types.
 
         Args:
             issue_number: GitHub issue number.
@@ -411,7 +415,7 @@ class GitHubPlatform(GitPlatform):
             default: Value returned when no matching label is found.
 
         Returns:
-            Canonical workflow_type string, or *default*.
+            Normalised workflow_type string, or *default*.
         """
         from nexus.core.workflow import WorkflowDefinition
 
@@ -427,7 +431,7 @@ class GitHubPlatform(GitPlatform):
             for label in labels:
                 if label.startswith(label_prefix):
                     raw = label[len(label_prefix):]
-                    return WorkflowDefinition.normalize_workflow_type(raw, default=raw)
+                    return WorkflowDefinition.normalize_workflow_type(raw, default=default)
 
             return default
         except Exception as e:

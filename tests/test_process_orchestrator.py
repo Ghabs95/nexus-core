@@ -34,9 +34,13 @@ class StubRuntime(AgentRuntime):
         self.audit_events: List[tuple] = []
         self.finalized: List[dict] = []
         self._retry = retry
+        self._dead_retry = True
         self._alert_success = alert_success
         self._workflow_states: Dict[str, str] = {}
+        self._running_agents: Dict[str, Optional[str]] = {}
         self._timeout_results: Dict[str, Tuple[bool, Any]] = {}
+        self._post_comment_success = True
+        self.posted_comments: List[dict] = []
 
     def launch_agent(self, issue_number, agent_type, *, trigger_source="", exclude_tools=None):
         self.launched.append(
@@ -57,6 +61,9 @@ class StubRuntime(AgentRuntime):
     def should_retry(self, issue_number, agent_type):
         return self._retry
 
+    def should_retry_dead_agent(self, issue_number, agent_type):
+        return self._dead_retry
+
     def send_alert(self, message):
         self.alerts.append(message)
         return self._alert_success
@@ -68,11 +75,18 @@ class StubRuntime(AgentRuntime):
         self.finalized.append({"issue": issue_number, "last_agent": last_agent})
         return {}
 
+    def post_completion_comment(self, issue_number: str, repo: str, body: str) -> bool:
+        self.posted_comments.append({"issue": issue_number, "repo": repo, "body": body})
+        return self._post_comment_success
+
     def get_workflow_state(self, issue_number):
         return self._workflow_states.get(str(issue_number))
 
     def check_log_timeout(self, issue_number, log_file):
         return self._timeout_results.get(issue_number, (False, None))
+
+    def get_expected_running_agent(self, issue_number):
+        return self._running_agents.get(str(issue_number))
 
 
 # ---------------------------------------------------------------------------
@@ -179,8 +193,29 @@ class TestScanAndProcessCompletions:
         with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
             orc.scan_and_process_completions("/base", set())
 
+        assert len(runtime.posted_comments) == 1
         assert len(runtime.launched) == 1
         assert runtime.launched[0]["agent_type"] == "reviewer"
+
+    def test_comment_post_failure_blocks_autochain(self):
+        """Completion processing must halt when completion comment cannot be posted."""
+        runtime = StubRuntime()
+        runtime._post_comment_success = False
+
+        async def complete(issue, agent, outputs):
+            return None
+
+        orc = _orchestrator(runtime, complete)
+        dedup_seen = set()
+        det = self._fake_detection(next_agent="architect")
+
+        with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
+            orc.scan_and_process_completions("/base", dedup_seen)
+
+        assert len(runtime.posted_comments) == 1
+        assert runtime.launched == []
+        assert any("comment delivery failed" in alert for alert in runtime.alerts)
+        assert "key-42" not in dedup_seen
 
     def test_engine_path_completed_finalizes(self):
         """When engine workflow is COMPLETED, finalize is called, nothing is launched."""
@@ -300,6 +335,22 @@ class TestScanAndProcessCompletions:
             orc.scan_and_process_completions("/base", set())
 
         assert runtime.finalized[0]["issue"] == "42"
+        assert runtime.launched == []
+
+    def test_engine_completion_mismatch_error_skips_autochain(self):
+        """If complete_step rejects a mismatched completion, do not auto-chain."""
+        runtime = StubRuntime()
+
+        async def complete(issue, agent, outputs):
+            raise ValueError("Completion agent mismatch for issue #42")
+
+        orc = _orchestrator(runtime, complete)
+        det = self._fake_detection(agent_type="developer", next_agent="debug")
+
+        with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
+            orc.scan_and_process_completions("/base", set())
+
+        assert len(runtime.posted_comments) == 1
         assert runtime.launched == []
 
     def test_failed_launch_sends_autochain_failed_alert(self):
@@ -480,6 +531,20 @@ class TestDetectDeadAgents:
 
         assert runtime.launched[0]["exclude_tools"] == ["gemini"]
 
+    def test_workflow_ineligible_dead_agent_skips_retry_and_cleans_tracker(self):
+        """Dead-agent retries are skipped when workflow no longer expects that agent."""
+        runtime = StubRuntime(retry=True)
+        runtime._dead_retry = False
+        runtime.tracker = {"71": self._entry(pid=7171, agent_type="triage", age_seconds=7200)}
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        with patch.object(runtime, "is_pid_alive", return_value=False):
+            orc.detect_dead_agents()
+
+        assert runtime.launched == []
+        assert "71" not in runtime.tracker
+        assert any(event == "AGENT_DEAD_STALE" for _, event, _ in runtime.audit_events)
+
 
 # ---------------------------------------------------------------------------
 # check_stuck_agents (Strategy-1)
@@ -540,4 +605,46 @@ class TestCheckStuckAgents:
         with patch.object(runtime, "check_log_timeout", return_value=(False, None)):
             orc.check_stuck_agents(str(tmp_path))
 
+        assert runtime.launched == []
+
+    def test_orphaned_running_step_retries_expected_agent(self, tmp_path):
+        """If RUNNING step has no live pid/tracker entry, orchestrator retries it."""
+        log_dir = tmp_path / ".nexus" / "tasks" / "job1" / "logs"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "copilot_44_20260101_120000.log"
+        log_file.write_text("stale output")
+        old_time = time.time() - 120
+        os.utime(log_file, (old_time, old_time))
+
+        runtime = StubRuntime(retry=True)
+        runtime._running_agents["44"] = "debug"
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        with patch.object(runtime, "check_log_timeout", return_value=(True, None)):
+            orc.check_stuck_agents(str(tmp_path))
+
+        assert any("Orphaned Running Step Detected" in a for a in runtime.alerts)
+        assert any(
+            launch["issue"] == "44"
+            and launch["agent_type"] == "debug"
+            and launch["trigger"] == "orphan-timeout-retry"
+            for launch in runtime.launched
+        )
+
+    def test_orphaned_running_step_without_expected_agent_is_ignored(self, tmp_path):
+        """No expected RUNNING agent means no orphan recovery action is taken."""
+        log_dir = tmp_path / ".nexus" / "tasks" / "job1" / "logs"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "copilot_45_20260101_120000.log"
+        log_file.write_text("stale output")
+        old_time = time.time() - 120
+        os.utime(log_file, (old_time, old_time))
+
+        runtime = StubRuntime(retry=True)
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        with patch.object(runtime, "check_log_timeout", return_value=(True, None)):
+            orc.check_stuck_agents(str(tmp_path))
+
+        assert runtime.alerts == []
         assert runtime.launched == []

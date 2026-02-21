@@ -16,6 +16,11 @@ class WorkflowPolicyPlugin:
         callback = self.config.get(name)
         return callback if callable(callback) else None
 
+    @staticmethod
+    def _format_agent(agent: str) -> str:
+        value = str(agent or "").strip().lstrip("@").strip()
+        return f"@{value}" if value else "unknown"
+
     def build_transition_message(
         self,
         *,
@@ -24,11 +29,13 @@ class WorkflowPolicyPlugin:
         next_agent: str,
         repo: str,
     ) -> str:
+        completed = self._format_agent(completed_agent)
+        launching = self._format_agent(next_agent)
         return (
             "🔗 **Agent Transition**\n\n"
             f"Issue: #{issue_number}\n"
-            f"Completed: `{completed_agent}`\n"
-            f"Launching: `{next_agent}`\n\n"
+            f"Completed: `{completed}`\n"
+            f"Launching: `{launching}`\n\n"
             f"🔗 https://github.com/{repo}/issues/{issue_number}"
         )
 
@@ -40,11 +47,13 @@ class WorkflowPolicyPlugin:
         next_agent: str,
         repo: str,
     ) -> str:
+        completed = self._format_agent(completed_agent)
+        failed = self._format_agent(next_agent)
         return (
             "❌ **Auto-chain Failed**\n\n"
             f"Issue: #{issue_number}\n"
-            f"Completed: `{completed_agent}`\n"
-            f"Failed to launch: `{next_agent}`\n\n"
+            f"Completed: `{completed}`\n"
+            f"Failed to launch: `{failed}`\n\n"
             f"🔗 https://github.com/{repo}/issues/{issue_number}"
         )
 

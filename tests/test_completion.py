@@ -122,7 +122,8 @@ class TestGenerateCompletionInstructions:
 
     def test_contains_agent_type(self):
         text = generate_completion_instructions("1", "triage")
-        assert '"agent_type": "triage"' in text
+        assert "agent_type" in text
+        assert "triage" in text
 
     def test_contains_workflow_steps(self):
         steps = "**Workflow Steps:**\n- 1. Triage — triage"
@@ -132,6 +133,11 @@ class TestGenerateCompletionInstructions:
     def test_custom_nexus_dir(self):
         text = generate_completion_instructions("1", "triage", project_name="myproject", nexus_dir=".custom")
         assert ".custom/tasks/myproject/completions" in text
+
+    def test_uses_python_command_instead_of_heredoc(self):
+        text = generate_completion_instructions("1", "triage")
+        assert "python3 -c" in text
+        assert "NEXUS_EOF" not in text
 
 
 # ---------------------------------------------------------------------------

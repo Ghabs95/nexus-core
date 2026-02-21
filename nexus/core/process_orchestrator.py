@@ -35,7 +35,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from nexus.core.completion import scan_for_completions
+from nexus.core.completion import build_completion_comment, scan_for_completions
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,14 @@ class AgentRuntime(ABC):
         """
         return None
 
+    def should_retry_dead_agent(self, issue_number: str, agent_type: str) -> bool:
+        """Return ``True`` when dead-agent retry is still workflow-valid.
+
+        Override in hosts that can inspect workflow storage and confirm there is
+        still a matching RUNNING step for ``agent_type``.
+        """
+        return True
+
     def is_process_running(self, issue_number: str) -> bool:
         """Return ``True`` if an agent process is still running for this issue.
 
@@ -161,6 +169,23 @@ class AgentRuntime(ABC):
     def notify_timeout(self, issue_number: str, agent_type: str, will_retry: bool) -> None:
         """Send a timeout notification.  No-op by default; override to use host
         notification system (e.g. ``notify_agent_timeout``)."""
+
+    def get_expected_running_agent(self, issue_number: str) -> Optional[str]:
+        """Return the workflow's current RUNNING step agent type, if available.
+
+        Hosts can override this when they can inspect workflow storage even if
+        launched-agent tracker metadata is missing.
+        """
+        return None
+
+    def post_completion_comment(self, issue_number: str, repo: str, body: str) -> bool:
+        """Post a workflow completion comment to the issue.
+
+        Hosts can override this to integrate with GitHub/GitLab. Returning
+        ``False`` blocks auto-chaining so workflows do not advance silently when
+        comment delivery fails.
+        """
+        return True
 
     # --- Default OS-level process helpers (rarely need overriding) ---
 
@@ -231,6 +256,8 @@ class ProcessOrchestrator:
         self._nexus_dir = nexus_dir
         # Per-session set of (issue:pid) keys we've already alerted for.
         self._dead_agent_alerted: Set[str] = set()
+        # Per-session set of orphaned-running-step alerts.
+        self._orphaned_step_alerted: Set[str] = set()
 
     # ------------------------------------------------------------------
     # Completion scanning / auto-chain
@@ -283,8 +310,17 @@ class ProcessOrchestrator:
                     repo = project_name or issue_num
 
                 completed_agent = summary.agent_type
-                dedup_seen.add(comment_key)
                 logger.info(f"📋 Agent completed for issue #{issue_num} ({completed_agent})")
+
+                comment_body = build_completion_comment(summary)
+                if not self._runtime.post_completion_comment(issue_num, repo, comment_body):
+                    self._runtime.send_alert(
+                        "⚠️ Completion detected but Git comment delivery failed; "
+                        f"auto-chain blocked for issue #{issue_num} ({completed_agent})."
+                    )
+                    continue
+
+                dedup_seen.add(comment_key)
 
                 # Ask the workflow engine what happens next.
                 engine_workflow = asyncio.run(
@@ -478,6 +514,21 @@ class ProcessOrchestrator:
             if alert_key in self._dead_agent_alerted:
                 continue
 
+            if not self._runtime.should_retry_dead_agent(str(issue_num), agent_type):
+                logger.info(
+                    f"Skipping dead-agent retry for issue #{issue_num}: "
+                    f"workflow no longer expects agent {agent_type}"
+                )
+                self._runtime.audit_log(
+                    issue_num,
+                    "AGENT_DEAD_STALE",
+                    f"PID {pid} ({agent_type}) no longer matches workflow RUNNING step",
+                )
+                launched.pop(issue_num, None)
+                self._runtime.save_launched_agents(launched)
+                self._dead_agent_alerted.add(alert_key)
+                continue
+
             crashed_tool = agent_data.get("tool", "")
             age_min = (now - launch_ts) / 60
             will_retry = self._runtime.should_retry(issue_num, agent_type)
@@ -581,7 +632,64 @@ class ProcessOrchestrator:
         age = time.time() - os.path.getmtime(log_file)
 
         if not (pid and self._runtime.is_pid_alive(pid)):
-            return  # Already gone; Strategy-2 will handle it.
+            expected_agent = self._runtime.get_expected_running_agent(str(issue_num))
+            if not expected_agent:
+                return
+
+            alert_key = f"{issue_num}:orphan:{expected_agent}"
+            if alert_key in self._orphaned_step_alerted:
+                return
+
+            if not self._runtime.should_retry_dead_agent(str(issue_num), expected_agent):
+                self._runtime.audit_log(
+                    issue_num,
+                    "AGENT_DEAD_STALE",
+                    f"Orphaned RUNNING step ({expected_agent}) no longer workflow-valid",
+                )
+                self._orphaned_step_alerted.add(alert_key)
+                return
+
+            will_retry = self._runtime.should_retry(issue_num, expected_agent)
+            if will_retry:
+                msg = (
+                    f"⚠️ **Orphaned Running Step Detected**\n\n"
+                    f"Issue: #{issue_num}\n"
+                    f"Agent: {expected_agent}\n"
+                    f"Status: RUNNING in workflow but no live process/tracker entry; "
+                    f"retry scheduled"
+                )
+            else:
+                msg = (
+                    f"❌ **Orphaned Running Step — Manual Intervention Required**\n\n"
+                    f"Issue: #{issue_num}\n"
+                    f"Agent: {expected_agent}\n"
+                    f"Status: RUNNING in workflow but no live process/tracker entry\n"
+                    f"Action: retry limit reached"
+                )
+
+            if not self._runtime.send_alert(msg):
+                return
+
+            self._runtime.audit_log(
+                issue_num,
+                "AGENT_ORPHANED_RUNNING_STEP",
+                f"{expected_agent} has no live process/tracker (log age {age / 60:.0f}min)",
+            )
+            self._orphaned_step_alerted.add(alert_key)
+
+            if will_retry:
+                self._runtime.clear_launch_guard(issue_num)
+                try:
+                    self._runtime.launch_agent(
+                        issue_num,
+                        expected_agent,
+                        trigger_source="orphan-timeout-retry",
+                    )
+                except Exception as exc:
+                    logger.error(
+                        f"Orphaned-step retry exception for issue #{issue_num}: {exc}"
+                    )
+            return
 
         killed = self._runtime.kill_process(pid)
         if not killed:
