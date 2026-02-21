@@ -110,6 +110,19 @@ class WorkflowPolicyPlugin:
         )
         return str(pr_url) if pr_url else None
 
+    def _find_existing_pr(self, *, repo: str, issue_number: str) -> Optional[str]:
+        finder = self._callback("find_existing_pr")
+        if not finder:
+            return None
+
+        try:
+            pr_url = finder(repo=repo, issue_number=str(issue_number))
+        except Exception as exc:
+            logger.warning("Error finding existing PR for issue #%s: %s", issue_number, exc)
+            return None
+
+        return str(pr_url) if pr_url else None
+
     def _close_issue(self, *, repo: str, issue_number: str, last_agent: str, pr_url: Optional[str]) -> bool:
         closer = self._callback("close_issue")
         if not closer:
@@ -154,17 +167,21 @@ class WorkflowPolicyPlugin:
         }
 
         if project_name:
-            git_dir = self._resolve_git_dir(project_name)
-            if git_dir:
-                try:
-                    result["pr_url"] = self._create_pr(
-                        repo=repo,
-                        repo_dir=git_dir,
-                        issue_number=issue_number,
-                        last_agent=last_agent,
-                    )
-                except Exception as exc:
-                    logger.warning("Error creating PR for issue #%s: %s", issue_number, exc)
+            existing_pr_url = self._find_existing_pr(repo=repo, issue_number=issue_number)
+            if existing_pr_url:
+                result["pr_url"] = existing_pr_url
+            else:
+                git_dir = self._resolve_git_dir(project_name)
+                if git_dir:
+                    try:
+                        result["pr_url"] = self._create_pr(
+                            repo=repo,
+                            repo_dir=git_dir,
+                            issue_number=issue_number,
+                            last_agent=last_agent,
+                        )
+                    except Exception as exc:
+                        logger.warning("Error creating PR for issue #%s: %s", issue_number, exc)
 
         try:
             result["issue_closed"] = self._close_issue(

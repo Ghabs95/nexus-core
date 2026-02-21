@@ -68,3 +68,41 @@ def test_workflow_policy_finalize_workflow():
     assert result["notification_sent"] is True
     assert "Workflow Complete" in captured["notify"]
     assert captured["pr_kwargs"]["issue_repo"] == "org/repo"
+
+
+def test_workflow_policy_finalize_workflow_reuses_existing_pr():
+    captured = {"created": False, "closed_kwargs": None}
+
+    def _resolve_git_dir(_project_name):
+        return "/tmp/repo"
+
+    def _find_existing_pr(**_kwargs):
+        return "https://github.com/org/repo/pull/50"
+
+    def _create_pr_from_changes(**_kwargs):
+        captured["created"] = True
+        return "https://github.com/org/repo/pull/99"
+
+    def _close_issue(**_kwargs):
+        captured["closed_kwargs"] = _kwargs
+        return True
+
+    plugin = WorkflowPolicyPlugin(
+        {
+            "resolve_git_dir": _resolve_git_dir,
+            "find_existing_pr": _find_existing_pr,
+            "create_pr_from_changes": _create_pr_from_changes,
+            "close_issue": _close_issue,
+        }
+    )
+
+    result = plugin.finalize_workflow(
+        issue_number="49",
+        repo="org/repo",
+        last_agent="writer",
+        project_name="nexus",
+    )
+
+    assert result["pr_url"] == "https://github.com/org/repo/pull/50"
+    assert captured["created"] is False
+    assert "https://github.com/org/repo/pull/50" in captured["closed_kwargs"]["comment"]
