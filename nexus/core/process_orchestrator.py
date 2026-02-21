@@ -598,7 +598,7 @@ class ProcessOrchestrator:
                     f"Agent: {agent_type} (PID {pid})\n"
                     f"Status: Process exited without completion, "
                     f"max retries reached\n\n"
-                    f"{f'Log: {latest_log}\\n' if latest_log else ''}"
+                    f"{f'Log: {latest_log}\n' if latest_log else ''}"
                     f"Use /reprocess to retry"
                 )
                 if not self._runtime.send_alert(msg):
