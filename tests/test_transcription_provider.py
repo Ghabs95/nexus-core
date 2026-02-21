@@ -1,24 +1,26 @@
 """Unit tests for WhisperTranscriptionProvider and AdapterRegistry.create_transcription."""
 import asyncio
 import sys
-from pathlib import Path
 from types import ModuleType
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 
-def _make_openai_mock():
+def _make_openai_mock() -> ModuleType:
     """Create a minimal openai mock module."""
     openai_mod = ModuleType("openai")
     openai_mod.AsyncOpenAI = MagicMock()
     openai_mod.OpenAIError = Exception
-    sys.modules["openai"] = openai_mod
     return openai_mod
 
 
-# Ensure openai is mocked before any import of the provider
-_make_openai_mock()
+@pytest.fixture(autouse=True)
+def openai_mock(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """Install a mocked openai module into sys.modules for the duration of each test."""
+    openai_mod = _make_openai_mock()
+    monkeypatch.setitem(sys.modules, "openai", openai_mod)
+    return openai_mod
 
 
 # ---------------------------------------------------------------------------

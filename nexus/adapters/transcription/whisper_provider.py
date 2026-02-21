@@ -1,9 +1,9 @@
 """OpenAI Whisper-based transcription provider."""
 
-import io
+import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from nexus.adapters.transcription.base import (
     TranscriptionInput,
@@ -42,12 +42,12 @@ class WhisperTranscriptionProvider(TranscriptionProvider):
         except ImportError as exc:  # pragma: no cover
             raise ImportError(
                 "openai package is required for WhisperTranscriptionProvider. "
-                "Install it with: pip install openai"
+                "Install it with: pip install nexus-core[openai]"
             ) from exc
 
         self._api_key = api_key
         self._model = model
-        self._extra_kwargs: Dict[str, Any] = extra_kwargs
+        self._extra_kwargs: dict[str, Any] = extra_kwargs
 
     # ------------------------------------------------------------------
     # TranscriptionProvider interface
@@ -93,7 +93,7 @@ class WhisperTranscriptionProvider(TranscriptionProvider):
 
         client = openai.AsyncOpenAI(api_key=self._api_key)
 
-        kwargs: Dict[str, Any] = dict(self._extra_kwargs)
+        kwargs: dict[str, Any] = dict(self._extra_kwargs)
         if audio_input.language:
             kwargs["language"] = audio_input.language
         # Request verbose_json to get segment-level detail when available
@@ -133,7 +133,7 @@ class WhisperTranscriptionProvider(TranscriptionProvider):
     # Helpers
     # ------------------------------------------------------------------
 
-    async def _resolve_source(self, audio_input: TranscriptionInput):
+    async def _resolve_source(self, audio_input: TranscriptionInput) -> tuple[bytes, str]:
         """Return (bytes, filename) from a Path, bytes, or URL source."""
         source = audio_input.source
 
@@ -147,17 +147,44 @@ class WhisperTranscriptionProvider(TranscriptionProvider):
             return source.read_bytes(), source.name
 
         if isinstance(source, bytes):
-            # Determine filename from format hint or fall back to mp3
-            fmt = audio_input.format if audio_input.format != "auto" else "mp3"
+            fmt_hint = audio_input.format or "auto"
+            fmt = "mp3" if fmt_hint == "auto" else fmt_hint.lower()
+            if fmt not in SUPPORTED_FORMATS:
+                raise ValueError(
+                    f"Unsupported audio format {fmt!r}. "
+                    f"Supported: {sorted(SUPPORTED_FORMATS)}"
+                )
             return source, f"audio.{fmt}"
 
         if isinstance(source, str):
-            # Treat as URL
+            # Restrict to http/https and block private/loopback IPs to prevent SSRF
+            import ipaddress
+            import socket
+            import urllib.parse
             import urllib.request
 
+            parsed = urllib.parse.urlparse(source)
+            if parsed.scheme not in ("http", "https"):
+                raise ValueError(
+                    f"Unsupported URL scheme {parsed.scheme!r}. Only 'http' and 'https' are allowed."
+                )
+            hostname = parsed.hostname or ""
+            try:
+                ip = ipaddress.ip_address(socket.gethostbyname(hostname))
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                    raise ValueError(
+                        f"Requests to private/internal addresses are not allowed: {hostname!r}"
+                    )
+            except socket.gaierror as exc:
+                raise ValueError(f"Unable to resolve hostname: {hostname!r}") from exc
             filename = source.split("/")[-1].split("?")[0] or "audio.mp3"
-            with urllib.request.urlopen(source) as resp:  # noqa: S310
-                data = resp.read()
+
+            def _fetch() -> bytes:
+                req = urllib.request.Request(source)  # noqa: S310
+                with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+                    return resp.read()
+
+            data = await asyncio.to_thread(_fetch)
             return data, filename
 
         raise TypeError(f"Unsupported source type: {type(source)}")
