@@ -54,7 +54,7 @@ class TestWhisperTranscriptionProvider:
 
         from nexus.adapters.transcription.base import TranscriptionInput
         inp = TranscriptionInput(source=ogg_file)
-        result = asyncio.get_event_loop().run_until_complete(provider.transcribe(inp))
+        result = asyncio.run(provider.transcribe(inp))
 
         assert result.text == "hello world"
         assert result.provider_used == "whisper"
@@ -70,7 +70,7 @@ class TestWhisperTranscriptionProvider:
         inp = TranscriptionInput(source=bad_file)
 
         with pytest.raises(ValueError, match="Unsupported audio format"):
-            asyncio.get_event_loop().run_until_complete(provider.transcribe(inp))
+            asyncio.run(provider.transcribe(inp))
 
     def test_check_availability_true(self):
         """check_availability returns True when the API responds successfully."""
@@ -80,7 +80,7 @@ class TestWhisperTranscriptionProvider:
         mock_client.models.retrieve = AsyncMock(return_value=MagicMock())
         sys.modules["openai"].AsyncOpenAI.return_value = mock_client
 
-        result = asyncio.get_event_loop().run_until_complete(provider.check_availability())
+        result = asyncio.run(provider.check_availability())
         assert result is True
 
     def test_check_availability_false_on_error(self):
@@ -91,7 +91,7 @@ class TestWhisperTranscriptionProvider:
         mock_client.models.retrieve = AsyncMock(side_effect=Exception("network error"))
         sys.modules["openai"].AsyncOpenAI.return_value = mock_client
 
-        result = asyncio.get_event_loop().run_until_complete(provider.check_availability())
+        result = asyncio.run(provider.check_availability())
         assert result is False
 
 
