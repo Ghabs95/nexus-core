@@ -31,6 +31,7 @@ from nexus.adapters.ai.base import AIProvider
 from nexus.adapters.git.base import GitPlatform
 from nexus.adapters.notifications.base import NotificationChannel
 from nexus.adapters.storage.base import StorageBackend
+from nexus.adapters.transcription.base import TranscriptionProvider
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,13 @@ def _load_builtin_ai(type_name: str) -> Optional[Type[AIProvider]]:
     return None
 
 
+def _load_builtin_transcription(type_name: str) -> Optional[Type[TranscriptionProvider]]:
+    if type_name == "whisper":
+        from nexus.adapters.transcription.whisper_provider import WhisperTranscriptionProvider
+        return WhisperTranscriptionProvider
+    return None
+
+
 # ---------------------------------------------------------------------------
 # AdapterRegistry
 # ---------------------------------------------------------------------------
@@ -107,6 +115,7 @@ class AdapterRegistry:
         self._git_registry:       Dict[str, Type[GitPlatform]]        = {}
         self._notif_registry:     Dict[str, Type[NotificationChannel]] = {}
         self._ai_registry:        Dict[str, Type[AIProvider]]          = {}
+        self._transcription_registry: Dict[str, Type[TranscriptionProvider]] = {}
 
     # ------------------------------------------------------------------
     # Registration API
@@ -131,6 +140,11 @@ class AdapterRegistry:
         """Register a custom AIProvider implementation."""
         self._ai_registry[type_name] = cls
         logger.debug("AdapterRegistry: registered ai %r = %s", type_name, cls.__name__)
+
+    def register_transcription(self, type_name: str, cls: Type[TranscriptionProvider]) -> None:
+        """Register a custom TranscriptionProvider implementation."""
+        self._transcription_registry[type_name] = cls
+        logger.debug("AdapterRegistry: registered transcription %r = %s", type_name, cls.__name__)
 
     # ------------------------------------------------------------------
     # Factory API
@@ -180,6 +194,22 @@ class AdapterRegistry:
             **kwargs: Constructor keyword arguments forwarded to the class.
         """
         cls = self._resolve("ai", type_name, _load_builtin_ai)
+        return cls(**kwargs)
+
+    def create_transcription(self, type_name: str, **kwargs: Any) -> TranscriptionProvider:
+        """Instantiate a TranscriptionProvider by type name.
+
+        Args:
+            type_name: Adapter type (``"whisper"``).
+            **kwargs: Constructor keyword arguments forwarded to the class.
+
+        Returns:
+            Configured TranscriptionProvider instance.
+
+        Raises:
+            ValueError: If *type_name* is unknown.
+        """
+        cls = self._resolve("transcription", type_name, _load_builtin_transcription)
         return cls(**kwargs)
 
     # ------------------------------------------------------------------
@@ -249,6 +279,7 @@ class AdapterRegistry:
             "git": self._git_registry,
             "notification": self._notif_registry,
             "ai": self._ai_registry,
+            "transcription": self._transcription_registry,
         }
         registry = registry_map.get(category, {})
         if type_name in registry:
