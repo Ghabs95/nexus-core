@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 
 @dataclass
 class TranscriptionSegment:
-    """A time-aligned segment of transcribed text."""
+    """A single segment of transcribed audio."""
 
     start: float
     end: float
@@ -51,6 +51,7 @@ class TranscriptionResult:
     """
 
     text: str
+    provider_used: str
     language: Optional[str] = None
     duration_seconds: Optional[float] = None
     segments: List[TranscriptionSegment] = field(default_factory=list)
@@ -59,7 +60,7 @@ class TranscriptionResult:
 
 
 class TranscriptionProvider(ABC):
-    """Abstract interface for audio transcription providers."""
+    """Abstract provider interface for audio transcription."""
 
     @abstractmethod
     async def transcribe(self, audio_input: TranscriptionInput) -> TranscriptionResult:
