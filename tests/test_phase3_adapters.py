@@ -6,11 +6,10 @@ extras installed.
 """
 import asyncio
 import json
-import unittest.mock
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -631,7 +630,7 @@ class TestDiscordNotificationChannel:
 
         with patch.object(channel, "_post_channel", return_value="77777") as mock_ch:
             await channel.send_alert("Database error", Severity.ERROR)
-        mock_ch.assert_called_once_with("111222333", unittest.mock.ANY)
+        mock_ch.assert_called_once_with("111222333", ANY)
 
     async def test_update_message_webhook_path(self):
         channel = self._make_channel()
@@ -667,3 +666,58 @@ class TestDiscordNotificationChannel:
 
         with pytest.raises(ValueError, match="webhook_url or bot_token"):
             DiscordNotificationChannel()
+
+    async def test_request_input_requires_bot_token(self):
+        from nexus.adapters.notifications.discord import _AIOHTTP_AVAILABLE
+
+        if not _AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp not installed")
+
+        channel = self._make_channel()
+        channel._bot_token = None
+
+        with pytest.raises(ValueError, match="bot_token"):
+            await channel.request_input("chan123", "Prompt?")
+
+    async def test_request_input_returns_user_reply_filtering_bots(self):
+        channel = self._make_channel()
+        bot_msg = {"id": "1", "content": "I am a bot", "author": {"bot": True}}
+        user_msg = {"id": "2", "content": "Human reply", "author": {"bot": False}}
+
+        with (
+            patch.object(channel, "_post_channel", new=AsyncMock(return_value="msg123")),
+            patch.object(
+                channel,
+                "_fetch_messages_after",
+                new=AsyncMock(side_effect=[[bot_msg], [bot_msg, user_msg]]),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
+            result = await channel.request_input(
+                "chan999", "Please reply", timeout=5.0, poll_interval=0.01
+            )
+
+        assert result == "Human reply"
+
+    async def test_request_input_raises_timeout_when_no_reply(self):
+        channel = self._make_channel()
+
+        with (
+            patch.object(channel, "_post_channel", new=AsyncMock(return_value="msg123")),
+            patch.object(
+                channel, "_fetch_messages_after", new=AsyncMock(return_value=[])
+            ),
+        ):
+            with pytest.raises(TimeoutError):
+                # timeout=0.0 → deadline is already reached before the loop body
+                await channel.request_input("chan999", "Waiting", timeout=0.0)
+
+    async def test_http_error_propagates_from_send_message(self):
+        from nexus.adapters.notifications.base import Message
+
+        channel = self._make_channel()
+        error = RuntimeError("Discord API 403")
+
+        with patch.object(channel, "_post_webhook", side_effect=error):
+            with pytest.raises(RuntimeError, match="Discord API 403"):
+                await channel.send_message("chan123", Message(text="test"))
