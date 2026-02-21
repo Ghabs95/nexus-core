@@ -74,10 +74,25 @@ class DiscordNotificationChannel(NotificationChannel):
         alert_channel_id: Optional[str] = None,
     ):
         _require_aiohttp()
-        if not webhook_url and not bot_token:
+        normalized_bot_token: Optional[str] = None
+        if bot_token is not None:
+            if not isinstance(bot_token, str):
+                raise TypeError("bot_token must be a string if provided.")
+            token = bot_token.strip()
+            if not token:
+                raise ValueError("bot_token must not be empty or whitespace.")
+            if token.lower().startswith("bot "):
+                raise ValueError(
+                    "bot_token should be provided without the 'Bot ' prefix (case-insensitive); "
+                    "the adapter will add the required Authorization header."
+                )
+            if any(ch.isspace() for ch in token):
+                raise ValueError("bot_token must not contain whitespace characters.")
+            normalized_bot_token = token
+        if not webhook_url and not normalized_bot_token:
             raise ValueError("At least one of webhook_url or bot_token must be provided.")
         self._webhook_url = webhook_url
-        self._bot_token = bot_token
+        self._bot_token = normalized_bot_token
         self._alert_channel_id = alert_channel_id
 
     # ------------------------------------------------------------------
@@ -96,12 +111,16 @@ class DiscordNotificationChannel(NotificationChannel):
             message: Message to send.
 
         Returns:
-            Discord message ID (``snowflake`` string).
+            Discord message ID. When using the webhook path, returns the bare
+            snowflake ID. When using the bot token path, returns
+            ``channel_id:message_id`` so callers can pass it to
+            ``update_message`` without tracking the channel separately.
         """
         payload = self._build_payload(message)
         if self._webhook_url:
             return await self._post_webhook(payload)
-        return await self._post_channel(user_id, payload)
+        message_id = await self._post_channel(user_id, payload)
+        return f"{user_id}:{message_id}"
 
     async def update_message(self, message_id: str, new_text: str) -> None:
         """Edit a previously sent Discord message.
@@ -146,10 +165,18 @@ class DiscordNotificationChannel(NotificationChannel):
             )
         await self._post_channel(self._alert_channel_id, payload)
 
-    async def request_input(self, user_id: str, prompt: str) -> str:
-        """Send a prompt to a channel and wait for the next human reply (up to 60 s).
+    async def request_input(
+        self, user_id: str, prompt: str, timeout: float = 60.0, poll_interval: float = 3.0
+    ) -> str:
+        """Send a prompt to a channel and wait for the next human reply.
 
         Requires ``bot_token``.
+
+        Args:
+            user_id: Discord channel ID to post to and poll.
+            prompt: Prompt message to send.
+            timeout: Maximum seconds to wait for a reply (default 60).
+            poll_interval: Seconds between polling attempts (default 3).
         """
         import asyncio
 
@@ -159,15 +186,16 @@ class DiscordNotificationChannel(NotificationChannel):
         msg = Message(text=prompt)
         raw_id = await self._post_channel(user_id, self._build_payload(msg))
 
-        deadline = asyncio.get_event_loop().time() + 60
-        while asyncio.get_event_loop().time() < deadline:
-            await asyncio.sleep(3)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            await asyncio.sleep(poll_interval)
             messages = await self._fetch_messages_after(user_id, raw_id)
             for m in messages:
                 if not m.get("author", {}).get("bot", False):
                     return m.get("content", "")
 
-        raise TimeoutError(f"No reply in Discord channel {user_id} within 60s")
+        raise TimeoutError(f"No reply in Discord channel {user_id} within {timeout}s")
 
     # ------------------------------------------------------------------
     # Internal helpers — payload building
@@ -201,9 +229,23 @@ class DiscordNotificationChannel(NotificationChannel):
     # Internal helpers — HTTP
     # ------------------------------------------------------------------
 
+    def _get_session(self) -> "aiohttp.ClientSession":
+        """Return a shared aiohttp session, creating it on first use."""
+        session = getattr(self, "_session", None)
+        if session is None or session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session  # type: ignore[return-value]
+
+    async def aclose(self) -> None:
+        """Close the underlying aiohttp session, if it exists."""
+        session = getattr(self, "_session", None)
+        if session is not None and not session.closed:
+            await session.close()
+
     async def _post_webhook(self, payload: dict) -> str:
         """POST payload to the webhook URL; returns the message ID."""
-        async with aiohttp.ClientSession() as session:
+        session = self._get_session()
+        try:
             async with session.post(
                 f"{self._webhook_url}?wait=true",
                 json=payload,
@@ -212,10 +254,14 @@ class DiscordNotificationChannel(NotificationChannel):
                 resp.raise_for_status()
                 data = await resp.json()
                 return str(data.get("id", ""))
+        except Exception:
+            logger.error("Discord _post_webhook failed for webhook %s", self._webhook_url)
+            raise
 
     async def _post_channel(self, channel_id: str, payload: dict) -> str:
         """POST payload to a channel via the REST API; returns the message ID."""
-        async with aiohttp.ClientSession() as session:
+        session = self._get_session()
+        try:
             async with session.post(
                 f"{self._BASE}/channels/{channel_id}/messages",
                 json=payload,
@@ -224,29 +270,45 @@ class DiscordNotificationChannel(NotificationChannel):
                 resp.raise_for_status()
                 data = await resp.json()
                 return str(data.get("id", ""))
+        except Exception:
+            logger.error("Discord _post_channel failed for channel %s", channel_id)
+            raise
 
     async def _patch_webhook_message(self, message_id: str, payload: dict) -> None:
-        async with aiohttp.ClientSession() as session:
+        session = self._get_session()
+        try:
             async with session.patch(
                 f"{self._webhook_url}/messages/{message_id}",
                 json=payload,
                 headers={"Content-Type": "application/json"},
             ) as resp:
                 resp.raise_for_status()
+        except Exception:
+            logger.error("Discord _patch_webhook_message failed for message %s", message_id)
+            raise
 
     async def _patch_channel_message(
         self, channel_id: str, message_id: str, payload: dict
     ) -> None:
-        async with aiohttp.ClientSession() as session:
+        session = self._get_session()
+        try:
             async with session.patch(
                 f"{self._BASE}/channels/{channel_id}/messages/{message_id}",
                 json=payload,
                 headers=self._auth_headers(),
             ) as resp:
                 resp.raise_for_status()
+        except Exception:
+            logger.error(
+                "Discord _patch_channel_message failed for channel %s message %s",
+                channel_id,
+                message_id,
+            )
+            raise
 
     async def _fetch_messages_after(self, channel_id: str, after_id: str) -> list:
-        async with aiohttp.ClientSession() as session:
+        session = self._get_session()
+        try:
             async with session.get(
                 f"{self._BASE}/channels/{channel_id}/messages",
                 params={"after": after_id, "limit": "10"},
@@ -255,6 +317,9 @@ class DiscordNotificationChannel(NotificationChannel):
                 if resp.status != 200:
                     return []
                 return await resp.json()
+        except Exception:
+            logger.error("Discord _fetch_messages_after failed for channel %s", channel_id)
+            raise
 
     def _auth_headers(self) -> dict:
         return {
