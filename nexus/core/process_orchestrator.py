@@ -501,9 +501,9 @@ class ProcessOrchestrator:
             if self._runtime.is_pid_alive(pid):
                 continue  # Strategy-1 handles timeout kills.
 
-            # Respect workflow-level pause / stop.
+            # Respect workflow-level pause / terminal states.
             state = self._runtime.get_workflow_state(str(issue_num))
-            if state in ("STOPPED", "PAUSED"):
+            if state in ("STOPPED", "PAUSED", "COMPLETED", "FAILED", "CANCELLED"):
                 logger.debug(
                     f"Skipping dead-agent check for issue #{issue_num}: "
                     f"workflow state is {state}"
