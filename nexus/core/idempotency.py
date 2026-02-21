@@ -6,7 +6,8 @@ Enforces uniqueness per the composite key::
 
 where *event_id* is a caller-supplied identifier — typically a GitHub comment
 ID or a hash of the completion file path/contents.  This prevents reprocessing
-of stale or duplicate signals before ``complete_step_for_issue`` is called.
+of stale or duplicate signals when ``complete_step_for_issue`` runs, before it
+calls the underlying engine to complete the step.
 """
 
 import hashlib
@@ -89,7 +90,11 @@ class IdempotencyLedger:
             parent = os.path.dirname(self._path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            with open(self._path, "w", encoding="utf-8") as fh:
+            tmp_path = f"{self._path}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as fh:
                 json.dump(sorted(self._seen), fh)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_path, self._path)
         except Exception as exc:
             logger.warning("IdempotencyLedger: failed to save %s: %s", self._path, exc)

@@ -381,15 +381,6 @@ class WorkflowStateEnginePlugin:
                 f"completed_agent={completed_agent_type}, active_agent={active_agent}"
             )
 
-        if not running_step:
-            logger.warning(
-                "complete_step_for_issue: no RUNNING step in workflow %s (issue #%s); "
-                "returning workflow unchanged",
-                workflow_id,
-                issue_number,
-            )
-            return workflow
-
         # Idempotency guard — reject duplicate step-completion signals.
         if event_id:
             idem_key = IdempotencyKey(
