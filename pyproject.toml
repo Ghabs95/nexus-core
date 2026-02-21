@@ -38,6 +38,9 @@ telegram = [
 slack = [
     "slack-sdk>=3.0",
 ]
+discord = [
+    "aiohttp>=3.8",
+]
 postgres = [
     "psycopg2-binary>=2.9",
     "sqlalchemy>=2.0",
@@ -52,7 +55,7 @@ anthropic = [
     "anthropic>=0.18",
 ]
 all = [
-    "nexus-core[telegram,slack,postgres,redis,openai,anthropic]",
+    "nexus-core[telegram,slack,discord,postgres,redis,openai,anthropic]",
 ]
 dev = [
     "pytest>=7.0",

@@ -9,7 +9,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -535,3 +535,189 @@ class TestPostgreSQLStorageBackend:
         assert restored.id == "serde-test"
         assert len(restored.steps) == 1
         assert restored.steps[0].agent.name == "triage"
+
+
+# ---------------------------------------------------------------------------
+# DiscordNotificationChannel
+# ---------------------------------------------------------------------------
+
+
+class TestDiscordNotificationChannel:
+    def _make_channel(self):
+        """Create a DiscordNotificationChannel with aiohttp mocked out."""
+        from nexus.adapters.notifications.discord import (
+            DiscordNotificationChannel,
+            _AIOHTTP_AVAILABLE,
+        )
+
+        if not _AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp not installed")
+
+        channel = DiscordNotificationChannel.__new__(DiscordNotificationChannel)
+        channel._webhook_url = "https://discord.com/api/webhooks/0/token"
+        channel._bot_token = "Bot.test.token"
+        channel._alert_channel_id = "111222333"
+        return channel
+
+    def test_name(self):
+        from nexus.adapters.notifications.discord import (
+            DiscordNotificationChannel,
+            _AIOHTTP_AVAILABLE,
+        )
+
+        if not _AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp not installed")
+        channel = DiscordNotificationChannel.__new__(DiscordNotificationChannel)
+        assert channel.name == "discord"
+
+    def test_build_payload_basic(self):
+        from nexus.adapters.notifications.base import Message
+        from nexus.core.models import Severity
+
+        channel = self._make_channel()
+        msg = Message(text="Hello Discord", severity=Severity.INFO)
+        payload = channel._build_payload(msg)
+        assert "embeds" in payload
+        assert "Hello Discord" in payload["embeds"][0]["description"]
+
+    def test_build_payload_with_buttons(self):
+        from nexus.adapters.notifications.base import Button, Message
+        from nexus.core.models import Severity
+
+        channel = self._make_channel()
+        btns = [Button(label="Approve", callback_data="approve", url="https://example.com")]
+        msg = Message(text="Approve?", severity=Severity.WARNING, buttons=btns)
+        payload = channel._build_payload(msg)
+        assert "content" in payload
+        assert "Approve" in payload["content"]
+        assert "https://example.com" in payload["content"]
+
+    async def test_send_message_uses_webhook(self):
+        channel = self._make_channel()
+        from nexus.adapters.notifications.base import Message
+
+        msg = Message(text="Test via webhook")
+        with patch.object(channel, "_post_webhook", return_value="99999") as mock_wh:
+            result = await channel.send_message("123", msg)
+        assert result == "99999"
+        mock_wh.assert_called_once()
+
+    async def test_send_alert_uses_webhook(self):
+        from nexus.core.models import Severity
+
+        channel = self._make_channel()
+        with patch.object(channel, "_post_webhook", return_value="88888") as mock_wh:
+            await channel.send_alert("System down", Severity.CRITICAL)
+        mock_wh.assert_called_once()
+        payload = mock_wh.call_args[0][0]
+        assert "embeds" in payload
+        assert "CRITICAL" in payload["embeds"][0]["title"]
+
+    async def test_send_alert_uses_channel_when_no_webhook(self):
+        from nexus.adapters.notifications.discord import (
+            DiscordNotificationChannel,
+            _AIOHTTP_AVAILABLE,
+        )
+        from nexus.core.models import Severity
+
+        if not _AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp not installed")
+
+        channel = DiscordNotificationChannel.__new__(DiscordNotificationChannel)
+        channel._webhook_url = None
+        channel._bot_token = "Bot.test.token"
+        channel._alert_channel_id = "111222333"
+
+        with patch.object(channel, "_post_channel", return_value="77777") as mock_ch:
+            await channel.send_alert("Database error", Severity.ERROR)
+        mock_ch.assert_called_once_with("111222333", ANY)
+
+    async def test_update_message_webhook_path(self):
+        channel = self._make_channel()
+        with patch.object(channel, "_patch_webhook_message") as mock_patch:
+            await channel.update_message("555666", "Updated text")
+        mock_patch.assert_called_once_with("555666", {"content": "Updated text"})
+
+    async def test_update_message_bot_path(self):
+        channel = self._make_channel()
+        with patch.object(channel, "_patch_channel_message") as mock_patch:
+            await channel.update_message("chan123:msg456", "New content")
+        mock_patch.assert_called_once_with("chan123", "msg456", {"content": "New content"})
+
+    def test_requires_aiohttp_without_install(self):
+        import nexus.adapters.notifications.discord as _mod
+
+        original = _mod._AIOHTTP_AVAILABLE
+        _mod._AIOHTTP_AVAILABLE = False
+        try:
+            with pytest.raises(ImportError, match="aiohttp"):
+                _mod._require_aiohttp()
+        finally:
+            _mod._AIOHTTP_AVAILABLE = original
+
+    def test_missing_credentials_raises(self):
+        from nexus.adapters.notifications.discord import (
+            DiscordNotificationChannel,
+            _AIOHTTP_AVAILABLE,
+        )
+
+        if not _AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp not installed")
+
+        with pytest.raises(ValueError, match="webhook_url or bot_token"):
+            DiscordNotificationChannel()
+
+    async def test_request_input_requires_bot_token(self):
+        from nexus.adapters.notifications.discord import _AIOHTTP_AVAILABLE
+
+        if not _AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp not installed")
+
+        channel = self._make_channel()
+        channel._bot_token = None
+
+        with pytest.raises(ValueError, match="bot_token"):
+            await channel.request_input("chan123", "Prompt?")
+
+    async def test_request_input_returns_user_reply_filtering_bots(self):
+        channel = self._make_channel()
+        bot_msg = {"id": "1", "content": "I am a bot", "author": {"bot": True}}
+        user_msg = {"id": "2", "content": "Human reply", "author": {"bot": False}}
+
+        with (
+            patch.object(channel, "_post_channel", new=AsyncMock(return_value="msg123")),
+            patch.object(
+                channel,
+                "_fetch_messages_after",
+                new=AsyncMock(side_effect=[[bot_msg], [bot_msg, user_msg]]),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
+            result = await channel.request_input(
+                "chan999", "Please reply", timeout=5.0, poll_interval=0.01
+            )
+
+        assert result == "Human reply"
+
+    async def test_request_input_raises_timeout_when_no_reply(self):
+        channel = self._make_channel()
+
+        with (
+            patch.object(channel, "_post_channel", new=AsyncMock(return_value="msg123")),
+            patch.object(
+                channel, "_fetch_messages_after", new=AsyncMock(return_value=[])
+            ),
+        ):
+            with pytest.raises(TimeoutError):
+                # timeout=0.0 → deadline is already reached before the loop body
+                await channel.request_input("chan999", "Waiting", timeout=0.0)
+
+    async def test_http_error_propagates_from_send_message(self):
+        from nexus.adapters.notifications.base import Message
+
+        channel = self._make_channel()
+        error = RuntimeError("Discord API 403")
+
+        with patch.object(channel, "_post_webhook", side_effect=error):
+            with pytest.raises(RuntimeError, match="Discord API 403"):
+                await channel.send_message("chan123", Message(text="test"))
