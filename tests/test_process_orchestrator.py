@@ -116,7 +116,7 @@ def _make_workflow(state: WorkflowState, active_agent: Optional[str] = None) -> 
 
 def _orchestrator(runtime: StubRuntime, complete_step_fn=None, stuck_threshold=60) -> ProcessOrchestrator:
     if complete_step_fn is None:
-        async def _noop(issue, agent, outputs):
+        async def _noop(issue, agent, outputs, event_id=""):
             return None
         complete_step_fn = _noop
     return ProcessOrchestrator(
@@ -184,7 +184,7 @@ class TestScanAndProcessCompletions:
         wf = _make_workflow(WorkflowState.RUNNING)
         wf.steps[0].agent.name = "reviewer"  # active_agent_type → "reviewer"
 
-        async def complete(issue, agent, outputs):
+        async def complete(issue, agent, outputs, event_id=""):
             return wf
 
         orc = _orchestrator(runtime, complete)
@@ -202,7 +202,7 @@ class TestScanAndProcessCompletions:
         runtime = StubRuntime()
         runtime._post_comment_success = False
 
-        async def complete(issue, agent, outputs):
+        async def complete(issue, agent, outputs, event_id=""):
             return None
 
         orc = _orchestrator(runtime, complete)
@@ -222,7 +222,7 @@ class TestScanAndProcessCompletions:
         runtime = StubRuntime()
         wf = _make_workflow(WorkflowState.COMPLETED)
 
-        async def complete(issue, agent, outputs):
+        async def complete(issue, agent, outputs, event_id=""):
             return wf
 
         orc = _orchestrator(runtime, complete)
@@ -240,7 +240,7 @@ class TestScanAndProcessCompletions:
         runtime = StubRuntime()
         wf = _make_workflow(WorkflowState.FAILED)
 
-        async def complete(issue, agent, outputs):
+        async def complete(issue, agent, outputs, event_id=""):
             return wf
 
         orc = _orchestrator(runtime, complete)
@@ -258,7 +258,7 @@ class TestScanAndProcessCompletions:
         wf = _make_workflow(WorkflowState.RUNNING)
         wf.steps[0].status = StepStatus.COMPLETED  # no RUNNING step → active_agent_type = None
 
-        async def complete(issue, agent, outputs):
+        async def complete(issue, agent, outputs, event_id=""):
             return wf
 
         orc = _orchestrator(runtime, complete)
@@ -275,7 +275,7 @@ class TestScanAndProcessCompletions:
         wf = _make_workflow(WorkflowState.RUNNING)
         wf.steps[0].agent.name = "reviewer"
 
-        async def complete(issue, agent, outputs):
+        async def complete(issue, agent, outputs, event_id=""):
             return wf
 
         orc = _orchestrator(runtime, complete)
@@ -294,7 +294,7 @@ class TestScanAndProcessCompletions:
         """Manual path: when is_workflow_done=True, finalize is called."""
         runtime = StubRuntime()
 
-        async def complete(issue, agent, outputs):
+        async def complete(issue, agent, outputs, event_id=""):
             return None  # no engine workflow
 
         orc = _orchestrator(runtime, complete)
@@ -310,7 +310,7 @@ class TestScanAndProcessCompletions:
         """Manual path: non-terminal next_agent should trigger launch."""
         runtime = StubRuntime()
 
-        async def complete(issue, agent, outputs):
+        async def complete(issue, agent, outputs, event_id=""):
             return None
 
         orc = _orchestrator(runtime, complete)
@@ -325,7 +325,7 @@ class TestScanAndProcessCompletions:
         """Manual path: 'none' as next_agent should finalize."""
         runtime = StubRuntime()
 
-        async def complete(issue, agent, outputs):
+        async def complete(issue, agent, outputs, event_id=""):
             return None
 
         orc = _orchestrator(runtime, complete)
@@ -341,7 +341,7 @@ class TestScanAndProcessCompletions:
         """If complete_step rejects a mismatched completion, do not auto-chain."""
         runtime = StubRuntime()
 
-        async def complete(issue, agent, outputs):
+        async def complete(issue, agent, outputs, event_id=""):
             raise ValueError("Completion agent mismatch for issue #42")
 
         orc = _orchestrator(runtime, complete)
@@ -365,7 +365,7 @@ class TestScanAndProcessCompletions:
 
         runtime.launch_agent = failing_launch  # type: ignore[method-assign]
 
-        async def complete(issue, agent, outputs):
+        async def complete(issue, agent, outputs, event_id=""):
             return None
 
         orc = _orchestrator(runtime, complete)
@@ -376,12 +376,32 @@ class TestScanAndProcessCompletions:
 
         assert any("Auto-chain failed" in a for a in runtime.alerts)
 
+    def test_duplicate_suppressed_launch_does_not_send_failed_alert(self):
+        """Intentional launch skip should not emit auto-chain failure alert."""
+        runtime = StubRuntime()
+
+        async def complete(issue, agent, outputs, event_id=""):
+            return None
+
+        orc = _orchestrator(runtime, complete)
+        det = self._fake_detection(next_agent="architect")
+
+        def duplicate_skip_launch(issue_number, agent_type, *, trigger_source="", exclude_tools=None):
+            return (None, "duplicate-suppressed")
+
+        runtime.launch_agent = duplicate_skip_launch  # type: ignore[method-assign]
+
+        with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
+            orc.scan_and_process_completions("/base", set())
+
+        assert not any("Auto-chain failed" in a for a in runtime.alerts)
+
     def test_resolve_project_called(self):
         """resolve_project callback is invoked with the detection file_path."""
         runtime = StubRuntime()
         wf = _make_workflow(WorkflowState.COMPLETED)
 
-        async def complete(issue, agent, outputs):
+        async def complete(issue, agent, outputs, event_id=""):
             return wf
 
         orc = _orchestrator(runtime, complete)
@@ -436,6 +456,21 @@ class TestDetectDeadAgents:
 
         assert any("Manual Intervention" in a for a in runtime.alerts)
         assert runtime.launched == []
+
+    def test_timeout_with_dead_tracked_pid_does_not_emit_orphan_alert(self, tmp_path):
+        """Dead tracked PID should be handled by dead-agent detection, not orphan path."""
+        runtime = StubRuntime(retry=True)
+        runtime.tracker = {"49": self._entry(pid=4321, agent_type="developer", age_seconds=7200)}
+        runtime._running_agents = {"49": "developer"}
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        log_file = tmp_path / "copilot_49_20260221.log"
+        log_file.write_text("stale log")
+
+        with patch.object(runtime, "is_pid_alive", return_value=False):
+            orc._handle_timeout("49", str(log_file), pid=None)
+
+        assert not any("Orphaned Running Step" in a for a in runtime.alerts)
 
     def test_alive_pid_is_skipped(self):
         """Alive PIDs should not be alerted."""
