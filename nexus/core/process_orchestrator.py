@@ -242,7 +242,8 @@ class ProcessOrchestrator:
     Args:
         runtime: Host-provided implementation of :class:`AgentRuntime`.
         complete_step_fn: Async callable with signature
-            ``(issue_number: str, agent_type: str, outputs: dict) -> Optional[Workflow]``.
+            ``(issue_number: str, agent_type: str, outputs: dict,
+            event_id: str = "") -> Optional[Workflow]``.
             Typically ``WorkflowStateEnginePlugin.complete_step_for_issue``.
         stuck_threshold_seconds: Seconds of inactivity before an agent is
             considered stuck.  Defaults to 3600 (1 hour).
@@ -332,7 +333,7 @@ class ProcessOrchestrator:
 
                 # Ask the workflow engine what happens next.
                 engine_workflow = asyncio.run(
-                    self._complete_step_fn(issue_num, completed_agent, summary.to_dict())
+                    self._complete_step_fn(issue_num, completed_agent, summary.to_dict(), comment_key)
                 )
 
                 next_agent: Optional[str] = None
@@ -398,6 +399,11 @@ class ProcessOrchestrator:
                     logger.info(
                         f"🔗 Auto-chained {completed_agent} → {next_agent} "
                         f"for issue #{issue_num} (PID: {pid}, tool: {tool_used})"
+                    )
+                elif tool_used in {"duplicate-suppressed", "workflow-terminal", "launch-skipped"}:
+                    logger.info(
+                        f"⏭️ Auto-chain launch skipped for issue #{issue_num} "
+                        f"({completed_agent} → {next_agent}, reason: {tool_used})"
                     )
                 else:
                     logger.error(
@@ -637,13 +643,22 @@ class ProcessOrchestrator:
         """Kill a timed-out agent and trigger a retry if allowed."""
         launched = self._runtime.load_launched_agents(recent_only=False)
         agent_data = launched.get(str(issue_num), {})
-        if not pid:
-            pid = agent_data.get("pid")
+        tracker_pid = agent_data.get("pid")
+        effective_pid = tracker_pid or pid
         agent_type = agent_data.get("agent_type", "unknown")
         crashed_tool = agent_data.get("tool", "")
         age = time.time() - os.path.getmtime(log_file)
 
-        if not (pid and self._runtime.is_pid_alive(pid)):
+        # True orphan: workflow expects a RUNNING step but there is no tracker/runtime PID.
+        # If we have a dead PID from the tracker, let detect_dead_agents() handle it.
+        # If the dead PID came only from check_log_timeout() (no tracker entry),
+        # fall through to the orphan-handling logic so the issue is not silently dropped.
+        if effective_pid and not self._runtime.is_pid_alive(effective_pid):
+            if tracker_pid:
+                return
+            effective_pid = None
+
+        if not effective_pid:
             expected_agent = self._runtime.get_expected_running_agent(str(issue_num))
             if not expected_agent:
                 return
@@ -703,18 +718,18 @@ class ProcessOrchestrator:
                     )
             return
 
-        killed = self._runtime.kill_process(pid)
+        killed = self._runtime.kill_process(effective_pid)
         if not killed:
             return
 
         logger.info(
-            f"⏰ Killed stuck agent PID {pid} for issue #{issue_num} "
+            f"⏰ Killed stuck agent PID {effective_pid} for issue #{issue_num} "
             f"(log age {age / 60:.0f}min)"
         )
         self._runtime.audit_log(
             issue_num,
             "AGENT_KILLED",
-            f"PID {pid} killed after {age / 60:.0f}min of inactivity",
+            f"PID {effective_pid} killed after {age / 60:.0f}min of inactivity",
         )
 
         will_retry = self._runtime.should_retry(issue_num, agent_type)
