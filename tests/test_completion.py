@@ -139,6 +139,11 @@ class TestGenerateCompletionInstructions:
         assert "python3 -c" in text
         assert "NEXUS_EOF" not in text
 
+    def test_forbids_ready_for_none_in_comments(self):
+        text = generate_completion_instructions("1", "writer")
+        assert "Never write `@none`" in text
+        assert "omit this line when next_agent is terminal/`none`" in text
+
 
 # ---------------------------------------------------------------------------
 # scan_for_completions
