@@ -39,6 +39,7 @@ class StubRuntime(AgentRuntime):
         self._workflow_states: Dict[str, str] = {}
         self._running_agents: Dict[str, Optional[str]] = {}
         self._timeout_results: Dict[str, Tuple[bool, Any]] = {}
+        self._agent_timeouts: Dict[Tuple[str, str], int] = {}
         self._post_comment_success = True
         self.posted_comments: List[dict] = []
 
@@ -87,6 +88,13 @@ class StubRuntime(AgentRuntime):
 
     def get_expected_running_agent(self, issue_number):
         return self._running_agents.get(str(issue_number))
+
+    def get_agent_timeout_seconds(self, issue_number, agent_type=None):
+        issue_key = str(issue_number)
+        normalized_agent = str(agent_type or "").strip().lower() or "*"
+        return self._agent_timeouts.get((issue_key, normalized_agent)) or self._agent_timeouts.get(
+            (issue_key, "*")
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +503,18 @@ class TestDetectDeadAgents:
 
         assert runtime.alerts == []
 
+    def test_dead_detection_uses_workflow_timeout_grace(self):
+        """Dead detection grace period should follow workflow-defined timeout."""
+        runtime = StubRuntime()
+        runtime.tracker = {"21": self._entry(pid=6161, agent_type="developer", age_seconds=120)}
+        runtime._agent_timeouts[("21", "developer")] = 300
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        with patch.object(runtime, "is_pid_alive", return_value=False):
+            orc.detect_dead_agents()
+
+        assert runtime.alerts == []
+
     def test_stopped_workflow_skipped(self):
         """Agents in a STOPPED workflow must not be retried."""
         runtime = StubRuntime()
@@ -641,6 +661,43 @@ class TestCheckStuckAgents:
             orc.check_stuck_agents(str(tmp_path))
 
         assert runtime.launched == []
+
+    def test_check_stuck_agents_uses_workflow_timeout(self, tmp_path):
+        """Stuck checks should respect workflow-defined timeout over global threshold."""
+        log_dir = tmp_path / ".nexus" / "tasks" / "job1" / "logs"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "copilot_98_20260101_120000.log"
+        log_file.write_text("agent output")
+        old_time = time.time() - 120
+        os.utime(log_file, (old_time, old_time))
+
+        runtime = StubRuntime()
+        runtime.tracker = {
+            "98": {
+                "pid": 9898,
+                "timestamp": time.time() - 120,
+                "agent_type": "developer",
+                "tool": "copilot",
+            }
+        }
+        runtime._agent_timeouts[("98", "developer")] = 300
+
+        killed_pids: List[int] = []
+
+        def fake_kill(pid):
+            killed_pids.append(pid)
+            return True
+
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        with (
+            patch.object(runtime, "is_pid_alive", return_value=True),
+            patch.object(runtime, "kill_process", side_effect=fake_kill),
+            patch.object(runtime, "check_log_timeout", return_value=(True, 9898)),
+        ):
+            orc.check_stuck_agents(str(tmp_path))
+
+        assert killed_pids == []
 
     def test_orphaned_running_step_retries_expected_agent(self, tmp_path):
         """If RUNNING step has no live pid/tracker entry, orchestrator retries it."""

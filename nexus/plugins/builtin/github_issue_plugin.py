@@ -126,7 +126,12 @@ class GitHubIssueCLIPlugin:
             result = self._run_with_retry(cmd, max_attempts=self.max_attempts)
             return json.loads(result.stdout or "{}")
         except Exception as exc:
-            logger.error("Failed to read issue %s: %s", issue_number, exc)
+            logger.debug(
+                "Issue lookup miss in %s for #%s: %s",
+                self.repo,
+                issue_number,
+                exc,
+            )
             return None
 
     def update_issue_body(self, issue_number: str, body: str) -> bool:
