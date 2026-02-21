@@ -39,6 +39,8 @@ from nexus.core.completion import build_completion_comment, scan_for_completions
 
 logger = logging.getLogger(__name__)
 
+_DEAD_PID_LIVENESS_MISS_THRESHOLD = 3
+
 
 # ---------------------------------------------------------------------------
 # AgentRuntime — abstract interface to the host application
@@ -265,6 +267,8 @@ class ProcessOrchestrator:
         self._nexus_dir = nexus_dir
         # Per-session set of (issue:pid) keys we've already alerted for.
         self._dead_agent_alerted: Set[str] = set()
+        # Consecutive dead-PID liveness misses per (issue, pid).
+        self._dead_pid_miss_counts: Dict[str, int] = {}
         # Per-session set of orphaned-running-step alerts.
         self._orphaned_step_alerted: Set[str] = set()
 
@@ -517,12 +521,28 @@ class ProcessOrchestrator:
             if not pid:
                 continue
 
-            # Grace period — let completion scanner run first.
-            if (now - launch_ts) < self._stuck_threshold:
-                continue
-
+            alert_key = f"{issue_num}:{pid}"
             if self._runtime.is_pid_alive(pid):
+                self._dead_pid_miss_counts.pop(alert_key, None)
                 continue  # Strategy-1 handles timeout kills.
+
+            miss_count = self._dead_pid_miss_counts.get(alert_key, 0) + 1
+            self._dead_pid_miss_counts[alert_key] = miss_count
+
+            required_misses = (
+                1 if (now - launch_ts) >= self._stuck_threshold
+                else _DEAD_PID_LIVENESS_MISS_THRESHOLD
+            )
+
+            if miss_count < required_misses:
+                logger.debug(
+                    "Dead-agent liveness miss %s/%s for issue #%s pid %s",
+                    miss_count,
+                    required_misses,
+                    issue_num,
+                    pid,
+                )
+                continue
 
             # Respect workflow-level pause / terminal states.
             state = self._runtime.get_workflow_state(str(issue_num))
@@ -533,7 +553,6 @@ class ProcessOrchestrator:
                 )
                 continue
 
-            alert_key = f"{issue_num}:{pid}"
             if alert_key in self._dead_agent_alerted:
                 continue
 
@@ -550,6 +569,7 @@ class ProcessOrchestrator:
                 launched.pop(issue_num, None)
                 self._runtime.save_launched_agents(launched)
                 self._dead_agent_alerted.add(alert_key)
+                self._dead_pid_miss_counts.pop(alert_key, None)
                 continue
 
             crashed_tool = agent_data.get("tool", "")
@@ -582,6 +602,7 @@ class ProcessOrchestrator:
                     continue
 
                 self._dead_agent_alerted.add(alert_key)
+                self._dead_pid_miss_counts.pop(alert_key, None)
                 launched.pop(issue_num, None)
                 self._runtime.save_launched_agents(launched)
                 self._runtime.clear_launch_guard(issue_num)
@@ -620,6 +641,7 @@ class ProcessOrchestrator:
                     continue
 
                 self._dead_agent_alerted.add(alert_key)
+                self._dead_pid_miss_counts.pop(alert_key, None)
                 launched.pop(issue_num, None)
                 self._runtime.save_launched_agents(launched)
 

@@ -497,6 +497,26 @@ class TestDetectDeadAgents:
 
         assert runtime.alerts == []
 
+    def test_repeated_dead_liveness_misses_trigger_retry_without_manual_cleanup(self):
+        """After N failed liveness checks, stale PID entries are auto-retried."""
+        runtime = StubRuntime(retry=True)
+        runtime.tracker = {"21": self._entry(pid=2121, age_seconds=10)}
+        orc = _orchestrator(runtime, stuck_threshold=3600)
+
+        with patch.object(runtime, "is_pid_alive", return_value=False):
+            orc.detect_dead_agents()
+            assert runtime.alerts == []
+            assert runtime.launched == []
+
+            orc.detect_dead_agents()
+            assert runtime.alerts == []
+            assert runtime.launched == []
+
+            orc.detect_dead_agents()
+
+        assert any("Crashed" in a for a in runtime.alerts)
+        assert any(e["issue"] == "21" for e in runtime.launched)
+
     def test_stopped_workflow_skipped(self):
         """Agents in a STOPPED workflow must not be retried."""
         runtime = StubRuntime()
