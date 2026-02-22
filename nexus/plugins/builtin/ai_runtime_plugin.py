@@ -305,6 +305,7 @@ class AIOrchestrator:
         logger.info("   Workspace: %s", workspace_dir)
         logger.info("   Log: %s", log_path)
 
+        log_file = None
         try:
             log_file = open(log_path, "w", encoding="utf-8")
             process = subprocess.Popen(
@@ -314,9 +315,15 @@ class AIOrchestrator:
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
             )
+            log_file.close()
             logger.info("🚀 Copilot launched (PID: %s)", process.pid)
             return process.pid
         except Exception as exc:
+            try:
+                if log_file:
+                    log_file.close()
+            except Exception:
+                pass
             logger.error("❌ Copilot launch failed: %s", exc)
             raise
 
@@ -363,6 +370,7 @@ class AIOrchestrator:
             except Exception:
                 return ""
 
+        log_file = None
         try:
             log_file = open(log_path, "w", encoding="utf-8")
             process = subprocess.Popen(
@@ -372,6 +380,7 @@ class AIOrchestrator:
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
             )
+            log_file.close()
             logger.info("🚀 Gemini launched (PID: %s)", process.pid)
 
             # Detect immediate startup failure so invoke_agent can fallback to the next tool.
@@ -393,6 +402,11 @@ class AIOrchestrator:
 
             return process.pid
         except Exception as exc:
+            try:
+                if log_file:
+                    log_file.close()
+            except Exception:
+                pass
             logger.error("❌ Gemini launch failed: %s", exc)
             raise
 

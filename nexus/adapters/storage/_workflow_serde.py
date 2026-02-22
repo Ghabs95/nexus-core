@@ -57,6 +57,8 @@ def step_to_dict(step: WorkflowStep) -> Dict[str, Any]:
         "completed_at": step.completed_at.isoformat() if step.completed_at else None,
         "error": step.error,
         "routes": step.routes,
+        "on_success": step.on_success,
+        "final_step": step.final_step,
         "iteration": step.iteration,
     }
 
@@ -94,6 +96,8 @@ def dict_to_workflow(data: Dict[str, Any]) -> Workflow:
             ),
             error=step_data.get("error"),
             routes=step_data.get("routes", []),
+            on_success=step_data.get("on_success"),
+            final_step=bool(step_data.get("final_step", False)),
             iteration=step_data.get("iteration", 0),
         )
         steps.append(step)

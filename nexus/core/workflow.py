@@ -208,9 +208,52 @@ class WorkflowEngine:
         activated_step: Optional[WorkflowStep] = None
 
         if not error:
+            if step.final_step:
+                workflow.state = WorkflowState.COMPLETED
+                workflow.completed_at = datetime.now(timezone.utc)
+                workflow.updated_at = datetime.now(timezone.utc)
+                await self.storage.save_workflow(workflow)
+                await self._audit(workflow_id, "STEP_COMPLETED", {
+                    "step_num": step_num,
+                    "step_name": step.name,
+                    "error": error,
+                })
+                logger.info(f"Completed step {step_num} in workflow {workflow_id}")
+                if self._on_workflow_complete:
+                    try:
+                        await self._on_workflow_complete(workflow, outputs)
+                    except Exception as exc:
+                        logger.error(
+                            f"on_workflow_complete callback failed for workflow {workflow_id}: {exc}"
+                        )
+                return workflow
+
             # Build context once; walk forward handling routers, conditions, and gotos
             context = self._build_step_context(workflow)
-            next_step = workflow.get_next_step()
+            next_step: Optional[WorkflowStep] = None
+            if step.on_success:
+                next_step = self._find_step_by_name(workflow, step.on_success)
+                if next_step is None:
+                    logger.warning(
+                        "Step %s in workflow %s has unresolved on_success target '%s'; "
+                        "falling back to sequential progression",
+                        step.name,
+                        workflow_id,
+                        step.on_success,
+                    )
+                elif next_step.status != StepStatus.PENDING:
+                    try:
+                        self._reset_step_for_goto(next_step)
+                    except RuntimeError as exc:
+                        logger.error(str(exc))
+                        workflow.state = WorkflowState.FAILED
+                        workflow.completed_at = datetime.now(timezone.utc)
+                        await self.storage.save_workflow(workflow)
+                        return workflow
+
+            if next_step is None:
+                next_step = workflow.get_next_step()
+
             while next_step:
                 # --- Router step: evaluate routes and jump to target ---
                 if next_step.routes:
@@ -662,6 +705,8 @@ class WorkflowDefinition:
                     condition=step_data.get("condition"),
                     inputs=inputs_data,
                     routes=step_routes,
+                    on_success=step_data.get("on_success"),
+                    final_step=bool(step_data.get("final_step", False)),
                 )
             )
 

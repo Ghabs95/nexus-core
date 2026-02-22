@@ -168,7 +168,7 @@ class TestSlackNotificationChannel:
         from nexus.adapters.notifications.base import Message
 
         msg = Message(text="Hello from nexus")
-        ts = asyncio.get_event_loop().run_until_complete(channel.send_message("U12345", msg))
+        ts = asyncio.run(channel.send_message("U12345", msg))
         assert ts == "1234567890.000001"
         mock_client.chat_postMessage.assert_called_once()
 
@@ -176,7 +176,7 @@ class TestSlackNotificationChannel:
         from nexus.core.models import Severity
 
         channel, mock_client = self._make_channel()
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             channel.send_alert("Deployment failed", Severity.WARNING)
         )
         mock_client.chat_postMessage.assert_called_once()
@@ -197,7 +197,7 @@ class TestSlackNotificationChannel:
         channel._webhook_url = "https://hooks.slack.com/services/T0/B0/xxx"
 
         with patch.object(channel, "_send_via_webhook") as mock_webhook:
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 channel.send_alert("Test alert", Severity.CRITICAL)
             )
         mock_webhook.assert_called_once()
@@ -284,7 +284,7 @@ class TestGitLabPlatform:
             "web_url": "https://gitlab.com/mygroup/myproject/-/issues/7",
         }
         with patch.object(platform, "_post", new=AsyncMock(return_value=mock_response)):
-            issue = asyncio.get_event_loop().run_until_complete(
+            issue = asyncio.run(
                 platform.create_issue("New issue", "Body")
             )
         assert issue.number == 7
@@ -296,7 +296,7 @@ class TestGitLabPlatform:
         platform = self._make_platform()
         exc = urllib.error.HTTPError("url", 404, "Not Found", {}, None)
         with patch.object(platform, "_get", new=AsyncMock(side_effect=exc)):
-            result = asyncio.get_event_loop().run_until_complete(platform.get_issue("999"))
+            result = asyncio.run(platform.get_issue("999"))
         assert result is None
 
     def test_list_open_issues_with_labels(self):
@@ -315,7 +315,7 @@ class TestGitLabPlatform:
             }
         ]
         with patch.object(platform, "_get", new=AsyncMock(return_value=response)) as mock_get:
-            issues = asyncio.get_event_loop().run_until_complete(
+            issues = asyncio.run(
                 platform.list_open_issues(limit=25, labels=["workflow:shortened", "workflow:full"])
             )
 
@@ -355,7 +355,7 @@ class TestGitLabPlatform:
             "_post",
             new=AsyncMock(return_value=mr_response),
         ) as mock_post:
-            pr = asyncio.get_event_loop().run_until_complete(
+            pr = asyncio.run(
                 platform.create_pr_from_changes(
                     repo_dir=str(repo_dir),
                     issue_number="42",
@@ -433,7 +433,7 @@ class TestOpenAIProvider:
                 prompt="Analyze this issue",
                 workspace=Path("/tmp"),
             )
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 provider.execute_agent(ctx)
             )
             assert result.success is True
@@ -459,7 +459,7 @@ class TestOpenAIProvider:
                 prompt="Analyze",
                 workspace=Path("/tmp"),
             )
-            result = asyncio.get_event_loop().run_until_complete(provider.execute_agent(ctx))
+            result = asyncio.run(provider.execute_agent(ctx))
             assert result.success is False
             assert "Rate limit" in result.error
         finally:
@@ -501,7 +501,7 @@ class TestCodexCLIProvider:
 
         provider = CodexCLIProvider()
         with patch("nexus.adapters.ai.codex_provider.shutil.which", return_value=None):
-            available = asyncio.get_event_loop().run_until_complete(
+            available = asyncio.run(
                 provider.check_availability()
             )
 
@@ -523,7 +523,7 @@ class TestCodexCLIProvider:
                 prompt="Implement feature X",
                 workspace=Path("/tmp"),
             )
-            result = asyncio.get_event_loop().run_until_complete(provider.execute_agent(ctx))
+            result = asyncio.run(provider.execute_agent(ctx))
 
         assert result.success is True
         assert result.provider_used == "codex"
@@ -546,7 +546,7 @@ class TestCodexCLIProvider:
                 prompt="Implement feature X",
                 workspace=Path("/tmp"),
             )
-            result = asyncio.get_event_loop().run_until_complete(provider.execute_agent(ctx))
+            result = asyncio.run(provider.execute_agent(ctx))
 
         assert result.success is False
         assert "Timeout" in (result.error or "")

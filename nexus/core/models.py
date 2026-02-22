@@ -112,6 +112,8 @@ class WorkflowStep:
     retry_count: int = 0  # Number of retries attempted so far
     approval_gates: List[ApprovalGate] = field(default_factory=list)  # Approval gates for this step
     routes: List[Dict[str, Any]] = field(default_factory=list)  # Router branch definitions (router steps only)
+    on_success: Optional[str] = None  # Named step (id) to activate after success
+    final_step: bool = False  # Mark step as terminal for workflow completion
     iteration: int = 0  # Times this step has been re-activated via a workflow goto
 
     def __str__(self) -> str:

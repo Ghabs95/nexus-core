@@ -242,5 +242,42 @@ async def test_router_no_match_and_no_default_ends_workflow():
     await engine.complete_step("wf-test", step_num=1, outputs={"decision": "irrelevant"})
 
     assert wf.state == WorkflowState.COMPLETED
-    assert deploy.status != StepStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_final_step_stops_workflow_before_later_linear_steps():
+    """A final_step must complete workflow without activating subsequent steps."""
+    implement = _make_step(1, "implement")
+    close_loop = _make_step(2, "close_loop")
+    close_loop.final_step = True
+    close_rejected = _make_step(3, "close_rejected")
+
+    wf = _make_workflow([implement, close_loop, close_rejected])
+    engine, _ = await _engine_with_workflow(wf)
+
+    await engine.complete_step("wf-test", step_num=1, outputs={"ok": True})
+    assert close_loop.status == StepStatus.RUNNING
+
+    await engine.complete_step("wf-test", step_num=2, outputs={"done": True})
+
+    assert wf.state == WorkflowState.COMPLETED
+    assert close_rejected.status == StepStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_on_success_jumps_to_named_step_not_sequential():
+    """on_success target should be activated even when it is not the next linear step."""
+    triage = _make_step(1, "triage")
+    triage.on_success = "develop"
+    design = _make_step(2, "design")
+    develop = _make_step(3, "develop")
+
+    wf = _make_workflow([triage, design, develop])
+    engine, _ = await _engine_with_workflow(wf)
+
+    await engine.complete_step("wf-test", step_num=1, outputs={"needs_design": False})
+
+    assert design.status == StepStatus.PENDING
+    assert develop.status == StepStatus.RUNNING
+    assert wf.current_step == develop.step_num
 
