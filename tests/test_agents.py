@@ -180,3 +180,48 @@ class TestLoadAgentDefinition:
         data = load_agent_definition("Architect", [agents_dir, shared_dir])
         assert data is not None
         assert data["spec"]["agent_type"] == "Architect"
+
+
+# ---------------------------------------------------------------------------
+# Business agent — examples/agents/business-agent.yaml
+# ---------------------------------------------------------------------------
+
+EXAMPLES_AGENTS_DIR = os.path.join(
+    os.path.dirname(__file__), "..", "examples", "agents"
+)
+
+
+class TestBusinessAgentYaml:
+    """Verify the business-agent.yaml definition is well-formed and discoverable."""
+
+    def test_business_agent_found(self):
+        path = find_agent_yaml("business", [EXAMPLES_AGENTS_DIR])
+        assert path, "business-agent.yaml not found in examples/agents/"
+        assert path.endswith(".yaml") or path.endswith(".yml")
+
+    def test_business_agent_kind(self):
+        data = load_agent_definition("business", [EXAMPLES_AGENTS_DIR])
+        assert data is not None
+        assert data["kind"] == "Agent"
+
+    def test_business_agent_type_field(self):
+        data = load_agent_definition("business", [EXAMPLES_AGENTS_DIR])
+        assert data["spec"]["agent_type"] == "business"
+
+    def test_business_agent_required_inputs(self):
+        data = load_agent_definition("business", [EXAMPLES_AGENTS_DIR])
+        inputs = data["spec"]["inputs"]
+        assert "project_name" in inputs
+        assert inputs["project_name"]["required"] is True
+
+    def test_business_agent_outputs_present(self):
+        data = load_agent_definition("business", [EXAMPLES_AGENTS_DIR])
+        outputs = data["spec"]["outputs"]
+        assert "suggestions" in outputs
+        assert "reasoning" in outputs
+
+    def test_business_agent_has_ai_instructions(self):
+        data = load_agent_definition("business", [EXAMPLES_AGENTS_DIR])
+        ai_instructions = data["spec"].get("ai_instructions", "")
+        assert "{project_name}" in ai_instructions
+        assert "JSON" in ai_instructions
