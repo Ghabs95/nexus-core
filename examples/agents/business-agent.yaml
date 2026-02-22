@@ -1,0 +1,137 @@
+apiVersion: "nexus-core/v1"
+kind: "Agent"
+metadata:
+  name: "Business"
+  description: "Generates actionable feature suggestions for a given project using AI"
+  author: "Nexus Core Team"
+  version: "0.1.0"
+
+spec:
+  # Agent type - determines which tasks this agent can handle
+  # Types: triage | design | debug | developer | reviewer | docs | summarizer | business
+  agent_type: "business"
+
+  # Agent behavior configuration
+  timeout_seconds: 300
+  max_retries: 3
+
+  purpose: |
+    Given a project name and optional context, this agent:
+    1. Reads the project description and existing feature set (if provided)
+    2. Uses AI to brainstorm and evaluate potential new features
+    3. Returns a prioritised list of feature suggestions with rationale
+    4. Posts findings as a structured comment on the requesting issue
+
+  requires_tools:
+    - github:read_issue
+    - github:add_comment
+    - ai:completion
+
+  inputs:
+    project_name:
+      type: string
+      description: "Name of the project to generate suggestions for"
+      required: true
+      example: "nexus-core"
+    project_description:
+      type: string
+      description: "Short description of what the project does"
+      required: false
+      example: "A multi-agent orchestration framework for automating GitHub workflows"
+    existing_features:
+      type: array
+      items: string
+      description: "Optional list of features already implemented (to avoid duplicates)"
+      required: false
+      example:
+        - "Triage agent"
+        - "Design agent"
+        - "Developer agent"
+    max_suggestions:
+      type: integer
+      description: "Maximum number of feature suggestions to return"
+      required: false
+      default: 5
+
+  outputs:
+    suggestions:
+      type: array
+      items:
+        title:
+          type: string
+          description: "Short feature title"
+        description:
+          type: string
+          description: "What the feature does and why it is valuable"
+        priority:
+          type: enum
+          values: ["high", "medium", "low"]
+        effort:
+          type: enum
+          values: ["small", "medium", "large"]
+      description: "Prioritised list of feature suggestions"
+    reasoning:
+      type: string
+      description: "Overall rationale for the suggested features"
+
+  ai_instructions: |
+    You are a product strategist and software architect.
+    Analyze the project below and suggest new features that would deliver the most value.
+
+    Project Name: {project_name}
+    Project Description: {project_description}
+    Already Implemented: {existing_features}
+    Maximum Suggestions: {max_suggestions}
+
+    For each suggestion:
+    - Be specific and actionable (not vague like "improve performance")
+    - Explain the user benefit in one sentence
+    - Estimate priority (high/medium/low) based on user impact
+    - Estimate effort (small/medium/large) based on implementation complexity
+
+    Do NOT suggest features already in the "Already Implemented" list.
+
+    Return JSON:
+    {
+      "suggestions": [
+        {
+          "title": "Short feature title",
+          "description": "What it does and why it is valuable",
+          "priority": "high|medium|low",
+          "effort": "small|medium|large"
+        }
+      ],
+      "reasoning": "1-2 sentences on the overall strategy behind these suggestions"
+    }
+
+  example:
+    input:
+      project_name: "nexus-core"
+      project_description: "A multi-agent orchestration framework for automating GitHub workflows"
+      existing_features:
+        - "Triage agent"
+        - "Design agent"
+        - "Developer agent"
+        - "Reviewer agent"
+      max_suggestions: 3
+    expected_output:
+      suggestions:
+        - title: "Performance Benchmarking Agent"
+          description: "Automatically profiles PRs for runtime regressions before merge"
+          priority: "medium"
+          effort: "medium"
+        - title: "Dependency Update Agent"
+          description: "Detects stale dependencies and opens PRs to update them"
+          priority: "high"
+          effort: "small"
+        - title: "Security Audit Agent"
+          description: "Scans code changes for known vulnerability patterns"
+          priority: "high"
+          effort: "large"
+      reasoning: >
+        The suggestions focus on quality gates and automation gaps that are common
+        pain points for teams already using multi-agent CI workflows.
+
+  # Routing: what happens after this agent runs
+  next_steps:
+    - default: "close_loop"

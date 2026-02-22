@@ -8,7 +8,7 @@ metadata:
 
 spec:
   # Agent type - determines which tasks this agent can handle
-  # Types: triage | design | debug | developer | reviewer | docs | summarizer | escalation
+  # Types: triage | design | debug | developer | reviewer | docs | summarizer | escalation | business
   # When a task is assigned to "triage", this agent will pick it up
   agent_type: "triage"
   
