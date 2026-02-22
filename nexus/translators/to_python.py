@@ -5,7 +5,7 @@ Generates Python class scaffolding from agent.yaml definitions.
 Produces a template that developers fill in with actual logic.
 
 Usage:
-    python to_python.py triage-agent.yaml > triage_agent.py
+    python -m nexus.cli translate to-python triage-agent.yaml > triage_agent.py
 """
 
 import yaml
@@ -148,13 +148,3 @@ if __name__ == "__main__":
 '''
     
     return py
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python to_python.py <agent.yaml>")
-        sys.exit(1)
-    
-    yaml_file = sys.argv[1]
-    python_code = translate_agent_to_python(yaml_file)
-    print(python_code)

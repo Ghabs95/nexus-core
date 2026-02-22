@@ -5,7 +5,7 @@ Converts agent.yaml definitions into formatted markdown documentation.
 Users can customize this to fit their documentation style.
 
 Usage:
-    python to_markdown.py triage-agent.yaml > Triage-Agent.md
+    python -m nexus.cli translate to-markdown triage-agent.yaml > Triage-Agent.md
 """
 
 import yaml
@@ -91,13 +91,3 @@ The agent needs access to these tools:
                 md += f"- {condition} → {action}\n"
     
     return md
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python to_markdown.py <agent.yaml>")
-        sys.exit(1)
-    
-    yaml_file = sys.argv[1]
-    markdown = translate_agent_to_markdown(yaml_file)
-    print(markdown)

@@ -771,6 +771,27 @@ Input:
 {text.strip()}
 """
 
+        if task == "detect_intent":
+            return f"""Is the following input a concrete software task (feature, bug, chore) that should be sent to the developer inbox, or is it a conversational question / brainstorming idea meant to be answered directly by an AI advisor?
+
+Input:
+{text[:500]}
+
+Return JSON: {{"intent": "conversation"}} or {{"intent": "task"}}
+
+Return ONLY valid JSON."""
+
+        if task == "business_chat":
+            history = kwargs.get("history", "")
+            persona = kwargs.get("persona", "You are a helpful AI assistant.")
+            return f"""{persona}
+
+Recent Conversation History:
+{history}
+
+User Input:
+{text.strip()}"""
+
         return text
 
     @staticmethod
@@ -869,6 +890,10 @@ Input:
             return {"text": "-".join(words).lower()}
         if task == "refine_description":
             return {"text": kwargs.get("text", "")}
+        if task == "detect_intent":
+            return {"intent": "task"}
+        if task == "business_chat":
+            return {"text": "I'm offline right now, how can I help you later?"}
         return {}
 
 

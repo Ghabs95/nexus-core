@@ -5,7 +5,7 @@ Converts agent.yaml to .copilot instruction format for Copilot Chat.
 This allows developers to ask Copilot to implement the agent.
 
 Usage:
-    python to_copilot.py triage-agent.yaml > triage-agent.copilot
+    python -m nexus.cli translate to-copilot triage-agent.yaml > triage-agent.copilot
 """
 
 import yaml
@@ -104,12 +104,3 @@ You will receive:
     
     return instructions
 
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python to_copilot.py <agent.yaml>")
-        sys.exit(1)
-    
-    yaml_file = sys.argv[1]
-    copilot_instructions = translate_agent_to_copilot(yaml_file)
-    print(copilot_instructions)
