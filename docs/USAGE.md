@@ -72,6 +72,20 @@ workflow = WorkflowDefinition.from_yaml(
 await engine.create_workflow(workflow)
 ```
 
+### Defining Custom Agents
+
+The Nexus Core framework allows for the definition of custom agent types through YAML configuration files. These agent definitions specify the agent's purpose, required tools, input/output contracts, and AI instructions, enabling flexible and extensible agent-driven workflows.
+
+**Example: Business Agent Definition**
+
+The `Business` agent (defined in `examples/agents/business-agent.yaml`) serves as an illustration of how to define an agent that provides AI-powered feature suggestions. It showcases:
+- **`agent_type`**: A unique identifier for the agent (e.g., `business`).
+- **`inputs` and `outputs`**: Clearly defined schema for data the agent expects and produces.
+- **`ai_instructions`**: A detailed prompt guiding the AI's behavior and desired output format.
+- **`requires_tools`**: Listing the external tools the agent needs to perform its task (e.g., `github:read_issue`, `ai:completion`).
+
+This modular approach ensures that new agent capabilities can be seamlessly integrated and orchestrated within Nexus Core workflows without modifying the core framework code.
+
 ### Workflow Monitoring & Approval Gates
 
 Nexus Core supports human approval gates and merge policies within workflow definitions.

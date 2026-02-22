@@ -16,7 +16,6 @@ Typical host usage (nexus Phase-3 thin shell)::
     orchestrator = ProcessOrchestrator(
         runtime=NexusAgentRuntime(),
         complete_step_fn=complete_step_for_issue,   # async callable
-        stuck_threshold_seconds=STUCK_AGENT_THRESHOLD,
         nexus_dir=get_nexus_dir_name(),
     )
 
@@ -155,7 +154,10 @@ class AgentRuntime(ABC):
         return False
 
     def check_log_timeout(
-        self, issue_number: str, log_file: str
+        self,
+        issue_number: str,
+        log_file: str,
+        timeout_seconds: Optional[int] = None,
     ) -> Tuple[bool, Optional[int]]:
         """Check whether the agent owning *log_file* has timed out.
 
@@ -164,9 +166,18 @@ class AgentRuntime(ABC):
             the log file's modification time; override to use
             ``AgentMonitor.check_timeout()`` or equivalent.
         """
+        timeout = int(timeout_seconds) if isinstance(timeout_seconds, int) and timeout_seconds > 0 else 3600
         age = time.time() - os.path.getmtime(log_file)
         # pid cannot be determined without host knowledge from base class
-        return age > 3600, None  # threshold overridden by stuck_threshold_seconds in orchestrator
+        return age > timeout, None
+
+    def get_agent_timeout_seconds(
+        self,
+        issue_number: str,
+        agent_type: Optional[str] = None,
+    ) -> Optional[int]:
+        """Return timeout configured by workflow/agent definition when available."""
+        return None
 
     def notify_timeout(self, issue_number: str, agent_type: str, will_retry: bool) -> None:
         """Send a timeout notification.  No-op by default; override to use host
@@ -247,8 +258,6 @@ class ProcessOrchestrator:
             ``(issue_number: str, agent_type: str, outputs: dict,
             event_id: str = "") -> Optional[Workflow]``.
             Typically ``WorkflowStateEnginePlugin.complete_step_for_issue``.
-        stuck_threshold_seconds: Seconds of inactivity before an agent is
-            considered stuck.  Defaults to 3600 (1 hour).
         nexus_dir: Name of the hidden nexus directory inside project roots.
             Defaults to ``".nexus"``.
     """
@@ -258,12 +267,10 @@ class ProcessOrchestrator:
         runtime: AgentRuntime,
         complete_step_fn: Callable[[str, str, dict], Any],
         *,
-        stuck_threshold_seconds: int = 3600,
         nexus_dir: str = ".nexus",
     ) -> None:
         self._runtime = runtime
         self._complete_step_fn = complete_step_fn
-        self._stuck_threshold = stuck_threshold_seconds
         self._nexus_dir = nexus_dir
         # Per-session set of (issue:pid) keys we've already alerted for.
         self._dead_agent_alerted: Set[str] = set()
@@ -325,16 +332,6 @@ class ProcessOrchestrator:
                 completed_agent = summary.agent_type
                 logger.info(f"📋 Agent completed for issue #{issue_num} ({completed_agent})")
 
-                comment_body = build_completion_comment(summary)
-                if not self._runtime.post_completion_comment(issue_num, repo, comment_body):
-                    self._runtime.send_alert(
-                        "⚠️ Completion detected but Git comment delivery failed; "
-                        f"auto-chain blocked for issue #{issue_num} ({completed_agent})."
-                    )
-                    continue
-
-                dedup_seen.add(comment_key)
-
                 # Ask the workflow engine what happens next.
                 engine_workflow = asyncio.run(
                     self._complete_step_fn(issue_num, completed_agent, summary.to_dict(), comment_key)
@@ -382,6 +379,29 @@ class ProcessOrchestrator:
                             reason="terminal-agent-ref",
                         )
                         continue
+
+                comment_summary = summary
+                if next_agent is not None and next_agent != summary.next_agent:
+                    comment_summary = type(summary)(
+                        status=summary.status,
+                        agent_type=summary.agent_type,
+                        summary=summary.summary,
+                        key_findings=summary.key_findings,
+                        next_agent=next_agent,
+                        verdict=summary.verdict,
+                        effort_breakdown=summary.effort_breakdown,
+                        raw=summary.raw,
+                    )
+
+                comment_body = build_completion_comment(comment_summary)
+                if not self._runtime.post_completion_comment(issue_num, repo, comment_body):
+                    self._runtime.send_alert(
+                        "⚠️ Completion detected but Git comment delivery failed; "
+                        f"auto-chain blocked for issue #{issue_num} ({completed_agent})."
+                    )
+                    continue
+
+                dedup_seen.add(comment_key)
 
                 # Send transition alert.
                 if build_transition_message:
@@ -483,13 +503,15 @@ class ProcessOrchestrator:
             if issue_logs and log_file != issue_logs[0]:
                 continue
 
-            timed_out, pid = self._runtime.check_log_timeout(issue_num, log_file)
-            # Also honour stuck_threshold_seconds as an override of the default
-            # base-class behaviour (which hard-codes 3600).
+            timeout_seconds = self._resolve_agent_timeout(issue_num)
+            timed_out, pid = self._runtime.check_log_timeout(
+                issue_num,
+                log_file,
+                timeout_seconds=timeout_seconds,
+            )
             if not timed_out:
-                # Recheck using our configurable threshold if no override is present.
                 age = time.time() - os.path.getmtime(log_file)
-                timed_out = age > self._stuck_threshold
+                timed_out = age > timeout_seconds
 
             if not timed_out:
                 continue
@@ -504,7 +526,7 @@ class ProcessOrchestrator:
 
         Reads the launched-agents tracker, checks each PID, and alerts /
         retries if the process is dead but no completion was recorded.  Gives
-        a grace period of ``stuck_threshold_seconds`` before acting so that
+        a grace period based on workflow/agent timeout before acting so that
         the completion scanner gets to run first.
         """
         launched = self._runtime.load_launched_agents(recent_only=False)
@@ -529,8 +551,9 @@ class ProcessOrchestrator:
             miss_count = self._dead_pid_miss_counts.get(alert_key, 0) + 1
             self._dead_pid_miss_counts[alert_key] = miss_count
 
+            timeout_seconds = self._resolve_agent_timeout(issue_num, agent_type)
             required_misses = (
-                1 if (now - launch_ts) >= self._stuck_threshold
+                1 if (now - launch_ts) >= timeout_seconds
                 else _DEAD_PID_LIVENESS_MISS_THRESHOLD
             )
 
@@ -781,6 +804,21 @@ class ProcessOrchestrator:
                 logger.error(
                     f"Timeout retry exception for issue #{issue_num}: {exc}"
                 )
+
+    def _resolve_agent_timeout(
+        self,
+        issue_num: str,
+        agent_type: Optional[str] = None,
+    ) -> int:
+        """Resolve timeout from runtime workflow metadata with safe fallback."""
+        try:
+            timeout = self._runtime.get_agent_timeout_seconds(str(issue_num), agent_type)
+        except Exception:
+            timeout = None
+
+        if isinstance(timeout, (int, float)) and int(timeout) > 0:
+            return int(timeout)
+        return 3600
 
 
 # ---------------------------------------------------------------------------

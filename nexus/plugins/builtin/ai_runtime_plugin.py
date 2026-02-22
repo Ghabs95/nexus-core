@@ -57,7 +57,15 @@ class AIOrchestrator:
         self.gemini_transcription_timeout = self.config.get("gemini_transcription_timeout", 60)
         self.copilot_transcription_timeout = self.config.get("copilot_transcription_timeout", 120)
         primary = str(self.config.get("transcription_primary", "gemini")).strip().lower()
-        self.transcription_primary = AIProvider.GEMINI if primary == "gemini" else AIProvider.COPILOT
+        self.transcription_primary = primary if primary in {"gemini", "copilot", "whisper"} else "gemini"
+        self.whisper_model = str(self.config.get("whisper_model", "whisper-1")).strip() or "whisper-1"
+        self.whisper_language = str(self.config.get("whisper_language", "")).strip().lower() or None
+        raw_whisper_languages = str(self.config.get("whisper_languages", "")).strip().lower()
+        self.whisper_languages = [
+            value.strip() for value in raw_whisper_languages.split(",") if value.strip()
+        ]
+        self._whisper_model_instance = None
+        self._whisper_model_name = ""
         self.get_tasks_logs_dir: Callable[[str, Optional[str]], str] = self.config.get(
             "tasks_logs_dir_resolver",
             _default_tasks_logs_dir,
@@ -390,37 +398,88 @@ class AIOrchestrator:
 
     def transcribe_audio_cli(self, audio_file_path: str) -> Optional[str]:
         primary = self.transcription_primary
-        fallback = self.get_fallback_tool(primary)
+        if primary == "whisper":
+            attempts = ["whisper", "gemini", "copilot"] if self.fallback_enabled else ["whisper"]
+        elif primary == "copilot":
+            attempts = ["copilot", "gemini"] if self.fallback_enabled else ["copilot"]
+        else:
+            attempts = ["gemini", "copilot"] if self.fallback_enabled else ["gemini"]
+
+        for tool_name in attempts:
+            try:
+                if tool_name == "whisper":
+                    text = self._transcribe_with_whisper_api(audio_file_path)
+                elif tool_name == "gemini":
+                    text = self._transcribe_with_gemini_cli(audio_file_path)
+                else:
+                    text = self._transcribe_with_copilot_cli(audio_file_path)
+
+                if text:
+                    logger.info("✅ Transcription successful with %s", tool_name)
+                    return text
+            except RateLimitedError as exc:
+                if tool_name in {"gemini", "copilot"}:
+                    ai_tool = AIProvider.GEMINI if tool_name == "gemini" else AIProvider.COPILOT
+                    self._record_rate_limit_with_context(ai_tool, exc, context="transcribe")
+                else:
+                    logger.warning("⚠️  %s transcription failed (rate-limited): %s", tool_name, exc)
+            except Exception as exc:
+                logger.warning("⚠️  %s transcription failed: %s", tool_name, exc)
+
+        logger.error("❌ All transcription tools failed (attempted: %s)", attempts)
+        return None
+
+    def _transcribe_with_whisper_api(self, audio_file_path: str) -> Optional[str]:
+        if not os.path.exists(audio_file_path):
+            raise ValueError(f"Audio file not found: {audio_file_path}")
 
         try:
-            text = (
-                self._transcribe_with_gemini_cli(audio_file_path)
-                if primary == AIProvider.GEMINI
-                else self._transcribe_with_copilot_cli(audio_file_path)
-            )
-            if text:
-                logger.info("✅ Transcription successful with %s", primary.value)
-                return text
-        except RateLimitedError as exc:
-            self._record_rate_limit_with_context(primary, exc, context="transcribe")
+            import whisper
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise ToolUnavailableError(
+                "Local Whisper requires the 'openai-whisper' package. "
+                "Install with: pip install openai-whisper"
+            ) from exc
+
+        model_name = self._normalize_local_whisper_model_name(self.whisper_model)
+        if self._whisper_model_instance is None or self._whisper_model_name != model_name:
+            logger.info("🔧 Loading local Whisper model: %s", model_name)
+            self._whisper_model_instance = whisper.load_model(model_name)
+            self._whisper_model_name = model_name
+
+        logger.info("🎧 Transcribing with local Whisper model %s: %s", model_name, audio_file_path)
+        try:
+            transcribe_kwargs: dict[str, Any] = {"fp16": False}
+            if self.whisper_language:
+                transcribe_kwargs["language"] = self.whisper_language
+            elif self.whisper_languages:
+                transcribe_kwargs["language"] = self.whisper_languages[0]
+            response = self._whisper_model_instance.transcribe(audio_file_path, **transcribe_kwargs)
         except Exception as exc:
-            logger.warning("⚠️  %s transcription failed: %s", primary.value, exc)
+            raise Exception(f"Local Whisper error: {exc}") from exc
 
-        if fallback:
-            try:
-                text = (
-                    self._transcribe_with_gemini_cli(audio_file_path)
-                    if fallback == AIProvider.GEMINI
-                    else self._transcribe_with_copilot_cli(audio_file_path)
-                )
-                if text:
-                    logger.info("✅ Fallback transcription succeeded with %s", fallback.value)
-                    return text
-            except Exception as exc:
-                logger.error("❌ Fallback transcription also failed: %s", exc)
+        detected_language = ""
+        if isinstance(response, dict):
+            detected_language = str(response.get("language") or "").strip().lower()
+        if self.whisper_languages and detected_language and detected_language not in self.whisper_languages:
+            raise Exception(
+                f"Detected language {detected_language!r} is outside allowed set: {self.whisper_languages}"
+            )
 
-        logger.error("❌ All transcription tools failed")
-        return None
+        text = response.get("text") if isinstance(response, dict) else None
+        text = str(text or "").strip()
+        if not text:
+            raise Exception("Whisper returned empty transcription")
+        return text
+
+    @staticmethod
+    def _normalize_local_whisper_model_name(configured_model: str) -> str:
+        model_name = (configured_model or "").strip().lower()
+        if not model_name:
+            return "base"
+        if model_name in {"whisper-1", "gpt-4o-mini-transcribe", "gpt-4o-transcribe"}:
+            return "base"
+        return model_name
 
     @staticmethod
     def _is_transcription_refusal(text: str) -> bool:

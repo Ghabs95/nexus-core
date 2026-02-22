@@ -341,7 +341,6 @@ workflows:
 # Required
 DATABASE_URL=postgresql://user:pass@localhost/nexus
 GITHUB_TOKEN=ghp_your_token
-OPENAI_API_KEY=sk-your_key
 
 # Optional
 NEXUS_LOG_LEVEL=INFO

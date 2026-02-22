@@ -39,6 +39,7 @@ class StubRuntime(AgentRuntime):
         self._workflow_states: Dict[str, str] = {}
         self._running_agents: Dict[str, Optional[str]] = {}
         self._timeout_results: Dict[str, Tuple[bool, Any]] = {}
+        self._agent_timeout_seconds: int = 3600
         self._post_comment_success = True
         self.posted_comments: List[dict] = []
 
@@ -82,8 +83,11 @@ class StubRuntime(AgentRuntime):
     def get_workflow_state(self, issue_number):
         return self._workflow_states.get(str(issue_number))
 
-    def check_log_timeout(self, issue_number, log_file):
+    def check_log_timeout(self, issue_number, log_file, timeout_seconds=None):
         return self._timeout_results.get(issue_number, (False, None))
+
+    def get_agent_timeout_seconds(self, issue_number, agent_type=None):
+        return self._agent_timeout_seconds
 
     def get_expected_running_agent(self, issue_number):
         return self._running_agents.get(str(issue_number))
@@ -119,10 +123,10 @@ def _orchestrator(runtime: StubRuntime, complete_step_fn=None, stuck_threshold=6
         async def _noop(issue, agent, outputs, event_id=""):
             return None
         complete_step_fn = _noop
+    runtime._agent_timeout_seconds = stuck_threshold
     return ProcessOrchestrator(
         runtime=runtime,
         complete_step_fn=complete_step_fn,
-        stuck_threshold_seconds=stuck_threshold,
         nexus_dir=".nexus",
     )
 
@@ -351,7 +355,7 @@ class TestScanAndProcessCompletions:
         with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
             orc.scan_and_process_completions("/base", dedup_seen)
 
-        assert len(runtime.posted_comments) == 1
+        assert len(runtime.posted_comments) == 0
         assert runtime.launched == []
         assert det.dedup_key in dedup_seen
 

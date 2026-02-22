@@ -259,8 +259,6 @@ def test_transcription_primary_uses_gemini_by_default(monkeypatch):
     orchestrator = AIOrchestrator()
     called = {"copilot": False, "gemini": False}
 
-    monkeypatch.setattr(orchestrator, "get_fallback_tool", lambda _primary: None)
-
     def _copilot(_path):
         called["copilot"] = True
         return "transcribed"
@@ -277,6 +275,34 @@ def test_transcription_primary_uses_gemini_by_default(monkeypatch):
     assert result == "transcribed"
     assert called["copilot"] is False
     assert called["gemini"] is True
+
+
+def test_transcription_primary_uses_whisper_when_configured(monkeypatch):
+    orchestrator = AIOrchestrator({"transcription_primary": "whisper", "fallback_enabled": False})
+    called = {"whisper": False, "gemini": False, "copilot": False}
+
+    def _whisper(_path):
+        called["whisper"] = True
+        return "spoken text"
+
+    def _gemini(_path):
+        called["gemini"] = True
+        return "gemini"
+
+    def _copilot(_path):
+        called["copilot"] = True
+        return "copilot"
+
+    monkeypatch.setattr(orchestrator, "_transcribe_with_whisper_api", _whisper)
+    monkeypatch.setattr(orchestrator, "_transcribe_with_gemini_cli", _gemini)
+    monkeypatch.setattr(orchestrator, "_transcribe_with_copilot_cli", _copilot)
+
+    result = orchestrator.transcribe_audio_cli("temp_voice.ogg")
+
+    assert result == "spoken text"
+    assert called["whisper"] is True
+    assert called["gemini"] is False
+    assert called["copilot"] is False
 
 
 def test_copilot_transcription_timeout_respects_config(monkeypatch):
