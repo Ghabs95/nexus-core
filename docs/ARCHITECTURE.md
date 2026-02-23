@@ -309,24 +309,15 @@ WORKFLOW_CHAIN = {
 # nexus.yaml
 adapters:
   storage:
-    type: postgres
-    connection_string: ${DATABASE_URL}
+    type: postgres # options: file, postgres
+    storage_config:
+      connection_string: ${DATABASE_URL}
+      # storage_dir: ./data # required for type: file
   
   git:
     type: github
     repo: yourorg/yourrepo
     token: ${GITHUB_TOKEN}
-  
-  ai_providers:
-    - type: openai
-      api_key: ${OPENAI_API_KEY}
-      preference: reasoning
-    - type: copilot_cli
-      preference: code_generation
-
-workflows:
-  - name: feature_dev
-    file: ./workflows/feature.yaml
 ```
 
 ---

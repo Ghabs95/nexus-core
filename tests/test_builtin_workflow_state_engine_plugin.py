@@ -259,3 +259,110 @@ async def test_approve_and_deny_invoke_clear_and_audit_callbacks():
     assert callback_log["clear"] == ["9", "9"]
     assert callback_log["audit"][0][1] == "APPROVAL_GRANTED"
     assert callback_log["audit"][1][1] == "APPROVAL_DENIED"
+
+
+# ---------------------------------------------------------------------------
+# Storage backend selection tests
+# ---------------------------------------------------------------------------
+
+
+def test_build_storage_file_uses_storage_dir(tmp_path):
+    """file storage is selected by default when storage_dir is provided."""
+    from nexus.adapters.storage.file import FileStorage
+
+    plugin = WorkflowStateEnginePlugin({"storage_dir": str(tmp_path)})
+    storage = plugin._build_storage()
+    assert isinstance(storage, FileStorage)
+    assert storage.base_path == tmp_path
+
+
+def test_build_storage_file_explicit_storage_type(tmp_path):
+    """Explicit storage_type='file' works the same as the default."""
+    from nexus.adapters.storage.file import FileStorage
+
+    plugin = WorkflowStateEnginePlugin(
+        {"storage_type": "file", "storage_dir": str(tmp_path)}
+    )
+    storage = plugin._build_storage()
+    assert isinstance(storage, FileStorage)
+
+
+def test_build_storage_file_missing_dir_raises():
+    """Missing storage_dir raises ValueError for file storage."""
+    import pytest
+
+    plugin = WorkflowStateEnginePlugin({"storage_type": "file"})
+    with pytest.raises(ValueError, match="storage_dir"):
+        plugin._build_storage()
+
+
+def test_build_storage_file_env_var(tmp_path, monkeypatch):
+    """NEXUS_STORAGE_DIR env var is used when storage_dir is absent."""
+    from nexus.adapters.storage.file import FileStorage
+
+    monkeypatch.setenv("NEXUS_STORAGE_DIR", str(tmp_path))
+    monkeypatch.delenv("NEXUS_STORAGE_TYPE", raising=False)
+    plugin = WorkflowStateEnginePlugin({})
+    storage = plugin._build_storage()
+    assert isinstance(storage, FileStorage)
+
+
+def test_build_storage_prebuilt_instance(tmp_path):
+    """A pre-built StorageBackend instance in config is returned as-is."""
+    from nexus.adapters.storage.file import FileStorage
+
+    prebuilt = FileStorage(base_path=tmp_path)
+    plugin = WorkflowStateEnginePlugin({"storage": prebuilt})
+    assert plugin._build_storage() is prebuilt
+
+
+def test_build_storage_postgres_requires_dsn_or_config():
+    """Postgres storage raises ValueError when no connection_string/env is given."""
+    import pytest
+
+    plugin = WorkflowStateEnginePlugin({"storage_type": "postgres"})
+    with pytest.raises(ValueError, match="connection_string"):
+        plugin._build_storage()
+
+
+def test_build_storage_postgres_env_dsn(monkeypatch):
+    """NEXUS_STORAGE_DSN env var is used when no storage_config is given."""
+    from nexus.adapters.storage.postgres import PostgreSQLStorageBackend
+    from unittest.mock import patch, MagicMock
+
+    fake_dsn = "postgresql+psycopg2://user:pass@localhost/testdb"
+    monkeypatch.setenv("NEXUS_STORAGE_TYPE", "postgres")
+    monkeypatch.setenv("NEXUS_STORAGE_DSN", fake_dsn)
+
+    # Patch the constructor to avoid a real DB connection.
+    with patch.object(
+        PostgreSQLStorageBackend,
+        "__init__",
+        return_value=None,
+    ) as mock_init:
+        plugin = WorkflowStateEnginePlugin({})
+        plugin._build_storage()
+        mock_init.assert_called_once_with(connection_string=fake_dsn)
+
+
+def test_build_storage_postgres_via_storage_config(monkeypatch):
+    """storage_config dict with connection_string is forwarded to Postgres backend."""
+    from nexus.adapters.storage.postgres import PostgreSQLStorageBackend
+    from unittest.mock import patch
+
+    fake_dsn = "postgresql+psycopg2://user:pass@host/db"
+    monkeypatch.delenv("NEXUS_STORAGE_DSN", raising=False)
+
+    with patch.object(
+        PostgreSQLStorageBackend,
+        "__init__",
+        return_value=None,
+    ) as mock_init:
+        plugin = WorkflowStateEnginePlugin(
+            {
+                "storage_type": "postgres",
+                "storage_config": {"connection_string": fake_dsn},
+            }
+        )
+        plugin._build_storage()
+        mock_init.assert_called_once_with(connection_string=fake_dsn)

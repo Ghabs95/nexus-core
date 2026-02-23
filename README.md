@@ -305,26 +305,15 @@ version: "1.0"
 
 adapters:
   storage:
-    type: postgres
-    connection_string: ${DATABASE_URL}
+    type: postgres # options: file, postgres
+    storage_config:
+      connection_string: ${DATABASE_URL}
+      # storage_dir: ./data # required for type: file
   
   git:
     type: github
     repo: yourorg/yourrepo
     token: ${GITHUB_TOKEN}
-  
-  ai_providers:
-    - type: copilot_cli
-      path: /usr/local/bin/copilot
-      preference: code_generation
-
-    - type: gemini_cli
-      preference: reasoning
-workflows:
-  - name: feature_dev
-    file: ./workflows/feature_dev.yaml
-  - name: bug_fix
-    file: ./workflows/bug_fix.yaml
 ```
 
 ### Environment Variables
@@ -333,6 +322,11 @@ workflows:
 # Required
 DATABASE_URL=postgresql://user:pass@localhost/nexus
 GITHUB_TOKEN=ghp_your_token
+
+# Storage Configuration (Alternative to YAML)
+NEXUS_STORAGE_TYPE=postgres
+NEXUS_STORAGE_DSN=postgresql://user:pass@localhost/nexus
+NEXUS_STORAGE_DIR=./data
 
 # Optional
 NEXUS_LOG_LEVEL=INFO
