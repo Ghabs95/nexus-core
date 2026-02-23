@@ -31,20 +31,6 @@ logger = logging.getLogger(__name__)
 #: Valid backoff strategies accepted in a ``retry_policy`` block.
 RETRY_BACKOFF_STRATEGIES = ("exponential", "linear", "constant")
 
-#: Fields allowed at the top level of a workflow YAML document.
-_TOP_LEVEL_OPTIONAL = {
-    "name", "id", "version", "description", "timeout_seconds",
-    "steps", "workflow_types", "monitoring", "error_handling",
-    "require_human_merge_approval",
-}
-
-#: Fields allowed inside a single step definition.
-_STEP_OPTIONAL = {
-    "id", "name", "description", "agent_type", "condition", "on_success",
-    "final_step", "inputs", "outputs", "routes", "tools",
-    "timeout", "retry", "retry_policy", "parallel", "prompt_template",
-}
-
 
 # ---------------------------------------------------------------------------
 # YamlWorkflowLoader
