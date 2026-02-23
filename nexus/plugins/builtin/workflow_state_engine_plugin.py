@@ -6,29 +6,106 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
-from nexus.adapters.storage.file import FileStorage
+from nexus.adapters.registry import AdapterRegistry
+from nexus.adapters.storage.base import StorageBackend
 from nexus.core.workflow import WorkflowDefinition, WorkflowEngine
 from nexus.core.models import StepStatus, WorkflowState
 from nexus.core.idempotency import IdempotencyKey, IdempotencyLedger
 
 logger = logging.getLogger(__name__)
 
+_STORAGE_TYPE_ENV = "NEXUS_STORAGE_TYPE"
+_STORAGE_DSN_ENV = "NEXUS_STORAGE_DSN"
+_STORAGE_DIR_ENV = "NEXUS_STORAGE_DIR"
+
 
 class WorkflowStateEnginePlugin:
-    """Adapter around ``WorkflowEngine`` with issue-number centric operations."""
+    """Adapter around ``WorkflowEngine`` with issue-number centric operations.
+
+    Storage backend selection
+    -------------------------
+    The plugin resolves the storage backend in the following priority order:
+
+    1. ``engine_factory`` config key — callable that returns a
+       :class:`~nexus.core.workflow.WorkflowEngine` directly (highest priority).
+    2. ``storage`` config key — a pre-built :class:`~nexus.adapters.storage.base.StorageBackend`
+       instance.
+    3. ``storage_type`` config key (or ``NEXUS_STORAGE_TYPE`` env var):
+
+       * ``"file"`` (default) — JSON file storage.  Requires either
+         ``storage_dir`` config key or ``NEXUS_STORAGE_DIR`` env var.
+       * ``"postgres"`` / ``"postgresql"`` — PostgreSQL via SQLAlchemy.
+         Requires either a ``storage_config`` dict with
+         ``connection_string`` or the ``NEXUS_STORAGE_DSN`` env var.
+
+    Example — file storage (default)::
+
+        plugin = WorkflowStateEnginePlugin({"storage_dir": "./data"})
+
+    Example — Postgres via config::
+
+        plugin = WorkflowStateEnginePlugin({
+            "storage_type": "postgres",
+            "storage_config": {"connection_string": "postgresql+psycopg2://user:pass@host/db"},
+        })
+
+    Example — Postgres via environment variables::
+
+        NEXUS_STORAGE_TYPE=postgres
+        NEXUS_STORAGE_DSN=postgresql+psycopg2://user:pass@host/db
+    """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
-        self.storage_dir: str = self.config.get("storage_dir", "")
+        self.storage_dir: str = self.config.get(
+            "storage_dir", os.environ.get(_STORAGE_DIR_ENV, "")
+        )
         self.engine_factory: Optional[Callable[[], WorkflowEngine]] = self.config.get("engine_factory")
         self.issue_to_workflow_id = self.config.get("issue_to_workflow_id")
+
+    def _build_storage(self) -> StorageBackend:
+        """Construct the appropriate StorageBackend from config / env vars."""
+        # A pre-built backend takes priority over type-based construction.
+        prebuilt = self.config.get("storage")
+        if isinstance(prebuilt, StorageBackend):
+            return prebuilt
+
+        storage_type = (
+            self.config.get("storage_type")
+            or os.environ.get(_STORAGE_TYPE_ENV, "file")
+        ).lower()
+
+        registry = AdapterRegistry()
+        storage_cfg: Dict[str, Any] = dict(self.config.get("storage_config") or {})
+
+        if storage_type == "file":
+            if not self.storage_dir:
+                raise ValueError(
+                    "storage_dir config key (or NEXUS_STORAGE_DIR env var) is required "
+                    "when storage_type is 'file'"
+                )
+            storage_cfg.setdefault("base_path", self.storage_dir)
+            return registry.create_storage("file", **storage_cfg)
+
+        if storage_type in ("postgres", "postgresql"):
+            if "connection_string" not in storage_cfg:
+                dsn = os.environ.get(_STORAGE_DSN_ENV, "")
+                if not dsn:
+                    raise ValueError(
+                        "A connection_string must be provided in storage_config or via "
+                        f"the {_STORAGE_DSN_ENV} environment variable when "
+                        f"storage_type is '{storage_type}'"
+                    )
+                storage_cfg["connection_string"] = dsn
+            return registry.create_storage("postgres", **storage_cfg)
+
+        # Unknown types — delegate to the registry (supports custom registrations).
+        return registry.create_storage(storage_type, **storage_cfg)
 
     def _get_engine(self) -> WorkflowEngine:
         if callable(self.engine_factory):
             return self.engine_factory()
-        if not self.storage_dir:
-            raise ValueError("storage_dir is required for workflow-state-engine plugin")
-        return WorkflowEngine(storage=FileStorage(base_path=self.storage_dir))
+        return WorkflowEngine(storage=self._build_storage())
 
     def _resolve_workflow_id(self, issue_number: str) -> Optional[str]:
         if callable(self.issue_to_workflow_id):
