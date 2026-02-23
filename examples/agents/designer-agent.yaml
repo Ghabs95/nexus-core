@@ -1,16 +1,16 @@
 apiVersion: "nexus-core/v1"
 kind: "Agent"
 metadata:
-  name: "Design"
+  name: "Designer"
   description: "Creates technical design proposals for feature requests"
   author: "Nexus Core Team"
   version: "0.1.0"
 
 spec:
   # Agent type - determines which tasks this agent can handle
-  # Types: triage | design | debug | developer | reviewer | docs | summarizer | escalation
-  # When a task is assigned to "design", this agent will pick it up
-  agent_type: "design"
+  # Types: triage | designer | debug | developer | reviewer | docs | summarizer | escalation
+  # When a task is assigned to "designer", this agent will pick it up
+  agent_type: "designer"
   
   # Agent behavior configuration
   timeout_seconds: 600

@@ -48,7 +48,7 @@ full_workflow:
     - id: "design"
       name: "Architecture & Design"
       description: "Create a design proposal covering API contracts and ADRs"
-      agent_type: "design"
+      agent_type: "designer"
       tools:
         - github:create_branch
         - github:create_file

@@ -73,7 +73,7 @@ ai_tool_preferences:
   # - task assignment (looks for agents with matching system_type)
   
   triage: copilot          # Issue classification and analysis
-  design: copilot          # Design and architecture proposals
+  designer: copilot        # Design and architecture proposals
   debug: copilot           # Root cause analysis
   reviewer: copilot        # PR reviews and code quality
   developer: copilot       # Code implementation
@@ -122,7 +122,7 @@ custom_project:
   # Only list agents that differ from global defaults
   ai_tool_preferences:
     triage: copilot          # Triage agent - issue classification
-    design: copilot          # Design agent - technical proposals  
+    designer: copilot        # Designer agent - technical proposals  
     debug: copilot           # Debug agent - root cause analysis
     reviewer: copilot        # Reviewer agent - PR reviews
     developer: copilot       # Developer agent - code implementation

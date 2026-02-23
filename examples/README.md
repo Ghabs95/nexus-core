@@ -10,7 +10,7 @@ examples/
 │   └── development_workflow.yaml  # Example: Multi-agent development workflow
 ├── agents/                     # Agent definitions (YAML)
 │   ├── triage-agent.yaml       # Example: Issue triage agent
-│   └── design-agent.yaml       # Example: Feature design agent
+│   └── designer-agent.yaml     # Example: Feature designer agent
 └── translator/                 # Agent YAML → Other formats (utilities)
     ├── to_markdown.py          # Generate markdown documentation
     ├── to_python.py            # Generate Python class template

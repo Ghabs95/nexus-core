@@ -57,19 +57,50 @@ class WorkflowEngine:
 ### YAML Workflow Definitions
 
 Nexus Core can load workflow definitions from YAML and map them into
-`Workflow` and `WorkflowStep` models.
+`Workflow` and `WorkflowStep` models. The `YamlWorkflowLoader` provides
+schema validation and support for advanced features like retry policies
+and parallel step groups.
 
 ```python
-from nexus.core.workflow import WorkflowDefinition
+from nexus.core import YamlWorkflowLoader
 
-workflow = WorkflowDefinition.from_yaml(
+workflow = YamlWorkflowLoader.load(
     "./examples/workflows/development_workflow.yaml",
     workflow_id="demo-issue-42",
-    name_override="nexus-core/feature-demo",
-    description_override="Demo workflow from YAML"
+    workflow_type="full",
+    strict=True  # Raise error on schema warnings
 )
 
 await engine.create_workflow(workflow)
+```
+
+#### Advanced YAML Features
+
+**Retry Policies**: Define fine-grained retry behavior per step.
+
+```yaml
+steps:
+  - id: triage
+    agent_type: triage
+    retry_policy:
+      max_retries: 3
+      backoff: exponential
+      initial_delay: 1.0
+```
+
+**Parallel Step Groups**: Group steps that can be executed concurrently.
+
+```yaml
+steps:
+  - id: security_scan
+    agent_type: compliance
+    parallel: ["style_check", "unit_tests"]
+    
+  - id: style_check
+    agent_type: reviewer
+    
+  - id: unit_tests
+    agent_type: developer
 ```
 
 ### Defining Custom Agents

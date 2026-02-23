@@ -61,29 +61,21 @@ pip install nexus-core[telegram,postgres,openai]
 ### Your First Workflow
 
 ```python
-from nexus import WorkflowEngine, FileStorage, GitHubPlatform
-from nexus.adapters.ai import OpenAIProvider
+from nexus.core import WorkflowEngine, YamlWorkflowLoader
+from nexus.adapters.storage.file import FileStorage
 
-# Configure adapters
+# Configure storage
 storage = FileStorage(base_path="./data")
-git = GitHubPlatform(repo="yourorg/yourrepo", token="ghp_...")
-ai = OpenAIProvider(api_key="sk-...")
 
 # Create workflow engine
-engine = WorkflowEngine(
-    storage=storage,
-    git_platform=git,
-    ai_provider=ai
-)
+engine = WorkflowEngine(storage=storage)
 
-# Load workflow definition
-workflow = engine.load_workflow("./workflows/feature_dev.yaml")
+# Load workflow definition using the new YAML loader
+workflow = YamlWorkflowLoader.load("./workflows/feature_dev.yaml")
 
-# Execute
-result = await engine.run(
-    workflow=workflow,
-    inputs={"issue_url": "https://github.com/yourorg/repo/issues/42"}
-)
+# Create and execute
+await engine.create_workflow(workflow)
+result = await engine.start_workflow(workflow.id)
 ```
 
 ### Define a Workflow (YAML)
@@ -100,7 +92,7 @@ steps:
     retry: 3
     
   - name: design
-    agent_type: design
+    agent_type: designer
     prompt: "Create technical design for this feature"
     condition: "triage.complexity == 'high'"
     timeout: 600
@@ -248,7 +240,7 @@ trigger: issue_created (label: feature)
 steps:
   - triage: Triage & scope
     → Adds comment with complexity analysis
-  - design: Technical design
+  - designer: Technical design
     → Creates design doc, updates issue
   - code_reviewer: Implementation review
     → Reviews PR, comments with feedback
