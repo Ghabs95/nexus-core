@@ -50,6 +50,24 @@ def test_copilot_analysis_timeout_respects_config(monkeypatch):
     assert result["project"] == "nexus"
 
 
+def test_gemini_analysis_uses_analysis_timeout(monkeypatch):
+    orchestrator = AIOrchestrator({"analysis_timeout": 47})
+    captured = {"timeout": None}
+
+    monkeypatch.setattr(orchestrator, "check_tool_available", lambda _tool: True)
+
+    def _fake_run(*_args, **kwargs):
+        captured["timeout"] = kwargs.get("timeout")
+        return _FakeCompletedProcess('{"project": "nexus", "type": "feature", "task_name": "abc"}')
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = orchestrator._run_gemini_cli_analysis("input", "classify")
+
+    assert captured["timeout"] == 47
+    assert result["project"] == "nexus"
+
+
 def test_gemini_agent_launch_uses_configured_model(monkeypatch, tmp_path):
     orchestrator = AIOrchestrator({"gemini_model": "gemini-3-pro"})
     captured = {"cmd": None}

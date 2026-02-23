@@ -52,7 +52,7 @@ class AIOrchestrator:
         self.fallback_enabled = self.config.get("fallback_enabled", True)
         self.rate_limit_ttl = self.config.get("rate_limit_ttl", 3600)
         self.max_retries = self.config.get("max_retries", 2)
-        self.analysis_timeout = self.config.get("analysis_timeout", 30)
+        self.analysis_timeout = self.config.get("analysis_timeout", 120)
         self.refine_description_timeout = self.config.get("refine_description_timeout", 90)
         self.gemini_transcription_timeout = self.config.get("gemini_transcription_timeout", 60)
         self.copilot_transcription_timeout = self.config.get("copilot_transcription_timeout", 120)
@@ -688,13 +688,14 @@ class AIOrchestrator:
             raise ToolUnavailableError("Gemini CLI not available")
 
         prompt = self._build_analysis_prompt(text, task, **kwargs)
+        timeout = self.analysis_timeout
 
         try:
             result = subprocess.run(
                 [self.gemini_cli_path, "-p", prompt],
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=timeout,
             )
 
             if result.returncode != 0:
@@ -704,7 +705,7 @@ class AIOrchestrator:
 
             return self._parse_analysis_result(result.stdout, task)
         except subprocess.TimeoutExpired as exc:
-            raise Exception(f"Gemini analysis timed out (>30s)") from exc
+            raise Exception(f"Gemini analysis timed out (>{timeout}s)") from exc
 
     def _run_copilot_analysis(self, text: str, task: str, **kwargs) -> Dict[str, Any]:
         if not self.check_tool_available(AIProvider.COPILOT):
