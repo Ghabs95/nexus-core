@@ -154,17 +154,18 @@ class AIOrchestrator:
         base_dir: str,
         issue_num: Optional[str] = None,
         log_subdir: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
     ) -> Optional[int]:
         """Dispatch to the correct CLI for *tool*. Extend here when adding new providers."""
         if tool == AIProvider.COPILOT:
             return self._invoke_copilot(
                 agent_prompt, workspace_dir, agents_dir, base_dir,
-                issue_num=issue_num, log_subdir=log_subdir,
+                issue_num=issue_num, log_subdir=log_subdir, env=env,
             )
         if tool == AIProvider.GEMINI:
             return self._invoke_gemini_agent(
                 agent_prompt, workspace_dir, agents_dir, base_dir,
-                issue_num=issue_num, log_subdir=log_subdir,
+                issue_num=issue_num, log_subdir=log_subdir, env=env,
             )
         raise ToolUnavailableError(f"No invoker implemented for tool: {tool.value}")
 
@@ -218,6 +219,7 @@ class AIOrchestrator:
         use_gemini: bool = False,
         exclude_tools: Optional[list] = None,
         log_subdir: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
     ) -> Tuple[Optional[int], AIProvider]:
         """Try each available tool in priority order, skipping any in *exclude_tools*.
 
@@ -251,7 +253,7 @@ class AIOrchestrator:
                     logger.info("🔄 Trying next tool %s (previously tried: %s)", tool.value, tried)
                 pid = self._invoke_tool(
                     tool, agent_prompt, workspace_dir, agents_dir, base_dir,
-                    issue_num=issue_num, log_subdir=log_subdir,
+                    issue_num=issue_num, log_subdir=log_subdir, env=env,
                 )
                 if pid:
                     if tried:
@@ -278,6 +280,7 @@ class AIOrchestrator:
         base_dir: str,
         issue_num: Optional[str] = None,
         log_subdir: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
     ) -> Optional[int]:
         if not self.check_tool_available(AIProvider.COPILOT):
             raise ToolUnavailableError("Copilot not available")
@@ -308,12 +311,18 @@ class AIOrchestrator:
         log_file = None
         try:
             log_file = open(log_path, "w", encoding="utf-8")
+            
+            merged_env = {**os.environ}
+            if env:
+                merged_env.update(env)
+                
             process = subprocess.Popen(
                 cmd,
                 cwd=workspace_dir,
                 stdin=subprocess.DEVNULL,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
+                env=merged_env,
             )
             log_file.close()
             logger.info("🚀 Copilot launched (PID: %s)", process.pid)
@@ -335,6 +344,7 @@ class AIOrchestrator:
         base_dir: str,
         issue_num: Optional[str] = None,
         log_subdir: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
     ) -> Optional[int]:
         if not self.check_tool_available(AIProvider.GEMINI):
             raise ToolUnavailableError("Gemini CLI not available")
@@ -373,12 +383,18 @@ class AIOrchestrator:
         log_file = None
         try:
             log_file = open(log_path, "w", encoding="utf-8")
+            
+            merged_env = {**os.environ}
+            if env:
+                merged_env.update(env)
+                
             process = subprocess.Popen(
                 cmd,
                 cwd=workspace_dir,
                 stdin=subprocess.DEVNULL,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
+                env=merged_env,
             )
             log_file.close()
             logger.info("🚀 Gemini launched (PID: %s)", process.pid)
