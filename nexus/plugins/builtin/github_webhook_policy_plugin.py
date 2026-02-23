@@ -6,6 +6,7 @@ small policy helpers for webhook-side decisions.
 
 import hashlib
 import hmac
+import re
 from typing import Any, Optional
 
 
@@ -212,22 +213,22 @@ class GithubWebhookPolicyPlugin:
             elif isinstance(label, str):
                 label_name = label.lower()
 
-            if "casit" in label_name or "caseitalia" in label_name:
-                return "casit"
-            if "wlbl" in label_name or "wallible" in label_name:
-                return "wlbl"
-            if "bm" in label_name or "biome" in label_name:
-                return "bm"
+            project_match = re.search(r"(?:^|[:/\s_-])project[:/\s_-]?([a-z0-9][a-z0-9_-]*)", label_name)
+            if project_match:
+                return project_match.group(1).replace("-", "_")
+
+            workspace_match = re.search(
+                r"(?:^|[:/\s_-])workspace[:/\s_-]?([a-z0-9][a-z0-9_-]*)", label_name
+            )
+            if workspace_match:
+                return workspace_match.group(1).replace("-", "_")
 
         body = str(issue.get("body", "")).lower()
-        if "caseitalia" in body or "case-italia" in body:
-            return "casit"
-        if "wallible" in body or "wlbl" in body:
-            return "wlbl"
-        if "biome" in body or "biomejs" in body:
-            return "bm"
+        body_match = re.search(r"\b(?:project|workspace)[:\s_-]+([a-z0-9][a-z0-9_-]*)", body)
+        if body_match:
+            return body_match.group(1).replace("-", "_")
 
-        return "casit"
+        return "default"
 
 
 def register_plugins(registry) -> None:

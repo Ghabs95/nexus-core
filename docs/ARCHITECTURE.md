@@ -287,10 +287,10 @@ class NotificationChannel(ABC):
 ```python
 # nexus/src/config.py
 PROJECT_CONFIG = {
-    "case_italia": {
-        "agents_dir": "ghabs/agents/casit-agents",
-        "workspace": "case_italia",
-        "git_repo": "Ghabs95/agents",
+    "example_project": {
+       "agents_dir": "examples/agents",
+       "workspace": "examples",
+       "git_repo": "Ghabs95/nexus-core",
     }
 }
 

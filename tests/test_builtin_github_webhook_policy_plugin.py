@@ -19,12 +19,12 @@ def test_resolve_project_key_matches_single_repo_field():
 def test_resolve_project_key_matches_repo_in_github_repos_list():
     plugin = GithubWebhookPolicyPlugin()
     config = {
-        "wallible": {
-            "git_repo": "acme/wallible-backend",
-            "git_repos": ["acme/wallible-backend", "acme/wallible-mobile"],
+        "project_alpha": {
+            "git_repo": "acme/project-alpha-backend",
+            "git_repos": ["acme/project-alpha-backend", "acme/project-alpha-mobile"],
         }
     }
 
-    project = plugin.resolve_project_key("acme/wallible-mobile", config, default_project="fallback")
+    project = plugin.resolve_project_key("acme/project-alpha-mobile", config, default_project="fallback")
 
-    assert project == "wallible"
+    assert project == "project_alpha"
