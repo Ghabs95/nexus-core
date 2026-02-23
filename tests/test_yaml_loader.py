@@ -23,12 +23,6 @@ def _minimal_dict(**overrides):
     return base
 
 
-def _step(**overrides):
-    base = {"id": "s1", "agent_type": "triage"}
-    base.update(overrides)
-    return base
-
-
 # ---------------------------------------------------------------------------
 # validate_dict — happy paths
 # ---------------------------------------------------------------------------
@@ -354,3 +348,225 @@ class TestLoadFile:
         wf = YamlWorkflowLoader.load(str(yaml_path), workflow_type="full")
         assert isinstance(wf, Workflow)
         assert len(wf.steps) > 0
+
+
+# ---------------------------------------------------------------------------
+# retry_policy backoff_strategy and initial_delay stored on WorkflowStep
+# ---------------------------------------------------------------------------
+
+class TestRetryPolicyBackoffStorage:
+    def test_backoff_strategy_stored_on_step(self):
+        data = {
+            "name": "Backoff Test",
+            "steps": [
+                {
+                    "id": "s1",
+                    "agent_type": "triage",
+                    "retry_policy": {"max_retries": 3, "backoff": "linear"},
+                }
+            ],
+        }
+        wf = YamlWorkflowLoader.load_from_dict(data)
+        assert wf.steps[0].backoff_strategy == "linear"
+
+    def test_initial_delay_stored_on_step(self):
+        data = {
+            "name": "Delay Test",
+            "steps": [
+                {
+                    "id": "s1",
+                    "agent_type": "triage",
+                    "retry_policy": {"max_retries": 2, "initial_delay": 5.0},
+                }
+            ],
+        }
+        wf = YamlWorkflowLoader.load_from_dict(data)
+        assert wf.steps[0].initial_delay == 5.0
+
+    def test_no_retry_policy_defaults(self):
+        wf = YamlWorkflowLoader.load_from_dict(_minimal_dict())
+        for step in wf.steps:
+            assert step.backoff_strategy is None
+            assert step.initial_delay == 0.0
+
+    def test_constant_backoff_stored(self):
+        data = {
+            "name": "Constant Backoff",
+            "steps": [
+                {
+                    "id": "s1",
+                    "agent_type": "triage",
+                    "retry_policy": {"backoff": "constant", "initial_delay": 10},
+                }
+            ],
+        }
+        wf = YamlWorkflowLoader.load_from_dict(data)
+        assert wf.steps[0].backoff_strategy == "constant"
+        assert wf.steps[0].initial_delay == 10.0
+
+
+# ---------------------------------------------------------------------------
+# get_runnable_steps
+# ---------------------------------------------------------------------------
+
+from typing import Any, Dict, List, Optional
+from nexus.core.models import Agent, AuditEvent, StepStatus, WorkflowState, WorkflowStep
+from nexus.core.workflow import WorkflowEngine
+from nexus.adapters.storage.base import StorageBackend
+
+
+class _InMemoryStorage(StorageBackend):
+    def __init__(self) -> None:
+        self._workflows: Dict[str, Workflow] = {}
+        self._audit: List[AuditEvent] = []
+
+    async def save_workflow(self, workflow: Workflow) -> None:
+        self._workflows[workflow.id] = workflow
+
+    async def load_workflow(self, workflow_id: str) -> Optional[Workflow]:
+        return self._workflows.get(workflow_id)
+
+    async def list_workflows(self, state=None, limit: int = 100):
+        return list(self._workflows.values())
+
+    async def delete_workflow(self, workflow_id: str) -> bool:
+        return bool(self._workflows.pop(workflow_id, None))
+
+    async def append_audit_event(self, event: AuditEvent) -> None:
+        self._audit.append(event)
+
+    async def get_audit_log(self, workflow_id: str, since=None) -> List[AuditEvent]:
+        return [e for e in self._audit if e.workflow_id == workflow_id]
+
+    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: Dict[str, Any]) -> None:
+        pass
+
+    async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    async def cleanup_old_workflows(self, older_than_days: int = 30) -> int:
+        return 0
+
+
+def _make_agent(name: str) -> Agent:
+    return Agent(name=name, display_name=name, description="test", timeout=60, max_retries=0)
+
+
+def _make_step(num: int, name: str, parallel_with: Optional[List[str]] = None) -> WorkflowStep:
+    return WorkflowStep(
+        step_num=num,
+        name=name,
+        agent=_make_agent(name),
+        prompt_template="do work",
+        parallel_with=parallel_with or [],
+    )
+
+
+class TestGetRunnableSteps:
+    @pytest.mark.asyncio
+    async def test_returns_empty_for_nonexistent_workflow(self):
+        storage = _InMemoryStorage()
+        engine = WorkflowEngine(storage=storage)
+        result = await engine.get_runnable_steps("nonexistent")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_workflow_not_running(self):
+        step = _make_step(1, "triage")
+        wf = Workflow(id="w1", name="test", version="1.0", steps=[step],
+                      state=WorkflowState.PENDING, current_step=1)
+        storage = _InMemoryStorage()
+        await storage.save_workflow(wf)
+        engine = WorkflowEngine(storage=storage)
+        result = await engine.get_runnable_steps("w1")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_workflow_completed(self):
+        step = _make_step(1, "triage")
+        wf = Workflow(id="w1", name="test", version="1.0", steps=[step],
+                      state=WorkflowState.COMPLETED, current_step=1)
+        storage = _InMemoryStorage()
+        await storage.save_workflow(wf)
+        engine = WorkflowEngine(storage=storage)
+        result = await engine.get_runnable_steps("w1")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_returns_current_pending_step(self):
+        step = _make_step(1, "triage")
+        wf = Workflow(id="w1", name="test", version="1.0", steps=[step],
+                      state=WorkflowState.RUNNING, current_step=1)
+        storage = _InMemoryStorage()
+        await storage.save_workflow(wf)
+        engine = WorkflowEngine(storage=storage)
+        result = await engine.get_runnable_steps("w1")
+        assert len(result) == 1
+        assert result[0].name == "triage"
+
+    @pytest.mark.asyncio
+    async def test_does_not_return_already_running_current_step(self):
+        step = _make_step(1, "triage")
+        step.status = StepStatus.RUNNING
+        wf = Workflow(id="w1", name="test", version="1.0", steps=[step],
+                      state=WorkflowState.RUNNING, current_step=1)
+        storage = _InMemoryStorage()
+        await storage.save_workflow(wf)
+        engine = WorkflowEngine(storage=storage)
+        result = await engine.get_runnable_steps("w1")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_includes_parallel_pending_steps(self):
+        step1 = _make_step(1, "triage")
+        step2 = _make_step(2, "developer", parallel_with=["triage"])
+        wf = Workflow(id="w1", name="test", version="1.0", steps=[step1, step2],
+                      state=WorkflowState.RUNNING, current_step=1)
+        storage = _InMemoryStorage()
+        await storage.save_workflow(wf)
+        engine = WorkflowEngine(storage=storage)
+        result = await engine.get_runnable_steps("w1")
+        names = {s.name for s in result}
+        assert "triage" in names
+        assert "developer" in names
+
+    @pytest.mark.asyncio
+    async def test_does_not_include_parallel_steps_with_wrong_reference(self):
+        step1 = _make_step(1, "triage")
+        step2 = _make_step(2, "developer", parallel_with=["reviewer"])  # wrong reference
+        wf = Workflow(id="w1", name="test", version="1.0", steps=[step1, step2],
+                      state=WorkflowState.RUNNING, current_step=1)
+        storage = _InMemoryStorage()
+        await storage.save_workflow(wf)
+        engine = WorkflowEngine(storage=storage)
+        result = await engine.get_runnable_steps("w1")
+        assert len(result) == 1
+        assert result[0].name == "triage"
+
+    @pytest.mark.asyncio
+    async def test_does_not_include_completed_parallel_steps(self):
+        step1 = _make_step(1, "triage")
+        step2 = _make_step(2, "developer", parallel_with=["triage"])
+        step2.status = StepStatus.COMPLETED
+        wf = Workflow(id="w1", name="test", version="1.0", steps=[step1, step2],
+                      state=WorkflowState.RUNNING, current_step=1)
+        storage = _InMemoryStorage()
+        await storage.save_workflow(wf)
+        engine = WorkflowEngine(storage=storage)
+        result = await engine.get_runnable_steps("w1")
+        names = {s.name for s in result}
+        assert "triage" in names
+        assert "developer" not in names
+
+    @pytest.mark.asyncio
+    async def test_no_parallel_with_returns_only_current(self):
+        step1 = _make_step(1, "triage")
+        step2 = _make_step(2, "developer")  # no parallel_with
+        wf = Workflow(id="w1", name="test", version="1.0", steps=[step1, step2],
+                      state=WorkflowState.RUNNING, current_step=1)
+        storage = _InMemoryStorage()
+        await storage.save_workflow(wf)
+        engine = WorkflowEngine(storage=storage)
+        result = await engine.get_runnable_steps("w1")
+        assert len(result) == 1
+        assert result[0].name == "triage"

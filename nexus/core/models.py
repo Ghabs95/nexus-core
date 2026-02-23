@@ -103,6 +103,8 @@ class WorkflowStep:
     condition: Optional[str] = None  # Python expression, e.g. "prev_step.result.tier == 'high'"
     timeout: Optional[int] = None  # Override agent default
     retry: Optional[int] = None  # Override agent default
+    backoff_strategy: Optional[str] = None  # Retry backoff strategy: exponential, linear, constant
+    initial_delay: float = 0.0  # Initial delay in seconds before first retry
     inputs: Dict[str, Any] = field(default_factory=dict)
     outputs: Dict[str, Any] = field(default_factory=dict)
     status: StepStatus = StepStatus.PENDING

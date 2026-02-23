@@ -28,6 +28,7 @@ OnStepTransition = Callable[[Workflow, WorkflowStep, dict], Awaitable[None]]
 OnWorkflowComplete = Callable[[Workflow, dict], Awaitable[None]]
 
 _MAX_LOOP_ITERATIONS = 5  # Maximum times a step can be re-activated by a goto before aborting
+_DEFAULT_BACKOFF_BASE = 1.0  # Default base delay (seconds) used when step.initial_delay is unset
 
 
 class WorkflowEngine:
@@ -185,8 +186,15 @@ class WorkflowEngine:
                 step.status = StepStatus.PENDING
                 step.completed_at = None
                 step.error = None
-                # Exponential backoff delay (seconds): 2^(retry_count-1), capped at 60 s
-                backoff = min(2 ** (step.retry_count - 1), 60)
+                # Compute backoff delay using step's configured strategy and initial_delay
+                strategy = step.backoff_strategy or "exponential"
+                base = step.initial_delay if step.initial_delay > 0 else _DEFAULT_BACKOFF_BASE
+                if strategy == "linear":
+                    backoff = min(base * step.retry_count, 60)
+                elif strategy == "constant":
+                    backoff = base
+                else:  # exponential (default)
+                    backoff = min(base * (2 ** (step.retry_count - 1)), 60)
                 workflow.updated_at = datetime.now(timezone.utc)
                 await self.storage.save_workflow(workflow)
                 await self._audit(workflow_id, "STEP_RETRY", {
@@ -490,8 +498,8 @@ class WorkflowEngine:
 
         A step is *runnable* when it is in ``PENDING`` state and its step number
         equals ``workflow.current_step`` **or** its ``parallel_with`` list contains
-        the name of the currently-running step (indicating it is part of a parallel
-        group).
+        the name of the step at position ``workflow.current_step`` (indicating it
+        is part of a parallel group).
 
         This method does not mutate workflow state; callers must explicitly start
         each step via the normal engine flow.
@@ -725,8 +733,17 @@ class WorkflowDefinition:
             # Resolve retry: explicit `retry` integer or `retry_policy.max_retries`
             step_retry: Optional[int] = step_data.get("retry")
             retry_policy = step_data.get("retry_policy")
-            if step_retry is None and isinstance(retry_policy, dict):
-                step_retry = retry_policy.get("max_retries")
+            step_backoff_strategy: Optional[str] = None
+            step_initial_delay: float = 0.0
+            if isinstance(retry_policy, dict):
+                if step_retry is None:
+                    step_retry = retry_policy.get("max_retries")
+                step_backoff_strategy = retry_policy.get("backoff")
+                raw_delay = retry_policy.get("initial_delay", 0.0)
+                try:
+                    step_initial_delay = float(raw_delay) if raw_delay else 0.0
+                except (TypeError, ValueError):
+                    step_initial_delay = 0.0
 
             agent = Agent(
                 name=agent_type,
@@ -746,7 +763,13 @@ class WorkflowDefinition:
 
             # `parallel` field: list of step ids that form a parallel group with this step
             parallel_raw = step_data.get("parallel", [])
-            parallel_with: List[str] = parallel_raw if isinstance(parallel_raw, list) else []
+            if isinstance(parallel_raw, list):
+                parallel_with: List[str] = [
+                    WorkflowDefinition._slugify(step_id) or step_id
+                    for step_id in parallel_raw
+                ]
+            else:
+                parallel_with = []
 
             step_routes = step_data.get("routes", [])
             steps.append(
@@ -757,6 +780,8 @@ class WorkflowDefinition:
                     prompt_template=prompt_template,
                     condition=step_data.get("condition"),
                     retry=step_retry,
+                    backoff_strategy=step_backoff_strategy,
+                    initial_delay=step_initial_delay,
                     inputs=inputs_data,
                     routes=step_routes,
                     on_success=step_data.get("on_success"),
