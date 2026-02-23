@@ -29,6 +29,8 @@ def translate_agent_to_markdown(yaml_path: str) -> str:
 **Version:** {metadata.get('version', '0.1.0')} | 
 **Author:** {metadata.get('author', 'Unknown')}
 
+**Agent Type:** `{spec.get('agent_type', 'unknown')}`
+
 ---
 
 ## Overview

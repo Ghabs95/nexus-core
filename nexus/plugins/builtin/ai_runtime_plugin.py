@@ -781,7 +781,7 @@ Return JSON: {{"intent": "conversation"}} or {{"intent": "task"}}
 
 Return ONLY valid JSON."""
 
-        if task == "business_chat":
+        if task == "advisor_chat":
             history = kwargs.get("history", "")
             persona = kwargs.get("persona", "You are a helpful AI assistant.")
             return f"""{persona}
@@ -892,7 +892,7 @@ User Input:
             return {"text": kwargs.get("text", "")}
         if task == "detect_intent":
             return {"intent": "task"}
-        if task == "business_chat":
+        if task == "advisor_chat":
             return {"text": "I'm offline right now, how can I help you later?"}
         return {}
 
