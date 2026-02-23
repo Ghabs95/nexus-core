@@ -485,6 +485,49 @@ class WorkflowEngine:
         """Get audit log for a workflow."""
         return await self.storage.get_audit_log(workflow_id)
 
+    async def get_runnable_steps(self, workflow_id: str) -> List[WorkflowStep]:
+        """Return all steps that are currently ready to run in parallel.
+
+        A step is *runnable* when it is in ``PENDING`` state and its step number
+        equals ``workflow.current_step`` **or** its ``parallel_with`` list contains
+        the name of the currently-running step (indicating it is part of a parallel
+        group).
+
+        This method does not mutate workflow state; callers must explicitly start
+        each step via the normal engine flow.
+
+        Args:
+            workflow_id: ID of the target workflow.
+
+        Returns:
+            List of :class:`~nexus.core.models.WorkflowStep` objects that can be
+            started concurrently.  Returns an empty list when the workflow is not
+            found or is not running.
+        """
+        workflow = await self.storage.load_workflow(workflow_id)
+        if not workflow or workflow.state != WorkflowState.RUNNING:
+            return []
+
+        current = workflow.get_step(workflow.current_step)
+        if current is None:
+            return []
+
+        runnable: List[WorkflowStep] = []
+
+        # Include the current step if it is still pending (not yet started)
+        if current.status == StepStatus.PENDING:
+            runnable.append(current)
+
+        # Include any pending steps that declare themselves parallel to the current step
+        current_name = current.name
+        for step in workflow.steps:
+            if step.step_num == workflow.current_step:
+                continue  # Already handled above
+            if step.status == StepStatus.PENDING and current_name in step.parallel_with:
+                runnable.append(step)
+
+        return runnable
+
     async def _audit(self, workflow_id: str, event_type: str, data: dict) -> None:
         """Add audit event."""
         event = AuditEvent(
@@ -679,6 +722,12 @@ class WorkflowDefinition:
             step_desc = step_data.get("description", "")
             prompt_template = step_data.get("prompt_template") or step_desc or "Execute step"
 
+            # Resolve retry: explicit `retry` integer or `retry_policy.max_retries`
+            step_retry: Optional[int] = step_data.get("retry")
+            retry_policy = step_data.get("retry_policy")
+            if step_retry is None and isinstance(retry_policy, dict):
+                step_retry = retry_policy.get("max_retries")
+
             agent = Agent(
                 name=agent_type,
                 display_name=step_data.get("name", agent_type),
@@ -695,6 +744,10 @@ class WorkflowDefinition:
                         normalized_inputs.update(entry)
                 inputs_data = normalized_inputs
 
+            # `parallel` field: list of step ids that form a parallel group with this step
+            parallel_raw = step_data.get("parallel", [])
+            parallel_with: List[str] = parallel_raw if isinstance(parallel_raw, list) else []
+
             step_routes = step_data.get("routes", [])
             steps.append(
                 WorkflowStep(
@@ -703,10 +756,12 @@ class WorkflowDefinition:
                     agent=agent,
                     prompt_template=prompt_template,
                     condition=step_data.get("condition"),
+                    retry=step_retry,
                     inputs=inputs_data,
                     routes=step_routes,
                     on_success=step_data.get("on_success"),
                     final_step=bool(step_data.get("final_step", False)),
+                    parallel_with=parallel_with,
                 )
             )
 

@@ -115,6 +115,7 @@ class WorkflowStep:
     on_success: Optional[str] = None  # Named step (id) to activate after success
     final_step: bool = False  # Mark step as terminal for workflow completion
     iteration: int = 0  # Times this step has been re-activated via a workflow goto
+    parallel_with: List[str] = field(default_factory=list)  # Step ids that run alongside this step
 
     def __str__(self) -> str:
         return f"Step {self.step_num}: {self.name} ({self.agent.name})"
