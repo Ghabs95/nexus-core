@@ -41,7 +41,9 @@ full_workflow:
       name: "Route After Triage"
       agent_type: "router"
       routes:
-        - when: "needs_design == true"
+        - when: "classification == 'feature' and needs_design == false"
+          then: "develop"
+        - when: "classification == 'feature'"
           then: "design"
         - default: "develop"
 

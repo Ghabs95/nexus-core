@@ -97,6 +97,11 @@ if _SA_AVAILABLE:
 class PostgreSQLStorageBackend(StorageBackend):
     """PostgreSQL-backed workflow storage using SQLAlchemy.
 
+    .. note::
+        For production deployments, it is highly recommended to use
+        the ``NEXUS_STORAGE_DSN`` environment variable instead of hardcoding
+        credentials in configuration files.
+
     Args:
         connection_string: SQLAlchemy DSN, e.g.
             ``postgresql+psycopg2://user:pass@localhost/dbname``.

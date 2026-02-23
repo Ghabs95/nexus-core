@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Configurable Storage Adapters** — Introduced a unified configuration mechanism for storage backends (File and PostgreSQL) via `WorkflowStateEnginePlugin`. Users can now switch backends using the `storage_type` configuration key or the `NEXUS_STORAGE_TYPE` environment variable ([#65](https://github.com/Ghabs95/nexus-core/issues/65)).
+- **PostgreSQL Environment Variable Support** — Added `NEXUS_STORAGE_DSN` for secure PostgreSQL connection management, avoiding plaintext credentials in configuration files.
 - **YAML Workflow Orchestration** — Introduced `YamlWorkflowLoader` for loading and validating workflow definitions from YAML. This enables complex multi-step AI workflows with support for parallel execution, conditional branching, and retry policies ([#62](https://github.com/Ghabs95/nexus-core/issues/62)).
 - **Schema Validation** — `YamlWorkflowLoader` performs comprehensive schema validation before instantiation, ensuring `agent_type`, `retry_policy`, and `parallel` groups are correctly defined.
 - **Retry Policies in YAML** — Workflow steps can now define a `retry_policy` block in YAML, supporting `max_retries`, `backoff` strategy (exponential, linear, constant), and `initial_delay`.

@@ -8,7 +8,7 @@ metadata:
 
 spec:
   # Agent type - determines which tasks this agent can handle
-  # Types: triage | design | debug | developer | reviewer | docs | summarizer | escalation
+  # Types: triage | designer | debug | developer | reviewer | docs | summarizer | escalation
   # When a task is assigned to "triage", this agent will pick it up
   agent_type: "triage"
   
@@ -57,6 +57,9 @@ spec:
     reasoning:
       type: string
       description: "Why we classified it this way"
+    needs_design:
+      type: boolean
+      description: "Whether this issue should pass through the designer step before development"
   
   # The AI prompt to use
   ai_instructions: |
@@ -82,9 +85,14 @@ spec:
     {
       "classification": "bug|feature|doc|support",
       "priority": "p0-critical|p1-high|p2-medium|p3-low",
+      "needs_design": true,
       "reasoning": "2-3 sentences explaining your classification",
       "suggested_labels": ["label1", "label2"]
     }
+
+    Routing rule for needs_design:
+    - For FEATURE issues, set needs_design=true unless the request is trivial and can be directly implemented.
+    - For BUG, DOC, or SUPPORT issues, set needs_design=false.
   
   # Example run for testing
   example:
@@ -93,6 +101,7 @@ spec:
     expected_output:
       classification: "feature"
       priority: "p2-medium"
+      needs_design: true
       suggested_labels: ["enhancement", "adapters/storage", "good-first-issue"]
       reasoning: "Request for PostgreSQL storage adapter. Useful but not blocking core functionality."
   
@@ -101,7 +110,7 @@ spec:
     - condition: "classification == 'bug'"
       then: "debug"
     - condition: "classification == 'feature'"
-      then: "design"
+      then: "designer"
     - condition: "classification == 'doc'"
       then: "writer"
     - default: "close_loop"
