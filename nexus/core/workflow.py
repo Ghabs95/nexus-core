@@ -28,6 +28,7 @@ OnStepTransition = Callable[[Workflow, WorkflowStep, dict], Awaitable[None]]
 OnWorkflowComplete = Callable[[Workflow, dict], Awaitable[None]]
 
 _MAX_LOOP_ITERATIONS = 5  # Maximum times a step can be re-activated by a goto before aborting
+_DEFAULT_BACKOFF_BASE = 1.0  # Default base delay (seconds) used when step.initial_delay is unset
 
 
 class WorkflowEngine:
@@ -185,8 +186,15 @@ class WorkflowEngine:
                 step.status = StepStatus.PENDING
                 step.completed_at = None
                 step.error = None
-                # Exponential backoff delay (seconds): 2^(retry_count-1), capped at 60 s
-                backoff = min(2 ** (step.retry_count - 1), 60)
+                # Compute backoff delay using step's configured strategy and initial_delay
+                strategy = step.backoff_strategy or "exponential"
+                base = step.initial_delay if step.initial_delay > 0 else _DEFAULT_BACKOFF_BASE
+                if strategy == "linear":
+                    backoff = min(base * step.retry_count, 60)
+                elif strategy == "constant":
+                    backoff = base
+                else:  # exponential (default)
+                    backoff = min(base * (2 ** (step.retry_count - 1)), 60)
                 workflow.updated_at = datetime.now(timezone.utc)
                 await self.storage.save_workflow(workflow)
                 await self._audit(workflow_id, "STEP_RETRY", {
@@ -485,6 +493,49 @@ class WorkflowEngine:
         """Get audit log for a workflow."""
         return await self.storage.get_audit_log(workflow_id)
 
+    async def get_runnable_steps(self, workflow_id: str) -> List[WorkflowStep]:
+        """Return all steps that are currently ready to run in parallel.
+
+        A step is *runnable* when it is in ``PENDING`` state and its step number
+        equals ``workflow.current_step`` **or** its ``parallel_with`` list contains
+        the name of the step at position ``workflow.current_step`` (indicating it
+        is part of a parallel group).
+
+        This method does not mutate workflow state; callers must explicitly start
+        each step via the normal engine flow.
+
+        Args:
+            workflow_id: ID of the target workflow.
+
+        Returns:
+            List of :class:`~nexus.core.models.WorkflowStep` objects that can be
+            started concurrently.  Returns an empty list when the workflow is not
+            found or is not running.
+        """
+        workflow = await self.storage.load_workflow(workflow_id)
+        if not workflow or workflow.state != WorkflowState.RUNNING:
+            return []
+
+        current = workflow.get_step(workflow.current_step)
+        if current is None:
+            return []
+
+        runnable: List[WorkflowStep] = []
+
+        # Include the current step if it is still pending (not yet started)
+        if current.status == StepStatus.PENDING:
+            runnable.append(current)
+
+        # Include any pending steps that declare themselves parallel to the current step
+        current_name = current.name
+        for step in workflow.steps:
+            if step.step_num == workflow.current_step:
+                continue  # Already handled above
+            if step.status == StepStatus.PENDING and current_name in step.parallel_with:
+                runnable.append(step)
+
+        return runnable
+
     async def _audit(self, workflow_id: str, event_type: str, data: dict) -> None:
         """Add audit event."""
         event = AuditEvent(
@@ -679,6 +730,21 @@ class WorkflowDefinition:
             step_desc = step_data.get("description", "")
             prompt_template = step_data.get("prompt_template") or step_desc or "Execute step"
 
+            # Resolve retry: explicit `retry` integer or `retry_policy.max_retries`
+            step_retry: Optional[int] = step_data.get("retry")
+            retry_policy = step_data.get("retry_policy")
+            step_backoff_strategy: Optional[str] = None
+            step_initial_delay: float = 0.0
+            if isinstance(retry_policy, dict):
+                if step_retry is None:
+                    step_retry = retry_policy.get("max_retries")
+                step_backoff_strategy = retry_policy.get("backoff")
+                raw_delay = retry_policy.get("initial_delay", 0.0)
+                try:
+                    step_initial_delay = float(raw_delay) if raw_delay else 0.0
+                except (TypeError, ValueError):
+                    step_initial_delay = 0.0
+
             agent = Agent(
                 name=agent_type,
                 display_name=step_data.get("name", agent_type),
@@ -695,6 +761,16 @@ class WorkflowDefinition:
                         normalized_inputs.update(entry)
                 inputs_data = normalized_inputs
 
+            # `parallel` field: list of step ids that form a parallel group with this step
+            parallel_raw = step_data.get("parallel", [])
+            if isinstance(parallel_raw, list):
+                parallel_with: List[str] = [
+                    WorkflowDefinition._slugify(step_id) or step_id
+                    for step_id in parallel_raw
+                ]
+            else:
+                parallel_with = []
+
             step_routes = step_data.get("routes", [])
             steps.append(
                 WorkflowStep(
@@ -703,10 +779,14 @@ class WorkflowDefinition:
                     agent=agent,
                     prompt_template=prompt_template,
                     condition=step_data.get("condition"),
+                    retry=step_retry,
+                    backoff_strategy=step_backoff_strategy,
+                    initial_delay=step_initial_delay,
                     inputs=inputs_data,
                     routes=step_routes,
                     on_success=step_data.get("on_success"),
                     final_step=bool(step_data.get("final_step", False)),
+                    parallel_with=parallel_with,
                 )
             )
 

@@ -103,6 +103,8 @@ class WorkflowStep:
     condition: Optional[str] = None  # Python expression, e.g. "prev_step.result.tier == 'high'"
     timeout: Optional[int] = None  # Override agent default
     retry: Optional[int] = None  # Override agent default
+    backoff_strategy: Optional[str] = None  # Retry backoff strategy: exponential, linear, constant
+    initial_delay: float = 0.0  # Initial delay in seconds before first retry
     inputs: Dict[str, Any] = field(default_factory=dict)
     outputs: Dict[str, Any] = field(default_factory=dict)
     status: StepStatus = StepStatus.PENDING
@@ -115,6 +117,7 @@ class WorkflowStep:
     on_success: Optional[str] = None  # Named step (id) to activate after success
     final_step: bool = False  # Mark step as terminal for workflow completion
     iteration: int = 0  # Times this step has been re-activated via a workflow goto
+    parallel_with: List[str] = field(default_factory=list)  # Step ids that run alongside this step
 
     def __str__(self) -> str:
         return f"Step {self.step_num}: {self.name} ({self.agent.name})"

@@ -23,6 +23,7 @@ from nexus.core.models import (
 from nexus.core.orchestrator import AIOrchestrator
 from nexus.core.process_orchestrator import AgentRuntime, ProcessOrchestrator
 from nexus.core.workflow import WorkflowDefinition, WorkflowEngine
+from nexus.core.yaml_loader import YamlWorkflowLoader
 
 __all__ = [
     # Agent Resolution
@@ -32,6 +33,7 @@ __all__ = [
     # Workflow Engine
     "WorkflowEngine",
     "WorkflowDefinition",
+    "YamlWorkflowLoader",
     "AIOrchestrator",
     # Process Orchestration
     "AgentRuntime",
