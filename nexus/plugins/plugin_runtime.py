@@ -11,11 +11,139 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import threading
 import types
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+class HandoffManager:
+    """Track and resolve active agent delegations within a workflow.
+
+    Thread-safe registry for :class:`~nexus.core.models.DelegationRequest`
+    objects. Injected into :class:`~nexus.core.orchestrator.AIOrchestrator`
+    as an optional dependency — existing code paths are unaffected when
+    no ``HandoffManager`` is provided.
+
+    Example::
+
+        from nexus.plugins.plugin_runtime import HandoffManager
+        from nexus.core.models import DelegationRequest
+
+        manager = HandoffManager()
+        req = DelegationRequest(
+            lead_agent="developer",
+            sub_agent="reviewer",
+            issue_number="42",
+            workflow_id="nexus-42-full",
+            task_description="Review the PR",
+        )
+        manager.register(req)
+        ...
+        manager.complete(callback)
+    """
+
+    def __init__(self) -> None:
+        # delegation_id → DelegationRequest
+        self._active: Dict[str, "DelegationRequest"] = {}  # noqa: F821
+        self._lock = threading.Lock()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def register(self, request: "DelegationRequest") -> None:  # noqa: F821
+        """Register *request* as an active delegation."""
+        from nexus.core.models import DelegationStatus
+
+        with self._lock:
+            request.status = DelegationStatus.ACTIVE
+            self._active[request.delegation_id] = request
+        logger.debug(
+            "Delegation registered: %s (%s → %s)",
+            request.delegation_id,
+            request.lead_agent,
+            request.sub_agent,
+        )
+
+    def complete(
+        self, callback: "DelegationCallback"  # noqa: F821
+    ) -> Optional["DelegationRequest"]:  # noqa: F821
+        """Mark the delegation identified by *callback* as completed.
+
+        Returns the original :class:`~nexus.core.models.DelegationRequest` or
+        ``None`` if the delegation is unknown.
+        """
+        from nexus.core.models import DelegationStatus
+
+        with self._lock:
+            request = self._active.pop(callback.delegation_id, None)
+        if request is None:
+            logger.warning(
+                "complete() called for unknown delegation_id: %s",
+                callback.delegation_id,
+            )
+            return None
+        request.status = DelegationStatus.COMPLETED
+        logger.debug("Delegation completed: %s", callback.delegation_id)
+        return request
+
+    def fail(self, delegation_id: str, error: str) -> None:
+        """Mark delegation *delegation_id* as failed with *error*."""
+        from nexus.core.models import DelegationStatus
+
+        with self._lock:
+            request = self._active.pop(delegation_id, None)
+        if request is not None:
+            request.status = DelegationStatus.FAILED
+            logger.debug("Delegation failed: %s — %s", delegation_id, error)
+        else:
+            logger.warning(
+                "fail() called for unknown delegation_id: %s", delegation_id
+            )
+
+    def expire_stale(self) -> List["DelegationRequest"]:  # noqa: F821
+        """Expire delegations whose ``expires_at`` timestamp has passed.
+
+        Returns the list of newly expired requests.
+        """
+        from nexus.core.models import DelegationStatus
+
+        now = datetime.now(timezone.utc).isoformat()
+        expired: List = []
+        with self._lock:
+            stale_ids = [
+                did
+                for did, req in self._active.items()
+                if req.expires_at is not None and req.expires_at < now
+            ]
+            for did in stale_ids:
+                req = self._active.pop(did)
+                req.status = DelegationStatus.EXPIRED
+                expired.append(req)
+        if expired:
+            logger.info("Expired %d stale delegation(s)", len(expired))
+        return expired
+
+    def get(self, delegation_id: str) -> Optional["DelegationRequest"]:  # noqa: F821
+        """Return the active delegation with *delegation_id*, or ``None``."""
+        with self._lock:
+            return self._active.get(delegation_id)
+
+    def pending_for(
+        self, lead_agent: str, workflow_id: str
+    ) -> List["DelegationRequest"]:  # noqa: F821
+        """Return all active delegations for *lead_agent* in *workflow_id*."""
+        with self._lock:
+            return [
+                req
+                for req in self._active.values()
+                if req.lead_agent == lead_agent and req.workflow_id == workflow_id
+            ]
+
 
 # Deferred import so that the rest of nexus-core stays importable even when
 # watchdog is not installed (hot-reload is an optional feature).
