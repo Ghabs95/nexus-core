@@ -5,14 +5,10 @@ All external SDK/driver calls are mocked so the suite runs without optional
 extras installed.
 """
 import asyncio
-import json
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # AdapterRegistry
@@ -71,10 +67,11 @@ class TestAdapterRegistry:
     def test_create_openai_provider(self):
         from nexus.adapters.registry import AdapterRegistry
 
-        registry = AdapterRegistry()
+        AdapterRegistry()
         with patch.dict("sys.modules", {"openai": MagicMock()}):
             # Reload so the guarded import picks up the mock
             import importlib
+
             import nexus.adapters.ai.openai_provider as _mod
             importlib.reload(_mod)
             _mod._OPENAI_AVAILABLE = True
@@ -100,7 +97,7 @@ class TestAdapterRegistry:
         assert isinstance(storage, FileStorage)
 
     def test_from_config(self, tmp_path):
-        from nexus.adapters.registry import AdapterRegistry, AdapterConfig
+        from nexus.adapters.registry import AdapterConfig, AdapterRegistry
 
         registry = AdapterRegistry()
         with patch("nexus.adapters.git.github.GitHubPlatform._check_gh_cli"):
@@ -142,7 +139,10 @@ class TestAdapterRegistry:
 class TestSlackNotificationChannel:
     def _make_channel(self):
         """Create a SlackNotificationChannel with a mocked WebClient."""
-        from nexus.adapters.notifications.slack import SlackNotificationChannel, _SLACK_SDK_AVAILABLE
+        from nexus.adapters.notifications.slack import (
+            _SLACK_SDK_AVAILABLE,
+            SlackNotificationChannel,
+        )
 
         if not _SLACK_SDK_AVAILABLE:
             pytest.skip("slack-sdk not installed")
@@ -156,7 +156,10 @@ class TestSlackNotificationChannel:
         return channel, mock_client
 
     def test_name(self):
-        from nexus.adapters.notifications.slack import SlackNotificationChannel, _SLACK_SDK_AVAILABLE
+        from nexus.adapters.notifications.slack import (
+            _SLACK_SDK_AVAILABLE,
+            SlackNotificationChannel,
+        )
 
         if not _SLACK_SDK_AVAILABLE:
             pytest.skip("slack-sdk not installed")
@@ -181,11 +184,14 @@ class TestSlackNotificationChannel:
         )
         mock_client.chat_postMessage.assert_called_once()
         call_kwargs = mock_client.chat_postMessage.call_args.kwargs
-        assert "#test" == call_kwargs["channel"]
+        assert call_kwargs["channel"] == "#test"
         assert "Deployment failed" in call_kwargs["text"]
 
     def test_send_alert_uses_webhook_when_configured(self):
-        from nexus.adapters.notifications.slack import SlackNotificationChannel, _SLACK_SDK_AVAILABLE
+        from nexus.adapters.notifications.slack import (
+            _SLACK_SDK_AVAILABLE,
+            SlackNotificationChannel,
+        )
         from nexus.core.models import Severity
 
         if not _SLACK_SDK_AVAILABLE:
@@ -233,7 +239,6 @@ class TestGitLabPlatform:
         assert platform._encoded_repo == urllib.parse.quote("mygroup/myproject", safe="")
 
     def test_to_issue_converts_data(self):
-        from nexus.adapters.git.gitlab import GitLabPlatform
 
         gl = self._make_platform()
         data = {
@@ -512,7 +517,7 @@ class TestPostgreSQLStorageBackend:
             from nexus.adapters.storage.postgres import PostgreSQLStorageBackend
 
             with patch.object(PostgreSQLStorageBackend, "__init__", lambda self, *a, **kw: None):
-                backend = PostgreSQLStorageBackend.__new__(PostgreSQLStorageBackend)
+                PostgreSQLStorageBackend.__new__(PostgreSQLStorageBackend)
                 # Simulate normalisation step in isolation
                 dsn = "postgres://user:pass@localhost/db"
                 normalised = dsn.replace("postgres://", "postgresql+psycopg2://", 1)
@@ -523,9 +528,9 @@ class TestPostgreSQLStorageBackend:
         from nexus.adapters.storage._workflow_serde import dict_to_workflow, workflow_to_dict
         from nexus.adapters.storage.file import FileStorage
 
-        storage = FileStorage(tmp_path)
+        FileStorage(tmp_path)
         # Use FileStorage round-trip test as proxy for shared serde correctness
-        from nexus.core.models import Agent, Workflow, WorkflowState, WorkflowStep
+        from nexus.core.models import Agent, Workflow, WorkflowStep
 
         agent = Agent(name="triage", display_name="Triage", description="")
         step = WorkflowStep(step_num=0, name="triage", agent=agent, prompt_template="Go", inputs={}, outputs={})
@@ -546,8 +551,8 @@ class TestDiscordNotificationChannel:
     def _make_channel(self):
         """Create a DiscordNotificationChannel with aiohttp mocked out."""
         from nexus.adapters.notifications.discord import (
-            DiscordNotificationChannel,
             _AIOHTTP_AVAILABLE,
+            DiscordNotificationChannel,
         )
 
         if not _AIOHTTP_AVAILABLE:
@@ -561,8 +566,8 @@ class TestDiscordNotificationChannel:
 
     def test_name(self):
         from nexus.adapters.notifications.discord import (
-            DiscordNotificationChannel,
             _AIOHTTP_AVAILABLE,
+            DiscordNotificationChannel,
         )
 
         if not _AIOHTTP_AVAILABLE:
@@ -615,8 +620,8 @@ class TestDiscordNotificationChannel:
 
     async def test_send_alert_uses_channel_when_no_webhook(self):
         from nexus.adapters.notifications.discord import (
-            DiscordNotificationChannel,
             _AIOHTTP_AVAILABLE,
+            DiscordNotificationChannel,
         )
         from nexus.core.models import Severity
 
@@ -657,8 +662,8 @@ class TestDiscordNotificationChannel:
 
     def test_missing_credentials_raises(self):
         from nexus.adapters.notifications.discord import (
-            DiscordNotificationChannel,
             _AIOHTTP_AVAILABLE,
+            DiscordNotificationChannel,
         )
 
         if not _AIOHTTP_AVAILABLE:
@@ -706,11 +711,10 @@ class TestDiscordNotificationChannel:
             patch.object(channel, "_post_channel", new=AsyncMock(return_value="msg123")),
             patch.object(
                 channel, "_fetch_messages_after", new=AsyncMock(return_value=[])
-            ),
+            ),pytest.raises(TimeoutError)
         ):
-            with pytest.raises(TimeoutError):
-                # timeout=0.0 → deadline is already reached before the loop body
-                await channel.request_input("chan999", "Waiting", timeout=0.0)
+            # timeout=0.0 → deadline is already reached before the loop body
+            await channel.request_input("chan999", "Waiting", timeout=0.0)
 
     async def test_http_error_propagates_from_send_message(self):
         from nexus.adapters.notifications.base import Message

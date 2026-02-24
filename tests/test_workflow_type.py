@@ -1,10 +1,11 @@
 """Tests for workflow_type normalization and issue label extraction."""
 import json
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from nexus.core.workflow import WorkflowDefinition
+import pytest
+
 from nexus.adapters.git.github import GitHubPlatform
+from nexus.core.workflow import WorkflowDefinition
 
 
 class TestNormalizeWorkflowType:

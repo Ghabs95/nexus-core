@@ -8,8 +8,9 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class RateLimitedError(Exception):
     """Raised when a tool hits rate limits."""
 
 
-def _default_tasks_logs_dir(workspace: str, project: Optional[str] = None) -> str:
+def _default_tasks_logs_dir(workspace: str, project: str | None = None) -> str:
     """Resolve default logs dir when host app does not provide a resolver."""
     logs_dir = os.path.join(workspace, ".nexus", "tasks", "logs")
     if project:
@@ -40,10 +41,10 @@ def _default_tasks_logs_dir(workspace: str, project: Optional[str] = None) -> st
 class AIOrchestrator:
     """Manages AI tool orchestration with fallback support."""
 
-    _rate_limits: Dict[str, Dict[str, Any]] = {}
-    _tool_available: Dict[str, Any] = {}
+    _rate_limits: dict[str, dict[str, Any]] = {}
+    _tool_available: dict[str, Any] = {}
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
         self.gemini_cli_path = self.config.get("gemini_cli_path", "gemini")
         self.gemini_model = str(self.config.get("gemini_model", "")).strip()
@@ -66,7 +67,7 @@ class AIOrchestrator:
         ]
         self._whisper_model_instance = None
         self._whisper_model_name = ""
-        self.get_tasks_logs_dir: Callable[[str, Optional[str]], str] = self.config.get(
+        self.get_tasks_logs_dir: Callable[[str, str | None], str] = self.config.get(
             "tasks_logs_dir_resolver",
             _default_tasks_logs_dir,
         )
@@ -115,14 +116,14 @@ class AIOrchestrator:
         self._tool_available[f"{tool.value}_cached_at"] = time.time()
         return available
 
-    def get_primary_tool(self, agent_name: Optional[str] = None) -> AIProvider:
+    def get_primary_tool(self, agent_name: str | None = None) -> AIProvider:
         if agent_name and agent_name in self.tool_preferences:
             pref = self.tool_preferences[agent_name]
             return AIProvider.COPILOT if pref == "copilot" else AIProvider.GEMINI
 
         return AIProvider.COPILOT
 
-    def get_fallback_tool(self, primary: AIProvider) -> Optional[AIProvider]:
+    def get_fallback_tool(self, primary: AIProvider) -> AIProvider | None:
         if not self.fallback_enabled:
             return None
 
@@ -134,7 +135,7 @@ class AIOrchestrator:
         logger.error("❌ Fallback %s unavailable", fallback.value)
         return None
 
-    def _get_tool_order(self, agent_name: Optional[str] = None, use_gemini: bool = False) -> list:
+    def _get_tool_order(self, agent_name: str | None = None, use_gemini: bool = False) -> list:
         """Return all known tools in priority order for this agent.
 
         The preferred tool goes first; the rest follow in enum declaration order.
@@ -152,10 +153,10 @@ class AIOrchestrator:
         workspace_dir: str,
         agents_dir: str,
         base_dir: str,
-        issue_num: Optional[str] = None,
-        log_subdir: Optional[str] = None,
-        env: Optional[Dict[str, str]] = None,
-    ) -> Optional[int]:
+        issue_num: str | None = None,
+        log_subdir: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> int | None:
         """Dispatch to the correct CLI for *tool*. Extend here when adding new providers."""
         if tool == AIProvider.COPILOT:
             return self._invoke_copilot(
@@ -214,13 +215,13 @@ class AIOrchestrator:
         workspace_dir: str,
         agents_dir: str,
         base_dir: str,
-        issue_url: Optional[str] = None,
-        agent_name: Optional[str] = None,
+        issue_url: str | None = None,
+        agent_name: str | None = None,
         use_gemini: bool = False,
-        exclude_tools: Optional[list] = None,
-        log_subdir: Optional[str] = None,
-        env: Optional[Dict[str, str]] = None,
-    ) -> Tuple[Optional[int], AIProvider]:
+        exclude_tools: list | None = None,
+        log_subdir: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> tuple[int | None, AIProvider]:
         """Try each available tool in priority order, skipping any in *exclude_tools*.
 
         *exclude_tools* is a list of tool value strings (e.g. ["gemini"]) that should
@@ -278,10 +279,10 @@ class AIOrchestrator:
         workspace_dir: str,
         agents_dir: str,
         base_dir: str,
-        issue_num: Optional[str] = None,
-        log_subdir: Optional[str] = None,
-        env: Optional[Dict[str, str]] = None,
-    ) -> Optional[int]:
+        issue_num: str | None = None,
+        log_subdir: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> int | None:
         if not self.check_tool_available(AIProvider.COPILOT):
             raise ToolUnavailableError("Copilot not available")
 
@@ -311,11 +312,11 @@ class AIOrchestrator:
         log_file = None
         try:
             log_file = open(log_path, "w", encoding="utf-8")
-            
+
             merged_env = {**os.environ}
             if env:
                 merged_env.update(env)
-                
+
             process = subprocess.Popen(
                 cmd,
                 cwd=workspace_dir,
@@ -342,10 +343,10 @@ class AIOrchestrator:
         workspace_dir: str,
         agents_dir: str,
         base_dir: str,
-        issue_num: Optional[str] = None,
-        log_subdir: Optional[str] = None,
-        env: Optional[Dict[str, str]] = None,
-    ) -> Optional[int]:
+        issue_num: str | None = None,
+        log_subdir: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> int | None:
         if not self.check_tool_available(AIProvider.GEMINI):
             raise ToolUnavailableError("Gemini CLI not available")
 
@@ -372,7 +373,7 @@ class AIOrchestrator:
 
         def _read_log_excerpt(max_chars: int = 2000) -> str:
             try:
-                with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+                with open(log_path, encoding="utf-8", errors="replace") as handle:
                     data = handle.read()
                 if len(data) <= max_chars:
                     return data
@@ -383,11 +384,11 @@ class AIOrchestrator:
         log_file = None
         try:
             log_file = open(log_path, "w", encoding="utf-8")
-            
+
             merged_env = {**os.environ}
             if env:
                 merged_env.update(env)
-                
+
             process = subprocess.Popen(
                 cmd,
                 cwd=workspace_dir,
@@ -426,7 +427,7 @@ class AIOrchestrator:
             logger.error("❌ Gemini launch failed: %s", exc)
             raise
 
-    def transcribe_audio_cli(self, audio_file_path: str) -> Optional[str]:
+    def transcribe_audio_cli(self, audio_file_path: str) -> str | None:
         primary = self.transcription_primary
         if primary == "whisper":
             attempts = ["whisper", "gemini", "copilot"] if self.fallback_enabled else ["whisper"]
@@ -459,7 +460,7 @@ class AIOrchestrator:
         logger.error("❌ All transcription tools failed (attempted: %s)", attempts)
         return None
 
-    def _transcribe_with_whisper_api(self, audio_file_path: str) -> Optional[str]:
+    def _transcribe_with_whisper_api(self, audio_file_path: str) -> str | None:
         if not os.path.exists(audio_file_path):
             raise ValueError(f"Audio file not found: {audio_file_path}")
 
@@ -573,12 +574,9 @@ class AIOrchestrator:
             "which whisper",
             "which ffmpeg",
         ]
-        if any(marker in lowered for marker in debug_markers):
-            return True
+        return bool(any(marker in lowered for marker in debug_markers))
 
-        return False
-
-    def _transcribe_with_gemini_cli(self, audio_file_path: str) -> Optional[str]:
+    def _transcribe_with_gemini_cli(self, audio_file_path: str) -> str | None:
         if not self.check_tool_available(AIProvider.GEMINI):
             raise ToolUnavailableError("Gemini CLI not available")
 
@@ -620,7 +618,7 @@ class AIOrchestrator:
         except subprocess.TimeoutExpired as exc:
             raise Exception(f"Gemini transcription timed out (>{self.gemini_transcription_timeout}s)") from exc
 
-    def _transcribe_with_copilot_cli(self, audio_file_path: str) -> Optional[str]:
+    def _transcribe_with_copilot_cli(self, audio_file_path: str) -> str | None:
         if not self.check_tool_available(AIProvider.COPILOT):
             raise ToolUnavailableError("Copilot CLI not available")
 
@@ -672,7 +670,7 @@ class AIOrchestrator:
         except subprocess.TimeoutExpired as exc:
             raise Exception(f"Copilot transcription timed out (>{self.copilot_transcription_timeout}s)") from exc
 
-    def run_text_to_speech_analysis(self, text: str, task: str = "classify", **kwargs) -> Dict[str, Any]:
+    def run_text_to_speech_analysis(self, text: str, task: str = "classify", **kwargs) -> dict[str, Any]:
         primary = AIProvider.GEMINI
         fallback = self.get_fallback_tool(primary)
 
@@ -699,7 +697,7 @@ class AIOrchestrator:
         logger.warning("⚠️  All tools failed for %s, returning default", task)
         return self._get_default_analysis_result(task, text=text, **kwargs)
 
-    def _run_gemini_cli_analysis(self, text: str, task: str, **kwargs) -> Dict[str, Any]:
+    def _run_gemini_cli_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
         if not self.check_tool_available(AIProvider.GEMINI):
             raise ToolUnavailableError("Gemini CLI not available")
 
@@ -723,7 +721,7 @@ class AIOrchestrator:
         except subprocess.TimeoutExpired as exc:
             raise Exception(f"Gemini analysis timed out (>{timeout}s)") from exc
 
-    def _run_copilot_analysis(self, text: str, task: str, **kwargs) -> Dict[str, Any]:
+    def _run_copilot_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
         if not self.check_tool_available(AIProvider.COPILOT):
             raise ToolUnavailableError("Copilot CLI not available")
 
@@ -852,10 +850,10 @@ User Input:
         result = "\n".join(cleaned).strip()
         return result
 
-    def _parse_analysis_result(self, output: str, task: str) -> Dict[str, Any]:
+    def _parse_analysis_result(self, output: str, task: str) -> dict[str, Any]:
         output = self._strip_cli_tool_output(output)
 
-        def _parse_json_candidates(text: str) -> Optional[Dict[str, Any]]:
+        def _parse_json_candidates(text: str) -> dict[str, Any] | None:
             candidates: list[str] = [text.strip()]
 
             fenced_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE)
@@ -890,7 +888,7 @@ User Input:
 
         return {"text": output}
 
-    def _get_default_analysis_result(self, task: str, **kwargs) -> Dict[str, Any]:
+    def _get_default_analysis_result(self, task: str, **kwargs) -> dict[str, Any]:
         if task == "classify":
             return {
                 "project": kwargs.get("projects", ["case-italia"])[0],

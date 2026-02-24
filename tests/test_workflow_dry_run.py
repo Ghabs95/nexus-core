@@ -1,9 +1,7 @@
 """Tests for WorkflowDefinition.dry_run validation and simulation."""
-import pytest
 
 from nexus.core.models import DryRunReport
 from nexus.core.workflow import WorkflowDefinition
-
 
 # ---------------------------------------------------------------------------
 # Helpers

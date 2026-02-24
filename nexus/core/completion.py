@@ -12,7 +12,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +40,11 @@ class CompletionSummary:
     status: str = "complete"
     agent_type: str = "unknown"
     summary: str = ""
-    key_findings: List[str] = field(default_factory=list)
+    key_findings: list[str] = field(default_factory=list)
     next_agent: str = ""
     verdict: str = ""
-    effort_breakdown: Dict[str, str] = field(default_factory=dict)
-    raw: Dict[str, Any] = field(default_factory=dict)
+    effort_breakdown: dict[str, str] = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_workflow_done(self) -> bool:
@@ -52,7 +52,7 @@ class CompletionSummary:
         return self.next_agent.strip().lower() in _TERMINAL_VALUES
 
     @staticmethod
-    def from_dict(data: Dict[str, Any]) -> "CompletionSummary":
+    def from_dict(data: dict[str, Any]) -> "CompletionSummary":
         """Build a CompletionSummary from a raw JSON dict."""
         return CompletionSummary(
             status=data.get("status", "complete"),
@@ -65,9 +65,9 @@ class CompletionSummary:
             raw=data,
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize back to a plain dict."""
-        d: Dict[str, Any] = {
+        d: dict[str, Any] = {
             "status": self.status,
             "agent_type": self.agent_type,
             "summary": self.summary,
@@ -91,7 +91,7 @@ def build_completion_comment(completion: CompletionSummary) -> str:
 
     Returns a Markdown string suitable for ``GitPlatform.add_comment()``.
     """
-    sections: List[str] = []
+    sections: list[str] = []
     sections.append("### ✅ Agent Completed")
 
     if completion.summary:
@@ -226,7 +226,7 @@ class DetectedCompletion:
 def scan_for_completions(
     base_dir: str,
     nexus_dir: str = ".nexus",
-) -> List[DetectedCompletion]:
+) -> list[DetectedCompletion]:
     """Scan directories under *base_dir* for ``completion_summary_*.json`` files.
 
     Args:
@@ -236,8 +236,8 @@ def scan_for_completions(
     Returns:
         List of detected completion summaries, each parsed and validated.
     """
-    results: List[DetectedCompletion] = []
-    candidates_by_issue: Dict[str, List[str]] = {}
+    results: list[DetectedCompletion] = []
+    candidates_by_issue: dict[str, list[str]] = {}
     seen_paths: set[str] = set()
     patterns = [
         os.path.join(
@@ -266,7 +266,7 @@ def scan_for_completions(
         parsed = False
         for path in sorted_paths:
             try:
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     data = json.load(f)
                 summary = CompletionSummary.from_dict(data)
                 results.append(DetectedCompletion(

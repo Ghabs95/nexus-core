@@ -1,10 +1,9 @@
 """Core data models for Nexus workflows."""
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
-from pathlib import Path
-from typing import Any, Dict, List, Optional
 import uuid
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from enum import Enum
+from typing import Any
 
 
 class WorkflowState(Enum):
@@ -52,9 +51,9 @@ class ApprovalGate:
 
     gate_type: ApprovalGateType
     required: bool = True  # If True, human approval required
-    tool_restrictions: List[str] = field(default_factory=list)  # Blocked commands/tools
-    approval_message: Optional[str] = None  # Custom message for agent
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    tool_restrictions: list[str] = field(default_factory=list)  # Blocked commands/tools
+    approval_message: str | None = None  # Custom message for agent
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @staticmethod
     def pr_merge_gate() -> "ApprovalGate":
@@ -82,7 +81,7 @@ class Agent:
     name: str
     display_name: str
     description: str
-    provider_preference: Optional[str] = None  # "openai", "copilot", "gemini", etc.
+    provider_preference: str | None = None  # "openai", "copilot", "gemini", etc.
     timeout: int = 600  # seconds
     max_retries: int = 3
 
@@ -101,38 +100,38 @@ class WorkflowStep:
     name: str
     agent: Agent
     prompt_template: str
-    condition: Optional[str] = None  # Python expression, e.g. "prev_step.result.tier == 'high'"
-    timeout: Optional[int] = None  # Override agent default
-    retry: Optional[int] = None  # Override agent default
-    backoff_strategy: Optional[str] = None  # Retry backoff strategy: exponential, linear, constant
+    condition: str | None = None  # Python expression, e.g. "prev_step.result.tier == 'high'"
+    timeout: int | None = None  # Override agent default
+    retry: int | None = None  # Override agent default
+    backoff_strategy: str | None = None  # Retry backoff strategy: exponential, linear, constant
     initial_delay: float = 0.0  # Initial delay in seconds before first retry
-    inputs: Dict[str, Any] = field(default_factory=dict)
-    outputs: Dict[str, Any] = field(default_factory=dict)
+    inputs: dict[str, Any] = field(default_factory=dict)
+    outputs: dict[str, Any] = field(default_factory=dict)
     status: StepStatus = StepStatus.PENDING
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    error: Optional[str] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error: str | None = None
     retry_count: int = 0  # Number of retries attempted so far
-    approval_gates: List[ApprovalGate] = field(default_factory=list)  # Approval gates for this step
-    routes: List[Dict[str, Any]] = field(default_factory=list)  # Router branch definitions (router steps only)
-    on_success: Optional[str] = None  # Named step (id) to activate after success
+    approval_gates: list[ApprovalGate] = field(default_factory=list)  # Approval gates for this step
+    routes: list[dict[str, Any]] = field(default_factory=list)  # Router branch definitions (router steps only)
+    on_success: str | None = None  # Named step (id) to activate after success
     final_step: bool = False  # Mark step as terminal for workflow completion
     iteration: int = 0  # Times this step has been re-activated via a workflow goto
-    parallel_with: List[str] = field(default_factory=list)  # Step ids that run alongside this step
+    parallel_with: list[str] = field(default_factory=list)  # Step ids that run alongside this step
 
     def __str__(self) -> str:
         return f"Step {self.step_num}: {self.name} ({self.agent.name})"
-    
+
     def has_approval_gate(self, gate_type: ApprovalGateType) -> bool:
         """Check if step has a specific approval gate type."""
         return any(gate.gate_type == gate_type and gate.required for gate in self.approval_gates)
-    
+
     def get_approval_constraints(self) -> str:
         """Get combined approval constraint messages for all gates."""
         messages = [gate.approval_message for gate in self.approval_gates if gate.required and gate.approval_message]
         return "\n\n".join(messages) if messages else ""
-    
-    def get_tool_restrictions(self) -> List[str]:
+
+    def get_tool_restrictions(self) -> list[str]:
         """Get all tool restrictions from approval gates."""
         restrictions = []
         for gate in self.approval_gates:
@@ -149,23 +148,23 @@ class Workflow:
     name: str
     version: str
     description: str = ""
-    steps: List[WorkflowStep] = field(default_factory=list)
+    steps: list[WorkflowStep] = field(default_factory=list)
     state: WorkflowState = WorkflowState.PENDING
     current_step: int = 0
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    completed_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     require_human_merge_approval: bool = True  # Workflow-level PR merge approval policy
 
-    def get_step(self, step_num: int) -> Optional[WorkflowStep]:
+    def get_step(self, step_num: int) -> WorkflowStep | None:
         """Get step by number."""
         for step in self.steps:
             if step.step_num == step_num:
                 return step
         return None
 
-    def get_next_step(self) -> Optional[WorkflowStep]:
+    def get_next_step(self) -> WorkflowStep | None:
         """Get the next pending step."""
         return self.get_step(self.current_step + 1)
 
@@ -174,7 +173,7 @@ class Workflow:
         return self.state in (WorkflowState.COMPLETED, WorkflowState.FAILED, WorkflowState.CANCELLED)
 
     @property
-    def active_agent_type(self) -> Optional[str]:
+    def active_agent_type(self) -> str | None:
         """Return the agent_type of the currently RUNNING step, or None.
 
         Useful after ``WorkflowEngine.complete_step()`` to discover which agent
@@ -184,10 +183,10 @@ class Workflow:
         if step and step.status == StepStatus.RUNNING:
             return step.agent.name
         return None
-    
+
     def apply_approval_gates(self) -> None:
         """Apply workflow-level approval gates to all steps.
-        
+
         This should be called after workflow is loaded from YAML to ensure
         workflow-level policies are applied to individual steps.
         """
@@ -211,8 +210,8 @@ class Task:
     title: str
     description: str
     created_by: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
         return f"Task #{self.id}: {self.title}"
@@ -224,10 +223,10 @@ class AgentResult:
 
     success: bool
     output: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     execution_time: float = 0.0
-    provider_used: Optional[str] = None
-    error: Optional[str] = None
+    provider_used: str | None = None
+    error: str | None = None
     retry_count: int = 0
 
 
@@ -238,8 +237,8 @@ class AuditEvent:
     workflow_id: str
     timestamp: datetime
     event_type: str  # e.g., "STEP_STARTED", "STEP_COMPLETED", "WORKFLOW_PAUSED"
-    data: Dict[str, Any]
-    user_id: Optional[str] = None
+    data: dict[str, Any]
+    user_id: str | None = None
 
     def __str__(self) -> str:
         return f"[{self.timestamp.isoformat()}] {self.event_type}: {self.workflow_id}"
@@ -251,17 +250,17 @@ class RateLimitStatus:
 
     provider: str
     is_limited: bool
-    reset_at: Optional[datetime] = None
-    requests_remaining: Optional[int] = None
-    requests_limit: Optional[int] = None
+    reset_at: datetime | None = None
+    requests_remaining: int | None = None
+    requests_limit: int | None = None
 
 
 @dataclass
 class DryRunReport:
     """Result of a workflow dry-run validation and simulation."""
 
-    errors: List[str] = field(default_factory=list)
-    predicted_flow: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    predicted_flow: list[str] = field(default_factory=list)
 
     @property
     def is_valid(self) -> bool:
@@ -288,13 +287,13 @@ class DelegationRequest:
     issue_number: str
     workflow_id: str
     task_description: str
-    task_context: Dict[str, Any] = field(default_factory=dict)
+    task_context: dict[str, Any] = field(default_factory=dict)
     delegation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     status: DelegationStatus = DelegationStatus.PENDING
     created_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
-    expires_at: Optional[str] = None
+    expires_at: str | None = None
 
     def __post_init__(self) -> None:
         # Normalize to ACTIVE on construction so callers don't have to set it
@@ -311,11 +310,11 @@ class DelegationCallback:
     lead_agent: str
     issue_number: str
     workflow_id: str
-    result: Dict[str, Any]
+    result: dict[str, Any]
     success: bool
-    error: Optional[str] = None
-    completed_at: Optional[str] = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    error: str | None = None
+    completed_at: str | None = field(
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
 
 
@@ -325,14 +324,14 @@ class WorkflowExecution:
 
     workflow: Workflow
     task: Task
-    current_context: Dict[str, Any] = field(default_factory=dict)
-    audit_log: List[AuditEvent] = field(default_factory=list)
+    current_context: dict[str, Any] = field(default_factory=dict)
+    audit_log: list[AuditEvent] = field(default_factory=list)
 
-    def add_audit_event(self, event_type: str, data: Dict[str, Any]) -> None:
+    def add_audit_event(self, event_type: str, data: dict[str, Any]) -> None:
         """Add an audit event."""
         event = AuditEvent(
             workflow_id=self.workflow.id,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             event_type=event_type,
             data=data,
         )

@@ -1,9 +1,11 @@
 """Tests for conditional step execution in WorkflowEngine."""
-import pytest
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock
 
+import pytest
+
+from nexus.adapters.storage.base import StorageBackend
 from nexus.core.models import (
     Agent,
     AuditEvent,
@@ -13,8 +15,6 @@ from nexus.core.models import (
     WorkflowStep,
 )
 from nexus.core.workflow import WorkflowEngine
-from nexus.adapters.storage.base import StorageBackend
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -27,8 +27,8 @@ def make_agent(name: str = "test_agent") -> Agent:
 def make_step(
     step_num: int,
     name: str,
-    condition: Optional[str] = None,
-    routes: Optional[List[Dict[str, Any]]] = None,
+    condition: str | None = None,
+    routes: list[dict[str, Any]] | None = None,
 ) -> WorkflowStep:
     return WorkflowStep(
         step_num=step_num,
@@ -40,7 +40,7 @@ def make_step(
     )
 
 
-def make_workflow(steps: List[WorkflowStep]) -> Workflow:
+def make_workflow(steps: list[WorkflowStep]) -> Workflow:
     wf = Workflow(
         id="wf-test",
         name="Test Workflow",
@@ -52,7 +52,7 @@ def make_workflow(steps: List[WorkflowStep]) -> Workflow:
     # Mark the first step as running
     if steps:
         steps[0].status = StepStatus.RUNNING
-        steps[0].started_at = datetime.now(timezone.utc)
+        steps[0].started_at = datetime.now(UTC)
     return wf
 
 
@@ -60,13 +60,13 @@ class InMemoryStorage(StorageBackend):
     """Minimal in-memory storage for tests."""
 
     def __init__(self) -> None:
-        self._workflows: Dict[str, Workflow] = {}
-        self._audit: List[AuditEvent] = []
+        self._workflows: dict[str, Workflow] = {}
+        self._audit: list[AuditEvent] = []
 
     async def save_workflow(self, workflow: Workflow) -> None:
         self._workflows[workflow.id] = workflow
 
-    async def load_workflow(self, workflow_id: str) -> Optional[Workflow]:
+    async def load_workflow(self, workflow_id: str) -> Workflow | None:
         return self._workflows.get(workflow_id)
 
     async def list_workflows(self, state=None, limit: int = 100):
@@ -78,13 +78,13 @@ class InMemoryStorage(StorageBackend):
     async def append_audit_event(self, event: AuditEvent) -> None:
         self._audit.append(event)
 
-    async def get_audit_log(self, workflow_id: str, since=None) -> List[AuditEvent]:
+    async def get_audit_log(self, workflow_id: str, since=None) -> list[AuditEvent]:
         return [e for e in self._audit if e.workflow_id == workflow_id]
 
-    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: Dict[str, Any]) -> None:
+    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: dict[str, Any]) -> None:
         pass
 
-    async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> Optional[Dict[str, Any]]:
+    async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> dict[str, Any] | None:
         return None
 
     async def cleanup_old_workflows(self, older_than_days: int = 30) -> int:

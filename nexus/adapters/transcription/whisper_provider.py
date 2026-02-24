@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from nexus.adapters.transcription.base import (
     TranscriptionInput,
@@ -33,7 +33,7 @@ class WhisperTranscriptionProvider(TranscriptionProvider):
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model: str = "whisper-1",
         **extra_kwargs: Any,
     ) -> None:

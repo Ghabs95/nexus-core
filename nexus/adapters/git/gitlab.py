@@ -19,8 +19,8 @@ import logging
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from nexus.adapters.git.base import Comment, GitPlatform, Issue, PullRequest
 
@@ -54,8 +54,8 @@ class GitLabPlatform(GitPlatform):
     async def list_open_issues(
         self,
         limit: int = 100,
-        labels: Optional[List[str]] = None,
-    ) -> List[Issue]:
+        labels: list[str] | None = None,
+    ) -> list[Issue]:
         query = f"state=opened&per_page={max(1, min(limit, 100))}&order_by=updated_at&sort=desc"
         if labels:
             query += "&labels=" + urllib.parse.quote(",".join(labels), safe="")
@@ -64,15 +64,15 @@ class GitLabPlatform(GitPlatform):
         return issues[:limit]
 
     async def create_issue(
-        self, title: str, body: str, labels: Optional[List[str]] = None
+        self, title: str, body: str, labels: list[str] | None = None
     ) -> Issue:
-        payload: Dict[str, Any] = {"title": title, "description": body}
+        payload: dict[str, Any] = {"title": title, "description": body}
         if labels:
             payload["labels"] = ",".join(labels)
         data = await self._post(f"projects/{self._encoded_repo}/issues", payload)
         return self._to_issue(data)
 
-    async def get_issue(self, issue_id: str) -> Optional[Issue]:
+    async def get_issue(self, issue_id: str) -> Issue | None:
         try:
             data = await self._get(f"projects/{self._encoded_repo}/issues/{issue_id}")
             return self._to_issue(data)
@@ -84,12 +84,12 @@ class GitLabPlatform(GitPlatform):
     async def update_issue(
         self,
         issue_id: str,
-        title: Optional[str] = None,
-        body: Optional[str] = None,
-        state: Optional[str] = None,
-        labels: Optional[List[str]] = None,
+        title: str | None = None,
+        body: str | None = None,
+        state: str | None = None,
+        labels: list[str] | None = None,
     ) -> Issue:
-        payload: Dict[str, Any] = {}
+        payload: dict[str, Any] = {}
         if title is not None:
             payload["title"] = title
         if body is not None:
@@ -110,8 +110,8 @@ class GitLabPlatform(GitPlatform):
         return self._to_comment(data, issue_id)
 
     async def get_comments(
-        self, issue_id: str, since: Optional[datetime] = None
-    ) -> List[Comment]:
+        self, issue_id: str, since: datetime | None = None
+    ) -> list[Comment]:
         url = f"projects/{self._encoded_repo}/issues/{issue_id}/notes?per_page=100&sort=asc"
         items = await self._get(url)
         comments = [self._to_comment(c, issue_id) for c in items]
@@ -119,12 +119,12 @@ class GitLabPlatform(GitPlatform):
             comments = [c for c in comments if c.created_at >= since]
         return comments
 
-    async def close_issue(self, issue_id: str, comment: Optional[str] = None) -> None:
+    async def close_issue(self, issue_id: str, comment: str | None = None) -> None:
         if comment:
             await self.add_comment(issue_id, comment)
         await self.update_issue(issue_id, state="closed")
 
-    async def search_linked_prs(self, issue_id: str) -> List[PullRequest]:
+    async def search_linked_prs(self, issue_id: str) -> list[PullRequest]:
         """GitLab links MRs to issues via the project's MR API; search by title keyword."""
         mrs = await self._get(
             f"projects/{self._encoded_repo}/merge_requests"
@@ -145,19 +145,16 @@ class GitLabPlatform(GitPlatform):
         issue_number: str,
         title: str,
         body: str,
-        issue_repo: Optional[str] = None,
+        issue_repo: str | None = None,
         base_branch: str = "main",
         branch_prefix: str = "nexus",
-    ) -> Optional[PullRequest]:
+    ) -> PullRequest | None:
         """Push local changes and open a GitLab merge request."""
         import subprocess
 
         issue_repo_ref = (issue_repo or self._repo or "").strip()
         same_repo_issue = not issue_repo_ref or issue_repo_ref == self._repo
-        if same_repo_issue:
-            issue_ref = f"#{issue_number}"
-        else:
-            issue_ref = f"{issue_repo_ref}#{issue_number}"
+        issue_ref = f"#{issue_number}" if same_repo_issue else f"{issue_repo_ref}#{issue_number}"
 
         import re as _re
 
@@ -239,13 +236,13 @@ class GitLabPlatform(GitPlatform):
     # HTTP helpers (sync + asyncio.to_thread wrapper)
     # ------------------------------------------------------------------
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         return {
             "PRIVATE-TOKEN": self._token,
             "Content-Type": "application/json",
         }
 
-    def _sync_request(self, method: str, path: str, payload: Optional[Dict] = None) -> Any:
+    def _sync_request(self, method: str, path: str, payload: dict | None = None) -> Any:
         url = f"{self._api_base}/{path.lstrip('/')}"
         data = json.dumps(payload).encode() if payload is not None else None
         req = urllib.request.Request(url, data=data, headers=self._headers(), method=method)
@@ -260,10 +257,10 @@ class GitLabPlatform(GitPlatform):
     async def _get(self, path: str) -> Any:
         return await asyncio.to_thread(self._sync_request, "GET", path)
 
-    async def _post(self, path: str, payload: Dict) -> Any:
+    async def _post(self, path: str, payload: dict) -> Any:
         return await asyncio.to_thread(self._sync_request, "POST", path, payload)
 
-    async def _put(self, path: str, payload: Dict) -> Any:
+    async def _put(self, path: str, payload: dict) -> Any:
         return await asyncio.to_thread(self._sync_request, "PUT", path, payload)
 
     # ------------------------------------------------------------------
@@ -271,13 +268,13 @@ class GitLabPlatform(GitPlatform):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_dt(val: Optional[str]) -> datetime:
+    def _parse_dt(val: str | None) -> datetime:
         if not val:
-            return datetime.now(tz=timezone.utc)
+            return datetime.now(tz=UTC)
         # GitLab returns ISO 8601 with 'Z' or '+HH:MM'
         return datetime.fromisoformat(val.replace("Z", "+00:00"))
 
-    def _to_issue(self, data: Dict) -> Issue:
+    def _to_issue(self, data: dict) -> Issue:
         return Issue(
             id=str(data["id"]),
             number=data["iid"],
@@ -291,7 +288,7 @@ class GitLabPlatform(GitPlatform):
         )
 
     @staticmethod
-    def _to_comment(data: Dict, issue_id: str) -> Comment:
+    def _to_comment(data: dict, issue_id: str) -> Comment:
         return Comment(
             id=str(data["id"]),
             issue_id=str(issue_id),
@@ -302,7 +299,7 @@ class GitLabPlatform(GitPlatform):
         )
 
     @staticmethod
-    def _to_pr(data: Dict) -> PullRequest:
+    def _to_pr(data: dict) -> PullRequest:
         return PullRequest(
             id=str(data["id"]),
             number=data.get("iid", 0),

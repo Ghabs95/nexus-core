@@ -1,10 +1,13 @@
 """Base interface for AI providers."""
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any
 
-from nexus.core.models import AgentResult, RateLimitStatus
+if TYPE_CHECKING:
+    from nexus.core.models import AgentResult, RateLimitStatus
 
 
 @dataclass
@@ -14,10 +17,10 @@ class ExecutionContext:
     agent_name: str
     prompt: str
     workspace: Path
-    issue_url: Optional[str] = None
-    metadata: Dict[str, Any] = None
+    issue_url: str | None = None
+    metadata: dict[str, Any] = None
     timeout: int = 600
-    tool_restrictions: Optional[list] = None  # Commands/tools to block (e.g., ["gh pr merge"])
+    tool_restrictions: list | None = None  # Commands/tools to block (e.g., ["gh pr merge"])
 
 
 class AIProvider(ABC):
@@ -27,10 +30,10 @@ class AIProvider(ABC):
     async def execute_agent(self, context: ExecutionContext) -> AgentResult:
         """
         Execute an AI agent with given context.
-        
+
         Args:
             context: Execution context with prompt, workspace, metadata
-            
+
         Returns:
             AgentResult with success status, output, and metadata
         """
@@ -50,7 +53,7 @@ class AIProvider(ABC):
     def get_preference_score(self, task_type: str) -> float:
         """
         Return preference score (0.0-1.0) for this provider for given task type.
-        
+
         Task types: "code_generation", "reasoning", "analysis", "content_creation"
         Higher score = better fit
         """

@@ -13,8 +13,8 @@ Schema is created automatically on first use (``create_all``).
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from nexus.adapters.storage.base import StorageBackend
 from nexus.core.models import AuditEvent, Workflow, WorkflowState
@@ -52,18 +52,18 @@ if _SA_AVAILABLE:
 
         id: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(128), primary_key=True)
         state: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(32))
-        definition_id: sa.orm.Mapped[Optional[str]] = sa.orm.mapped_column(
+        definition_id: sa.orm.Mapped[str | None] = sa.orm.mapped_column(
             sa.String(128), nullable=True
         )
         current_step: sa.orm.Mapped[int] = sa.orm.mapped_column(sa.Integer, default=0)
         data: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.Text)  # JSON blob
         created_at: sa.orm.Mapped[datetime] = sa.orm.mapped_column(
-            sa.DateTime(timezone=True), default=lambda: datetime.now(tz=timezone.utc)
+            sa.DateTime(timezone=True), default=lambda: datetime.now(tz=UTC)
         )
         updated_at: sa.orm.Mapped[datetime] = sa.orm.mapped_column(
             sa.DateTime(timezone=True),
-            default=lambda: datetime.now(tz=timezone.utc),
-            onupdate=lambda: datetime.now(tz=timezone.utc),
+            default=lambda: datetime.now(tz=UTC),
+            onupdate=lambda: datetime.now(tz=UTC),
         )
 
     class _AuditRow(_Base):
@@ -73,7 +73,7 @@ if _SA_AVAILABLE:
         workflow_id: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(128), index=True)
         timestamp: sa.orm.Mapped[datetime] = sa.orm.mapped_column(sa.DateTime(timezone=True))
         event_type: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(64))
-        user_id: sa.orm.Mapped[Optional[str]] = sa.orm.mapped_column(sa.String(128), nullable=True)
+        user_id: sa.orm.Mapped[str | None] = sa.orm.mapped_column(sa.String(128), nullable=True)
         data: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.Text)  # JSON blob
 
     class _AgentMetaRow(_Base):
@@ -84,8 +84,8 @@ if _SA_AVAILABLE:
         data: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.Text)  # JSON blob
         updated_at: sa.orm.Mapped[datetime] = sa.orm.mapped_column(
             sa.DateTime(timezone=True),
-            default=lambda: datetime.now(tz=timezone.utc),
-            onupdate=lambda: datetime.now(tz=timezone.utc),
+            default=lambda: datetime.now(tz=UTC),
+            onupdate=lambda: datetime.now(tz=UTC),
         )
 
 
@@ -138,12 +138,12 @@ class PostgreSQLStorageBackend(StorageBackend):
     async def save_workflow(self, workflow: Workflow) -> None:
         await asyncio.to_thread(self._sync_save_workflow, workflow)
 
-    async def load_workflow(self, workflow_id: str) -> Optional[Workflow]:
+    async def load_workflow(self, workflow_id: str) -> Workflow | None:
         return await asyncio.to_thread(self._sync_load_workflow, workflow_id)
 
     async def list_workflows(
-        self, state: Optional[WorkflowState] = None, limit: int = 100
-    ) -> List[Workflow]:
+        self, state: WorkflowState | None = None, limit: int = 100
+    ) -> list[Workflow]:
         return await asyncio.to_thread(self._sync_list_workflows, state, limit)
 
     async def delete_workflow(self, workflow_id: str) -> bool:
@@ -153,18 +153,18 @@ class PostgreSQLStorageBackend(StorageBackend):
         await asyncio.to_thread(self._sync_append_audit, event)
 
     async def get_audit_log(
-        self, workflow_id: str, since: Optional[datetime] = None
-    ) -> List[AuditEvent]:
+        self, workflow_id: str, since: datetime | None = None
+    ) -> list[AuditEvent]:
         return await asyncio.to_thread(self._sync_get_audit, workflow_id, since)
 
     async def save_agent_metadata(
-        self, workflow_id: str, agent_name: str, metadata: Dict[str, Any]
+        self, workflow_id: str, agent_name: str, metadata: dict[str, Any]
     ) -> None:
         await asyncio.to_thread(self._sync_save_agent_meta, workflow_id, agent_name, metadata)
 
     async def get_agent_metadata(
         self, workflow_id: str, agent_name: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         return await asyncio.to_thread(self._sync_get_agent_meta, workflow_id, agent_name)
 
     async def cleanup_old_workflows(self, older_than_days: int = 30) -> int:
@@ -178,7 +178,7 @@ class PostgreSQLStorageBackend(StorageBackend):
         with Session(self._engine) as session:
             row = session.get(_WorkflowRow, workflow.id)
             data = self._workflow_to_dict(workflow)
-            now = datetime.now(tz=timezone.utc)
+            now = datetime.now(tz=UTC)
             if row:
                 row.state = workflow.state.value
                 row.current_step = workflow.current_step
@@ -198,7 +198,7 @@ class PostgreSQLStorageBackend(StorageBackend):
                 )
             session.commit()
 
-    def _sync_load_workflow(self, workflow_id: str) -> Optional[Workflow]:
+    def _sync_load_workflow(self, workflow_id: str) -> Workflow | None:
         with Session(self._engine) as session:
             row = session.get(_WorkflowRow, workflow_id)
             if not row:
@@ -206,8 +206,8 @@ class PostgreSQLStorageBackend(StorageBackend):
             return self._dict_to_workflow(json.loads(row.data))
 
     def _sync_list_workflows(
-        self, state: Optional[WorkflowState], limit: int
-    ) -> List[Workflow]:
+        self, state: WorkflowState | None, limit: int
+    ) -> list[Workflow]:
         with Session(self._engine) as session:
             q = session.query(_WorkflowRow).order_by(_WorkflowRow.updated_at.desc())
             if state is not None:
@@ -244,8 +244,8 @@ class PostgreSQLStorageBackend(StorageBackend):
             session.commit()
 
     def _sync_get_audit(
-        self, workflow_id: str, since: Optional[datetime]
-    ) -> List[AuditEvent]:
+        self, workflow_id: str, since: datetime | None
+    ) -> list[AuditEvent]:
         with Session(self._engine) as session:
             q = (
                 session.query(_AuditRow)
@@ -267,11 +267,11 @@ class PostgreSQLStorageBackend(StorageBackend):
             ]
 
     def _sync_save_agent_meta(
-        self, workflow_id: str, agent_name: str, metadata: Dict[str, Any]
+        self, workflow_id: str, agent_name: str, metadata: dict[str, Any]
     ) -> None:
         with Session(self._engine) as session:
             row = session.get(_AgentMetaRow, (workflow_id, agent_name))
-            now = datetime.now(tz=timezone.utc)
+            now = datetime.now(tz=UTC)
             if row:
                 row.data = json.dumps(metadata, default=str)
                 row.updated_at = now
@@ -288,7 +288,7 @@ class PostgreSQLStorageBackend(StorageBackend):
 
     def _sync_get_agent_meta(
         self, workflow_id: str, agent_name: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         with Session(self._engine) as session:
             row = session.get(_AgentMetaRow, (workflow_id, agent_name))
             if not row:
@@ -298,7 +298,7 @@ class PostgreSQLStorageBackend(StorageBackend):
     def _sync_cleanup(self, older_than_days: int) -> int:
         from datetime import timedelta
 
-        cutoff = datetime.now(tz=timezone.utc) - timedelta(days=older_than_days)
+        cutoff = datetime.now(tz=UTC) - timedelta(days=older_than_days)
         with Session(self._engine) as session:
             rows = (
                 session.query(_WorkflowRow)
@@ -316,11 +316,11 @@ class PostgreSQLStorageBackend(StorageBackend):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _workflow_to_dict(workflow: Workflow) -> Dict[str, Any]:
+    def _workflow_to_dict(workflow: Workflow) -> dict[str, Any]:
         from nexus.adapters.storage._workflow_serde import workflow_to_dict
         return workflow_to_dict(workflow)
 
     @staticmethod
-    def _dict_to_workflow(data: Dict[str, Any]) -> Workflow:
+    def _dict_to_workflow(data: dict[str, Any]) -> Workflow:
         from nexus.adapters.storage._workflow_serde import dict_to_workflow
         return dict_to_workflow(data)

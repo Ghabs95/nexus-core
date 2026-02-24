@@ -52,6 +52,7 @@ AI-powered workers that execute tasks (Copilot, Gemini, soon Claude and Codex, e
 - **Git**: Issue tracking platform (GitHub, GitLab, Bitbucket)
 - **AI Providers**: Which AI tool executes agents (Copilot, OpenAI, Anthropic)
 - **Notifications**: How users get updates (Telegram, Slack, Email)
+- **Interactive Clients**: Platform polling for user chat commands (Telegram Bot, Discord Bot)
 
 ### Orchestrator
 Intelligently routes work to best AI provider with automatic fallback on failure.

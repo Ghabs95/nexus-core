@@ -2,8 +2,6 @@
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from nexus.core.guards import LaunchGuard
 
 

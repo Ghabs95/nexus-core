@@ -3,7 +3,7 @@
 **Production-grade framework for orchestrating AI agents in multi-step workflows**
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 ---
 
@@ -158,10 +158,14 @@ Swap any component via configuration:
 - `BitbucketPlatform` - Issues, PRs
 
 **Notification Channels**:
-- `TelegramNotifier` - Interactive bot messages
+- `TelegramNotifier` - Push notifications to chats
 - `SlackNotifier` - Thread-based updates
 - `EmailNotifier` - Digest & alerts
 - `WebhookNotifier` - Custom integrations
+
+**Interactive Clients**:
+- `TelegramInteractivePlugin` - Two-way chat bot polling apps
+- `DiscordInteractivePlugin` - Two-way chat bot via HTTP app commands
 
 ### 🛡️ Production-Ready Error Handling
 
@@ -395,7 +399,7 @@ mypy nexus/     # Type check
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 **Good first issues**:
-- Implement new adapters (Notion, Jira, Discord)
+- Implement new adapters (Notion, Jira, Slack)
 - Add example workflows
 - Improve documentation
 - Write integration tests

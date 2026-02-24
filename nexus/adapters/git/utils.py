@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 
-def resolve_repo(config: Optional[Dict[str, Any]], default_repo: str) -> str:
+def resolve_repo(config: dict[str, Any] | None, default_repo: str) -> str:
     """Resolve repository slug from project config with legacy fallback."""
     if not isinstance(config, dict):
         return default_repo
@@ -16,7 +16,7 @@ def resolve_repo(config: Optional[Dict[str, Any]], default_repo: str) -> str:
     return default_repo
 
 
-def build_issue_url(repo: str, issue_num: str, config: Optional[Dict[str, Any]]) -> str:
+def build_issue_url(repo: str, issue_num: str, config: dict[str, Any] | None) -> str:
     """Build issue URL for configured git platform (GitHub/GitLab)."""
     if not isinstance(config, dict):
         return f"https://github.com/{repo}/issues/{issue_num}"

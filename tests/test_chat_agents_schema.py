@@ -1,21 +1,18 @@
-"""Tests for nexus.core.chat_agents_schema."""
+"""Tests for nexus.core.handoff."""
 
 from __future__ import annotations
 
-import json
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
 
 from nexus.core.chat_agents_schema import (
-    HandoffPayload,
     HandoffDispatcher,
+    HandoffPayload,
     sign_handoff,
     verify_handoff,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -25,14 +22,14 @@ _SECRET = "test-secret-value"
 
 
 def _make_payload(**kwargs) -> HandoffPayload:
-    defaults = dict(
-        issued_by="designer",
-        target_agent="developer",
-        issue_number="69",
-        workflow_id="nexus-69-full",
-        task_context={"key": "value"},
-        expires_at=None,
-    )
+    defaults = {
+        "issued_by": "designer",
+        "target_agent": "developer",
+        "issue_number": "69",
+        "workflow_id": "nexus-69-full",
+        "task_context": {"key": "value"},
+        "expires_at": None,
+    }
     defaults.update(kwargs)
     return HandoffPayload.create(**defaults)
 
@@ -85,12 +82,12 @@ class TestHandoffPayloadIsExpired:
         assert p.is_expired() is False
 
     def test_future_expiry(self):
-        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         p = _make_payload(expires_at=future)
         assert p.is_expired() is False
 
     def test_past_expiry(self):
-        past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        past = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
         p = _make_payload(expires_at=past)
         assert p.is_expired() is True
 
@@ -123,7 +120,7 @@ class TestHandoffPayloadSerialization:
             "target_agent": "y",
             "issue_number": "1",
             "workflow_id": "w",
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
         p = HandoffPayload.from_dict(minimal)
         assert p.verification_token == ""
@@ -204,7 +201,7 @@ class TestHandoffDispatcher:
     def test_dispatch_rejects_expired(self):
         rt = self._runtime()
         d = self._dispatcher()
-        past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        past = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
         p = _make_payload(expires_at=past)
         pid, tool = d.dispatch(p, rt)
         assert pid is None

@@ -2,7 +2,6 @@
 
 import os
 import re
-from typing import Optional
 
 from nexus.core.completion import generate_completion_instructions
 from nexus.core.workflow import WorkflowDefinition
@@ -19,7 +18,7 @@ class AgentLaunchPolicyPlugin:
         task_content: str,
         agent_type: str,
         continuation: bool = False,
-        continuation_prompt: Optional[str] = None,
+        continuation_prompt: str | None = None,
         workflow_path: str = "",
         nexus_dir: str = ".nexus",
         project_name: str = "",

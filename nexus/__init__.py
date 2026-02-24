@@ -7,8 +7,10 @@ Licensed under MIT License
 
 __version__ = "0.2.0"
 
-from nexus.core.workflow import WorkflowEngine, WorkflowDefinition
-from nexus.core.orchestrator import AIOrchestrator
+from nexus.adapters.git import GitHubPlatform
+
+# Adapter exports
+from nexus.adapters.storage import FileStorage
 from nexus.core.completion import (
     CompletionSummary,
     DetectedCompletion,
@@ -18,23 +20,21 @@ from nexus.core.completion import (
 )
 from nexus.core.guards import LaunchGuard
 from nexus.core.models import (
-    Workflow,
-    WorkflowStep,
-    WorkflowState,
     Agent,
-    Task,
     AgentResult,
+    Task,
+    Workflow,
+    WorkflowState,
+    WorkflowStep,
 )
-
-# Adapter exports
-from nexus.adapters.storage import FileStorage
-from nexus.adapters.git import GitHubPlatform
+from nexus.core.orchestrator import AIOrchestrator
+from nexus.core.workflow import WorkflowDefinition, WorkflowEngine
 from nexus.plugins import (
     PluginKind,
-    PluginSpec,
-    PluginRegistry,
-    PluginRegistrationError,
     PluginNotFoundError,
+    PluginRegistrationError,
+    PluginRegistry,
+    PluginSpec,
 )
 
 __all__ = [

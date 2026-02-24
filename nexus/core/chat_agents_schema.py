@@ -28,9 +28,9 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.core.process_orchestrator import AgentRuntime
@@ -79,10 +79,10 @@ class HandoffPayload:
     target_agent: str
     issue_number: str
     workflow_id: str
-    task_context: Dict[str, Any]
+    task_context: dict[str, Any]
     verification_token: str
     created_at: str
-    expires_at: Optional[str] = None
+    expires_at: str | None = None
     retry_count: int = 0
     max_retries: int = 3
     retry_backoff_s: float = 5.0
@@ -94,11 +94,11 @@ class HandoffPayload:
         target_agent: str,
         issue_number: str,
         workflow_id: str,
-        task_context: Optional[Dict[str, Any]] = None,
-        expires_at: Optional[str] = None,
+        task_context: dict[str, Any] | None = None,
+        expires_at: str | None = None,
         max_retries: int = 3,
         retry_backoff_s: float = 5.0,
-    ) -> "HandoffPayload":
+    ) -> HandoffPayload:
         """Factory that creates a new, *unsigned* :class:`HandoffPayload`.
 
         Call :func:`sign_handoff` on the result before dispatching.
@@ -124,7 +124,7 @@ class HandoffPayload:
             workflow_id=workflow_id,
             task_context=task_context or {},
             verification_token="",
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
             expires_at=expires_at,
             max_retries=max_retries,
             retry_backoff_s=retry_backoff_s,
@@ -136,17 +136,17 @@ class HandoffPayload:
             return False
         try:
             expiry = datetime.fromisoformat(self.expires_at.replace("Z", "+00:00"))
-            return datetime.now(timezone.utc) > expiry
+            return datetime.now(UTC) > expiry
         except (ValueError, TypeError):
             logger.warning("Invalid expires_at value %r — treating as expired", self.expires_at)
             return True
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict (suitable for JSON encoding)."""
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "HandoffPayload":
+    def from_dict(cls, data: dict[str, Any]) -> HandoffPayload:
         """Deserialize from a plain dict."""
         return cls(
             handoff_id=data["handoff_id"],
@@ -171,7 +171,7 @@ class HandoffPayload:
 
 def _canonical_bytes(payload: HandoffPayload) -> bytes:
     """Return canonical JSON bytes of the signable fields (sorted keys)."""
-    signable: Dict[str, Any] = {k: getattr(payload, k) for k in _SIGN_FIELDS}
+    signable: dict[str, Any] = {k: getattr(payload, k) for k in _SIGN_FIELDS}
     return json.dumps(signable, sort_keys=True, ensure_ascii=True).encode("utf-8")
 
 
@@ -229,7 +229,7 @@ class HandoffDispatcher:
     def __init__(
         self,
         secret_env: str = _DEFAULT_SECRET_ENV,
-        secret: Optional[str] = None,
+        secret: str | None = None,
     ) -> None:
         self._secret_env = secret_env
         self._explicit_secret = secret
@@ -248,9 +248,9 @@ class HandoffDispatcher:
     def dispatch(
         self,
         payload: HandoffPayload,
-        runtime: "AgentRuntime",
+        runtime: AgentRuntime,
         timeout_s: float = 60.0,
-    ) -> Tuple[Optional[int], Optional[str]]:
+    ) -> tuple[int | None, str | None]:
         """Sign, validate, and dispatch *payload* to the target agent.
 
         Applies exponential back-off on failure up to ``payload.max_retries``.
@@ -281,7 +281,7 @@ class HandoffDispatcher:
         # Sign (or re-sign) the payload before dispatch
         payload.verification_token = sign_handoff(payload, secret)
 
-        last_result: Tuple[Optional[int], Optional[str]] = (None, None)
+        last_result: tuple[int | None, str | None] = (None, None)
         attempt = 0
         max_attempts = max(1, payload.max_retries + 1)
 
@@ -338,3 +338,80 @@ class HandoffDispatcher:
             max_attempts,
         )
         return last_result
+
+
+def normalize_chat_agents(raw_chat_agents: Any) -> list[dict[str, Any]]:
+    """Normalize chat_agents config payload into ordered entries with `agent_type`."""
+    entries: list[dict[str, Any]] = []
+
+    if isinstance(raw_chat_agents, dict):
+        for agent_type, payload in raw_chat_agents.items():
+            normalized = str(agent_type or "").strip().lower()
+            if not normalized:
+                continue
+            item: dict[str, Any] = {"agent_type": normalized}
+            if isinstance(payload, dict):
+                item.update(payload)
+            entries.append(item)
+        return entries
+
+    if isinstance(raw_chat_agents, list):
+        for item in raw_chat_agents:
+            if not isinstance(item, dict):
+                continue
+
+            if "agent_type" in item:
+                normalized = str(item.get("agent_type") or "").strip().lower()
+                if not normalized:
+                    continue
+                payload = dict(item)
+                payload["agent_type"] = normalized
+                entries.append(payload)
+                continue
+
+            if len(item) != 1:
+                continue
+            key, value = next(iter(item.items()))
+            normalized = str(key or "").strip().lower()
+            if not normalized:
+                continue
+            payload: dict[str, Any] = {"agent_type": normalized}
+            if isinstance(value, dict):
+                payload.update(value)
+            entries.append(payload)
+
+    return entries
+
+
+def get_project_chat_agents(project_cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return normalized ordered chat agent entries from a project config payload."""
+    if not isinstance(project_cfg, dict):
+        return []
+    return normalize_chat_agents(project_cfg.get("chat_agents"))
+
+
+def get_project_chat_agent_types(project_cfg: dict[str, Any]) -> list[str]:
+    """Return ordered agent_type values from project chat_agents."""
+    return [entry["agent_type"] for entry in get_project_chat_agents(project_cfg)]
+
+
+def get_default_project_chat_agent_type(project_cfg: dict[str, Any]) -> str:
+    """Return first configured chat agent type for the project, if any."""
+    types = get_project_chat_agent_types(project_cfg)
+    return types[0] if types else ""
+
+
+def get_project_chat_agent_config(project_cfg: dict[str, Any], agent_type: str) -> dict[str, Any]:
+    """Return per-agent chat config payload for a specific agent_type."""
+    normalized = str(agent_type or "").strip().lower()
+    if not normalized:
+        return {}
+
+    for entry in get_project_chat_agents(project_cfg):
+        if entry.get("agent_type") != normalized:
+            continue
+        payload = dict(entry)
+        payload.pop("agent_type", None)
+        return payload
+
+    return {}

@@ -10,7 +10,7 @@ individual agent capabilities, tools, and input/output contracts.
 import glob
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
 
@@ -36,7 +36,7 @@ def normalize_agent_key(agent_name: str) -> str:
     return name.lower()
 
 
-def find_agent_yaml(agent_type: str, search_dirs: List[str]) -> str:
+def find_agent_yaml(agent_type: str, search_dirs: list[str]) -> str:
     """Find an agent YAML definition file by ``spec.agent_type``.
 
     Iterates through *search_dirs* in order, scanning for YAML files
@@ -71,7 +71,7 @@ def find_agent_yaml(agent_type: str, search_dirs: List[str]) -> str:
         for pattern in patterns:
             for path in glob.glob(pattern, recursive=True):
                 try:
-                    with open(path, "r", encoding="utf-8") as handle:
+                    with open(path, encoding="utf-8") as handle:
                         data = yaml.safe_load(handle)
                 except Exception:
                     continue
@@ -90,7 +90,7 @@ def find_agent_yaml(agent_type: str, search_dirs: List[str]) -> str:
     return ""
 
 
-def load_agent_definition(agent_type: str, search_dirs: List[str]) -> Optional[Dict[str, Any]]:
+def load_agent_definition(agent_type: str, search_dirs: list[str]) -> dict[str, Any] | None:
     """Load and parse an agent YAML definition.
 
     Combines :func:`find_agent_yaml` with YAML parsing.  Returns the
@@ -112,7 +112,7 @@ def load_agent_definition(agent_type: str, search_dirs: List[str]) -> Optional[D
     if not path:
         return None
     try:
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             return yaml.safe_load(handle)
     except Exception:
         return None

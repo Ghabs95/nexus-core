@@ -1,12 +1,14 @@
 """Plugin protocols and metadata for Nexus Core extension points."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from nexus.adapters.ai.base import AIProvider
 from nexus.adapters.git.base import GitPlatform
 from nexus.adapters.notifications.base import NotificationChannel
+from nexus.adapters.notifications.interactive import InteractiveClientPlugin
 from nexus.adapters.storage.base import StorageBackend
 from nexus.adapters.transcription.base import TranscriptionProvider
 
@@ -20,6 +22,7 @@ class PluginKind(Enum):
     STORAGE_BACKEND = "storage_backend"
     INPUT_ADAPTER = "input_adapter"
     TRANSCRIPTION_PROVIDER = "transcription_provider"
+    INTERACTIVE_CLIENT = "interactive_client"
 
 
 @dataclass(frozen=True)
@@ -29,7 +32,7 @@ class PluginSpec:
     kind: PluginKind
     name: str
     version: str
-    factory: Callable[[Dict[str, Any]], Any]
+    factory: Callable[[dict[str, Any]], Any]
     description: str = ""
 
 
@@ -45,7 +48,7 @@ class RegistryContributor(Protocol):
 class AIProviderPlugin(Protocol):
     """Protocol for AI provider plugin factories."""
 
-    def __call__(self, config: Dict[str, Any]) -> AIProvider:
+    def __call__(self, config: dict[str, Any]) -> AIProvider:
         """Build and return an AIProvider implementation."""
 
 
@@ -53,7 +56,7 @@ class AIProviderPlugin(Protocol):
 class GitPlatformPlugin(Protocol):
     """Protocol for Git platform plugin factories."""
 
-    def __call__(self, config: Dict[str, Any]) -> GitPlatform:
+    def __call__(self, config: dict[str, Any]) -> GitPlatform:
         """Build and return a GitPlatform implementation."""
 
 
@@ -61,7 +64,7 @@ class GitPlatformPlugin(Protocol):
 class NotificationChannelPlugin(Protocol):
     """Protocol for notification channel plugin factories."""
 
-    def __call__(self, config: Dict[str, Any]) -> NotificationChannel:
+    def __call__(self, config: dict[str, Any]) -> NotificationChannel:
         """Build and return a NotificationChannel implementation."""
 
 
@@ -69,7 +72,7 @@ class NotificationChannelPlugin(Protocol):
 class StorageBackendPlugin(Protocol):
     """Protocol for storage backend plugin factories."""
 
-    def __call__(self, config: Dict[str, Any]) -> StorageBackend:
+    def __call__(self, config: dict[str, Any]) -> StorageBackend:
         """Build and return a StorageBackend implementation."""
 
 
@@ -77,8 +80,16 @@ class StorageBackendPlugin(Protocol):
 class TranscriptionProviderPlugin(Protocol):
     """Protocol for transcription provider plugin factories."""
 
-    def __call__(self, config: Dict[str, Any]) -> TranscriptionProvider:
+    def __call__(self, config: dict[str, Any]) -> TranscriptionProvider:
         """Build and return a TranscriptionProvider implementation."""
+
+
+@runtime_checkable
+class InteractiveClientPluginProtocol(Protocol):
+    """Protocol for interactive client plugin factories."""
+
+    def __call__(self, config: dict[str, Any]) -> InteractiveClientPlugin:
+        """Build and return an InteractiveClientPlugin implementation."""
 
 
 def normalize_plugin_name(name: str) -> str:
@@ -91,7 +102,7 @@ def make_plugin_spec(
     kind: PluginKind,
     name: str,
     version: str,
-    factory: Callable[[Dict[str, Any]], Any],
+    factory: Callable[[dict[str, Any]], Any],
     description: str = "",
 ) -> PluginSpec:
     """Create a normalized plugin spec."""

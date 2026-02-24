@@ -1,9 +1,10 @@
 """Built-in plugin: JSON/line-based state storage helpers."""
 
+import contextlib
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -11,16 +12,16 @@ logger = logging.getLogger(__name__)
 class JsonStateStorePlugin:
     """Store and retrieve JSON and line-based state files."""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         self.base_dir = config.get("base_dir")
 
-    def load_json(self, path: str, default: Optional[Any] = None) -> Any:
+    def load_json(self, path: str, default: Any | None = None) -> Any:
         """Load JSON payload from file path."""
         resolved = self._resolve(path)
         if not os.path.exists(resolved):
             return default
         try:
-            with open(resolved, "r", encoding="utf-8") as file_handle:
+            with open(resolved, encoding="utf-8") as file_handle:
                 return json.load(file_handle)
         except Exception as exc:
             logger.error("Failed to load JSON state from %s: %s", resolved, exc)
@@ -38,10 +39,8 @@ class JsonStateStorePlugin:
             return True
         except Exception as exc:
             logger.error("Failed to save JSON state to %s: %s", resolved, exc)
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp)
-            except OSError:
-                pass
             return False
 
     def append_line(self, path: str, line: str) -> bool:
@@ -56,13 +55,13 @@ class JsonStateStorePlugin:
             logger.error("Failed to append line to %s: %s", resolved, exc)
             return False
 
-    def read_lines(self, path: str) -> List[str]:
+    def read_lines(self, path: str) -> list[str]:
         """Read all lines from a text file."""
         resolved = self._resolve(path)
         if not os.path.exists(resolved):
             return []
         try:
-            with open(resolved, "r", encoding="utf-8") as file_handle:
+            with open(resolved, encoding="utf-8") as file_handle:
                 return file_handle.readlines()
         except Exception as exc:
             logger.error("Failed to read lines from %s: %s", resolved, exc)

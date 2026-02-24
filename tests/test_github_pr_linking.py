@@ -1,8 +1,8 @@
 """Tests for automatic PR-to-issue linking in GitHubPlatform.create_pr_from_changes()."""
 import json
-import re
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 from nexus.adapters.git.github import GitHubPlatform
 
@@ -46,9 +46,7 @@ class TestPRAutoLinking:
                     m.stdout = " file.py | 2 +-\n"
                 elif subcmd == "rev-parse":
                     m.stdout = "main"
-                elif subcmd == "ls-files":
-                    m.stdout = ""
-                elif subcmd == "push":
+                elif subcmd == "ls-files" or subcmd == "push":
                     m.stdout = ""
             elif cmd[0] == "gh":
                 # Capture the body passed to gh pr create

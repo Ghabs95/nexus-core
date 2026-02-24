@@ -1,9 +1,6 @@
 """Tests for the completion protocol module."""
 import json
 import os
-import tempfile
-
-import pytest
 
 from nexus.core.completion import (
     CompletionSummary,
@@ -12,7 +9,6 @@ from nexus.core.completion import (
     generate_completion_instructions,
     scan_for_completions,
 )
-
 
 # ---------------------------------------------------------------------------
 # CompletionSummary

@@ -4,7 +4,6 @@ import logging
 import shutil
 import subprocess
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from nexus.adapters.ai.base import AIProvider, ExecutionContext
@@ -94,7 +93,7 @@ class CopilotCLIProvider(AIProvider):
                 execution_time=elapsed,
                 provider_used=self.name,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AgentResult(
                 success=False,
                 output="",

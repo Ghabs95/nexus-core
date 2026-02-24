@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
 
@@ -63,10 +63,10 @@ class YamlWorkflowLoader:
     @staticmethod
     def load(
         yaml_path: str,
-        workflow_id: Optional[str] = None,
-        name_override: Optional[str] = None,
-        description_override: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        workflow_id: str | None = None,
+        name_override: str | None = None,
+        description_override: str | None = None,
+        metadata: dict[str, Any] | None = None,
         workflow_type: str = "",
         strict: bool = False,
     ) -> Workflow:
@@ -116,11 +116,11 @@ class YamlWorkflowLoader:
 
     @staticmethod
     def load_from_dict(
-        data: Dict[str, Any],
-        workflow_id: Optional[str] = None,
-        name_override: Optional[str] = None,
-        description_override: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        data: dict[str, Any],
+        workflow_id: str | None = None,
+        name_override: str | None = None,
+        description_override: str | None = None,
+        metadata: dict[str, Any] | None = None,
         workflow_type: str = "",
         strict: bool = False,
     ) -> Workflow:
@@ -172,7 +172,7 @@ class YamlWorkflowLoader:
     def validate(
         yaml_path: str,
         workflow_type: str = "",
-    ) -> List[str]:
+    ) -> list[str]:
         """Validate a YAML file and return a list of error strings.
 
         Returns an empty list when the file is valid.
@@ -199,9 +199,9 @@ class YamlWorkflowLoader:
 
     @staticmethod
     def validate_dict(
-        data: Dict[str, Any],
+        data: dict[str, Any],
         workflow_type: str = "",
-    ) -> List[str]:
+    ) -> list[str]:
         """Validate a workflow definition dict and return a list of error strings.
 
         Args:
@@ -222,15 +222,15 @@ class YamlWorkflowLoader:
     def _validate_dict(
         data: Any,
         workflow_type: str = "",
-    ) -> tuple[List[str], List[str]]:
+    ) -> tuple[list[str], list[str]]:
         """Validate a workflow definition dict.
 
         Returns:
             ``(errors, warnings)`` — lists of strings.  Errors are fatal;
             warnings are informational only.
         """
-        errors: List[str] = []
-        warnings: List[str] = []
+        errors: list[str] = []
+        warnings: list[str] = []
 
         if not isinstance(data, dict):
             errors.append(f"Workflow definition must be a mapping, got {type(data).__name__}")

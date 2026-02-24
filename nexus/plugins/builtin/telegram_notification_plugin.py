@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 from urllib import request
 
 from nexus.adapters.notifications.base import Message, NotificationChannel
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class TelegramNotificationPlugin(NotificationChannel):
     """Telegram notification channel using direct HTTP API calls."""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         self.bot_token = config.get("bot_token", "")
         self.chat_id = str(config.get("chat_id", ""))
         self.parse_mode = config.get("parse_mode", "Markdown")
@@ -39,15 +39,15 @@ class TelegramNotificationPlugin(NotificationChannel):
     def send_message_sync(
         self,
         message: str,
-        parse_mode: Optional[str] = None,
-        reply_markup: Optional[Dict[str, Any]] = None,
+        parse_mode: str | None = None,
+        reply_markup: dict[str, Any] | None = None,
     ) -> bool:
         """Send a message synchronously to configured chat id."""
         if not self.bot_token or not self.chat_id:
             logger.warning("Telegram plugin missing credentials, skipping send_message_sync")
             return False
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "chat_id": self.chat_id,
             "text": message,
             "parse_mode": parse_mode or self.parse_mode,
@@ -87,7 +87,7 @@ class TelegramNotificationPlugin(NotificationChannel):
 
         return self.send_message_sync(f"{icon} {message}", parse_mode=self.parse_mode)
 
-    def _post(self, method: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _post(self, method: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         if not self.bot_token:
             return None
 

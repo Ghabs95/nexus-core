@@ -11,7 +11,6 @@ Usage::
 """
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import yaml
 
@@ -30,10 +29,10 @@ class AgentRegistry:
         agents_dir: Directory containing ``*.yaml`` agent definition files.
     """
 
-    def __init__(self, agents_dir: Optional[Path] = None):
+    def __init__(self, agents_dir: Path | None = None):
         self._agents_dir = agents_dir
         # Maps agent_type -> provider name (e.g. "copilot" | "gemini")
-        self._provider_map: Dict[str, str] = {}
+        self._provider_map: dict[str, str] = {}
         if agents_dir:
             self._load(agents_dir)
 
@@ -44,8 +43,8 @@ class AgentRegistry:
     def resolve(
         self,
         agent_type: str,
-        providers: List[AIProvider],
-    ) -> Optional[AIProvider]:
+        providers: list[AIProvider],
+    ) -> AIProvider | None:
         """Return the preferred provider for *agent_type*.
 
         Looks up the YAML-defined provider name, then finds a matching
@@ -85,7 +84,7 @@ class AgentRegistry:
         """
         return self._provider_map.get(agent_type, _DEFAULT_PROVIDER)
 
-    def registered_types(self) -> List[str]:
+    def registered_types(self) -> list[str]:
         """Return all agent_type values found across loaded YAML files."""
         return list(self._provider_map.keys())
 

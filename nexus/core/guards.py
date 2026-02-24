@@ -7,8 +7,8 @@ Prevents duplicate agent launches through multiple layers of detection:
 """
 import logging
 import time
-from dataclasses import dataclass, field
-from typing import Callable, Dict, Optional
+from collections.abc import Callable
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class LaunchRecord:
     issue_id: str
     agent_type: str
     timestamp: float
-    pid: Optional[int] = None
+    pid: int | None = None
 
 
 class LaunchGuard:
@@ -48,7 +48,7 @@ class LaunchGuard:
     def __init__(
         self,
         cooldown_seconds: int = DEFAULT_COOLDOWN_SECONDS,
-        custom_guard: Optional[Callable[[str, str], bool]] = None,
+        custom_guard: Callable[[str, str], bool] | None = None,
     ):
         """
         Args:
@@ -61,7 +61,7 @@ class LaunchGuard:
         self._cooldown = cooldown_seconds
         self._custom_guard = custom_guard
         # Key: "{issue_id}:{agent_type}" → LaunchRecord
-        self._launches: Dict[str, LaunchRecord] = {}
+        self._launches: dict[str, LaunchRecord] = {}
 
     def can_launch(self, issue_id: str, agent_type: str) -> bool:
         """Check whether launching this agent is allowed right now.
@@ -98,7 +98,7 @@ class LaunchGuard:
         self,
         issue_id: str,
         agent_type: str,
-        pid: Optional[int] = None,
+        pid: int | None = None,
     ) -> None:
         """Record that an agent was launched."""
         key = f"{issue_id}:{agent_type}"
@@ -110,7 +110,7 @@ class LaunchGuard:
         )
         logger.debug(f"LaunchGuard: recorded launch {agent_type} for issue {issue_id}")
 
-    def clear(self, issue_id: Optional[str] = None) -> int:
+    def clear(self, issue_id: str | None = None) -> int:
         """Remove launch records.
 
         Args:

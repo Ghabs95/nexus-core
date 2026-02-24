@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Iterator, List, Tuple
+from collections.abc import Callable, Iterator
+from typing import Any
 
 
 def project_repos_from_config(
     project_name: str,
-    project_cfg: Dict[str, Any],
-    get_project_repos: Callable[[str], List[str]],
-) -> List[str]:
+    project_cfg: dict[str, Any],
+    get_project_repos: Callable[[str], list[str]],
+) -> list[str]:
     """Return configured repo list for a project config payload."""
-    repos: List[str] = []
+    repos: list[str] = []
 
     single_repo = None
     if isinstance(project_cfg, dict):
@@ -42,9 +43,9 @@ def project_repos_from_config(
 
 
 def iter_project_configs(
-    project_config: Dict[str, Any],
-    get_project_repos: Callable[[str], List[str]],
-) -> Iterator[Tuple[str, Dict[str, Any]]]:
+    project_config: dict[str, Any],
+    get_project_repos: Callable[[str], list[str]],
+) -> Iterator[tuple[str, dict[str, Any]]]:
     """Yield (project_key, project_cfg) pairs for configured projects with repos."""
     for project_key, project_cfg in project_config.items():
         if not isinstance(project_cfg, dict):

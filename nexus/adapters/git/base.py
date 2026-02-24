@@ -2,7 +2,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
 
 
 @dataclass
@@ -14,7 +13,7 @@ class Issue:
     title: str
     body: str
     state: str  # "open", "closed"
-    labels: List[str]
+    labels: list[str]
     created_at: datetime
     updated_at: datetime
     url: str
@@ -31,7 +30,7 @@ class PullRequest:
     head_branch: str
     base_branch: str
     url: str
-    linked_issues: List[str] = field(default_factory=list)
+    linked_issues: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -53,20 +52,20 @@ class GitPlatform(ABC):
     async def list_open_issues(
         self,
         limit: int = 100,
-        labels: Optional[List[str]] = None,
-    ) -> List[Issue]:
+        labels: list[str] | None = None,
+    ) -> list[Issue]:
         """List open issues, optionally filtered by labels."""
         pass
 
     @abstractmethod
     async def create_issue(
-        self, title: str, body: str, labels: Optional[List[str]] = None
+        self, title: str, body: str, labels: list[str] | None = None
     ) -> Issue:
         """Create a new issue."""
         pass
 
     @abstractmethod
-    async def get_issue(self, issue_id: str) -> Optional[Issue]:
+    async def get_issue(self, issue_id: str) -> Issue | None:
         """Get issue by ID or number."""
         pass
 
@@ -74,10 +73,10 @@ class GitPlatform(ABC):
     async def update_issue(
         self,
         issue_id: str,
-        title: Optional[str] = None,
-        body: Optional[str] = None,
-        state: Optional[str] = None,
-        labels: Optional[List[str]] = None,
+        title: str | None = None,
+        body: str | None = None,
+        state: str | None = None,
+        labels: list[str] | None = None,
     ) -> Issue:
         """Update issue properties."""
         pass
@@ -88,17 +87,17 @@ class GitPlatform(ABC):
         pass
 
     @abstractmethod
-    async def get_comments(self, issue_id: str, since: Optional[datetime] = None) -> List[Comment]:
+    async def get_comments(self, issue_id: str, since: datetime | None = None) -> list[Comment]:
         """Get comments for an issue."""
         pass
 
     @abstractmethod
-    async def close_issue(self, issue_id: str, comment: Optional[str] = None) -> None:
+    async def close_issue(self, issue_id: str, comment: str | None = None) -> None:
         """Close an issue."""
         pass
 
     @abstractmethod
-    async def search_linked_prs(self, issue_id: str) -> List[PullRequest]:
+    async def search_linked_prs(self, issue_id: str) -> list[PullRequest]:
         """Find PRs linked to this issue."""
         pass
 
@@ -114,10 +113,10 @@ class GitPlatform(ABC):
         issue_number: str,
         title: str,
         body: str,
-        issue_repo: Optional[str] = None,
+        issue_repo: str | None = None,
         base_branch: str = "main",
         branch_prefix: str = "nexus",
-    ) -> Optional[PullRequest]:
+    ) -> PullRequest | None:
         """Create a PR from uncommitted changes in a local repository.
 
         Performs the full pipeline: detect changes → create branch →

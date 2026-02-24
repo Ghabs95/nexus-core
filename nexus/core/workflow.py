@@ -1,10 +1,10 @@
 """Basic workflow engine - simplified version for MVP."""
 import logging
-import math
 import os
 import re
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from typing import Any
 
 import yaml
 
@@ -13,10 +13,10 @@ from nexus.core.models import (
     Agent,
     AuditEvent,
     DryRunReport,
+    StepStatus,
     Workflow,
     WorkflowState,
     WorkflowStep,
-    StepStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,19 +34,19 @@ _DEFAULT_BACKOFF_BASE = 1.0  # Default base delay (seconds) used when step.initi
 class WorkflowEngine:
     """
     Core workflow orchestration engine.
-    
+
     Handles workflow execution, state management, and step progression.
     """
 
     def __init__(
         self,
         storage: StorageBackend,
-        on_step_transition: Optional[OnStepTransition] = None,
-        on_workflow_complete: Optional[OnWorkflowComplete] = None,
+        on_step_transition: OnStepTransition | None = None,
+        on_workflow_complete: OnWorkflowComplete | None = None,
     ):
         """
         Initialize workflow engine.
-        
+
         Args:
             storage: Storage backend for persistence
             on_step_transition: Async callback invoked when the next step is ready.
@@ -61,19 +61,19 @@ class WorkflowEngine:
     async def create_workflow(self, workflow: Workflow) -> Workflow:
         """Create and persist a new workflow."""
         workflow.state = WorkflowState.PENDING
-        workflow.created_at = datetime.now(timezone.utc)
-        workflow.updated_at = datetime.now(timezone.utc)
-        
+        workflow.created_at = datetime.now(UTC)
+        workflow.updated_at = datetime.now(UTC)
+
         # Apply workflow-level approval gates to steps
         workflow.apply_approval_gates()
-        
+
         await self.storage.save_workflow(workflow)
         await self._audit(workflow.id, "WORKFLOW_CREATED", {"name": workflow.name})
-        
+
         logger.info(f"Created workflow {workflow.id}: {workflow.name}")
         return workflow
 
-    async def get_workflow(self, workflow_id: str) -> Optional[Workflow]:
+    async def get_workflow(self, workflow_id: str) -> Workflow | None:
         """Retrieve a workflow by ID."""
         workflow = await self.storage.load_workflow(workflow_id)
         if workflow:
@@ -86,23 +86,23 @@ class WorkflowEngine:
         workflow = await self.storage.load_workflow(workflow_id)
         if not workflow:
             raise ValueError(f"Workflow {workflow_id} not found")
-        
+
         if workflow.state != WorkflowState.PENDING:
             raise ValueError(f"Cannot start workflow in state {workflow.state.value}")
-        
+
         workflow.state = WorkflowState.RUNNING
-        workflow.updated_at = datetime.now(timezone.utc)
+        workflow.updated_at = datetime.now(UTC)
         workflow.current_step = 0
 
         first_step = workflow.get_step(1)
         if first_step and first_step.status == StepStatus.PENDING:
             first_step.status = StepStatus.RUNNING
-            first_step.started_at = datetime.now(timezone.utc)
+            first_step.started_at = datetime.now(UTC)
             workflow.current_step = first_step.step_num
-        
+
         await self.storage.save_workflow(workflow)
         await self._audit(workflow_id, "WORKFLOW_STARTED", {})
-        
+
         logger.info(f"Started workflow {workflow_id}")
         return workflow
 
@@ -111,16 +111,16 @@ class WorkflowEngine:
         workflow = await self.storage.load_workflow(workflow_id)
         if not workflow:
             raise ValueError(f"Workflow {workflow_id} not found")
-        
+
         if workflow.state != WorkflowState.RUNNING:
             raise ValueError(f"Cannot pause workflow in state {workflow.state.value}")
-        
+
         workflow.state = WorkflowState.PAUSED
-        workflow.updated_at = datetime.now(timezone.utc)
-        
+        workflow.updated_at = datetime.now(UTC)
+
         await self.storage.save_workflow(workflow)
         await self._audit(workflow_id, "WORKFLOW_PAUSED", {})
-        
+
         logger.info(f"Paused workflow {workflow_id}")
         return workflow
 
@@ -129,16 +129,16 @@ class WorkflowEngine:
         workflow = await self.storage.load_workflow(workflow_id)
         if not workflow:
             raise ValueError(f"Workflow {workflow_id} not found")
-        
+
         if workflow.state != WorkflowState.PAUSED:
             raise ValueError(f"Cannot resume workflow in state {workflow.state.value}")
-        
+
         workflow.state = WorkflowState.RUNNING
-        workflow.updated_at = datetime.now(timezone.utc)
-        
+        workflow.updated_at = datetime.now(UTC)
+
         await self.storage.save_workflow(workflow)
         await self._audit(workflow_id, "WORKFLOW_RESUMED", {})
-        
+
         logger.info(f"Resumed workflow {workflow_id}")
         return workflow
 
@@ -152,8 +152,8 @@ class WorkflowEngine:
             raise ValueError(f"Cannot cancel workflow in state {workflow.state.value}")
 
         workflow.state = WorkflowState.CANCELLED
-        workflow.updated_at = datetime.now(timezone.utc)
-        workflow.completed_at = datetime.now(timezone.utc)
+        workflow.updated_at = datetime.now(UTC)
+        workflow.completed_at = datetime.now(UTC)
 
         await self.storage.save_workflow(workflow)
         await self._audit(workflow_id, "WORKFLOW_CANCELLED", {})
@@ -162,19 +162,19 @@ class WorkflowEngine:
         return workflow
 
     async def complete_step(
-        self, workflow_id: str, step_num: int, outputs: dict, error: Optional[str] = None
+        self, workflow_id: str, step_num: int, outputs: dict, error: str | None = None
     ) -> Workflow:
         """Mark a step as completed and advance workflow."""
         workflow = await self.storage.load_workflow(workflow_id)
         if not workflow:
             raise ValueError(f"Workflow {workflow_id} not found")
-        
+
         step = workflow.get_step(step_num)
         if not step:
             raise ValueError(f"Step {step_num} not found in workflow")
-        
+
         # Update step
-        step.completed_at = datetime.now(timezone.utc)
+        step.completed_at = datetime.now(UTC)
         step.outputs = outputs
         step.error = error
 
@@ -195,7 +195,7 @@ class WorkflowEngine:
                     backoff = base
                 else:  # exponential (default)
                     backoff = min(base * (2 ** (step.retry_count - 1)), 60)
-                workflow.updated_at = datetime.now(timezone.utc)
+                workflow.updated_at = datetime.now(UTC)
                 await self.storage.save_workflow(workflow)
                 await self._audit(workflow_id, "STEP_RETRY", {
                     "step_num": step_num,
@@ -212,14 +212,14 @@ class WorkflowEngine:
             step.status = StepStatus.FAILED
         else:
             step.status = StepStatus.COMPLETED
-        
-        activated_step: Optional[WorkflowStep] = None
+
+        activated_step: WorkflowStep | None = None
 
         if not error:
             if step.final_step:
                 workflow.state = WorkflowState.COMPLETED
-                workflow.completed_at = datetime.now(timezone.utc)
-                workflow.updated_at = datetime.now(timezone.utc)
+                workflow.completed_at = datetime.now(UTC)
+                workflow.updated_at = datetime.now(UTC)
                 await self.storage.save_workflow(workflow)
                 await self._audit(workflow_id, "STEP_COMPLETED", {
                     "step_num": step_num,
@@ -238,7 +238,7 @@ class WorkflowEngine:
 
             # Build context once; walk forward handling routers, conditions, and gotos
             context = self._build_step_context(workflow)
-            next_step: Optional[WorkflowStep] = None
+            next_step: WorkflowStep | None = None
             if step.on_success:
                 next_step = self._find_step_by_name(workflow, step.on_success)
                 if next_step is None:
@@ -255,7 +255,7 @@ class WorkflowEngine:
                     except RuntimeError as exc:
                         logger.error(str(exc))
                         workflow.state = WorkflowState.FAILED
-                        workflow.completed_at = datetime.now(timezone.utc)
+                        workflow.completed_at = datetime.now(UTC)
                         await self.storage.save_workflow(workflow)
                         return workflow
 
@@ -266,7 +266,7 @@ class WorkflowEngine:
                 # --- Router step: evaluate routes and jump to target ---
                 if next_step.routes:
                     next_step.status = StepStatus.SKIPPED
-                    next_step.completed_at = datetime.now(timezone.utc)
+                    next_step.completed_at = datetime.now(UTC)
                     await self._audit(workflow_id, "STEP_SKIPPED", {
                         "step_num": next_step.step_num,
                         "step_name": next_step.name,
@@ -277,14 +277,14 @@ class WorkflowEngine:
                     if target is None:
                         # No route matched and no default — workflow is done
                         workflow.state = WorkflowState.COMPLETED
-                        workflow.completed_at = datetime.now(timezone.utc)
+                        workflow.completed_at = datetime.now(UTC)
                         break
                     try:
                         self._reset_step_for_goto(target)
                     except RuntimeError as exc:
                         logger.error(str(exc))
                         workflow.state = WorkflowState.FAILED
-                        workflow.completed_at = datetime.now(timezone.utc)
+                        workflow.completed_at = datetime.now(UTC)
                         await self.storage.save_workflow(workflow)
                         return workflow
                     next_step = target
@@ -295,13 +295,13 @@ class WorkflowEngine:
                     # Condition passed (or no condition) – run this step
                     workflow.current_step = next_step.step_num
                     next_step.status = StepStatus.RUNNING
-                    next_step.started_at = datetime.now(timezone.utc)
+                    next_step.started_at = datetime.now(UTC)
                     activated_step = next_step
                     break
                 else:
                     # Condition failed – skip this step
                     next_step.status = StepStatus.SKIPPED
-                    next_step.completed_at = datetime.now(timezone.utc)
+                    next_step.completed_at = datetime.now(UTC)
                     await self._audit(workflow_id, "STEP_SKIPPED", {
                         "step_num": next_step.step_num,
                         "step_name": next_step.name,
@@ -317,22 +317,22 @@ class WorkflowEngine:
             else:
                 # No more steps
                 workflow.state = WorkflowState.COMPLETED
-                workflow.completed_at = datetime.now(timezone.utc)
+                workflow.completed_at = datetime.now(UTC)
         else:
             # Workflow failed
             workflow.state = WorkflowState.FAILED
-            workflow.completed_at = datetime.now(timezone.utc)
-        
-        workflow.updated_at = datetime.now(timezone.utc)
+            workflow.completed_at = datetime.now(UTC)
+
+        workflow.updated_at = datetime.now(UTC)
         await self.storage.save_workflow(workflow)
-        
+
         event_type = "STEP_FAILED" if error else "STEP_COMPLETED"
         await self._audit(workflow_id, event_type, {
             "step_num": step_num,
             "step_name": step.name,
             "error": error
         })
-        
+
         logger.info(f"Completed step {step_num} in workflow {workflow_id}")
 
         # --- Fire transition callbacks ---
@@ -355,7 +355,7 @@ class WorkflowEngine:
         return workflow
 
     @staticmethod
-    def render_prompt(template: str, context: Dict[str, Any]) -> str:
+    def render_prompt(template: str, context: dict[str, Any]) -> str:
         """Substitute ``{variable}`` placeholders in *template* with values from *context*.
 
         Uses :py:meth:`str.format_map` with a safe mapping so that unknown
@@ -376,18 +376,18 @@ class WorkflowEngine:
         return template.format_map(_SafeDict(context))
 
     def _resolve_route(
-        self, workflow: Workflow, router_step: WorkflowStep, context: Dict[str, Any]
-    ) -> Optional[WorkflowStep]:
+        self, workflow: Workflow, router_step: WorkflowStep, context: dict[str, Any]
+    ) -> WorkflowStep | None:
         """Evaluate a router step's routes and return the matching target WorkflowStep.
 
         Route dict supports either ``goto:`` (YAML convention) or ``then:`` (alias).
         A ``default: true`` entry is used when no ``when:`` clause matches.
         """
-        default_target: Optional[str] = None
+        default_target: str | None = None
         for route in router_step.routes:
-            when: Optional[str] = route.get("when")
+            when: str | None = route.get("when")
             # Support both "goto" (YAML convention) and "then" (alias)
-            target_name: Optional[str] = route.get("goto") or route.get("then")
+            target_name: str | None = route.get("goto") or route.get("then")
             is_default: bool = bool(route.get("default")) and not when
             if is_default:
                 # "default" can be a step name directly (``default: "develop"``)
@@ -405,7 +405,7 @@ class WorkflowEngine:
             return self._find_step_by_name(workflow, default_target)
         return None
 
-    def _find_step_by_name(self, workflow: Workflow, name: str) -> Optional[WorkflowStep]:
+    def _find_step_by_name(self, workflow: Workflow, name: str) -> WorkflowStep | None:
         """Find a step by its slugified id or agent_type name."""
         slug = WorkflowDefinition._slugify(name)
         for step in workflow.steps:
@@ -432,7 +432,7 @@ class WorkflowEngine:
         step.outputs = {}
         step.retry_count = 0
 
-    def _build_step_context(self, workflow: Workflow) -> Dict[str, Any]:
+    def _build_step_context(self, workflow: Workflow) -> dict[str, Any]:
         """Build evaluation context from all completed/skipped step outputs.
 
         The context contains:
@@ -442,7 +442,7 @@ class WorkflowEngine:
           so simple YAML conditions like ``approval_status == 'approved'``
           work without needing to qualify the key with the step id.
         """
-        context: Dict[str, Any] = {}
+        context: dict[str, Any] = {}
         for step in workflow.steps:
             if step.status in (StepStatus.COMPLETED, StepStatus.SKIPPED):
                 context[step.name] = step.outputs
@@ -457,8 +457,8 @@ class WorkflowEngine:
 
     def _evaluate_condition(
         self,
-        condition: Optional[str],
-        context: Dict[str, Any],
+        condition: str | None,
+        context: dict[str, Any],
         default_on_error: bool = True,
     ) -> bool:
         """
@@ -493,7 +493,7 @@ class WorkflowEngine:
         """Get audit log for a workflow."""
         return await self.storage.get_audit_log(workflow_id)
 
-    async def get_runnable_steps(self, workflow_id: str) -> List[WorkflowStep]:
+    async def get_runnable_steps(self, workflow_id: str) -> list[WorkflowStep]:
         """Return all steps that are currently ready to run in parallel.
 
         A step is *runnable* when it is in ``PENDING`` state and its step number
@@ -520,7 +520,7 @@ class WorkflowEngine:
         if current is None:
             return []
 
-        runnable: List[WorkflowStep] = []
+        runnable: list[WorkflowStep] = []
 
         # Include the current step if it is still pending (not yet started)
         if current.status == StepStatus.PENDING:
@@ -540,7 +540,7 @@ class WorkflowEngine:
         """Add audit event."""
         event = AuditEvent(
             workflow_id=workflow_id,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             event_type=event_type,
             data=data
         )
@@ -550,7 +550,7 @@ class WorkflowEngine:
 class WorkflowDefinition:
     """
     Workflow definition loader (from YAML/JSON).
-    
+
     Provides a minimal YAML-based loader that maps a workflow definition
     into Nexus Core's Workflow/WorkflowStep models.
     """
@@ -579,7 +579,7 @@ class WorkflowDefinition:
         return cleaned if cleaned else default
 
     @staticmethod
-    def _resolve_steps(data: Dict[str, Any], workflow_type: str = "") -> List[dict]:
+    def _resolve_steps(data: dict[str, Any], workflow_type: str = "") -> list[dict]:
         """Resolve the steps list from a workflow definition.
 
         Supports two layouts:
@@ -647,10 +647,10 @@ class WorkflowDefinition:
     @staticmethod
     def from_yaml(
         yaml_path: str,
-        workflow_id: Optional[str] = None,
-        name_override: Optional[str] = None,
-        description_override: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        workflow_id: str | None = None,
+        name_override: str | None = None,
+        description_override: str | None = None,
+        metadata: dict[str, Any] | None = None,
         workflow_type: str = "",
     ) -> Workflow:
         """Load workflow from a YAML file and return a Workflow object.
@@ -665,7 +665,7 @@ class WorkflowDefinition:
                 ``"fast-track"``).  When empty, uses flat ``steps:`` or
                 falls back to the first available tier.
         """
-        with open(yaml_path, "r", encoding="utf-8") as f:
+        with open(yaml_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return WorkflowDefinition.from_dict(
             data,
@@ -678,11 +678,11 @@ class WorkflowDefinition:
 
     @staticmethod
     def from_dict(
-        data: Dict[str, Any],
-        workflow_id: Optional[str] = None,
-        name_override: Optional[str] = None,
-        description_override: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        data: dict[str, Any],
+        workflow_id: str | None = None,
+        name_override: str | None = None,
+        description_override: str | None = None,
+        metadata: dict[str, Any] | None = None,
         workflow_type: str = "",
     ) -> Workflow:
         """Load workflow from a dict and return a Workflow object.
@@ -715,7 +715,7 @@ class WorkflowDefinition:
         require_human_merge_approval = True  # Default to safe option
         if isinstance(monitoring, dict):
             require_human_merge_approval = monitoring.get("require_human_merge_approval", True)
-        
+
         # Also check top-level (backwards compatibility)
         if "require_human_merge_approval" in data:
             require_human_merge_approval = data.get("require_human_merge_approval", True)
@@ -731,9 +731,9 @@ class WorkflowDefinition:
             prompt_template = step_data.get("prompt_template") or step_desc or "Execute step"
 
             # Resolve retry: explicit `retry` integer or `retry_policy.max_retries`
-            step_retry: Optional[int] = step_data.get("retry")
+            step_retry: int | None = step_data.get("retry")
             retry_policy = step_data.get("retry_policy")
-            step_backoff_strategy: Optional[str] = None
+            step_backoff_strategy: str | None = None
             step_initial_delay: float = 0.0
             if isinstance(retry_policy, dict):
                 if step_retry is None:
@@ -764,7 +764,7 @@ class WorkflowDefinition:
             # `parallel` field: list of step ids that form a parallel group with this step
             parallel_raw = step_data.get("parallel", [])
             if isinstance(parallel_raw, list):
-                parallel_with: List[str] = [
+                parallel_with: list[str] = [
                     WorkflowDefinition._slugify(step_id) or step_id
                     for step_id in parallel_raw
                 ]
@@ -803,10 +803,10 @@ class WorkflowDefinition:
             metadata=workflow_metadata,
             require_human_merge_approval=require_human_merge_approval,
         )
-        
+
         # Apply workflow-level approval gates to all steps
         workflow.apply_approval_gates()
-        
+
         return workflow
 
     @staticmethod
@@ -814,7 +814,7 @@ class WorkflowDefinition:
         yaml_path: str,
         current_agent_type: str,
         workflow_type: str = "",
-    ) -> List[str]:
+    ) -> list[str]:
         """Resolve valid next agent_types for a given agent_type from the workflow.
 
         Follows ``on_success`` links and router ``routes`` to determine which
@@ -831,7 +831,7 @@ class WorkflowDefinition:
             the agent_type is not found.
         """
         try:
-            with open(yaml_path, "r") as f:
+            with open(yaml_path) as f:
                 data = yaml.safe_load(f)
         except Exception:
             return []
@@ -841,14 +841,14 @@ class WorkflowDefinition:
             return []
 
         # Build id → step lookup
-        by_id: Dict[str, dict] = {s["id"]: s for s in steps if "id" in s}
+        by_id: dict[str, dict] = {s["id"]: s for s in steps if "id" in s}
 
         # Find the step(s) matching current_agent_type
         current_steps = [s for s in steps if s.get("agent_type") == current_agent_type]
         if not current_steps:
             return []
 
-        result: List[str] = []
+        result: list[str] = []
         for step in current_steps:
             on_success = step.get("on_success")
             if step.get("final_step"):
@@ -880,7 +880,7 @@ class WorkflowDefinition:
 
         # Deduplicate while preserving order
         seen: set = set()
-        unique: List[str] = []
+        unique: list[str] = []
         for agent in result:
             if agent not in seen:
                 seen.add(agent)
@@ -925,7 +925,7 @@ class WorkflowDefinition:
             return candidate
 
         try:
-            with open(yaml_path, "r") as handle:
+            with open(yaml_path) as handle:
                 data = yaml.safe_load(handle)
         except Exception:
             return valid_next[0] if len(valid_next) == 1 else ""
@@ -935,7 +935,7 @@ class WorkflowDefinition:
         for step in steps:
             step_id = str(step.get("id", "")).strip().lower()
             step_name = str(step.get("name", "")).strip().lower()
-            if candidate_lc == step_id or candidate_lc == step_name:
+            if candidate_lc in (step_id, step_name):
                 mapped = str(step.get("agent_type", "")).strip()
                 if mapped in valid_next:
                     return mapped
@@ -970,7 +970,7 @@ class WorkflowDefinition:
             Formatted Markdown text, or empty string on error.
         """
         try:
-            with open(yaml_path, "r") as f:
+            with open(yaml_path) as f:
                 data = yaml.safe_load(f)
 
             steps = WorkflowDefinition._resolve_steps(data, workflow_type)
@@ -979,7 +979,7 @@ class WorkflowDefinition:
 
             basename = os.path.basename(yaml_path)
             tier_label = f" [{workflow_type}]" if workflow_type else ""
-            lines: List[str] = [f"**Workflow Steps{tier_label} (from {basename}):**\n"]
+            lines: list[str] = [f"**Workflow Steps{tier_label} (from {basename}):**\n"]
             for idx, step_data in enumerate(steps, 1):
                 agent_type = step_data.get("agent_type", "unknown")
                 name = step_data.get("name", step_data.get("id", f"Step {idx}"))
@@ -997,7 +997,7 @@ class WorkflowDefinition:
             # Build display-name mapping (agent_type → Capitalized)
             # Used by agents for the "Ready for @..." comment line.
             seen: set = set()
-            display_pairs: List[str] = []
+            display_pairs: list[str] = []
             for step_data in steps:
                 at = step_data.get("agent_type", "")
                 if at and at != "router" and at not in seen:
@@ -1035,7 +1035,7 @@ class WorkflowDefinition:
 
     @staticmethod
     def dry_run(
-        data: Dict[str, Any],
+        data: dict[str, Any],
         workflow_type: str = "",
     ) -> "DryRunReport":
         """Validate a workflow definition dict and simulate step execution.
@@ -1065,8 +1065,8 @@ class WorkflowDefinition:
         Returns:
             A :class:`DryRunReport` with ``errors`` and ``predicted_flow``.
         """
-        errors: List[str] = []
-        predicted_flow: List[str] = []
+        errors: list[str] = []
+        predicted_flow: list[str] = []
 
         if not isinstance(data, dict):
             return DryRunReport(errors=["Workflow definition must be a dict"])

@@ -1,16 +1,17 @@
 """Built-in plugin: workflow monitor policy (platform-neutral)."""
 
 import re
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 
 class WorkflowMonitorPolicyPlugin:
     """Workflow policy for issue discovery, comments, PR lookup, and repo resolution."""
 
-    def __init__(self, config: Optional[dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
 
-    def _callback(self, name: str) -> Optional[Callable[..., Any]]:
+    def _callback(self, name: str) -> Callable[..., Any] | None:
         callback = self.config.get(name)
         return callback if callable(callback) else None
 
@@ -34,11 +35,8 @@ class WorkflowMonitorPolicyPlugin:
         return label_names
 
     @staticmethod
-    def _extract_issue_number(issue: Any) -> Optional[str]:
-        if isinstance(issue, dict):
-            number = issue.get("number")
-        else:
-            number = getattr(issue, "number", None)
+    def _extract_issue_number(issue: Any) -> str | None:
+        number = issue.get("number") if isinstance(issue, dict) else getattr(issue, "number", None)
         return str(number) if number is not None else None
 
     def list_workflow_issue_numbers(
@@ -85,7 +83,7 @@ class WorkflowMonitorPolicyPlugin:
         comments = get_comments(repo=repo, issue_number=str(issue_number))
         return [comment for comment in comments if getattr(comment, "author", "") == bot_author]
 
-    def find_open_linked_pr(self, *, repo: str, issue_number: str) -> Optional[Any]:
+    def find_open_linked_pr(self, *, repo: str, issue_number: str) -> Any | None:
         search_linked_prs = self._callback("search_linked_prs")
         if not search_linked_prs:
             raise RuntimeError("search_linked_prs callback is required")

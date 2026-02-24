@@ -2,8 +2,9 @@
 
 import logging
 import threading
+from collections.abc import Callable
 from importlib.metadata import entry_points
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 from nexus.plugins.base import (
     PluginKind,
@@ -28,7 +29,7 @@ class PluginRegistry:
     """Holds plugin specs and instantiates plugin implementations."""
 
     def __init__(self):
-        self._plugins: Dict[Tuple[PluginKind, str], PluginSpec] = {}
+        self._plugins: dict[tuple[PluginKind, str], PluginSpec] = {}
         self._lock = threading.Lock()
 
     def register(self, spec: PluginSpec, *, force: bool = False) -> None:
@@ -76,7 +77,7 @@ class PluginRegistry:
         kind: PluginKind,
         name: str,
         version: str,
-        factory: Callable[[Dict[str, Any]], Any],
+        factory: Callable[[dict[str, Any]], Any],
         description: str = "",
         *,
         force: bool = False,
@@ -84,7 +85,7 @@ class PluginRegistry:
         """Convenience method to register a plugin from primitive values."""
         self.register(make_plugin_spec(kind, name, version, factory, description), force=force)
 
-    def create(self, kind: PluginKind, name: str, config: Optional[Dict[str, Any]] = None) -> Any:
+    def create(self, kind: PluginKind, name: str, config: dict[str, Any] | None = None) -> Any:
         """Instantiate a plugin by kind/name."""
         key = (kind, normalize_plugin_name(name))
         with self._lock:
@@ -93,12 +94,12 @@ class PluginRegistry:
             raise PluginNotFoundError(f"No plugin found: kind={kind.value} name={name}")
         return spec.factory(config or {})
 
-    def get_spec(self, kind: PluginKind, name: str) -> Optional[PluginSpec]:
+    def get_spec(self, kind: PluginKind, name: str) -> PluginSpec | None:
         """Get plugin spec by kind/name."""
         with self._lock:
             return self._plugins.get((kind, normalize_plugin_name(name)))
 
-    def list_specs(self, kind: Optional[PluginKind] = None) -> List[PluginSpec]:
+    def list_specs(self, kind: PluginKind | None = None) -> list[PluginSpec]:
         """List registered plugin specs, optionally filtered by kind."""
         with self._lock:
             specs = list(self._plugins.values())

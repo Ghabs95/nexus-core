@@ -5,9 +5,8 @@ Requires the ``slack`` optional extra::
     pip install nexus-core[slack]
 """
 import logging
-from typing import Optional
 
-from nexus.adapters.notifications.base import Button, Message, NotificationChannel
+from nexus.adapters.notifications.base import Message, NotificationChannel
 from nexus.core.models import Severity
 
 try:
@@ -60,7 +59,7 @@ class SlackNotificationChannel(NotificationChannel):
         self,
         token: str,
         default_channel: str = "#general",
-        webhook_url: Optional[str] = None,
+        webhook_url: str | None = None,
     ):
         _require_slack_sdk()
         self._client = WebClient(token=token)

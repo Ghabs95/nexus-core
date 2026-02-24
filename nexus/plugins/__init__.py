@@ -2,13 +2,14 @@
 
 from nexus.plugins.base import PluginKind, PluginSpec, make_plugin_spec
 from nexus.plugins.builtin import (
+    AgentLaunchPolicyPlugin,
     AIOrchestrator,
     AIProvider,
-    AgentLaunchPolicyPlugin,
     GitHubIssueCLIPlugin,
     JsonStateStorePlugin,
     RateLimitedError,
     RuntimeOpsPlugin,
+    TelegramInteractivePlugin,
     TelegramNotificationPlugin,
     ToolUnavailableError,
     WorkflowMonitorPolicyPlugin,
@@ -33,6 +34,7 @@ __all__ = [
     "GitHubIssueCLIPlugin",
     "JsonStateStorePlugin",
     "RuntimeOpsPlugin",
+    "TelegramInteractivePlugin",
     "TelegramNotificationPlugin",
     "WorkflowMonitorPolicyPlugin",
     "WorkflowPolicyPlugin",

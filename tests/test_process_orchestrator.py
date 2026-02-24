@@ -1,11 +1,8 @@
 """Tests for ProcessOrchestrator and AgentRuntime (Phase 2)."""
-import asyncio
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 from nexus.core.models import (
     Agent,
@@ -20,7 +17,6 @@ from nexus.core.process_orchestrator import (
     _is_terminal,
 )
 
-
 # ---------------------------------------------------------------------------
 # Stub AgentRuntime — minimal concrete implementation for testing
 # ---------------------------------------------------------------------------
@@ -28,20 +24,20 @@ from nexus.core.process_orchestrator import (
 
 class StubRuntime(AgentRuntime):
     def __init__(self, *, alert_success: bool = True, retry: bool = True):
-        self.launched: List[dict] = []
-        self.tracker: Dict[str, dict] = {}
-        self.alerts: List[str] = []
-        self.audit_events: List[tuple] = []
-        self.finalized: List[dict] = []
+        self.launched: list[dict] = []
+        self.tracker: dict[str, dict] = {}
+        self.alerts: list[str] = []
+        self.audit_events: list[tuple] = []
+        self.finalized: list[dict] = []
         self._retry = retry
         self._dead_retry = True
         self._alert_success = alert_success
-        self._workflow_states: Dict[str, str] = {}
-        self._running_agents: Dict[str, Optional[str]] = {}
-        self._timeout_results: Dict[str, Tuple[bool, Any]] = {}
+        self._workflow_states: dict[str, str] = {}
+        self._running_agents: dict[str, str | None] = {}
+        self._timeout_results: dict[str, tuple[bool, Any]] = {}
         self._agent_timeout_seconds: int = 3600
         self._post_comment_success = True
-        self.posted_comments: List[dict] = []
+        self.posted_comments: list[dict] = []
 
     def launch_agent(self, issue_number, agent_type, *, trigger_source="", exclude_tools=None):
         self.launched.append(
@@ -98,7 +94,7 @@ class StubRuntime(AgentRuntime):
 # ---------------------------------------------------------------------------
 
 
-def _make_workflow(state: WorkflowState, active_agent: Optional[str] = None) -> Workflow:
+def _make_workflow(state: WorkflowState, active_agent: str | None = None) -> Workflow:
     """Build a minimal Workflow with the given state."""
     step = WorkflowStep(
         step_num=1,
@@ -364,7 +360,6 @@ class TestScanAndProcessCompletions:
         runtime = StubRuntime()
         runtime.launched = []  # override: make launch fail
 
-        real_launch = runtime.launch_agent
 
         def failing_launch(issue_number, agent_type, *, trigger_source="", exclude_tools=None):
             return (None, None)
@@ -634,7 +629,7 @@ class TestCheckStuckAgents:
             }
         }
 
-        killed_pids: List[int] = []
+        killed_pids: list[int] = []
 
         def fake_kill(pid):
             killed_pids.append(pid)

@@ -107,6 +107,12 @@ telegram_integration = "nexus_telegram_plugin:register_plugins"
 - Telegram notification plugin: `nexus.plugins.builtin.telegram_notification_plugin`
     - Class: `TelegramNotificationPlugin`
     - Registration entry: `register_plugins(registry)`
+- Telegram interactive client plugin: `nexus.plugins.builtin.telegram_interactive_plugin`
+    - Class: `TelegramInteractivePlugin`
+    - Registration entry: `register_plugins(registry)`
+- Discord interactive client plugin: `nexus.plugins.builtin.discord_interactive_plugin`
+    - Class: `DiscordInteractivePlugin`
+    - Registration entry: `register_plugins(registry)`
 - JSON state storage plugin: `nexus.plugins.builtin.json_state_plugin`
     - Class: `JsonStateStorePlugin`
     - Registration entry: `register_plugins(registry)`

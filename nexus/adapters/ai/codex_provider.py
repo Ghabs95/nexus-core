@@ -6,7 +6,6 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import List, Optional
 
 from nexus.adapters.ai.base import AIProvider, ExecutionContext
 from nexus.core.models import AgentResult, RateLimitStatus
@@ -24,8 +23,8 @@ class CodexCLIProvider(AIProvider):
         self,
         timeout: int = 600,
         binary: str = "codex",
-        model: Optional[str] = None,
-        extra_args: Optional[List[str]] = None,
+        model: str | None = None,
+        extra_args: list[str] | None = None,
     ):
         self._timeout = timeout
         self._binary = binary
@@ -109,7 +108,7 @@ class CodexCLIProvider(AIProvider):
                 execution_time=elapsed,
                 provider_used=self.name,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AgentResult(
                 success=False,
                 output="",

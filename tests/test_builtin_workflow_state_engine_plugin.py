@@ -327,8 +327,9 @@ def test_build_storage_postgres_requires_dsn_or_config():
 
 def test_build_storage_postgres_env_dsn(monkeypatch):
     """NEXUS_STORAGE_DSN env var is used when no storage_config is given."""
+    from unittest.mock import patch
+
     from nexus.adapters.storage.postgres import PostgreSQLStorageBackend
-    from unittest.mock import patch, MagicMock
 
     fake_dsn = "postgresql+psycopg2://user:pass@localhost/testdb"
     monkeypatch.setenv("NEXUS_STORAGE_TYPE", "postgres")
@@ -347,8 +348,9 @@ def test_build_storage_postgres_env_dsn(monkeypatch):
 
 def test_build_storage_postgres_via_storage_config(monkeypatch):
     """storage_config dict with connection_string is forwarded to Postgres backend."""
-    from nexus.adapters.storage.postgres import PostgreSQLStorageBackend
     from unittest.mock import patch
+
+    from nexus.adapters.storage.postgres import PostgreSQLStorageBackend
 
     fake_dsn = "postgresql+psycopg2://user:pass@host/db"
     monkeypatch.delenv("NEXUS_STORAGE_DSN", raising=False)

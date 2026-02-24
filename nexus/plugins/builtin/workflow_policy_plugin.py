@@ -1,7 +1,8 @@
 """Built-in plugin: workflow policy (finalization + notifications)."""
 
 import logging
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -9,10 +10,10 @@ logger = logging.getLogger(__name__)
 class WorkflowPolicyPlugin:
     """Workflow policy for notification composition and completion finalization."""
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
 
-    def _callback(self, name: str) -> Optional[Callable[..., Any]]:
+    def _callback(self, name: str) -> Callable[..., Any] | None:
         callback = self.config.get(name)
         return callback if callable(callback) else None
 
@@ -63,7 +64,7 @@ class WorkflowPolicyPlugin:
         issue_number: str,
         last_agent: str,
         repo: str,
-        pr_url: Optional[str] = None,
+        pr_url: str | None = None,
     ) -> str:
         parts = [
             "✅ **Workflow Complete**\n\n"
@@ -75,7 +76,7 @@ class WorkflowPolicyPlugin:
         parts.append(f"\n🔗 https://github.com/{repo}/issues/{issue_number}")
         return "".join(parts)
 
-    def _resolve_git_dir(self, project_name: str) -> Optional[str]:
+    def _resolve_git_dir(self, project_name: str) -> str | None:
         resolver = self._callback("resolve_git_dir")
         if not resolver:
             return None
@@ -88,7 +89,7 @@ class WorkflowPolicyPlugin:
         repo_dir: str,
         issue_number: str,
         last_agent: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         creator = self._callback("create_pr_from_changes")
         if not creator:
             return None
@@ -110,7 +111,7 @@ class WorkflowPolicyPlugin:
         )
         return str(pr_url) if pr_url else None
 
-    def _find_existing_pr(self, *, repo: str, issue_number: str) -> Optional[str]:
+    def _find_existing_pr(self, *, repo: str, issue_number: str) -> str | None:
         finder = self._callback("find_existing_pr")
         if not finder:
             return None
@@ -123,7 +124,7 @@ class WorkflowPolicyPlugin:
 
         return str(pr_url) if pr_url else None
 
-    def _close_issue(self, *, repo: str, issue_number: str, last_agent: str, pr_url: Optional[str]) -> bool:
+    def _close_issue(self, *, repo: str, issue_number: str, last_agent: str, pr_url: str | None) -> bool:
         closer = self._callback("close_issue")
         if not closer:
             return False
@@ -137,7 +138,7 @@ class WorkflowPolicyPlugin:
 
         return bool(closer(repo=repo, issue_number=str(issue_number), comment=close_comment))
 
-    def _notify(self, *, repo: str, issue_number: str, last_agent: str, pr_url: Optional[str]) -> None:
+    def _notify(self, *, repo: str, issue_number: str, last_agent: str, pr_url: str | None) -> None:
         notifier = self._callback("send_notification")
         if not notifier:
             return
@@ -158,9 +159,9 @@ class WorkflowPolicyPlugin:
         repo: str,
         last_agent: str,
         project_name: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Finalize workflow and return outcome summary."""
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "pr_url": None,
             "issue_closed": False,
             "notification_sent": False,

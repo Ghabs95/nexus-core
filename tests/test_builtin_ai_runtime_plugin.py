@@ -197,7 +197,7 @@ def test_refusal_text_is_not_accepted_as_transcription(monkeypatch):
 
     try:
         orchestrator._transcribe_with_copilot_cli("temp_voice.ogg")
-        assert False, "Expected refusal text to be rejected"
+        raise AssertionError("Expected refusal text to be rejected")
     except Exception as exc:
         assert "non-transcription content" in str(exc)
 
@@ -221,7 +221,7 @@ def test_gemini_file_reference_echo_is_rejected(monkeypatch):
 
     try:
         orchestrator._transcribe_with_gemini_cli("temp_voice.ogg")
-        assert False, "Expected file-reference echo to be rejected"
+        raise AssertionError("Expected file-reference echo to be rejected")
     except Exception as exc:
         assert "non-transcription content" in str(exc)
 
@@ -247,7 +247,7 @@ def test_copilot_tool_debug_output_is_rejected(monkeypatch):
 
     try:
         orchestrator._transcribe_with_copilot_cli("temp_voice.ogg")
-        assert False, "Expected tool-debug output to be rejected"
+        raise AssertionError("Expected tool-debug output to be rejected")
     except Exception as exc:
         assert "non-transcription content" in str(exc)
 

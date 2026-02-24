@@ -1,7 +1,6 @@
 """Base interface for notification channels."""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional
 
 from nexus.core.models import Severity
 
@@ -12,7 +11,7 @@ class Button:
 
     label: str
     callback_data: str
-    url: Optional[str] = None
+    url: str | None = None
 
 
 @dataclass
@@ -21,7 +20,7 @@ class Message:
 
     text: str
     severity: Severity = Severity.INFO
-    buttons: Optional[List[Button]] = None
+    buttons: list[Button] | None = None
 
 
 class NotificationChannel(ABC):
@@ -33,7 +32,7 @@ class NotificationChannel(ABC):
     ) -> str:
         """
         Send a message to a user.
-        
+
         Returns: Message ID for later updates
         """
         pass

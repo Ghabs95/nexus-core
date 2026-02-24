@@ -15,7 +15,6 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Set
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +51,7 @@ class IdempotencyLedger:
 
     def __init__(self, ledger_path: str) -> None:
         self._path = ledger_path
-        self._seen: Set[str] = set()
+        self._seen: set[str] = set()
         self._load()
 
     # ------------------------------------------------------------------
@@ -78,7 +77,7 @@ class IdempotencyLedger:
         if not os.path.exists(self._path):
             return
         try:
-            with open(self._path, "r", encoding="utf-8") as fh:
+            with open(self._path, encoding="utf-8") as fh:
                 data = json.load(fh)
             if isinstance(data, list):
                 self._seen = set(data)

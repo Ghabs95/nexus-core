@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional
+from typing import Any
 
 
 def normalize_task_name(value: str, max_len: int = 80) -> str:
@@ -19,7 +19,7 @@ def generate_task_name(
     orchestrator: Any,
     content: str,
     project_name: str,
-    logger: Optional[Any] = None,
+    logger: Any | None = None,
 ) -> str:
     def _extract_candidate_name(payload: Any) -> str:
         if isinstance(payload, str):

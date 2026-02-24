@@ -25,11 +25,12 @@ Or load the whole adapter stack from a YAML/dict config section::
     })
 """
 import logging
-from typing import Any, Dict, List, Optional, Type
+from typing import Any
 
 from nexus.adapters.ai.base import AIProvider
 from nexus.adapters.git.base import GitPlatform
 from nexus.adapters.notifications.base import NotificationChannel
+from nexus.adapters.notifications.interactive import InteractiveClientPlugin
 from nexus.adapters.storage.base import StorageBackend
 from nexus.adapters.transcription.base import TranscriptionProvider
 
@@ -41,7 +42,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _load_builtin_storage(type_name: str) -> Optional[Type[StorageBackend]]:
+def _load_builtin_storage(type_name: str) -> type[StorageBackend] | None:
     if type_name == "file":
         from nexus.adapters.storage.file import FileStorage
         return FileStorage
@@ -51,7 +52,7 @@ def _load_builtin_storage(type_name: str) -> Optional[Type[StorageBackend]]:
     return None
 
 
-def _load_builtin_git(type_name: str) -> Optional[Type[GitPlatform]]:
+def _load_builtin_git(type_name: str) -> type[GitPlatform] | None:
     if type_name == "github":
         from nexus.adapters.git.github import GitHubPlatform
         return GitHubPlatform
@@ -61,14 +62,24 @@ def _load_builtin_git(type_name: str) -> Optional[Type[GitPlatform]]:
     return None
 
 
-def _load_builtin_notifications(type_name: str) -> Optional[Type[NotificationChannel]]:
+def _load_builtin_notifications(type_name: str) -> type[NotificationChannel] | None:
     if type_name == "slack":
         from nexus.adapters.notifications.slack import SlackNotificationChannel
         return SlackNotificationChannel
     return None
 
 
-def _load_builtin_ai(type_name: str) -> Optional[Type[AIProvider]]:
+def _load_builtin_interactive(type_name: str) -> type[InteractiveClientPlugin] | None:
+    if type_name == "telegram-interactive-http":
+        from nexus.plugins.builtin.telegram_interactive_plugin import TelegramInteractivePlugin
+        return TelegramInteractivePlugin
+    elif type_name == "discord-interactive-http":
+        from nexus.plugins.builtin.discord_interactive_plugin import DiscordInteractivePlugin
+        return DiscordInteractivePlugin
+    return None
+
+
+def _load_builtin_ai(type_name: str) -> type[AIProvider] | None:
     if type_name == "codex":
         from nexus.adapters.ai.codex_provider import CodexCLIProvider
         return CodexCLIProvider
@@ -84,7 +95,7 @@ def _load_builtin_ai(type_name: str) -> Optional[Type[AIProvider]]:
     return None
 
 
-def _load_builtin_transcription(type_name: str) -> Optional[Type[TranscriptionProvider]]:
+def _load_builtin_transcription(type_name: str) -> type[TranscriptionProvider] | None:
     if type_name == "whisper":
         from nexus.adapters.transcription.whisper_provider import WhisperTranscriptionProvider
         return WhisperTranscriptionProvider
@@ -111,37 +122,43 @@ class AdapterRegistry:
         self._auto_builtins = auto_register_builtins
 
         # Custom overrides: type_name -> class
-        self._storage_registry:  Dict[str, Type[StorageBackend]]     = {}
-        self._git_registry:       Dict[str, Type[GitPlatform]]        = {}
-        self._notif_registry:     Dict[str, Type[NotificationChannel]] = {}
-        self._ai_registry:        Dict[str, Type[AIProvider]]          = {}
-        self._transcription_registry: Dict[str, Type[TranscriptionProvider]] = {}
+        self._storage_registry:  dict[str, type[StorageBackend]]     = {}
+        self._git_registry:       dict[str, type[GitPlatform]]        = {}
+        self._notif_registry:     dict[str, type[NotificationChannel]] = {}
+        self._interactive_registry: dict[str, type[InteractiveClientPlugin]] = {}
+        self._ai_registry:        dict[str, type[AIProvider]]          = {}
+        self._transcription_registry: dict[str, type[TranscriptionProvider]] = {}
 
     # ------------------------------------------------------------------
     # Registration API
     # ------------------------------------------------------------------
 
-    def register_storage(self, type_name: str, cls: Type[StorageBackend]) -> None:
+    def register_storage(self, type_name: str, cls: type[StorageBackend]) -> None:
         """Register a custom StorageBackend implementation."""
         self._storage_registry[type_name] = cls
         logger.debug("AdapterRegistry: registered storage %r = %s", type_name, cls.__name__)
 
-    def register_git(self, type_name: str, cls: Type[GitPlatform]) -> None:
+    def register_git(self, type_name: str, cls: type[GitPlatform]) -> None:
         """Register a custom GitPlatform implementation."""
         self._git_registry[type_name] = cls
         logger.debug("AdapterRegistry: registered git %r = %s", type_name, cls.__name__)
 
-    def register_notification(self, type_name: str, cls: Type[NotificationChannel]) -> None:
+    def register_notification(self, type_name: str, cls: type[NotificationChannel]) -> None:
         """Register a custom NotificationChannel implementation."""
         self._notif_registry[type_name] = cls
         logger.debug("AdapterRegistry: registered notification %r = %s", type_name, cls.__name__)
 
-    def register_ai(self, type_name: str, cls: Type[AIProvider]) -> None:
+    def register_interactive(self, type_name: str, cls: type[InteractiveClientPlugin]) -> None:
+        """Register a custom InteractiveClientPlugin implementation."""
+        self._interactive_registry[type_name] = cls
+        logger.debug("AdapterRegistry: registered interactive %r = %s", type_name, cls.__name__)
+
+    def register_ai(self, type_name: str, cls: type[AIProvider]) -> None:
         """Register a custom AIProvider implementation."""
         self._ai_registry[type_name] = cls
         logger.debug("AdapterRegistry: registered ai %r = %s", type_name, cls.__name__)
 
-    def register_transcription(self, type_name: str, cls: Type[TranscriptionProvider]) -> None:
+    def register_transcription(self, type_name: str, cls: type[TranscriptionProvider]) -> None:
         """Register a custom TranscriptionProvider implementation."""
         self._transcription_registry[type_name] = cls
         logger.debug("AdapterRegistry: registered transcription %r = %s", type_name, cls.__name__)
@@ -186,6 +203,16 @@ class AdapterRegistry:
         cls = self._resolve("notification", type_name, _load_builtin_notifications)
         return cls(**kwargs)
 
+    def create_interactive(self, type_name: str, **kwargs: Any) -> InteractiveClientPlugin:
+        """Instantiate an InteractiveClientPlugin by type name.
+
+        Args:
+            type_name: Adapter type (``"telegram"``).
+            **kwargs: Constructor keyword arguments forwarded to the class.
+        """
+        cls = self._resolve("interactive", type_name, _load_builtin_interactive)
+        return cls(**kwargs)
+
     def create_ai(self, type_name: str, **kwargs: Any) -> AIProvider:
         """Instantiate an AIProvider by type name.
 
@@ -216,7 +243,7 @@ class AdapterRegistry:
     # Config-driven bulk construction
     # ------------------------------------------------------------------
 
-    def from_config(self, config: Dict[str, Any]) -> "AdapterConfig":
+    def from_config(self, config: dict[str, Any]) -> "AdapterConfig":
         """Construct all adapter instances from a config dict.
 
         Expected shape::
@@ -237,25 +264,31 @@ class AdapterRegistry:
             :class:`AdapterConfig` with ``.storage``, ``.git``,
             ``.notifications``, ``.ai_providers`` populated.
         """
-        storage: Optional[StorageBackend] = None
+        storage: StorageBackend | None = None
         if "storage" in config:
             cfg = dict(config["storage"])
             t = cfg.pop("type")
             storage = self.create_storage(t, **cfg)
 
-        git: Optional[GitPlatform] = None
+        git: GitPlatform | None = None
         if "git" in config:
             cfg = dict(config["git"])
             t = cfg.pop("type")
             git = self.create_git(t, **cfg)
 
-        notifications: List[NotificationChannel] = []
+        notifications: list[NotificationChannel] = []
         for entry in config.get("notifications", []):
             cfg = dict(entry)
             t = cfg.pop("type")
             notifications.append(self.create_notification(t, **cfg))
 
-        ai_providers: List[AIProvider] = []
+        interactive_clients: list[InteractiveClientPlugin] = []
+        for entry in config.get("interactive_clients", []):
+            cfg = dict(entry)
+            t = cfg.pop("type")
+            interactive_clients.append(self.create_interactive(t, **cfg))
+
+        ai_providers: list[AIProvider] = []
         for entry in config.get("ai", []):
             cfg = dict(entry)
             t = cfg.pop("type")
@@ -265,6 +298,7 @@ class AdapterRegistry:
             storage=storage,
             git=git,
             notifications=notifications,
+            interactive_clients=interactive_clients,
             ai_providers=ai_providers,
         )
 
@@ -278,6 +312,7 @@ class AdapterRegistry:
             "storage": self._storage_registry,
             "git": self._git_registry,
             "notification": self._notif_registry,
+            "interactive": self._interactive_registry,
             "ai": self._ai_registry,
             "transcription": self._transcription_registry,
         }
@@ -307,15 +342,17 @@ class AdapterConfig:
 
     def __init__(
         self,
-        storage: Optional[StorageBackend] = None,
-        git: Optional[GitPlatform] = None,
-        notifications: Optional[List[NotificationChannel]] = None,
-        ai_providers: Optional[List[AIProvider]] = None,
+        storage: StorageBackend | None = None,
+        git: GitPlatform | None = None,
+        notifications: list[NotificationChannel] | None = None,
+        interactive_clients: list[InteractiveClientPlugin] | None = None,
+        ai_providers: list[AIProvider] | None = None,
     ):
         self.storage = storage
         self.git = git
-        self.notifications: List[NotificationChannel] = notifications or []
-        self.ai_providers: List[AIProvider] = ai_providers or []
+        self.notifications: list[NotificationChannel] = notifications or []
+        self.interactive_clients: list[InteractiveClientPlugin] = interactive_clients or []
+        self.ai_providers: list[AIProvider] = ai_providers or []
 
     def __repr__(self) -> str:
         return (
@@ -323,5 +360,6 @@ class AdapterConfig:
             f"storage={type(self.storage).__name__ if self.storage else None}, "
             f"git={type(self.git).__name__ if self.git else None}, "
             f"notifications={[type(n).__name__ for n in self.notifications]}, "
+            f"interactive_clients={[type(i).__name__ for i in self.interactive_clients]}, "
             f"ai={[type(a).__name__ for a in self.ai_providers]})"
         )

@@ -13,9 +13,8 @@ import importlib.util
 import logging
 import threading
 import types
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +47,14 @@ class HandoffManager:
 
     def __init__(self) -> None:
         # delegation_id → DelegationRequest
-        self._active: Dict[str, "DelegationRequest"] = {}  # noqa: F821
+        self._active: dict[str, DelegationRequest] = {}  # noqa: F821
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def register(self, request: "DelegationRequest") -> None:  # noqa: F821
+    def register(self, request: DelegationRequest) -> None:  # noqa: F821
         """Register *request* as an active delegation."""
         from nexus.core.models import DelegationStatus
 
@@ -70,8 +69,8 @@ class HandoffManager:
         )
 
     def complete(
-        self, callback: "DelegationCallback"  # noqa: F821
-    ) -> Optional["DelegationRequest"]:  # noqa: F821
+        self, callback: DelegationCallback  # noqa: F821
+    ) -> DelegationRequest | None:  # noqa: F821
         """Mark the delegation identified by *callback* as completed.
 
         Returns the original :class:`~nexus.core.models.DelegationRequest` or
@@ -105,15 +104,15 @@ class HandoffManager:
                 "fail() called for unknown delegation_id: %s", delegation_id
             )
 
-    def expire_stale(self) -> List["DelegationRequest"]:  # noqa: F821
+    def expire_stale(self) -> list[DelegationRequest]:  # noqa: F821
         """Expire delegations whose ``expires_at`` timestamp has passed.
 
         Returns the list of newly expired requests.
         """
         from nexus.core.models import DelegationStatus
 
-        now = datetime.now(timezone.utc).isoformat()
-        expired: List = []
+        now = datetime.now(UTC).isoformat()
+        expired: list = []
         with self._lock:
             stale_ids = [
                 did
@@ -128,14 +127,14 @@ class HandoffManager:
             logger.info("Expired %d stale delegation(s)", len(expired))
         return expired
 
-    def get(self, delegation_id: str) -> Optional["DelegationRequest"]:  # noqa: F821
+    def get(self, delegation_id: str) -> DelegationRequest | None:  # noqa: F821
         """Return the active delegation with *delegation_id*, or ``None``."""
         with self._lock:
             return self._active.get(delegation_id)
 
     def pending_for(
         self, lead_agent: str, workflow_id: str
-    ) -> List["DelegationRequest"]:  # noqa: F821
+    ) -> list[DelegationRequest]:  # noqa: F821
         """Return all active delegations for *lead_agent* in *workflow_id*."""
         with self._lock:
             return [
@@ -185,8 +184,8 @@ class HotReloadWatcher:
 
     def __init__(
         self,
-        registry: "PluginRegistry",  # noqa: F821 – forward ref
-        watch_dir: "str | Path",
+        registry: PluginRegistry,  # noqa: F821 – forward ref
+        watch_dir: str | Path,
         poll_interval: float = 1.0,
     ) -> None:
         if not _WATCHDOG_AVAILABLE:
@@ -202,7 +201,7 @@ class HotReloadWatcher:
         self._registry = registry
         self._watch_dir = Path(watch_dir).resolve()
         self._poll_interval = poll_interval
-        self._observer: Optional[Observer] = None
+        self._observer: Observer | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -243,7 +242,7 @@ if _WATCHDOG_AVAILABLE:
     class _PluginFileEventHandler(FileSystemEventHandler):
         """Handles file-system events and triggers registry refresh."""
 
-        def __init__(self, registry: "PluginRegistry", watch_dir: Path) -> None:  # noqa: F821
+        def __init__(self, registry: PluginRegistry, watch_dir: Path) -> None:  # noqa: F821
             super().__init__()
             self._registry = registry
             self._watch_dir = watch_dir
@@ -294,7 +293,7 @@ else:
         pass
 
 
-def _load_module_from_path(path: Path) -> Optional[types.ModuleType]:
+def _load_module_from_path(path: Path) -> types.ModuleType | None:
     """Load a Python module from *path* using a fresh module object.
 
     Uses ``importlib.util.spec_from_file_location`` + ``module_from_spec`` so

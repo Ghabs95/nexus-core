@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 
 @dataclass
@@ -29,10 +29,10 @@ class TranscriptionInput:
         metadata: Free-form key/value bag forwarded to the provider.
     """
 
-    source: Union[Path, bytes, str]
-    language: Optional[str] = None
+    source: Path | bytes | str
+    language: str | None = None
     format: str = "auto"
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -52,11 +52,11 @@ class TranscriptionResult:
 
     text: str
     provider_used: str
-    language: Optional[str] = None
-    duration_seconds: Optional[float] = None
-    segments: List[TranscriptionSegment] = field(default_factory=list)
+    language: str | None = None
+    duration_seconds: float | None = None
+    segments: list[TranscriptionSegment] = field(default_factory=list)
     provider_used: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class TranscriptionProvider(ABC):

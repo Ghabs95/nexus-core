@@ -5,9 +5,8 @@ Requires the ``discord`` optional extra::
     pip install nexus-core[discord]
 """
 import logging
-from typing import Optional
 
-from nexus.adapters.notifications.base import Button, Message, NotificationChannel
+from nexus.adapters.notifications.base import Message, NotificationChannel
 from nexus.core.models import Severity
 
 try:
@@ -69,12 +68,12 @@ class DiscordNotificationChannel(NotificationChannel):
 
     def __init__(
         self,
-        webhook_url: Optional[str] = None,
-        bot_token: Optional[str] = None,
-        alert_channel_id: Optional[str] = None,
+        webhook_url: str | None = None,
+        bot_token: str | None = None,
+        alert_channel_id: str | None = None,
     ):
         _require_aiohttp()
-        normalized_bot_token: Optional[str] = None
+        normalized_bot_token: str | None = None
         if bot_token is not None:
             if not isinstance(bot_token, str):
                 raise TypeError("bot_token must be a string if provided.")

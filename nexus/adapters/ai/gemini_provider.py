@@ -82,7 +82,7 @@ class GeminiCLIProvider(AIProvider):
                 execution_time=elapsed,
                 provider_used=self.name,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AgentResult(
                 success=False,
                 output="",

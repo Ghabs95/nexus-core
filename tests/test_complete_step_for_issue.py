@@ -1,9 +1,11 @@
 """Tests for WorkflowStateEnginePlugin.complete_step_for_issue and Workflow.active_agent_type."""
 
-import pytest
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
+import pytest
+
+from nexus.adapters.storage.base import StorageBackend
 from nexus.core.models import (
     Agent,
     AuditEvent,
@@ -13,9 +15,7 @@ from nexus.core.models import (
     WorkflowStep,
 )
 from nexus.core.workflow import WorkflowEngine
-from nexus.adapters.storage.base import StorageBackend
 from nexus.plugins.builtin.workflow_state_engine_plugin import WorkflowStateEnginePlugin
-
 
 # ---------------------------------------------------------------------------
 # Helpers (reuse pattern from test_conditional_steps.py)
@@ -24,13 +24,13 @@ from nexus.plugins.builtin.workflow_state_engine_plugin import WorkflowStateEngi
 
 class InMemoryStorage(StorageBackend):
     def __init__(self) -> None:
-        self._workflows: Dict[str, Workflow] = {}
-        self._audit: List[AuditEvent] = []
+        self._workflows: dict[str, Workflow] = {}
+        self._audit: list[AuditEvent] = []
 
     async def save_workflow(self, workflow: Workflow) -> None:
         self._workflows[workflow.id] = workflow
 
-    async def load_workflow(self, workflow_id: str) -> Optional[Workflow]:
+    async def load_workflow(self, workflow_id: str) -> Workflow | None:
         return self._workflows.get(workflow_id)
 
     async def list_workflows(self, state=None, limit: int = 100):
@@ -42,13 +42,13 @@ class InMemoryStorage(StorageBackend):
     async def append_audit_event(self, event: AuditEvent) -> None:
         self._audit.append(event)
 
-    async def get_audit_log(self, workflow_id: str, since=None) -> List[AuditEvent]:
+    async def get_audit_log(self, workflow_id: str, since=None) -> list[AuditEvent]:
         return [e for e in self._audit if e.workflow_id == workflow_id]
 
-    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: Dict[str, Any]) -> None:
+    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: dict[str, Any]) -> None:
         pass
 
-    async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> Optional[Dict[str, Any]]:
+    async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> dict[str, Any] | None:
         return None
 
     async def cleanup_old_workflows(self, older_than_days: int = 30) -> int:
@@ -69,7 +69,7 @@ def _step(num: int, step_id: str, agent_type: str, routes=None) -> WorkflowStep:
     )
 
 
-def _make_workflow(workflow_id: str, steps: List[WorkflowStep]) -> Workflow:
+def _make_workflow(workflow_id: str, steps: list[WorkflowStep]) -> Workflow:
     wf = Workflow(
         id=workflow_id,
         name="test",
@@ -79,7 +79,7 @@ def _make_workflow(workflow_id: str, steps: List[WorkflowStep]) -> Workflow:
         current_step=1,
     )
     steps[0].status = StepStatus.RUNNING
-    steps[0].started_at = datetime.now(timezone.utc)
+    steps[0].started_at = datetime.now(UTC)
     return wf
 
 

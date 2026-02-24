@@ -5,7 +5,7 @@ future backends) import from here so the serialization logic lives in one
 place.
 """
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 
 from nexus.core.models import (
     Agent,
@@ -16,7 +16,7 @@ from nexus.core.models import (
 )
 
 
-def workflow_to_dict(workflow: Workflow) -> Dict[str, Any]:
+def workflow_to_dict(workflow: Workflow) -> dict[str, Any]:
     """Serialize a :class:`Workflow` instance to a plain dict."""
     return {
         "id": workflow.id,
@@ -33,7 +33,7 @@ def workflow_to_dict(workflow: Workflow) -> Dict[str, Any]:
     }
 
 
-def step_to_dict(step: WorkflowStep) -> Dict[str, Any]:
+def step_to_dict(step: WorkflowStep) -> dict[str, Any]:
     """Serialize a :class:`WorkflowStep` to a plain dict."""
     return {
         "step_num": step.step_num,
@@ -63,7 +63,7 @@ def step_to_dict(step: WorkflowStep) -> Dict[str, Any]:
     }
 
 
-def dict_to_workflow(data: Dict[str, Any]) -> Workflow:
+def dict_to_workflow(data: dict[str, Any]) -> Workflow:
     """Deserialize a plain dict to a :class:`Workflow` instance."""
     steps = []
     for step_data in data.get("steps", []):

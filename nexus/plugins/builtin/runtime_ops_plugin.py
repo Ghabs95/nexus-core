@@ -3,7 +3,7 @@
 import logging
 import re
 import subprocess
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class RuntimeOpsPlugin:
     """Process discovery and termination helpers for issue-linked agent runtimes."""
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
         self.process_name = self.config.get("process_name", "copilot")
         self.pgrep_timeout = int(self.config.get("pgrep_timeout", 5))
@@ -24,7 +24,7 @@ class RuntimeOpsPlugin:
             f"{self.process_name}.*issues/{issue_number}$"
         )
 
-    def find_issue_processes(self, issue_number: str) -> List[Dict[str, Any]]:
+    def find_issue_processes(self, issue_number: str) -> list[dict[str, Any]]:
         """Return process matches for an issue number."""
         pattern = self.build_issue_pattern(issue_number)
         try:
@@ -42,7 +42,7 @@ class RuntimeOpsPlugin:
         if not result.stdout:
             return []
 
-        matches: List[Dict[str, Any]] = []
+        matches: list[dict[str, Any]] = []
         for line in result.stdout.strip().splitlines():
             parts = line.split(None, 1)
             if not parts:
@@ -54,7 +54,7 @@ class RuntimeOpsPlugin:
             matches.append({"pid": pid, "command": command})
         return matches
 
-    def find_agent_pid_for_issue(self, issue_number: str) -> Optional[int]:
+    def find_agent_pid_for_issue(self, issue_number: str) -> int | None:
         """Return first PID for issue-linked process, if any."""
         matches = self.find_issue_processes(issue_number)
         if not matches:
@@ -81,7 +81,7 @@ class RuntimeOpsPlugin:
             logger.error("Failed to kill pid %s (force=%s): %s", pid, force, exc)
             return False
 
-    def stop_issue_agent(self, issue_number: str, force: bool = True) -> Optional[int]:
+    def stop_issue_agent(self, issue_number: str, force: bool = True) -> int | None:
         """Find and kill issue-linked process; return pid if killed."""
         pid = self.find_agent_pid_for_issue(issue_number)
         if not pid:
@@ -90,7 +90,7 @@ class RuntimeOpsPlugin:
         return pid if killed else None
 
     @staticmethod
-    def _parse_pid(value: str) -> Optional[int]:
+    def _parse_pid(value: str) -> int | None:
         match = re.match(r"^(\d+)$", value.strip())
         if not match:
             return None

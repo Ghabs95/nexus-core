@@ -7,13 +7,13 @@ small policy helpers for webhook-side decisions.
 import hashlib
 import hmac
 import re
-from typing import Any, Optional
+from typing import Any
 
 
 class GithubWebhookPolicyPlugin:
     """Policy helper for GitHub webhook event normalization."""
 
-    def __init__(self, config: Optional[dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
 
     def parse_issue_event(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -102,8 +102,8 @@ class GithubWebhookPolicyPlugin:
     def verify_signature(
         self,
         payload_body: bytes,
-        signature_header: Optional[str],
-        secret: Optional[str],
+        signature_header: str | None,
+        secret: str | None,
     ) -> bool:
         """Verify GitHub webhook signature header."""
         if not secret:

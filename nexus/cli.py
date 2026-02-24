@@ -1,19 +1,18 @@
 import argparse
-import os
-import sys
 
-from nexus.translators.to_markdown import translate_agent_to_markdown
 from nexus.translators.to_copilot import translate_agent_to_copilot
+from nexus.translators.to_markdown import translate_agent_to_markdown
 from nexus.translators.to_python import translate_agent_to_python
+
 
 def main():
     parser = argparse.ArgumentParser(description="Nexus Core CLI")
     subparsers = parser.add_subparsers(dest="command")
-    
+
     # Translate
     translate_parser = subparsers.add_parser("translate", help="Translate definitions")
     translate_sub = translate_parser.add_subparsers(dest="subcommand")
-    
+
     # Translate to Markdown
     md_parser = translate_sub.add_parser("to-markdown", help="Convert YAML to Markdown")
     md_parser.add_argument("file", help="YAML file to translate")
@@ -25,9 +24,9 @@ def main():
     # Translate to Python
     python_parser = translate_sub.add_parser("to-python", help="Convert YAML to Python class")
     python_parser.add_argument("file", help="YAML file to translate")
-    
+
     args = parser.parse_args()
-    
+
     if args.command == "translate":
         if args.subcommand == "to-markdown":
             print(translate_agent_to_markdown(args.file))

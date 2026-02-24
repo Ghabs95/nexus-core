@@ -1,6 +1,6 @@
 """Tests for GitHub workflow policy plugin."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from nexus.adapters.git.base import Issue
@@ -72,8 +72,8 @@ def test_workflow_policy_list_issue_objects_with_string_labels():
             body="",
             state="open",
             labels=["workflow:shortened", "bug"],
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
             url="https://example/42",
         ),
         Issue(
@@ -83,8 +83,8 @@ def test_workflow_policy_list_issue_objects_with_string_labels():
             body="",
             state="open",
             labels=["bug"],
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
             url="https://example/43",
         ),
     ]

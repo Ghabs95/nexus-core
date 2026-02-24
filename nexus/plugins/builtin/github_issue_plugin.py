@@ -4,7 +4,7 @@ import json
 import logging
 import subprocess
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -12,13 +12,13 @@ logger = logging.getLogger(__name__)
 class GitHubIssueCLIPlugin:
     """Create GitHub issues via gh CLI with label fallback behavior."""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         self.repo = config.get("repo", "")
         self.max_attempts = int(config.get("max_attempts", 3))
         self.timeout = int(config.get("timeout", 30))
         self.base_delay = float(config.get("base_delay", 1.0))
 
-    def create_issue(self, title: str, body: str, labels: Optional[List[str]] = None) -> Optional[str]:
+    def create_issue(self, title: str, body: str, labels: list[str] | None = None) -> str | None:
         """Create issue and return URL, or None when all attempts fail."""
         labels = labels or []
         cmd = [
@@ -115,7 +115,7 @@ class GitHubIssueCLIPlugin:
             logger.error("Failed to assign issue %s: %s", issue_number, exc)
             return False
 
-    def get_issue(self, issue_number: str, fields: List[str]) -> Optional[Dict[str, Any]]:
+    def get_issue(self, issue_number: str, fields: list[str]) -> dict[str, Any] | None:
         """Fetch issue JSON for selected fields."""
         cmd = [
             "gh", "issue", "view", str(issue_number),
@@ -174,8 +174,8 @@ class GitHubIssueCLIPlugin:
         self,
         state: str = "open",
         limit: int = 10,
-        fields: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        fields: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """List issues from the configured repository."""
         fields = fields or ["number", "title", "state"]
         cmd = [
@@ -195,7 +195,7 @@ class GitHubIssueCLIPlugin:
 
     def _run_with_retry(
         self,
-        cmd: List[str],
+        cmd: list[str],
         max_attempts: int,
     ) -> subprocess.CompletedProcess:
         """Run command with simple exponential backoff."""

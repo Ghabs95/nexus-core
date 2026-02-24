@@ -2,8 +2,7 @@
 import pytest
 
 from nexus.core.models import Workflow, WorkflowStep
-from nexus.core.yaml_loader import YamlWorkflowLoader, RETRY_BACKOFF_STRATEGIES
-
+from nexus.core.yaml_loader import RETRY_BACKOFF_STRATEGIES, YamlWorkflowLoader
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -409,21 +408,22 @@ class TestRetryPolicyBackoffStorage:
 # get_runnable_steps
 # ---------------------------------------------------------------------------
 
-from typing import Any, Dict, List, Optional
-from nexus.core.models import Agent, AuditEvent, StepStatus, WorkflowState, WorkflowStep
-from nexus.core.workflow import WorkflowEngine
+from typing import Any
+
 from nexus.adapters.storage.base import StorageBackend
+from nexus.core.models import Agent, AuditEvent, StepStatus, WorkflowState
+from nexus.core.workflow import WorkflowEngine
 
 
 class _InMemoryStorage(StorageBackend):
     def __init__(self) -> None:
-        self._workflows: Dict[str, Workflow] = {}
-        self._audit: List[AuditEvent] = []
+        self._workflows: dict[str, Workflow] = {}
+        self._audit: list[AuditEvent] = []
 
     async def save_workflow(self, workflow: Workflow) -> None:
         self._workflows[workflow.id] = workflow
 
-    async def load_workflow(self, workflow_id: str) -> Optional[Workflow]:
+    async def load_workflow(self, workflow_id: str) -> Workflow | None:
         return self._workflows.get(workflow_id)
 
     async def list_workflows(self, state=None, limit: int = 100):
@@ -435,13 +435,13 @@ class _InMemoryStorage(StorageBackend):
     async def append_audit_event(self, event: AuditEvent) -> None:
         self._audit.append(event)
 
-    async def get_audit_log(self, workflow_id: str, since=None) -> List[AuditEvent]:
+    async def get_audit_log(self, workflow_id: str, since=None) -> list[AuditEvent]:
         return [e for e in self._audit if e.workflow_id == workflow_id]
 
-    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: Dict[str, Any]) -> None:
+    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: dict[str, Any]) -> None:
         pass
 
-    async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> Optional[Dict[str, Any]]:
+    async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> dict[str, Any] | None:
         return None
 
     async def cleanup_old_workflows(self, older_than_days: int = 30) -> int:
@@ -452,7 +452,7 @@ def _make_agent(name: str) -> Agent:
     return Agent(name=name, display_name=name, description="test", timeout=60, max_retries=0)
 
 
-def _make_step(num: int, name: str, parallel_with: Optional[List[str]] = None) -> WorkflowStep:
+def _make_step(num: int, name: str, parallel_with: list[str] | None = None) -> WorkflowStep:
     return WorkflowStep(
         step_num=num,
         name=name,

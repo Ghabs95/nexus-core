@@ -3,14 +3,15 @@
 import ast
 import logging
 import os
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from nexus.adapters.registry import AdapterRegistry
 from nexus.adapters.storage.base import StorageBackend
-from nexus.core.workflow import WorkflowDefinition, WorkflowEngine
-from nexus.core.models import StepStatus, WorkflowState
 from nexus.core.idempotency import IdempotencyKey, IdempotencyLedger
+from nexus.core.models import StepStatus, WorkflowState
+from nexus.core.workflow import WorkflowDefinition, WorkflowEngine
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +56,12 @@ class WorkflowStateEnginePlugin:
         NEXUS_STORAGE_DSN=postgresql+psycopg2://user:pass@host/db
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
         self.storage_dir: str = self.config.get(
             "storage_dir", os.environ.get(_STORAGE_DIR_ENV, "")
         )
-        self.engine_factory: Optional[Callable[[], WorkflowEngine]] = self.config.get("engine_factory")
+        self.engine_factory: Callable[[], WorkflowEngine] | None = self.config.get("engine_factory")
         self.issue_to_workflow_id = self.config.get("issue_to_workflow_id")
 
     def _build_storage(self) -> StorageBackend:
@@ -76,7 +77,7 @@ class WorkflowStateEnginePlugin:
         ).lower()
 
         registry = AdapterRegistry()
-        storage_cfg: Dict[str, Any] = dict(self.config.get("storage_config") or {})
+        storage_cfg: dict[str, Any] = dict(self.config.get("storage_config") or {})
 
         if storage_type == "file":
             if not self.storage_dir:
@@ -107,7 +108,7 @@ class WorkflowStateEnginePlugin:
             return self.engine_factory()
         return WorkflowEngine(storage=self._build_storage())
 
-    def _resolve_workflow_id(self, issue_number: str) -> Optional[str]:
+    def _resolve_workflow_id(self, issue_number: str) -> str | None:
         if callable(self.issue_to_workflow_id):
             return self.issue_to_workflow_id(str(issue_number))
         mapping = self.config.get("issue_workflow_map", {})
@@ -125,7 +126,7 @@ class WorkflowStateEnginePlugin:
             logger.warning("Callback %s failed: %s", callback_name, exc)
 
     @staticmethod
-    def _issue_number_as_int(issue_number: str) -> Optional[int]:
+    def _issue_number_as_int(issue_number: str) -> int | None:
         try:
             return int(str(issue_number))
         except Exception:
@@ -151,7 +152,7 @@ class WorkflowStateEnginePlugin:
         return None
 
     @staticmethod
-    def _route_target_ref(route: Dict[str, Any]) -> str:
+    def _route_target_ref(route: dict[str, Any]) -> str:
         target = route.get("goto") or route.get("then")
         if target:
             return str(target)
@@ -194,8 +195,8 @@ class WorkflowStateEnginePlugin:
     def _normalize_completion_outputs(
         workflow,
         completed_step,
-        outputs: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        outputs: dict[str, Any],
+    ) -> dict[str, Any]:
         normalized = dict(outputs or {})
         next_agent = WorkflowStateEnginePlugin._normalize_ref(normalized.get("next_agent", ""))
         if not next_agent:
@@ -235,7 +236,7 @@ class WorkflowStateEnginePlugin:
 
         return normalized
 
-    def _resolve_workflow_definition_path(self, project_name: str) -> Optional[str]:
+    def _resolve_workflow_definition_path(self, project_name: str) -> str | None:
         resolver = self.config.get("workflow_definition_path_resolver")
         if callable(resolver):
             return resolver(project_name)
@@ -246,7 +247,7 @@ class WorkflowStateEnginePlugin:
 
         return self.config.get("workflow_definition_path")
 
-    def _resolve_issue_url(self, issue_number: str) -> Optional[str]:
+    def _resolve_issue_url(self, issue_number: str) -> str | None:
         resolver = self.config.get("issue_url_resolver")
         if callable(resolver):
             return resolver(issue_number)
@@ -264,7 +265,7 @@ class WorkflowStateEnginePlugin:
         tier_name: str,
         task_type: str,
         description: str = "",
-    ) -> Optional[str]:
+    ) -> str | None:
         """Create workflow from configured workflow definition path for an issue."""
         workflow_definition_path = self._resolve_workflow_definition_path(project_name)
         if not workflow_definition_path:
@@ -353,7 +354,7 @@ class WorkflowStateEnginePlugin:
             logger.error("Failed to resume workflow for issue #%s: %s", issue_number, exc)
             return False
 
-    async def get_workflow_status(self, issue_number: str) -> Optional[Dict[str, Any]]:
+    async def get_workflow_status(self, issue_number: str) -> dict[str, Any] | None:
         """Return status payload for workflow mapped to issue number."""
         workflow_id = self._resolve_workflow_id(issue_number)
         if not workflow_id:
@@ -480,9 +481,9 @@ class WorkflowStateEnginePlugin:
         self,
         issue_number: str,
         completed_agent_type: str,
-        outputs: Dict[str, Any],
+        outputs: dict[str, Any],
         event_id: str = "",
-    ) -> Optional[Any]:
+    ) -> Any | None:
         """Mark the current running step for *issue_number* as complete.
 
         Locates the RUNNING step whose ``agent.name`` matches
@@ -627,7 +628,7 @@ class WorkflowStateEnginePlugin:
             )
             return False
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for step in workflow.steps:
             if step.step_num < target_step.step_num:
                 step.status = StepStatus.COMPLETED

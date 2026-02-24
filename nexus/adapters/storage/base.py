@@ -1,7 +1,7 @@
 """Base interface for storage backends."""
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from nexus.core.models import AuditEvent, Workflow, WorkflowState
 
@@ -15,14 +15,14 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
-    async def load_workflow(self, workflow_id: str) -> Optional[Workflow]:
+    async def load_workflow(self, workflow_id: str) -> Workflow | None:
         """Load workflow state by ID."""
         pass
 
     @abstractmethod
     async def list_workflows(
-        self, state: Optional[WorkflowState] = None, limit: int = 100
-    ) -> List[Workflow]:
+        self, state: WorkflowState | None = None, limit: int = 100
+    ) -> list[Workflow]:
         """List workflows, optionally filtered by state."""
         pass
 
@@ -38,18 +38,18 @@ class StorageBackend(ABC):
 
     @abstractmethod
     async def get_audit_log(
-        self, workflow_id: str, since: Optional[datetime] = None
-    ) -> List[AuditEvent]:
+        self, workflow_id: str, since: datetime | None = None
+    ) -> list[AuditEvent]:
         """Get audit log for a workflow."""
         pass
 
     @abstractmethod
-    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: Dict[str, Any]) -> None:
+    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: dict[str, Any]) -> None:
         """Save agent execution metadata (PID, timestamp, etc.)."""
         pass
 
     @abstractmethod
-    async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> Optional[Dict[str, Any]]:
+    async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> dict[str, Any] | None:
         """Get agent execution metadata."""
         pass
 

@@ -32,7 +32,8 @@ import re
 import signal
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from nexus.core.completion import build_completion_comment, scan_for_completions
 
@@ -62,8 +63,8 @@ class AgentRuntime(ABC):
         agent_type: str,
         *,
         trigger_source: str = "orchestrator",
-        exclude_tools: Optional[List[str]] = None,
-    ) -> Tuple[Optional[int], Optional[str]]:
+        exclude_tools: list[str] | None = None,
+    ) -> tuple[int | None, str | None]:
         """Spawn an agent process for *issue_number*.
 
         Returns:
@@ -71,7 +72,7 @@ class AgentRuntime(ABC):
         """
 
     @abstractmethod
-    def load_launched_agents(self, recent_only: bool = True) -> Dict[str, dict]:
+    def load_launched_agents(self, recent_only: bool = True) -> dict[str, dict]:
         """Return the running-agent tracker dict.
 
         Each value must contain at minimum::
@@ -85,7 +86,7 @@ class AgentRuntime(ABC):
         """
 
     @abstractmethod
-    def save_launched_agents(self, data: Dict[str, dict]) -> None:
+    def save_launched_agents(self, data: dict[str, dict]) -> None:
         """Persist the tracker dict."""
 
     @abstractmethod
@@ -128,7 +129,7 @@ class AgentRuntime(ABC):
 
     # --- Optional hooks (concrete defaults provided) ---
 
-    def get_workflow_state(self, issue_number: str) -> Optional[str]:
+    def get_workflow_state(self, issue_number: str) -> str | None:
         """Return the control state of the workflow, or ``None`` if active.
 
         Recognised values: ``"STOPPED"``, ``"PAUSED"``.  Return ``None`` (the
@@ -157,8 +158,8 @@ class AgentRuntime(ABC):
         self,
         issue_number: str,
         log_file: str,
-        timeout_seconds: Optional[int] = None,
-    ) -> Tuple[bool, Optional[int]]:
+        timeout_seconds: int | None = None,
+    ) -> tuple[bool, int | None]:
         """Check whether the agent owning *log_file* has timed out.
 
         Returns:
@@ -174,8 +175,8 @@ class AgentRuntime(ABC):
     def get_agent_timeout_seconds(
         self,
         issue_number: str,
-        agent_type: Optional[str] = None,
-    ) -> Optional[int]:
+        agent_type: str | None = None,
+    ) -> int | None:
         """Return timeout configured by workflow/agent definition when available."""
         return None
 
@@ -183,7 +184,7 @@ class AgentRuntime(ABC):
         """Send a timeout notification.  No-op by default; override to use host
         notification system (e.g. ``notify_agent_timeout``)."""
 
-    def get_expected_running_agent(self, issue_number: str) -> Optional[str]:
+    def get_expected_running_agent(self, issue_number: str) -> str | None:
         """Return the workflow's current RUNNING step agent type, if available.
 
         Hosts can override this when they can inspect workflow storage even if
@@ -200,7 +201,7 @@ class AgentRuntime(ABC):
         """
         return True
 
-    def get_latest_issue_log(self, issue_number: str) -> Optional[str]:
+    def get_latest_issue_log(self, issue_number: str) -> str | None:
         """Return latest session log path for *issue_number*, if available.
 
         Host runtimes can override this to expose issue-scoped task/session log
@@ -273,11 +274,11 @@ class ProcessOrchestrator:
         self._complete_step_fn = complete_step_fn
         self._nexus_dir = nexus_dir
         # Per-session set of (issue:pid) keys we've already alerted for.
-        self._dead_agent_alerted: Set[str] = set()
+        self._dead_agent_alerted: set[str] = set()
         # Consecutive dead-PID liveness misses per (issue, pid).
-        self._dead_pid_miss_counts: Dict[str, int] = {}
+        self._dead_pid_miss_counts: dict[str, int] = {}
         # Per-session set of orphaned-running-step alerts.
-        self._orphaned_step_alerted: Set[str] = set()
+        self._orphaned_step_alerted: set[str] = set()
 
     # ------------------------------------------------------------------
     # Completion scanning / auto-chain
@@ -286,12 +287,12 @@ class ProcessOrchestrator:
     def scan_and_process_completions(
         self,
         base_dir: str,
-        dedup_seen: Set[str],
+        dedup_seen: set[str],
         *,
-        resolve_project: Optional[Callable[[str], Optional[str]]] = None,
-        resolve_repo: Optional[Callable[[str, str], str]] = None,
-        build_transition_message: Optional[Callable[..., str]] = None,
-        build_autochain_failed_message: Optional[Callable[..., str]] = None,
+        resolve_project: Callable[[str], str | None] | None = None,
+        resolve_repo: Callable[[str, str], str] | None = None,
+        build_transition_message: Callable[..., str] | None = None,
+        build_autochain_failed_message: Callable[..., str] | None = None,
     ) -> None:
         """Scan *base_dir* for completion files and handle each new one.
 
@@ -337,7 +338,7 @@ class ProcessOrchestrator:
                     self._complete_step_fn(issue_num, completed_agent, summary.to_dict(), comment_key)
                 )
 
-                next_agent: Optional[str] = None
+                next_agent: str | None = None
 
                 if engine_workflow is not None:
                     from nexus.core.models import WorkflowState
@@ -692,7 +693,7 @@ class ProcessOrchestrator:
         self,
         issue_num: str,
         log_file: str,
-        pid: Optional[int],
+        pid: int | None,
     ) -> None:
         """Kill a timed-out agent and trigger a retry if allowed."""
         launched = self._runtime.load_launched_agents(recent_only=False)
@@ -808,7 +809,7 @@ class ProcessOrchestrator:
     def _resolve_agent_timeout(
         self,
         issue_num: str,
-        agent_type: Optional[str] = None,
+        agent_type: str | None = None,
     ) -> int:
         """Resolve timeout from runtime workflow metadata with safe fallback."""
         try:

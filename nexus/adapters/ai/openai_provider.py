@@ -8,8 +8,6 @@ Uses the ``openai`` Python SDK (v1+) with async support.
 """
 import logging
 import time
-from datetime import datetime, timezone
-from typing import Optional
 
 from nexus.adapters.ai.base import AIProvider, ExecutionContext
 from nexus.core.models import AgentResult, RateLimitStatus
@@ -50,7 +48,7 @@ class OpenAIProvider(AIProvider):
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         model: str = _DEFAULT_MODEL,
         system_prompt: str = "You are a helpful AI assistant.",
         timeout: int = 300,

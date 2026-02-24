@@ -2,8 +2,7 @@
 import json
 import logging
 import subprocess
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from nexus.adapters.git.base import Comment, GitPlatform, Issue, PullRequest
 
@@ -13,10 +12,10 @@ logger = logging.getLogger(__name__)
 class GitHubPlatform(GitPlatform):
     """GitHub platform adapter using gh CLI."""
 
-    def __init__(self, repo: str, token: Optional[str] = None):
+    def __init__(self, repo: str, token: str | None = None):
         """
         Initialize GitHub adapter.
-        
+
         Args:
             repo: Repository in format "owner/name"
             token: Optional GitHub token (uses gh CLI auth if not provided)
@@ -39,20 +38,17 @@ class GitHubPlatform(GitPlatform):
                 "gh CLI not found. Install from https://cli.github.com/"
             )
 
-    def _run_gh_command(self, args: List[str], timeout: int = 30) -> str:
+    def _run_gh_command(self, args: list[str], timeout: int = 30) -> str:
         """Run gh CLI command and return stdout."""
         # gh api uses full URL paths; --repo is only for issue/pr subcommands
-        if args and args[0] == "api":
-            cmd = ["gh"] + args
-        else:
-            cmd = ["gh"] + args + ["--repo", self.repo]
-        
+        cmd = ["gh"] + args if args and args[0] == "api" else ["gh"] + args + ["--repo", self.repo]
+
         env = None
         if self.token:
             import os
             env = os.environ.copy()
             env["GITHUB_TOKEN"] = self.token
-        
+
         try:
             result = subprocess.run(
                 cmd,
@@ -68,13 +64,13 @@ class GitHubPlatform(GitPlatform):
             raise RuntimeError(f"GitHub CLI error: {e.stderr}")
         except subprocess.TimeoutExpired:
             logger.error(f"gh command timed out after {timeout}s")
-            raise RuntimeError(f"GitHub CLI command timed out")
+            raise RuntimeError("GitHub CLI command timed out")
 
     async def list_open_issues(
         self,
         limit: int = 100,
-        labels: Optional[List[str]] = None,
-    ) -> List[Issue]:
+        labels: list[str] | None = None,
+    ) -> list[Issue]:
         """List open issues with optional label filtering."""
         args = [
             "issue", "list",
@@ -93,23 +89,23 @@ class GitHubPlatform(GitPlatform):
             return []
 
     async def create_issue(
-        self, title: str, body: str, labels: Optional[List[str]] = None
+        self, title: str, body: str, labels: list[str] | None = None
     ) -> Issue:
         """Create a new issue."""
         args = ["issue", "create", "--title", title, "--body", body]
-        
+
         if labels:
             args.extend(["--label", ",".join(labels)])
-        
+
         args.append("--json")
         args.append("number,title,body,state,labels,createdAt,updatedAt,url")
-        
+
         output = self._run_gh_command(args)
         data = json.loads(output)
-        
+
         return self._parse_issue(data)
 
-    async def get_issue(self, issue_id: str) -> Optional[Issue]:
+    async def get_issue(self, issue_id: str) -> Issue | None:
         """Get issue by ID or number."""
         try:
             args = [
@@ -125,29 +121,29 @@ class GitHubPlatform(GitPlatform):
     async def update_issue(
         self,
         issue_id: str,
-        title: Optional[str] = None,
-        body: Optional[str] = None,
-        state: Optional[str] = None,
-        labels: Optional[List[str]] = None,
+        title: str | None = None,
+        body: str | None = None,
+        state: str | None = None,
+        labels: list[str] | None = None,
     ) -> Issue:
         """Update issue properties."""
         args = ["issue", "edit", str(issue_id)]
-        
+
         if title:
             args.extend(["--title", title])
         if body:
             args.extend(["--body", body])
         if labels:
             args.extend(["--add-label", ",".join(labels)])
-        
+
         self._run_gh_command(args)
-        
+
         # Close/reopen if state changed
         if state == "closed":
             self._run_gh_command(["issue", "close", str(issue_id)])
         elif state == "open":
             self._run_gh_command(["issue", "reopen", str(issue_id)])
-        
+
         # Fetch updated issue
         updated = await self.get_issue(issue_id)
         if not updated:
@@ -158,47 +154,47 @@ class GitHubPlatform(GitPlatform):
         """Add a comment to an issue."""
         args = ["issue", "comment", str(issue_id), "--body", body]
         self._run_gh_command(args)
-        
+
         # Fetch the comment (last comment on the issue)
         comments = await self.get_comments(issue_id)
         if comments:
             return comments[-1]
-        
+
         # Fallback: create a comment object
         return Comment(
             id="unknown",
             issue_id=str(issue_id),
             author="bot",
             body=body,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             url=f"https://github.com/{self.repo}/issues/{issue_id}"
         )
 
     async def get_comments(
-        self, issue_id: str, since: Optional[datetime] = None
-    ) -> List[Comment]:
+        self, issue_id: str, since: datetime | None = None
+    ) -> list[Comment]:
         """Get comments for an issue."""
         args = [
             "api",
             f"/repos/{self.repo}/issues/{issue_id}/comments",
             "--jq", ".[]|{id,user:.user.login,body,created_at,html_url}"
         ]
-        
+
         try:
             output = self._run_gh_command(args)
             if not output:
                 return []
-            
+
             comments = []
             for line in output.strip().split("\n"):
                 if not line:
                     continue
                 data = json.loads(line)
                 created_at = datetime.fromisoformat(data["created_at"].replace("Z", "+00:00"))
-                
+
                 if since and created_at < since:
                     continue
-                
+
                 comment = Comment(
                     id=str(data["id"]),
                     issue_id=str(issue_id),
@@ -208,20 +204,20 @@ class GitHubPlatform(GitPlatform):
                     url=data["html_url"]
                 )
                 comments.append(comment)
-            
+
             return comments
         except RuntimeError:
             return []
 
-    async def close_issue(self, issue_id: str, comment: Optional[str] = None) -> None:
+    async def close_issue(self, issue_id: str, comment: str | None = None) -> None:
         """Close an issue."""
         if comment:
             await self.add_comment(issue_id, comment)
-        
+
         self._run_gh_command(["issue", "close", str(issue_id)])
         logger.info(f"Closed issue #{issue_id}")
 
-    async def search_linked_prs(self, issue_id: str) -> List[PullRequest]:
+    async def search_linked_prs(self, issue_id: str) -> list[PullRequest]:
         """Find PRs linked to this issue."""
         # Search for PRs mentioning this issue
         args = [
@@ -229,11 +225,11 @@ class GitHubPlatform(GitPlatform):
             "--search", f"#{issue_id}",
             "--json", "number,title,state,headRefName,baseRefName,url"
         ]
-        
+
         try:
             output = self._run_gh_command(args)
             data = json.loads(output)
-            
+
             prs = []
             for pr_data in data:
                 pr = PullRequest(
@@ -247,7 +243,7 @@ class GitHubPlatform(GitPlatform):
                     linked_issues=[issue_id]
                 )
                 prs.append(pr)
-            
+
             return prs
         except RuntimeError:
             return []
@@ -263,10 +259,10 @@ class GitHubPlatform(GitPlatform):
         issue_number: str,
         title: str,
         body: str,
-        issue_repo: Optional[str] = None,
+        issue_repo: str | None = None,
         base_branch: str = "main",
         branch_prefix: str = "nexus",
-    ) -> Optional[PullRequest]:
+    ) -> PullRequest | None:
         """Create a PR from uncommitted changes in a local repository.
 
         Performs: detect changes → create branch → stage → commit → push → open PR.
@@ -396,8 +392,8 @@ class GitHubPlatform(GitPlatform):
         self,
         issue_number: int,
         label_prefix: str = "workflow:",
-        default: Optional[str] = None,
-    ) -> Optional[str]:
+        default: str | None = None,
+    ) -> str | None:
         """Extract the workflow type from an issue's labels.
 
         Looks for labels matching *label_prefix* (e.g. ``workflow:full``,
@@ -443,7 +439,7 @@ class GitHubPlatform(GitPlatform):
     def _parse_issue(self, data: dict) -> Issue:
         """Parse issue data from gh CLI JSON output."""
         labels = [label["name"] for label in data.get("labels", [])]
-        
+
         return Issue(
             id=str(data["number"]),
             number=data["number"],
