@@ -2,8 +2,7 @@
 
 import threading
 import time
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -13,7 +12,6 @@ from nexus.plugins.registry import (
     PluginRegistrationError,
     PluginRegistry,
 )
-
 
 # ---------------------------------------------------------------------------
 # Registry thread-safety / unregister / force tests

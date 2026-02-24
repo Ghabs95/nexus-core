@@ -215,7 +215,7 @@ class HotReloadWatcher:
             return
 
         handler = _PluginFileEventHandler(self._registry, self._watch_dir)
-        self._observer = Observer()
+        self._observer = Observer(timeout=self._poll_interval)
         self._observer.schedule(handler, str(self._watch_dir), recursive=False)
         self._observer.start()
         logger.info("HotReloadWatcher started, watching %s", self._watch_dir)

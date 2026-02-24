@@ -28,7 +28,7 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
@@ -170,9 +170,22 @@ class HandoffPayload:
 
 
 def _canonical_bytes(payload: HandoffPayload) -> bytes:
-    """Return canonical JSON bytes of the signable fields (sorted keys)."""
+    """Return canonical JSON bytes of the signable fields (sorted keys).
+
+    Raises:
+        ValueError: If any signable field (notably ``task_context``) contains
+            non-JSON-serializable data.
+    """
     signable: Dict[str, Any] = {k: getattr(payload, k) for k in _SIGN_FIELDS}
-    return json.dumps(signable, sort_keys=True, ensure_ascii=True).encode("utf-8")
+    try:
+        return json.dumps(signable, sort_keys=True, ensure_ascii=True).encode("utf-8")
+    except TypeError as exc:
+        raise ValueError(
+            "HandoffPayload contains non-JSON-serializable data in signable "
+            "fields (e.g. 'task_context'). Ensure all values are JSON-"
+            "serializable primitives (str, int, float, bool, None, lists, "
+            "and dicts)."
+        ) from exc
 
 
 def sign_handoff(payload: HandoffPayload, secret: str) -> str:
@@ -249,7 +262,6 @@ class HandoffDispatcher:
         self,
         payload: HandoffPayload,
         runtime: "AgentRuntime",
-        timeout_s: float = 60.0,
     ) -> Tuple[Optional[int], Optional[str]]:
         """Sign, validate, and dispatch *payload* to the target agent.
 
@@ -259,7 +271,6 @@ class HandoffDispatcher:
         Args:
             payload: The handoff payload to dispatch.
             runtime: Host-provided :class:`AgentRuntime` implementation.
-            timeout_s: Per-attempt timeout in seconds passed to the runtime.
 
         Returns:
             ``(pid, tool_name)`` on success, ``(None, None)`` on all failures.

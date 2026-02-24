@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import json
-import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
 
 from nexus.core.chat_agents_schema import (
-    HandoffPayload,
     HandoffDispatcher,
+    HandoffPayload,
     sign_handoff,
     verify_handoff,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -188,7 +185,7 @@ class TestHandoffDispatcher:
         rt = self._runtime()
         d = self._dispatcher()
         p = _make_payload()
-        pid, tool = d.dispatch(p, rt, timeout_s=5.0)
+        pid, tool = d.dispatch(p, rt)
         assert pid == 1234
         assert tool == "copilot"
         rt.launch_agent.assert_called_once()
