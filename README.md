@@ -27,6 +27,7 @@ Every agent action becomes part of your development history:
 - ✅ **Reliability**: Auto-retry, timeout detection, graceful failure handling
 - ✅ **State Management**: Persistent workflow state with audit trails
 - ✅ **AI Orchestration**: Route work to the best AI tool (Copilot, Gemini, soon Claude and Codex)
+- ✅ **Multi-Agent Delegation**: Structured handoffs and callbacks for complex workflows
 - ✅ **Fallback Support**: Automatic failover when tools are rate-limited or unavailable
 - ✅ **Pluggable Architecture**: Bring your own storage, git platform, notification system
 
@@ -34,6 +35,7 @@ Every agent action becomes part of your development history:
 
 > 📖 **Documentation:**
 > - [Usage Guide & Examples](docs/USAGE.md) - How to use nexus-core in your project
+> - [Agent Delegation Protocol](docs/DELEGATION.md) - Multi-agent collaborative workflows and handoffs
 > - [Plugin Architecture](docs/PLUGINS.md) - Build and load Telegram/GitHub/AI integrations as plugins
 > - [Comparison with Google ADK, LangChain, and others](docs/COMPARISON.md)
 > - [Positioning & Messaging](docs/POSITIONING.md)

@@ -278,6 +278,17 @@ class NotificationChannel(ABC):
 - `EmailNotifier` - SMTP
 - `DiscordNotifier` - Discord webhooks
 
+### 5. Agent Delegation Protocol
+**Why**: Facilitate seamless, non-linear collaboration between specialized agents with guaranteed context integrity and lifecycle tracking.
+
+**Core Components**:
+- `DelegationRequest/Callback`: Formal models for requesting sub-tasks and returning structured results.
+- `HandoffManager`: Thread-safe registry for tracking and resolving active agent delegations.
+- `HandoffPayload`: Canonical agent-to-agent contract including task context, workflow IDs, and verification tokens.
+- `State-Signing (ADR-001)`: HMAC-SHA256 signatures over payload fields ensure context hasn't been tampered with during transfer.
+- `HandoffDispatcher (ADR-002)`: Manages the dispatch of handoff payloads with built-in retry logic and exponential backoff.
+- `Expiry Enforcement (ADR-003)`: Time-to-live (TTL) on payloads prevents replay attacks and stale task execution.
+
 ---
 
 ## Configuration Evolution

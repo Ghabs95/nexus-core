@@ -103,6 +103,8 @@ steps:
     agent_type: developer
 ```
 
+**Multi-Agent Collaborative Delegation**: Enables lead agents to request sub-tasks from specialized agents and await results. See [Agent Delegation Protocol](DELEGATION.md) for technical details and examples.
+
 ### Defining Custom Agents
 
 The Nexus Core framework allows for the definition of custom agent types through YAML configuration files. These agent definitions specify the agent's purpose, required tools, input/output contracts, and AI instructions, enabling flexible and extensible agent-driven workflows.
@@ -169,6 +171,39 @@ require_human_merge_approval: true  # Only applies when project policy is 'workf
 - **Agent behavior**: Deployment agents (e.g., @OpsCommander) check this policy before executing merge operations
 
 See [examples/workflows/development_workflow.yaml](../examples/workflows/development_workflow.yaml) for complete example.
+
+### Agent Handoff Protocol
+
+Nexus Core provides a standardized protocol for agents to communicate and hand off tasks to one another securely. This protocol ensures that context is preserved and verified as it moves through the workflow.
+
+#### Key Features
+- **Standardized Schema**: Uses `HandoffPayload` for consistent data exchange.
+- **Secure Transfer**: Verification tokens using HMAC-SHA256 prevent tampering.
+- **Robust Dispatching**: Automatic retries with exponential backoff for inter-agent calls.
+- **Expiry Protection**: Built-in TTL to prevent stale task execution.
+
+#### Basic Usage
+
+```python
+from nexus.core.chat_agents_schema import HandoffPayload, HandoffDispatcher
+
+# Create a handoff payload
+payload = HandoffPayload.create(
+    issued_by="designer",
+    target_agent="developer",
+    issue_number="69",
+    workflow_id="nexus-69-full",
+    task_context={"design_doc": "path/to/doc.md"}
+)
+
+# Dispatch to the next agent
+dispatcher = HandoffDispatcher()
+success, error = await dispatcher.dispatch(
+    payload=payload,
+    runtime=agent_runtime,
+    secret=os.environ["NEXUS_HANDOFF_SECRET"]
+)
+```
 
 **What it does NOT know:**
 - ❌ What "tier-2-standard" means
