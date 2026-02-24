@@ -3,8 +3,10 @@ AI Orchestrator - intelligently routes work to best AI provider with fallback.
 
 Migrated and simplified from original Nexus ai_orchestrator.py
 """
+import json
 import logging
-from typing import List, Optional
+import re
+from typing import Any, Dict, List, Optional
 
 from nexus.adapters.ai.base import AIProvider, ExecutionContext
 from nexus.core.models import AgentResult
@@ -180,3 +182,140 @@ class AIOrchestrator:
                 logger.info(f"Removed provider: {provider_name}")
                 return True
         return False
+
+    async def execute_with_delegation(
+        self,
+        agent_name: str,
+        prompt: str,
+        workspace: str,
+        delegation_request: Optional[Any] = None,
+        handoff_manager: Optional[Any] = None,
+        **kwargs,
+    ) -> AgentResult:
+        """Execute agent with optional delegation tracking.
+
+        Wraps :meth:`execute` with delegation lifecycle management:
+
+        1. If *delegation_request* is provided, it is registered with
+           *handoff_manager* before the agent is launched.
+        2. After execution, the result output is scanned for a nested
+           completion marker (a JSON block tagged ``__delegation_callback__``).
+           When found, the marker is stripped from ``result.output`` and
+           :meth:`handoff_manager.complete` is called to resolve the chain.
+        3. ``result.metadata["delegation_id"]`` is set when a delegation is
+           active, so callers can correlate results.
+
+        Nested completion marker format emitted by a sub-agent::
+
+            {"__delegation_callback__": {"delegation_id": "<uuid>",
+                                         "result": {...},
+                                         "success": true}}
+
+        Args:
+            agent_name: Name of the agent to execute.
+            prompt: Prompt/instructions for the agent.
+            workspace: Workspace path.
+            delegation_request: Optional
+                :class:`~nexus.core.models.DelegationRequest` to register.
+            handoff_manager: Optional
+                :class:`~nexus.plugins.plugin_runtime.HandoffManager` for
+                lifecycle tracking.  Required when *delegation_request* is set.
+            **kwargs: Forwarded to :meth:`execute`.
+
+        Returns:
+            :class:`~nexus.core.models.AgentResult` with
+            ``metadata["delegation_id"]`` populated when active.
+        """
+        if delegation_request is not None and handoff_manager is not None:
+            handoff_manager.register(delegation_request)
+            kwargs.setdefault("metadata", {})["delegation_id"] = (
+                delegation_request.delegation_id
+            )
+
+        result = await self.execute(agent_name, prompt, workspace, **kwargs)
+
+        if result.metadata is None:
+            result.metadata = {}
+
+        if delegation_request is not None:
+            result.metadata["delegation_id"] = delegation_request.delegation_id
+
+        if handoff_manager is not None and result.output:
+            result = self._resolve_delegation_callback(result, handoff_manager)
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    _CALLBACK_RE = re.compile(
+        r'\{[^{}]*"__delegation_callback__"[^{}]*\{[^{}]*\}[^{}]*\}',
+        re.DOTALL,
+    )
+
+    def _resolve_delegation_callback(
+        self,
+        result: AgentResult,
+        handoff_manager: Any,
+    ) -> AgentResult:
+        """Scan *result.output* for delegation callback markers and resolve them.
+
+        Strips the JSON marker from the output so downstream consumers see
+        clean text.  Calls :meth:`handoff_manager.complete` for each valid
+        marker found.
+
+        Args:
+            result: The :class:`~nexus.core.models.AgentResult` to inspect.
+            handoff_manager: Active
+                :class:`~nexus.plugins.plugin_runtime.HandoffManager`.
+
+        Returns:
+            The (possibly mutated) *result* with markers removed.
+        """
+        from nexus.core.models import DelegationCallback
+
+        cleaned_output = result.output
+        for match in self._CALLBACK_RE.finditer(result.output):
+            raw = match.group(0)
+            try:
+                outer: Dict[str, Any] = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            payload = outer.get("__delegation_callback__")
+            if not isinstance(payload, dict):
+                continue
+
+            delegation_id = payload.get("delegation_id")
+            if not delegation_id:
+                continue
+
+            original = handoff_manager.get(delegation_id)
+            if original is None:
+                logger.warning(
+                    "_resolve_delegation_callback: unknown delegation_id %s",
+                    delegation_id,
+                )
+                continue
+
+            callback = DelegationCallback(
+                delegation_id=delegation_id,
+                sub_agent=original.sub_agent,
+                lead_agent=original.lead_agent,
+                issue_number=original.issue_number,
+                workflow_id=original.workflow_id,
+                result=payload.get("result", {}),
+                success=bool(payload.get("success", False)),
+                error=payload.get("error"),
+            )
+            handoff_manager.complete(callback)
+            logger.info(
+                "Delegation callback resolved: %s (success=%s)",
+                delegation_id,
+                callback.success,
+            )
+            cleaned_output = cleaned_output.replace(raw, "", 1)
+
+        result.output = cleaned_output.strip()
+        return result

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import uuid
 
 
 class WorkflowState(Enum):
@@ -266,6 +267,56 @@ class DryRunReport:
     def is_valid(self) -> bool:
         """Return True when no configuration errors were detected."""
         return len(self.errors) == 0
+
+
+class DelegationStatus(Enum):
+    """Lifecycle status of an agent delegation."""
+
+    PENDING = "pending"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    EXPIRED = "expired"
+
+
+@dataclass
+class DelegationRequest:
+    """Request issued by a lead agent to delegate a sub-task to another agent."""
+
+    lead_agent: str
+    sub_agent: str
+    issue_number: str
+    workflow_id: str
+    task_description: str
+    task_context: Dict[str, Any] = field(default_factory=dict)
+    delegation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    status: DelegationStatus = DelegationStatus.PENDING
+    created_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    expires_at: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        # Normalize to ACTIVE on construction so callers don't have to set it
+        if self.status == DelegationStatus.PENDING:
+            self.status = DelegationStatus.ACTIVE
+
+
+@dataclass
+class DelegationCallback:
+    """Structured callback emitted by a sub-agent upon completing a delegation."""
+
+    delegation_id: str
+    sub_agent: str
+    lead_agent: str
+    issue_number: str
+    workflow_id: str
+    result: Dict[str, Any]
+    success: bool
+    error: Optional[str] = None
+    completed_at: Optional[str] = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
 
 @dataclass
