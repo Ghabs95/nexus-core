@@ -2,11 +2,14 @@
 
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib import request
 
 from nexus.adapters.notifications.base import Message, NotificationChannel
 from nexus.core.models import Severity
+
+if TYPE_CHECKING:
+    from nexus.core.models import Workflow
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +89,25 @@ class TelegramNotificationPlugin(NotificationChannel):
         }.get((severity or "info").lower(), "ℹ️")
 
         return self.send_message_sync(f"{icon} {message}", parse_mode=self.parse_mode)
+
+    def send_workflow_visualization(self, workflow: "Workflow") -> bool:
+        """Send a Mermaid flowchart of *workflow* to the configured Telegram chat.
+
+        The diagram is delivered as a fenced ``mermaid`` code block so that
+        Telegram clients (or bots with Mermaid rendering support) can display
+        it correctly.  Falls back gracefully when credentials are missing.
+
+        Args:
+            workflow: The workflow whose step statuses should be visualised.
+
+        Returns:
+            ``True`` if the message was sent successfully, ``False`` otherwise.
+        """
+        from nexus.core.visualizer import workflow_to_mermaid
+
+        diagram = workflow_to_mermaid(workflow)
+        text = f"📊 *Workflow: {workflow.name}*\n\n```mermaid\n{diagram}\n```"
+        return self.send_message_sync(text, parse_mode=self.parse_mode)
 
     def _post(self, method: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not self.bot_token:
