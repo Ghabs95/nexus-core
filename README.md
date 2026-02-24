@@ -29,6 +29,7 @@ Every agent action becomes part of your development history:
 - ✅ **AI Orchestration**: Route work to the best AI tool (Copilot, Gemini, soon Claude and Codex)
 - ✅ **Fallback Support**: Automatic failover when tools are rate-limited or unavailable
 - ✅ **Pluggable Architecture**: Bring your own storage, git platform, notification system
+- ✅ **Dynamic Plugin Hot-Reload**: Load and update agent plugins at runtime without service restarts ([#68](https://github.com/Ghabs95/nexus-core/issues/68))
 
 **Think of it as Temporal meets GitHub Actions for AI agents** — workflows that integrate seamlessly with your development process.
 

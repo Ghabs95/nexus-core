@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Dynamic Plugin Hot-Reload** — Enable the AI Orchestrator to load and update agent plugins without restarting core Nexus services. Introduced `HotReloadWatcher` in `nexus.plugins.plugin_runtime` which monitors a directory for `.py` file changes and reloads plugins into the `PluginRegistry` using isolated module loading ([#68](https://github.com/Ghabs95/nexus-core/issues/68)).
+- **Plugin Registry Enhancements** — Added `unregister(kind, name)` to `PluginRegistry` and a `force` flag to `register()` and `register_factory()` to support in-place plugin replacement. The registry is now concurrency-safe with internal `threading.Lock` protection.
 - **Configurable Storage Adapters** — Introduced a unified configuration mechanism for storage backends (File and PostgreSQL) via `WorkflowStateEnginePlugin`. Users can now switch backends using the `storage_type` configuration key or the `NEXUS_STORAGE_TYPE` environment variable ([#65](https://github.com/Ghabs95/nexus-core/issues/65)).
 - **PostgreSQL Environment Variable Support** — Added `NEXUS_STORAGE_DSN` for secure PostgreSQL connection management, avoiding plaintext credentials in configuration files.
 - **YAML Workflow Orchestration** — Introduced `YamlWorkflowLoader` for loading and validating workflow definitions from YAML. This enables complex multi-step AI workflows with support for parallel execution, conditional branching, and retry policies ([#62](https://github.com/Ghabs95/nexus-core/issues/62)).

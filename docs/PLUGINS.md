@@ -63,6 +63,62 @@ github_integration = "nexus_github_plugin:register_plugins"
 telegram_integration = "nexus_telegram_plugin:register_plugins"
 ```
 
+## Dynamic Hot-Reload
+
+Nexus Core supports loading and updating plugins from a directory at runtime without restarting services. This is useful for rapid development and production environments where downtime must be minimized.
+
+### Requirements
+
+Hot-reload requires the `watchdog` package:
+
+```bash
+pip install nexus-core[hotreload]
+```
+
+### Usage
+
+The `HotReloadWatcher` monitors a directory for `.py` file changes and reloads matching plugins into the `PluginRegistry`.
+
+```python
+from nexus.plugins import PluginRegistry
+from nexus.plugins.plugin_runtime import HotReloadWatcher
+
+registry = PluginRegistry()
+watcher = HotReloadWatcher(registry, watch_dir="/path/to/plugins")
+
+# Start the background watcher thread
+watcher.start()
+
+# Stop the watcher when finished
+watcher.stop()
+```
+
+### Plugin File Format
+
+For a file in the watched directory to be loaded, it must expose one of the following:
+
+1.  A function named `register_plugins(registry)` (the `RegistryContributor` protocol).
+2.  The module itself is a callable that accepts a `PluginRegistry`.
+
+**Example `my_plugin.py`:**
+
+```python
+from nexus.plugins import PluginKind
+
+def register_plugins(registry):
+    registry.register_factory(
+        kind=PluginKind.AI_PROVIDER,
+        name="custom-provider",
+        version="1.0.0",
+        factory=lambda config: MyProvider(**config),
+        force=True  # Ensure we can overwrite during hot-reload
+    )
+```
+
+### Isolation
+
+Each reload uses a fresh module object created via `importlib.util.spec_from_file_location` and `module_from_spec`. This ensures that stale references do not leak into `sys.modules`.
+
 ## Migration Guidance
 
 ### Move into nexus-core (contracts only)
