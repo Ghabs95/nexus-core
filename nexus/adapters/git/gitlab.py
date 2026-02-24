@@ -171,50 +171,69 @@ class GitLabPlatform(GitPlatform):
             body = f"{body}\n\nCloses {issue_ref}"
 
         branch_name = f"{branch_prefix}/issue-{issue_number}"
-
-        # Stage + commit + push
-        result = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
+        current_branch = base_branch
+        current_branch_result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
+            text=True,
             cwd=repo_dir,
         )
-        if not result.stdout.strip():
-            subprocess.run(["git", "add", "-A"], cwd=repo_dir, check=True)
+        if current_branch_result.returncode == 0:
+            detected = (current_branch_result.stdout or "").strip()
+            if detected:
+                current_branch = detected
 
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            capture_output=True,
-            cwd=repo_dir,
-        )
-        if not status.stdout.strip():
-            logger.info("No local changes detected — skipping MR creation")
-            return None
+        try:
+            # Stage + commit + push
+            result = subprocess.run(
+                ["git", "diff", "--cached", "--name-only"],
+                capture_output=True,
+                cwd=repo_dir,
+            )
+            if not result.stdout.strip():
+                subprocess.run(["git", "add", "-A"], cwd=repo_dir, check=True)
 
-        subprocess.run(
-            ["git", "checkout", "-B", branch_name], cwd=repo_dir, check=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", f"nexus: {title} (closes #{issue_number})"],
-            cwd=repo_dir,
-            check=True,
-        )
-        subprocess.run(
-            ["git", "push", "--set-upstream", "origin", branch_name, "--force"],
-            cwd=repo_dir,
-            check=True,
-        )
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True,
+                cwd=repo_dir,
+            )
+            if not status.stdout.strip():
+                logger.info("No local changes detected — skipping MR creation")
+                return None
 
-        data = await self._post(
-            f"projects/{self._encoded_repo}/merge_requests",
-            {
-                "source_branch": branch_name,
-                "target_branch": base_branch,
-                "title": title,
-                "description": body,
-                "remove_source_branch": True,
-            },
-        )
-        return self._to_pr(data)
+            subprocess.run(
+                ["git", "checkout", "-B", branch_name], cwd=repo_dir, check=True
+            )
+            subprocess.run(
+                ["git", "commit", "-m", f"nexus: {title} (closes #{issue_number})"],
+                cwd=repo_dir,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "push", "--set-upstream", "origin", branch_name, "--force"],
+                cwd=repo_dir,
+                check=True,
+            )
+
+            data = await self._post(
+                f"projects/{self._encoded_repo}/merge_requests",
+                {
+                    "source_branch": branch_name,
+                    "target_branch": base_branch,
+                    "title": title,
+                    "description": body,
+                    "remove_source_branch": True,
+                },
+            )
+            return self._to_pr(data)
+        finally:
+            subprocess.run(
+                ["git", "checkout", current_branch],
+                cwd=repo_dir,
+                check=False,
+                capture_output=True,
+            )
 
     # ------------------------------------------------------------------
     # HTTP helpers (sync + asyncio.to_thread wrapper)
