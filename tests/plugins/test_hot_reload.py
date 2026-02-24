@@ -161,6 +161,15 @@ class TestHotReloadWatcherInit:
         with pytest.raises(TypeError):
             HotReloadWatcher("not-a-registry", "/tmp")
 
+    def test_start_raises_when_watch_dir_missing(self, tmp_path):
+        pytest.importorskip("watchdog")
+        from nexus.plugins.plugin_runtime import HotReloadWatcher
+
+        missing = tmp_path / "does_not_exist"
+        watcher = HotReloadWatcher(PluginRegistry(), missing)
+        with pytest.raises(FileNotFoundError, match="Watch directory does not exist"):
+            watcher.start()
+
 
 @pytest.mark.skipif(
     not __import__("importlib").util.find_spec("watchdog"),
@@ -253,3 +262,30 @@ class TestPluginFileEventHandler:
         handler = _PluginFileEventHandler(registry, tmp_path)
         # Must not raise
         handler.on_modified(self._make_event(str(bad_file)))
+
+    def test_register_without_force_logs_warning_not_raises(self, tmp_path, caplog):
+        """Reloading a plugin that uses register without force=True must not crash the watcher."""
+        pytest.importorskip("watchdog")
+        import logging
+
+        from nexus.plugins.plugin_runtime import _PluginFileEventHandler
+
+        plugin_file = tmp_path / "no_force_plugin.py"
+        plugin_file.write_text(
+            "from nexus.plugins.base import PluginKind, make_plugin_spec\n"
+            "def _f(c): return object()\n"
+            "def register_plugins(registry):\n"
+            "    registry.register_factory(PluginKind.STORAGE_BACKEND, 'dup', '1.0', _f)\n"
+        )
+
+        registry = PluginRegistry()
+        # First load — registers successfully
+        handler = _PluginFileEventHandler(registry, tmp_path)
+        handler.on_modified(self._make_event(str(plugin_file)))
+        assert registry.has_plugin(PluginKind.STORAGE_BACKEND, "dup")
+
+        # Second load — register without force=True raises PluginRegistrationError;
+        # the handler must log a warning and NOT raise
+        with caplog.at_level(logging.WARNING, logger="nexus.plugins.plugin_runtime"):
+            handler.on_modified(self._make_event(str(plugin_file)))
+        assert any("Failed to register plugins" in r.message for r in caplog.records)

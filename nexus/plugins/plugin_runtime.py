@@ -37,6 +37,26 @@ class HotReloadWatcher:
     The watcher is opt-in and must be explicitly started with :meth:`start`.
     It has no effect on existing code paths that do not use it.
 
+    .. warning::
+
+        All ``.py`` files inside ``watch_dir`` are executed as Python code
+        with the application's full privileges.  Only point this watcher at
+        directories that contain **trusted** source files.
+
+    **Limitations:**
+
+    - Only the **top-level** directory is monitored (non-recursive).  Plugin
+      files placed in sub-directories will not be detected.
+    - Module isolation applies to the plugin file itself only.  If a plugin
+      imports other modules those are loaded through the normal
+      ``sys.modules`` cache and will **not** be re-executed on reload.
+      Hot-reload works best for self-contained plugin files.
+    - Plugin ``register_plugins()`` functions must call
+      ``registry.register()`` / ``registry.register_factory()`` with
+      ``force=True``; otherwise subsequent reloads raise
+      :class:`~nexus.plugins.registry.PluginRegistrationError` (the error
+      is caught and logged, but the reload is skipped).
+
     Example::
 
         from nexus.plugins.plugin_runtime import HotReloadWatcher
@@ -46,20 +66,30 @@ class HotReloadWatcher:
         watcher.stop()
 
     Plugin files must expose one of:
-    - A ``register_plugins(registry)`` function (``RegistryContributor`` protocol), or
+
+    - A ``register_plugins(registry)`` function (``RegistryContributor``
+      protocol), or
     - A top-level callable that accepts a :class:`PluginRegistry`.
+
+    Example plugin file using ``force=True`` for hot-reload compatibility::
+
+        from nexus.plugins.base import PluginKind
+
+        def register_plugins(registry):
+            registry.register_factory(
+                PluginKind.STORAGE_BACKEND, "my-plugin", "1.0", _factory,
+                force=True,
+            )
 
     Args:
         registry: The :class:`~nexus.plugins.registry.PluginRegistry` to update.
         watch_dir: Path to the directory containing plugin ``.py`` files.
-        poll_interval: Seconds between filesystem event checks (default 1.0).
     """
 
     def __init__(
         self,
         registry: "PluginRegistry",  # noqa: F821 – forward ref
         watch_dir: "str | Path",
-        poll_interval: float = 1.0,
     ) -> None:
         if not _WATCHDOG_AVAILABLE:
             raise ImportError(
@@ -73,7 +103,6 @@ class HotReloadWatcher:
 
         self._registry = registry
         self._watch_dir = Path(watch_dir).resolve()
-        self._poll_interval = poll_interval
         self._observer: Optional[Observer] = None
 
     # ------------------------------------------------------------------
@@ -85,6 +114,9 @@ class HotReloadWatcher:
         if self._observer is not None and self._observer.is_alive():
             logger.warning("HotReloadWatcher is already running")
             return
+
+        if not self._watch_dir.exists():
+            raise FileNotFoundError(f"Watch directory does not exist: {self._watch_dir}")
 
         handler = _PluginFileEventHandler(self._registry, self._watch_dir)
         self._observer = Observer()
