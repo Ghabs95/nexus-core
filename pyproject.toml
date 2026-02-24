@@ -54,8 +54,11 @@ openai = [
 anthropic = [
     "anthropic>=0.18",
 ]
+hotreload = [
+    "watchdog>=3.0",
+]
 all = [
-    "nexus-core[telegram,slack,discord,postgres,redis,openai,anthropic]",
+    "nexus-core[telegram,slack,discord,postgres,redis,openai,anthropic,hotreload]",
 ]
 dev = [
     "pytest>=7.0",

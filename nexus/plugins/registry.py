@@ -1,6 +1,7 @@
 """Plugin registry and entry-point loading for Nexus Core."""
 
 import logging
+import threading
 from importlib.metadata import entry_points
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -28,23 +29,47 @@ class PluginRegistry:
 
     def __init__(self):
         self._plugins: Dict[Tuple[PluginKind, str], PluginSpec] = {}
+        self._lock = threading.Lock()
 
-    def register(self, spec: PluginSpec) -> None:
-        """Register a plugin spec."""
+    def register(self, spec: PluginSpec, *, force: bool = False) -> None:
+        """Register a plugin spec.
+
+        Args:
+            spec: The plugin spec to register.
+            force: When True, replaces an existing registration without error.
+        """
         key = (spec.kind, normalize_plugin_name(spec.name))
-        if key in self._plugins:
-            existing = self._plugins[key]
-            raise PluginRegistrationError(
-                f"Plugin already registered: kind={spec.kind.value} name={spec.name} "
-                f"existing_version={existing.version}"
-            )
-        self._plugins[key] = spec
+        with self._lock:
+            if key in self._plugins and not force:
+                existing = self._plugins[key]
+                raise PluginRegistrationError(
+                    f"Plugin already registered: kind={spec.kind.value} name={spec.name} "
+                    f"existing_version={existing.version}"
+                )
+            self._plugins[key] = spec
         logger.info(
             "Registered plugin: kind=%s name=%s version=%s",
             spec.kind.value,
             spec.name,
             spec.version,
         )
+
+    def unregister(self, kind: PluginKind, name: str) -> None:
+        """Remove a registered plugin spec.
+
+        Args:
+            kind: The plugin kind.
+            name: The plugin name (normalized internally).
+
+        Raises:
+            PluginNotFoundError: If no matching plugin is registered.
+        """
+        key = (kind, normalize_plugin_name(name))
+        with self._lock:
+            if key not in self._plugins:
+                raise PluginNotFoundError(f"No plugin found: kind={kind.value} name={name}")
+            del self._plugins[key]
+        logger.info("Unregistered plugin: kind=%s name=%s", kind.value, name)
 
     def register_factory(
         self,
@@ -53,32 +78,38 @@ class PluginRegistry:
         version: str,
         factory: Callable[[Dict[str, Any]], Any],
         description: str = "",
+        *,
+        force: bool = False,
     ) -> None:
         """Convenience method to register a plugin from primitive values."""
-        self.register(make_plugin_spec(kind, name, version, factory, description))
+        self.register(make_plugin_spec(kind, name, version, factory, description), force=force)
 
     def create(self, kind: PluginKind, name: str, config: Optional[Dict[str, Any]] = None) -> Any:
         """Instantiate a plugin by kind/name."""
         key = (kind, normalize_plugin_name(name))
-        spec = self._plugins.get(key)
+        with self._lock:
+            spec = self._plugins.get(key)
         if not spec:
             raise PluginNotFoundError(f"No plugin found: kind={kind.value} name={name}")
         return spec.factory(config or {})
 
     def get_spec(self, kind: PluginKind, name: str) -> Optional[PluginSpec]:
         """Get plugin spec by kind/name."""
-        return self._plugins.get((kind, normalize_plugin_name(name)))
+        with self._lock:
+            return self._plugins.get((kind, normalize_plugin_name(name)))
 
     def list_specs(self, kind: Optional[PluginKind] = None) -> List[PluginSpec]:
         """List registered plugin specs, optionally filtered by kind."""
-        specs = self._plugins.values()
+        with self._lock:
+            specs = list(self._plugins.values())
         if kind:
-            specs = (spec for spec in specs if spec.kind == kind)
+            specs = [spec for spec in specs if spec.kind == kind]
         return sorted(specs, key=lambda spec: (spec.kind.value, spec.name))
 
     def has_plugin(self, kind: PluginKind, name: str) -> bool:
         """Check whether a plugin is registered."""
-        return (kind, normalize_plugin_name(name)) in self._plugins
+        with self._lock:
+            return (kind, normalize_plugin_name(name)) in self._plugins
 
     def load_entrypoint_plugins(self, group: str = "nexus_core.plugins") -> int:
         """Load plugins from setuptools entry points.
