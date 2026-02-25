@@ -33,7 +33,7 @@ class OpsHandlerDeps:
     get_inbox_queue_overview: Callable[[int], dict[str, Any]]
     format_error_for_user: Callable[[Exception, str], str]
     get_audit_history: Callable[[str, int], list[dict[str, Any]]]
-    get_github_repo: Callable[[str], str]
+    get_repo: Callable[[str], str]
     get_direct_issue_plugin: Callable[[str], Any]
     orchestrator: Any
     ai_persona: str
@@ -465,12 +465,12 @@ async def direct_handler(ctx: InteractiveContext, deps: OpsHandlerDeps) -> None:
 ---
 *Created via /direct command - invoke {agent} immediately*"""
 
-        repo = deps.get_github_repo(project)
+        repo = deps.get_repo(project)
         plugin = deps.get_direct_issue_plugin(repo)
         if not plugin:
             await ctx.edit_message_text(
                 message_id=msg_id,
-                text="❌ Failed to initialize GitHub issue plugin",
+                text="❌ Failed to initialize Git issue plugin",
             )
             return
 

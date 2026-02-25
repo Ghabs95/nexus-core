@@ -463,6 +463,9 @@ def _build_feature_suggestions(
             task="advisor_chat",
             persona=persona,
         )
+        raw_text = result.get("text", "") if isinstance(result, dict) else ""
+        deps.logger.info("AI returned feature ideation text (length %d)", len(raw_text))
+        
         generated = _extract_items_from_result(result or {})
         if generated:
             provider = "primary"

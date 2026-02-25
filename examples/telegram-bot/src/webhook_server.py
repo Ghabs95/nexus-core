@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-GitHub Webhook Server - Receives and processes GitHub webhook events
+Nexus Webhook Server - Receives and processes Git webhook events
 
-This service replaces the polling-based GitHub comment checking with 
+This service replaces the polling-based Git comment checking with 
 real-time webhook event processing for faster response times.
 
 Event handlers:
-- issues.opened: Convert GitHub issue to markdown task in .nexus/inbox/<project>/ for triage
+- issues.opened: Convert Git issue to markdown task in .nexus/inbox/<project>/ for triage
 - issue_comment.created: Detect workflow completion and chain to next agent
 - pull_request.opened/synchronized: Notify about new PRs
 - pull_request_review.submitted: Notify about PR reviews
@@ -50,7 +50,7 @@ from config import (
     WEBHOOK_PORT,
     WEBHOOK_SECRET,
     get_default_project,
-    get_github_repos,
+    get_repos,
     get_inbox_dir,
     get_tasks_active_dir,
 )
@@ -58,7 +58,7 @@ from integrations.notifications import (
     emit_alert,
     send_notification,
 )
-from orchestration.plugin_runtime import get_github_webhook_policy_plugin
+from orchestration.plugin_runtime import get_webhook_policy_plugin
 from runtime.agent_launcher import launch_next_agent
 
 # Configure logging
@@ -136,7 +136,7 @@ except Exception as _e:
 
 def _get_webhook_policy():
     """Get framework webhook policy plugin."""
-    return get_github_webhook_policy_plugin(cache_key="github-webhook-policy:webhook")
+    return get_webhook_policy_plugin(cache_key="github-webhook-policy:webhook")
 
 
 def _repo_to_project_key(repo_name: str) -> str:
@@ -166,7 +166,7 @@ def _notify_lifecycle(message: str) -> bool:
 
 
 def verify_signature(payload_body, signature_header):
-    """Verify GitHub webhook signature."""
+    """Verify Git webhook signature."""
     policy = _get_webhook_policy()
     verified = bool(policy.verify_signature(payload_body, signature_header, WEBHOOK_SECRET))
     if not WEBHOOK_SECRET and verified:
@@ -180,7 +180,7 @@ def handle_issue_opened(payload, event):
     """
     Handle issues.opened events.
     
-    Converts GitHub issue to a markdown task file in .nexus/inbox/<project>/
+    Converts Git issue to a markdown task file in .nexus/inbox/<project>/
     for the inbox processor to route to the appropriate agent based on type.
     
     Agent types (abstract roles):
@@ -213,9 +213,9 @@ def handle_issue_opened(payload, event):
     if action != "opened":
         return {"status": "ignored", "reason": f"action is {action}, not opened"}
     
-    # Skip issues created by Nexus itself (inbox processor → create_github_issue).
+    # Skip issues created by Nexus itself (inbox processor → create_issue).
     # These already have an agent launched via the standard task processing path.
-    # Detect via workflow labels that create_github_issue() always applies.
+    # Detect via workflow labels that create_issue() always applies.
     workflow_labels = [l for l in issue_labels if l.startswith("workflow:")]
     if workflow_labels:
         logger.info(f"⏭️ Skipping self-created issue #{issue_number} (has workflow label: {workflow_labels})")
@@ -224,7 +224,7 @@ def handle_issue_opened(payload, event):
     # Also skip if an active task file already exists for this issue
     try:
         for _key, _cfg in PROJECT_CONFIG.items():
-            if isinstance(_cfg, dict) and repo_name in _project_repos(_key, _cfg, get_github_repos):
+            if isinstance(_cfg, dict) and repo_name in _project_repos(_key, _cfg, get_repos):
                 _ws = os.path.join(BASE_DIR, _cfg.get("workspace", ""))
                 _active = get_tasks_active_dir(_ws, _key)
                 _task = os.path.join(_active, f"issue_{issue_number}.md")
@@ -237,7 +237,7 @@ def handle_issue_opened(payload, event):
     
     # Determine which agent type to route to
     try:
-        triage_config = PROJECT_CONFIG.get("github_issue_triage", {})
+        triage_config = PROJECT_CONFIG.get("issue_triage", {})
         agent_type = triage_config.get("default_agent_type", "triage")
         
         # Check for label-based override
@@ -256,7 +256,7 @@ def handle_issue_opened(payload, event):
         
     except Exception as e:
         logger.warning(f"⚠️ Could not load triage config, using default: {e}")
-        triage_config = PROJECT_CONFIG.get("github_issue_triage", {})
+        triage_config = PROJECT_CONFIG.get("issue_triage", {})
         agent_type = triage_config.get("default_agent_type", "triage")
     
     # Create markdown task file for inbox processor
@@ -269,7 +269,7 @@ def handle_issue_opened(payload, event):
         for project_key, project_cfg in PROJECT_CONFIG.items():
             if not isinstance(project_cfg, dict):
                 continue
-            project_repos = _project_repos(project_key, project_cfg, get_github_repos)
+            project_repos = _project_repos(project_key, project_cfg, get_repos)
             if repo_name in project_repos:
                 project_workspace = project_cfg.get("workspace")
                 logger.info(
@@ -302,7 +302,7 @@ def handle_issue_opened(payload, event):
         
         # Create markdown content with agent type and source metadata
         # The inbox processor will route this to the appropriate agent based on type
-        # SOURCE=webhook tells inbox processor to skip GitHub issue creation (already exists)
+        # SOURCE=webhook tells inbox processor to skip Git issue creation (already exists)
         task_content = f"""# Issue #{issue_number}: {issue_title}
 
 **From:** @{issue_author}  
@@ -422,7 +422,7 @@ def handle_issue_comment(payload, event):
             pid, _ = launch_next_agent(
                 issue_number=issue_number,
                 next_agent=next_agent,
-                trigger_source="github_webhook"
+                trigger_source="webhook"
             )
 
             if pid:
@@ -714,10 +714,10 @@ def webhook():
 def index():
     """Root endpoint - basic info."""
     return jsonify({
-        "service": "Nexus GitHub Webhook Server",
+        "service": "Nexus Nexus Webhook Server",
         "version": "1.0.0",
         "endpoints": {
-            "/webhook": "POST - GitHub webhook events",
+            "/webhook": "POST - Git webhook events",
             "/health": "GET - Health check",
             "/visualizer": "GET - Real-time workflow visualizer dashboard"
         }

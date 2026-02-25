@@ -59,10 +59,9 @@ from config import (
     TELEGRAM_BOT_LOG_FILE,
     TELEGRAM_CHAT_ID,
     TELEGRAM_TOKEN,
-    get_default_github_repo,
-    get_default_project,
-    get_github_repo,
-    get_github_repos,
+    get_default_repo,
+    get_repo,
+    get_repos,
     get_inbox_storage_backend,
     get_inbox_dir,
     get_nexus_dir_name,
@@ -76,6 +75,7 @@ from handlers.audio_transcription_handler import (
     AudioTranscriptionDeps,
     transcribe_telegram_voice,
 )
+from handlers.bug_report_handler import handle_report_bug
 from handlers.callback_command_handlers import (
     CallbackHandlerDeps,
 )
@@ -106,9 +106,11 @@ from handlers.chat_command_handlers import (
     chat_menu_handler as core_chat_menu_handler,
 )
 from handlers.common_routing import extract_json_dict, route_task_with_context
+from handlers.bug_report_handler import handle_report_bug
 from handlers.feature_ideation_handlers import (
     FeatureIdeationHandlerDeps,
     handle_feature_ideation_request,
+    is_feature_ideation_request,
 )
 from handlers.feature_ideation_handlers import (
     feature_callback_handler as core_feature_callback_handler,
@@ -261,6 +263,7 @@ from services.workflow_control_service import (
 )
 from services.workflow_ops_service import (
     build_workflow_snapshot,
+    fetch_workflow_state_snapshot,
     reconcile_issue_from_signals,
 )
 from services.workflow_signal_sync import (
@@ -268,6 +271,7 @@ from services.workflow_signal_sync import (
     read_latest_local_completion,
     write_local_completion_from_signal,
 )
+from utils.task_utils import find_task_file_by_issue
 from state_manager import HostStateManager
 from user_manager import get_user_manager
 
@@ -300,8 +304,7 @@ rate_limiter = get_rate_limiter()
 # Initialize user manager
 user_manager = get_user_manager()
 
-# Legacy alias for compatibility
-GITHUB_REPO = get_default_github_repo()
+DEFAULT_REPO = get_default_repo()
 from integrations.workflow_state_factory import get_workflow_state as _get_wf_state
 
 _WORKFLOW_STATE_PLUGIN_KWARGS = {
@@ -323,7 +326,7 @@ def _workflow_handler_deps() -> WorkflowHandlerDeps:
         logger=logger,
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
         base_dir=BASE_DIR,
-        default_repo=GITHUB_REPO,
+        default_repo=DEFAULT_REPO,
         project_config=PROJECT_CONFIG,
         workflow_state_plugin_kwargs=_WORKFLOW_STATE_PLUGIN_KWARGS,
         prompt_project_selection=_ctx_prompt_project_selection,
@@ -340,6 +343,7 @@ def _workflow_handler_deps() -> WorkflowHandlerDeps:
         kill_issue_agent=kill_issue_agent,
         get_runtime_ops_plugin=get_runtime_ops_plugin,
         get_workflow_state_plugin=get_workflow_state_plugin,
+        fetch_workflow_state_snapshot=fetch_workflow_state_snapshot,
         scan_for_completions=scan_for_completions,
         normalize_agent_reference=_normalize_agent_reference,
         get_expected_running_agent_from_workflow=_get_expected_running_agent_from_workflow,
@@ -410,7 +414,7 @@ def _issue_handler_deps() -> IssueHandlerDeps:
         logger=logger,
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
         base_dir=BASE_DIR,
-        default_repo=GITHUB_REPO,
+        default_repo=DEFAULT_REPO,
         prompt_project_selection=_ctx_prompt_project_selection,
         ensure_project_issue=_ctx_ensure_project_issue,
         project_repo=_project_repo,
@@ -453,7 +457,7 @@ def _ops_handler_deps() -> OpsHandlerDeps:
         get_inbox_queue_overview=_get_inbox_queue_overview,
         format_error_for_user=format_error_for_user,
         get_audit_history=AuditStore.get_audit_history,
-        get_github_repo=get_github_repo,
+        get_repo=get_repo,
         get_direct_issue_plugin=_get_direct_issue_plugin,
         orchestrator=orchestrator,
         ai_persona=AI_PERSONA,
@@ -466,7 +470,7 @@ def _ops_handler_deps() -> OpsHandlerDeps:
 def _callback_handler_deps() -> CallbackHandlerDeps:
     return CallbackHandlerDeps(
         logger=logger,
-        github_repo=GITHUB_REPO,
+        git_repo=DEFAULT_REPO,
         prompt_issue_selection=_ctx_prompt_issue_selection,
         prompt_project_selection=_ctx_prompt_project_selection,
         dispatch_command=_ctx_dispatch_command,
@@ -486,6 +490,7 @@ def _callback_handler_deps() -> CallbackHandlerDeps:
             "audit": partial(_ctx_call_telegram_handler, handler=audit_handler),
             "reprocess": partial(_ctx_call_telegram_handler, handler=reprocess_handler),
         },
+        report_bug_action=_report_bug_action_wrapper,
     )
 
 
@@ -528,6 +533,7 @@ def _hands_free_routing_handler_deps() -> HandsFreeRoutingDeps:
         append_message=append_message,
         get_chat=get_chat,
         process_inbox_task=process_inbox_task,
+        feature_ideation_deps=_feature_ideation_handler_deps(),
         normalize_project_key=_normalize_project_key,
         save_resolved_task=save_resolved_task,
         task_confirmation_mode=TASK_CONFIRMATION_MODE,
@@ -535,13 +541,13 @@ def _hands_free_routing_handler_deps() -> HandsFreeRoutingDeps:
 
 
 def _get_direct_issue_plugin(repo: str):
-    """Return GitHub issue plugin for direct Telegram operations."""
+    """Return issue plugin for direct Telegram operations."""
     return get_profiled_plugin(
         "github_telegram",
         overrides={
             "repo": repo,
         },
-        cache_key=f"github:telegram:{repo}",
+        cache_key=f"git:telegram:{repo}",
     )
 
 
@@ -597,7 +603,7 @@ def save_tracked_issues(data):
 def get_issue_details(issue_num, repo: str = None):
     """Query GitHub API for issue details."""
     try:
-        repo = repo or GITHUB_REPO
+        repo = repo or DEFAULT_REPO
         plugin = _get_direct_issue_plugin(repo)
         if not plugin:
             return None
@@ -918,28 +924,6 @@ def resolve_project_config_from_task(task_file):
     return None, None
 
 
-def find_task_file_by_issue(issue_num):
-    """Search for a task file that references the issue number."""
-    nexus_dir_name = get_nexus_dir_name()
-    patterns = [
-        os.path.join(BASE_DIR, "**", nexus_dir_name, "tasks", "*", "active", "*.md"),
-        os.path.join(BASE_DIR, "**", nexus_dir_name, "inbox", "*", "*.md"),
-    ]
-    for pattern in patterns:
-        for path in glob.glob(pattern, recursive=True):
-            try:
-                with open(path) as f:
-                    content = f.read()
-                if re.search(
-                    r"\*\*Issue:\*\*\s*https?://github.com/.+/issues/" + re.escape(issue_num),
-                    content,
-                ):
-                    return path
-            except Exception:
-                continue
-    return None
-
-
 def _iter_project_keys() -> list[str]:
     keys = []
     for key, cfg in PROJECT_CONFIG.items():
@@ -980,7 +964,7 @@ def _get_project_logs_dir(project_key: str) -> str | None:
 
 def _project_repo(project_key: str) -> str:
     config = PROJECT_CONFIG.get(project_key)
-    return resolve_repo(config if isinstance(config, dict) else None, GITHUB_REPO)
+    return resolve_repo(config if isinstance(config, dict) else None, DEFAULT_REPO)
 
 
 def _project_issue_url(project_key: str, issue_num: str) -> str:
@@ -994,7 +978,8 @@ def _default_issue_url(issue_num: str) -> str:
         project_key = get_default_project()
         return _project_issue_url(project_key, issue_num)
     except Exception:
-        return f"https://github.com/{GITHUB_REPO}/issues/{issue_num}"
+        # This is strictly for the /link command, we should ideally resolve this from the repo platform
+        return f"https://github.com/{DEFAULT_REPO}/issues/{issue_num}"
 
 
 def _extract_project_from_nexus_path(path: str) -> str | None:
@@ -1044,7 +1029,7 @@ def _list_project_issues(project_key: str, state: str = "open", limit: int = 10)
         repos = [r for r in config.get("git_repos", []) if isinstance(r, str) and r.strip()]
         repo = repos[0] if repos else None
     if not repo:
-        repos = get_github_repos(project_key)
+        repos = get_repos(project_key)
         repo = repos[0] if repos else None
     if not repo:
         return []
@@ -2364,14 +2349,35 @@ async def inline_keyboard_handler(update: Update, context: ContextTypes.DEFAULT_
     await _call_core_callback_handler(update, context, callback_inline_keyboard_handler)
 
 
+async def _report_bug_action_wrapper(ctx, issue_num):
+    # Use the default repo for bug reports unless a project is clearly identified
+    await handle_report_bug(
+        ctx,
+        issue_num,
+        repo_key=DEFAULT_REPO,
+        get_direct_issue_plugin=_get_direct_issue_plugin,
+    )
+
+
 async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Global Telegram error handler for uncaught update exceptions."""
     logger.exception("Unhandled exception while processing update", exc_info=context.error)
 
+    # Truncate and format
+    user_msg = format_error_for_user(context.error, "Internal error")
+    
+    # Bug Reporting Button
+    buttons = []
+    # If we have an issue context in user_data, add a report button
+    pending_issue = context.user_data.get("pending_issue")
+    if pending_issue:
+        buttons = [[Button("🐞 Report Bug", callback_data=f"report_bug_{pending_issue}")]]
+
     if isinstance(update, Update) and update.effective_message:
         with contextlib.suppress(Exception):
             await update.effective_message.reply_text(
-                "⚠️ Something went wrong while processing that request. Please try again."
+                f"❌ {user_msg}",
+                reply_markup=_buttons_to_reply_markup(buttons) if buttons else None
             )
 
 

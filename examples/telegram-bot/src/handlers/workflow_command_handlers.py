@@ -41,6 +41,7 @@ class WorkflowHandlerDeps:
     kill_issue_agent: Callable[..., dict[str, Any]]
     get_runtime_ops_plugin: Callable[..., Any]
     get_workflow_state_plugin: Callable[..., Any]
+    fetch_workflow_state_snapshot: Callable[..., Awaitable[dict[str, Any]]]
     scan_for_completions: Callable[[str], list[Any]]
     normalize_agent_reference: Callable[[str | None], str | None]
     get_expected_running_agent_from_workflow: Callable[[str], str | None]
@@ -408,7 +409,7 @@ async def reconcile_handler(
     repo = deps.project_repo(project_key)
 
     msg_id = await ctx.reply_text(
-        f"🔄 Reconciling issue #{issue_num} from structured GitHub comments..."
+        f"🔄 Reconciling issue #{issue_num} from structured Git comments..."
     )
 
     result = await deps.reconcile_issue_from_signals(
@@ -464,7 +465,7 @@ async def wfstate_handler(
         f"📊 Fetching workflow state for issue #{issue_num}..."
     )
 
-    state = await deps.get_workflow_state(
+    state = await deps.fetch_workflow_state_snapshot(
         issue_num=issue_num,
         project_key=project_key,
         repo=repo,

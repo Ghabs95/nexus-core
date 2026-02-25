@@ -6,7 +6,8 @@ import logging
 import re
 from typing import Sequence
 
-from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, get_github_repo
+from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, get_repo, PROJECT_CONFIG
+from nexus.adapters.git.utils import build_issue_url
 from orchestration.plugin_runtime import get_profiled_plugin
 
 logger = logging.getLogger(__name__)
@@ -131,7 +132,7 @@ def notify_agent_needs_input(issue_number: str, agent: str, preview: str, projec
     Send notification that an agent needs input.
     
     Args:
-        issue_number: GitHub issue number
+        issue_number: Git issue number
         agent: Agent name
         preview: Preview of the agent's question
         project: Project name (default: nexus)
@@ -149,7 +150,7 @@ def notify_agent_needs_input(issue_number: str, agent: str, preview: str, projec
     keyboard = (
         InlineKeyboard()
         .add_button("📝 View Full", callback_data=f"logs_{issue_number}")
-        .add_button("🔗 GitHub", url=f"https://github.com/{get_github_repo(project)}/issues/{issue_number}")
+        .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
         .new_row()
         .add_button("✍️ Respond", callback_data=f"respond_{issue_number}")
     )
@@ -162,7 +163,7 @@ def notify_workflow_started(issue_number: str, project: str, tier: str, task_typ
     Send notification that a workflow has started.
     
     Args:
-        issue_number: GitHub issue number
+        issue_number: Git issue number
         project: Project name
         tier: Workflow tier (full, shortened, fast-track)
         task_type: Task type (feature, bug, hotfix, etc.)
@@ -189,7 +190,7 @@ def notify_workflow_started(issue_number: str, project: str, tier: str, task_typ
         .add_button("👀 Logs", callback_data=f"logs_{issue_number}")
         .add_button("📊 Status", callback_data=f"status_{issue_number}")
         .new_row()
-        .add_button("🔗 GitHub", url=f"https://github.com/{get_github_repo(project)}/issues/{issue_number}")
+        .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
         .add_button("⏸️ Pause", callback_data=f"pause_{issue_number}")
     )
     
@@ -207,7 +208,7 @@ def notify_agent_completed(
     Send notification that an agent completed and next one started.
     
     Args:
-        issue_number: GitHub issue number
+        issue_number: Git issue number
         completed_agent: Agent that just completed
         next_agent: Agent that's starting next
         project: Project name (default: nexus)
@@ -229,7 +230,7 @@ def notify_agent_completed(
     keyboard = (
         InlineKeyboard()
         .add_button("📝 View Logs", callback_data=f"logs_{issue_number}")
-        .add_button("🔗 GitHub", url=f"https://github.com/{get_github_repo(project)}/issues/{issue_number}")
+        .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
         .new_row()
         .add_button("⏸️ Pause Chain", callback_data=f"pause_{issue_number}")
         .add_button("🛑 Stop", callback_data=f"stop_{issue_number}")
@@ -243,7 +244,7 @@ def notify_agent_timeout(issue_number: str, agent: str, will_retry: bool, projec
     Send notification about agent timeout.
     
     Args:
-        issue_number: GitHub issue number
+        issue_number: Git issue number
         agent: Agent name
         will_retry: Whether the agent will be retried
         project: Project name (default: nexus)
@@ -262,7 +263,7 @@ def notify_agent_timeout(issue_number: str, agent: str, will_retry: bool, projec
         keyboard = (
             InlineKeyboard()
             .add_button("📝 View Logs", callback_data=f"logs_{issue_number}")
-            .add_button("🔗 GitHub", url=f"https://github.com/{get_github_repo(project)}/issues/{issue_number}")
+            .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
             .new_row()
             .add_button("🔄 Reprocess Now", callback_data=f"reprocess_{issue_number}")
             .add_button("🛑 Stop", callback_data=f"stop_{issue_number}")
@@ -278,7 +279,7 @@ def notify_agent_timeout(issue_number: str, agent: str, will_retry: bool, projec
         keyboard = (
             InlineKeyboard()
             .add_button("📝 View Logs", callback_data=f"logs_{issue_number}")
-            .add_button("🔗 GitHub", url=f"https://github.com/{get_github_repo(project)}/issues/{issue_number}")
+            .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
             .new_row()
             .add_button("🔄 Reprocess", callback_data=f"reprocess_{issue_number}")
             .add_button("🛑 Stop Workflow", callback_data=f"stop_{issue_number}")
@@ -296,7 +297,7 @@ def notify_workflow_completed(
     Send notification that a workflow completed successfully.
     
     Args:
-        issue_number: GitHub issue number
+        issue_number: Git issue number
         project: Project name
         pr_urls: Optional PR URLs if found
     
@@ -313,14 +314,14 @@ def notify_workflow_completed(
             f"Project: {project}\n"
             f"PRs: {len(normalized_pr_urls)}\n\n"
             f"All workflow steps completed. **Ready for review!**\n\n"
-            f"🔗 Issue: https://github.com/{get_github_repo(project)}/issues/{issue_number}\n"
+            f"🔗 Issue: {build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None)}\n"
             f"{pr_lines}"
         )
         
         keyboard = (
             InlineKeyboard()
             .add_button("🔗 View PR", url=first_pr_url)
-            .add_button("🔗 View Issue", url=f"https://github.com/{get_github_repo(project)}/issues/{issue_number}")
+            .add_button("🔗 View Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
             .new_row()
             .add_button("✅ Approve", callback_data=f"approve_{issue_number}")
             .add_button("📝 Request Changes", callback_data=f"reject_{issue_number}")
@@ -340,7 +341,7 @@ def notify_workflow_completed(
         keyboard = (
             InlineKeyboard()
             .add_button("📝 View Full Logs", callback_data=f"logsfull_{issue_number}")
-            .add_button("🔗 GitHub", url=f"https://github.com/{get_github_repo(project)}/issues/{issue_number}")
+            .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
             .new_row()
             .add_button("📊 View Audit Trail", callback_data=f"audit_{issue_number}")
         )
@@ -353,7 +354,7 @@ def notify_implementation_requested(issue_number: str, requester: str, project: 
     Send notification that implementation was requested.
     
     Args:
-        issue_number: GitHub issue number
+        issue_number: Git issue number
         requester: Who requested the implementation
         project: Project name (default: nexus)
     
@@ -373,7 +374,7 @@ def notify_implementation_requested(issue_number: str, requester: str, project: 
         .add_button("❌ Reject", callback_data=f"reject_{issue_number}")
         .new_row()
         .add_button("📝 View Details", callback_data=f"logs_{issue_number}")
-        .add_button("🔗 GitHub", url=f"https://github.com/{get_github_repo(project)}/issues/{issue_number}")
+        .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
     )
     
     return send_notification(message, keyboard=keyboard)
@@ -391,7 +392,7 @@ def notify_approval_required(
     Send notification that a workflow step is awaiting human approval.
     
     Args:
-        issue_number: GitHub issue number
+        issue_number: Git issue number
         step_num: Step number requiring approval
         step_name: Step name requiring approval
         agent: Agent that would execute the step
@@ -424,7 +425,7 @@ def notify_approval_required(
         .new_row()
         .add_button(
             "🔗 GitHub",
-            url=f"https://github.com/{get_github_repo(project)}/issues/{issue_number}",
+            url=f"https://github.com/{get_repo(project)}/issues/{issue_number}",
         )
     )
 

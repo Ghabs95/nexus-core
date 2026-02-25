@@ -24,18 +24,18 @@ _WORKFLOW_STATE_PLUGIN_KWARGS = {
 
 def _get_project_repo(project_key: str) -> str:
     cfg = PROJECT_CONFIG.get(project_key, {})
-    if isinstance(cfg, dict) and cfg.get("github_repo"):
-        return cfg["github_repo"]
+    if isinstance(cfg, dict) and cfg.get("repo_key"):
+        return cfg["repo_key"]
     raise ValueError(f"Unknown project '{project_key}'")
 
 
 def _get_issue_plugin(repo: str):
-    """Return a configured GitHub issue plugin for the repo."""
+    """Return a configured Git issue plugin for the repo."""
     if repo in _issue_plugin_cache:
         return _issue_plugin_cache[repo]
 
     plugin = get_profiled_plugin(
-        "github_workflow",
+        "git_workflow",
         overrides={
             "repo": repo,
         },
@@ -194,7 +194,7 @@ async def stop_handler(ctx: InteractiveContext):
         HostStateManager.save_launched_agents(launched)
         logger.info(f"Removed issue #{issue_num} from launched_agents tracker")
 
-    # Close the GitHub issue
+    # Close the Git issue
     try:
         repo = _get_project_repo(project_key)
         plugin = _get_issue_plugin(repo)

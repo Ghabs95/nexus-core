@@ -589,7 +589,7 @@ class NexusAgentRuntime(AgentRuntime):
         if not isinstance(metadata, dict):
             return None
 
-        issue_url = str(metadata.get("github_issue_url", "")).strip()
+        issue_url = str(metadata.get("issue_url", "")).strip()
         project_name = str(metadata.get("project", "")).strip() or None
 
         repo_name = ""

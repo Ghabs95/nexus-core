@@ -19,7 +19,11 @@ from handlers.common_routing import (
     route_task_with_context,
     run_conversation_turn,
 )
-from handlers.feature_ideation_handlers import FEATURE_STATE_KEY
+from handlers.feature_ideation_handlers import (
+    FEATURE_STATE_KEY,
+    handle_feature_ideation_request,
+    is_feature_ideation_request,
+)
 
 
 @dataclass
@@ -33,6 +37,7 @@ class HandsFreeRoutingDeps:
     append_message: Callable[[int, str, str], None]
     get_chat: Callable[[int], dict[str, Any]]
     process_inbox_task: Callable[[str, Any, str, str | None], Awaitable[dict[str, Any]]]
+    feature_ideation_deps: Any
     normalize_project_key: Callable[[str], str | None]
     save_resolved_task: Callable[[dict, str, str], Awaitable[dict[str, Any]]]
     task_confirmation_mode: str
@@ -339,6 +344,18 @@ async def route_hands_free_text(
     
     # First check if we're resolving a project selection
     if await resolve_pending_project_selection(ctx, deps):
+        return
+
+    # Bug 2 Fix: Check for feature ideation request first
+    if is_feature_ideation_request(text):
+        deps.logger.info("Feature ideation request detected in hands-free text: %s", text[:50])
+        status_msg = await ctx.reply_text("🧠 *Thinking about features...*")
+        await handle_feature_ideation_request(
+            ctx=ctx,
+            status_msg_id=status_msg,
+            text=text,
+            deps=deps.feature_ideation_deps,
+        )
         return
 
     force_conversation = _has_active_feature_ideation(ctx) and not _looks_like_explicit_task_request(text)

@@ -16,7 +16,7 @@ from nexus.adapters.notifications.base import Button
 @dataclass
 class CallbackHandlerDeps:
     logger: logging.Logger
-    github_repo: str
+    repo_key: str
     prompt_issue_selection: Callable[..., Awaitable[None]]
     prompt_project_selection: Callable[..., Awaitable[None]]
     dispatch_command: Callable[..., Awaitable[None]]
@@ -141,16 +141,11 @@ async def monitor_project_picker_handler(ctx: InteractiveContext, deps: Callback
         project_key = parts[1]
         extra_args = parts[2:]
 
-    if command == "status":
-        ctx.args = [project_key] + extra_args
-        await deps.status_handler(ctx)
-        return
-    if command == "active":
-        ctx.args = [project_key] + extra_args
-        await deps.active_handler(ctx)
-        return
-
     if command in {"logs", "logsfull", "tail", "fuse"}:
+        ctx.user_state["pending_command"] = command
+        ctx.user_state["pending_project"] = project_key
+        await deps.prompt_issue_selection(ctx, command, project_key, edit_message=True)
+        return
         ctx.user_state["pending_command"] = command
         ctx.user_state["pending_project"] = project_key
         await deps.prompt_issue_selection(ctx, command, project_key, edit_message=True)
@@ -283,6 +278,10 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
     action = parts[0]
     issue_num = parts[1]
 
+    if action == "report_bug":
+        await deps.report_bug_action(ctx, issue_num)
+        return
+
     deps.logger.info(f"Inline keyboard action: {action} for issue #{issue_num}")
 
     if action in deps.action_handlers:
@@ -301,7 +300,7 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
         await ctx.edit_message_text(f"✅ Approving implementation for issue #{issue_num}...")
 
         try:
-            plugin = deps.get_direct_issue_plugin(deps.github_repo)
+            plugin = deps.get_direct_issue_plugin(deps.repo_key)
             if not plugin or not plugin.add_comment(
                 issue_num,
                 "✅ Implementation approved. Please proceed.",
@@ -319,7 +318,7 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
         await ctx.edit_message_text(f"❌ Rejecting implementation for issue #{issue_num}...")
 
         try:
-            plugin = deps.get_direct_issue_plugin(deps.github_repo)
+            plugin = deps.get_direct_issue_plugin(deps.repo_key)
             if not plugin or not plugin.add_comment(
                 issue_num,
                 "❌ Implementation rejected. Please revise.",

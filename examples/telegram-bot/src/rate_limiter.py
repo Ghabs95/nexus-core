@@ -1,4 +1,4 @@
-"""Rate limiting and throttling for Telegram commands and GitHub API calls."""
+"""Rate limiting and throttling for Telegram commands and Git API calls."""
 import json
 import logging
 import os
@@ -70,7 +70,7 @@ class RateLimiter:
         "reprocess": RateLimit(2, 300, "2 reprocesses/5min"),
         "implement": RateLimit(5, 300, "5 implementations/5min"),
         
-        # GitHub API limits
+        # Git API limits
         "github_api": RateLimit(100, 3600, "100 API calls/hour"),
         "github_issue_create": RateLimit(10, 3600, "10 issue creates/hour"),
     }

@@ -115,7 +115,7 @@ async def implement_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> 
         if not plugin:
             await ctx.edit_message_text(
                 message_id=msg_id,
-                text="❌ Failed to initialize GitHub issue plugin",
+                text="❌ Failed to initialize Git issue plugin",
             )
             return
 
@@ -183,7 +183,7 @@ async def prepare_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
         if not plugin:
             await ctx.edit_message_text(
                 message_id=msg_id,
-                text="❌ Failed to initialize GitHub issue plugin",
+                text="❌ Failed to initialize Git issue plugin",
             )
             return
 

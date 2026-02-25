@@ -8,7 +8,7 @@ import logging
 import os
 from typing import Any
 
-from nexus.adapters.git.github import GitHubPlatform
+from nexus.adapters.git.github import GitPlatform
 from nexus.adapters.git.gitlab import GitLabPlatform
 from nexus.adapters.storage.file import FileStorage
 from nexus.core.events import EventBus
@@ -20,7 +20,7 @@ from config import (
     NEXUS_CORE_STORAGE_DIR,
     _get_project_config,
     get_default_project,
-    get_github_repo,
+    get_repo,
     get_gitlab_base_url,
     get_project_platform,
 )
@@ -96,10 +96,10 @@ def setup_event_handlers() -> None:
 def get_git_platform(repo: str = None, project_name: str = None):
     """Get initialized Git platform adapter for the project.
 
-    Returns either :class:`GitHubPlatform` or :class:`GitLabPlatform`.
+    Returns either :class:`GitPlatform` or :class:`GitLabPlatform`.
     """
     project_key = project_name or get_default_project()
-    repo_name = repo or get_github_repo(project_key)
+    repo_name = repo or get_repo(project_key)
     platform_type = get_project_platform(project_key)
 
     project_config = _get_project_config().get(project_key, {})
@@ -121,7 +121,7 @@ def get_git_platform(repo: str = None, project_name: str = None):
 
     if not token:
         logger.warning(f"{token_var} is missing for project '{project_key}'. Git operations may fail.")
-    return GitHubPlatform(repo=repo_name, token=token)
+    return GitPlatform(repo=repo_name, token=token)
 
 
 def get_workflow_definition_path(project_name: str) -> str | None:
@@ -185,10 +185,10 @@ async def create_workflow_for_issue(
     description: str = ""
 ) -> str | None:
     """
-    Create a nexus-core workflow for a GitHub issue.
+    Create a nexus-core workflow for a Git issue.
     
     Args:
-        issue_number: GitHub issue number
+        issue_number: Git issue number
         issue_title: Issue title (slug)
         project_name: Project name (e.g., 'nxs')
         tier_name: Workflow tier (tier-1-simple, tier-2-standard, etc.)
@@ -200,7 +200,7 @@ async def create_workflow_for_issue(
     """
     workflow_plugin = get_workflow_state_plugin(
         **_WORKFLOW_STATE_PLUGIN_BASE_KWARGS,
-        github_repo=get_github_repo(project_name),
+        repo_key=get_repo(project_name),
         cache_key=_WORKFLOW_STATE_PLUGIN_CACHE_KEY,
     )
 
@@ -242,7 +242,7 @@ async def start_workflow(workflow_id: str, issue_number: str = None) -> bool:
     
     Args:
         workflow_id: Workflow ID
-        issue_number: Optional issue number for GitHub comment
+        issue_number: Optional issue number for Git comment
     
     Returns:
         True if successful
@@ -263,7 +263,7 @@ async def pause_workflow(issue_number: str, reason: str = "User requested") -> b
     Pause a workflow by issue number.
     
     Args:
-        issue_number: GitHub issue number
+        issue_number: Git issue number
         reason: Reason for pausing
     
     Returns:
@@ -281,7 +281,7 @@ async def resume_workflow(issue_number: str) -> bool:
     Resume a paused workflow by issue number.
     
     Args:
-        issue_number: GitHub issue number
+        issue_number: Git issue number
     
     Returns:
         True if successful
@@ -298,7 +298,7 @@ async def get_workflow_status(issue_number: str) -> dict | None:
     Get workflow status for an issue.
     
     Args:
-        issue_number: GitHub issue number
+        issue_number: Git issue number
     
     Returns:
         Dict with workflow status or None
@@ -326,7 +326,7 @@ async def handle_approval_gate(
     
     Args:
         workflow_id: The workflow ID (for reference)
-        issue_number: GitHub issue number
+        issue_number: Git issue number
         step_num: Step number awaiting approval
         step_name: Step name awaiting approval
         agent_name: Agent that will run the step when approved
@@ -375,7 +375,7 @@ async def complete_step_for_issue(
     branches and review/develop loops.
 
     Args:
-        issue_number: GitHub issue number.
+        issue_number: Git issue number.
         completed_agent_type: The ``agent_type`` that just finished.
         outputs: Structured outputs from the completion summary (use
             ``CompletionSummary.to_dict()`` or pass a raw dict).

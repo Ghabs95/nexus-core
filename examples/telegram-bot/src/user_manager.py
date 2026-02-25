@@ -174,7 +174,7 @@ class UserManager:
         Args:
             telegram_id: Telegram user ID
             project: Project name (nxs, etc.)
-            issue_number: GitHub issue number
+            issue_number: Git issue number
             username: Telegram username
             first_name: User's first name
         """
@@ -208,7 +208,7 @@ class UserManager:
         Args:
             telegram_id: Telegram user ID
             project: Project name
-            issue_number: GitHub issue number
+            issue_number: Git issue number
         
         Returns:
             True if issue was untracked, False if it wasn't being tracked
@@ -275,7 +275,7 @@ class UserManager:
         
         Args:
             project: Project name
-            issue_number: GitHub issue number
+            issue_number: Git issue number
         
         Returns:
             List of Telegram user IDs

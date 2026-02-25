@@ -1,0 +1,33 @@
+import glob
+import logging
+import os
+import re
+
+from config import get_nexus_dir_name, BASE_DIR
+
+logger = logging.getLogger(__name__)
+
+def find_task_file_by_issue(issue_num: str) -> str | None:
+    """Search for a task file that references the issue number."""
+    nexus_dir_name = get_nexus_dir_name()
+    patterns = [
+        os.path.join(BASE_DIR, "**", nexus_dir_name, "tasks", "*", "active", "*.md"),
+        os.path.join(BASE_DIR, "**", nexus_dir_name, "inbox", "*", "*.md"),
+    ]
+    for pattern in patterns:
+        for path in glob.glob(pattern, recursive=True):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    content = f.read()
+                # Match both full URLs and short references
+                if re.search(
+                    r"\*\*Issue:\*\*\s*https?://github.com/.+/issues/" + re.escape(issue_num),
+                    content,
+                ) or re.search(
+                    r"\*\*Issue:\*\*\s*#" + re.escape(issue_num) + r"(?!\d)",
+                    content,
+                ):
+                    return path
+            except Exception:
+                continue
+    return None

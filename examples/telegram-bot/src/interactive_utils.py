@@ -48,7 +48,7 @@ async def prompt_issue_selection(
     for issue in issues[:5]:  # show top 5
         actions.append(
             InteractiveAction(
-                action_id=f"pickis:{command}:{project_key}:{issue['number']}",
+                action_id=f"pickissue:{command}:{project_key}:{issue['number']}",
                 label=f"#{issue['number']} {issue['title'][:20]}...",
                 style="primary"
             )

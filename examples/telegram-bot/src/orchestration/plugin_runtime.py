@@ -31,7 +31,7 @@ _PLUGIN_PROFILES: dict[str, dict[str, Any]] = {
             "timeout": 10,
         },
     },
-    "github_inbox": {
+    "git_inbox": {
         "kind": "GIT_PLATFORM",
         "name": "github-issue-cli",
         "config": {
@@ -39,7 +39,7 @@ _PLUGIN_PROFILES: dict[str, dict[str, Any]] = {
             "timeout": 30,
         },
     },
-    "github_telegram": {
+    "git_telegram": {
         "kind": "GIT_PLATFORM",
         "name": "github-issue-cli",
         "config": {
@@ -47,7 +47,7 @@ _PLUGIN_PROFILES: dict[str, dict[str, Any]] = {
             "timeout": 15,
         },
     },
-    "github_workflow": {
+    "git_workflow": {
         "kind": "GIT_PLATFORM",
         "name": "github-issue-cli",
         "config": {
@@ -55,7 +55,7 @@ _PLUGIN_PROFILES: dict[str, dict[str, Any]] = {
             "timeout": 10,
         },
     },
-    "github_agent_launcher": {
+    "git_agent_launcher": {
         "kind": "GIT_PLATFORM",
         "name": "github-issue-cli",
         "config": {
@@ -98,7 +98,7 @@ _PLUGIN_PROFILES: dict[str, dict[str, Any]] = {
         "name": "workflow-monitor-policy",
         "config": {},
     },
-    "github_webhook_policy": {
+    "webhook_policy": {
         "kind": "INPUT_ADAPTER",
         "name": "github-webhook-policy",
         "config": {},
@@ -234,7 +234,7 @@ def get_workflow_state_plugin(
     issue_to_workflow_id: Callable[[str], str | None] | None = None,
     issue_to_workflow_map_setter: Callable[[str, str], None] | None = None,
     workflow_definition_path_resolver: Callable[[str], str | None] | None = None,
-    github_repo: str | None = None,
+    repo_key: str | None = None,
     set_pending_approval: Callable[..., None] | None = None,
     clear_pending_approval: Callable[[str], None] | None = None,
     audit_log: Callable[..., None] | None = None,
@@ -252,7 +252,7 @@ def get_workflow_state_plugin(
         "issue_to_workflow_id": issue_to_workflow_id,
         "issue_to_workflow_map_setter": issue_to_workflow_map_setter,
         "workflow_definition_path_resolver": workflow_definition_path_resolver,
-        "github_repo": github_repo,
+        "repo_key": repo_key,
         "set_pending_approval": set_pending_approval,
         "clear_pending_approval": clear_pending_approval,
         "audit_log": audit_log,
@@ -352,12 +352,12 @@ def get_workflow_policy_plugin(
     )
 
 
-def get_github_webhook_policy_plugin(
+def get_webhook_policy_plugin(
     *,
     cache_key: str | None = "github-webhook-policy:default",
 ):
-    """Create a configured GitHub webhook policy plugin instance."""
+    """Create a configured Git webhook policy plugin instance."""
     return get_profiled_plugin(
-        "github_webhook_policy",
+        "webhook_policy",
         cache_key=cache_key,
     )

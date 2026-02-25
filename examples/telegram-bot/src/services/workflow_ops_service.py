@@ -14,7 +14,7 @@ from orchestration.plugin_runtime import (
     get_runtime_ops_plugin,
     get_workflow_state_plugin,
 )
-from integrations.workflow_state_factory import get_workflow_state
+from integrations.workflow_state_factory import get_workflow_state as _get_wf_state
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ async def reconcile_issue_from_signals(
     workflow_state_plugin_kwargs: dict[str, Any],
     write_local_completion_from_signal: Callable[[str, str, dict[str, str]], str],
 ) -> dict[str, Any]:
-    """Reconcile workflow + local completion using structured GitHub comments."""
+    """Reconcile workflow + local completion using structured Git comments."""
     plugin = get_issue_plugin(repo)
     if not plugin:
         return {"ok": False, "error": f"Could not initialize GitHub plugin for {repo}."}
@@ -116,7 +116,7 @@ async def reconcile_issue_from_signals(
             "status": "complete",
             "agent_type": signal["completed_agent"],
             "next_agent": signal["next_agent"],
-            "summary": f"Reconciled from GitHub comment {signal.get('comment_id', 'n/a')}",
+            "summary": f"Reconciled from Git comment {signal.get('comment_id', 'n/a')}",
             "source": "telegram-reconcile",
         }
         try:
@@ -165,6 +165,52 @@ async def reconcile_issue_from_signals(
     }
 
 
+async def fetch_workflow_state_snapshot(
+    *,
+    issue_num: str,
+    project_key: str,
+    repo: str,
+    get_issue_plugin: Callable[[str], Any],
+    extract_structured_completion_signals: Callable[[list[dict]], list[dict[str, str]]],
+    workflow_state_plugin_kwargs: dict[str, Any],
+    write_local_completion_from_signal: Callable[[str, str, dict[str, str]], str],
+    build_workflow_snapshot: Callable[..., dict[str, Any]],
+    read_latest_local_completion: Callable[[str], dict[str, Any] | None],
+) -> dict[str, Any]:
+    """Reconcile and build workflow snapshot for /wfstate."""
+    # 1. Reconcile from signals (guarantees local/remote state is synced before snapshot)
+    await reconcile_issue_from_signals(
+        issue_num=issue_num,
+        project_key=project_key,
+        repo=repo,
+        get_issue_plugin=get_issue_plugin,
+        extract_structured_completion_signals=extract_structured_completion_signals,
+        workflow_state_plugin_kwargs=workflow_state_plugin_kwargs,
+        write_local_completion_from_signal=write_local_completion_from_signal,
+    )
+
+    # 2. Get expected running agent reference
+    from runtime.nexus_agent_runtime import get_expected_running_agent_from_workflow
+    expected_running = get_expected_running_agent_from_workflow(issue_num)
+
+    # 3. Build snapshot
+    # Note: build_workflow_snapshot needs find_task_file_by_issue, 
+    # but it's often passed via deps. We'll use a local import or proxy if needed.
+    from utils.task_utils import find_task_file_by_issue
+
+    snapshot = build_workflow_snapshot(
+        issue_num=issue_num,
+        repo=repo,
+        get_issue_plugin=get_issue_plugin,
+        expected_running_agent=expected_running or "",
+        find_task_file_by_issue=find_task_file_by_issue,
+        read_latest_local_completion=read_latest_local_completion,
+        extract_structured_completion_signals=extract_structured_completion_signals,
+    )
+
+    return {"ok": True, "snapshot": snapshot}
+
+
 def build_workflow_snapshot(
     *,
     issue_num: str,
@@ -176,7 +222,7 @@ def build_workflow_snapshot(
     extract_structured_completion_signals: Callable[[list[dict]], list[dict[str, str]]],
 ) -> dict[str, Any]:
     """Build workflow/process/local/comment snapshot used by /wfstate."""
-    workflow_id = get_workflow_state().get_workflow_id(issue_num)
+    workflow_id = _get_wf_state().get_workflow_id(issue_num)
     workflow_file = (
         os.path.join(NEXUS_CORE_STORAGE_DIR, "workflows", f"{workflow_id}.json")
         if workflow_id

@@ -26,9 +26,9 @@ from config import (
     TELEGRAM_ALLOWED_USER_IDS,
     TELEGRAM_BOT_LOG_FILE,
     TELEGRAM_TOKEN,
-    get_default_github_repo,
-    get_github_repo,
-    get_inbox_storage_backend,
+    get_default_repo,
+    get_repo,
+    get_repos,
     get_inbox_dir,
     get_nexus_dir_name,
     get_tasks_active_dir,
@@ -106,8 +106,7 @@ rate_limiter = get_rate_limiter()
 # Initialize user manager
 user_manager = get_user_manager()
 
-# Legacy alias for compatibility
-GITHUB_REPO = get_default_github_repo()
+DEFAULT_REPO = get_default_repo()
 _WORKFLOW_STATE_PLUGIN_KWARGS = {
     "storage_dir": NEXUS_CORE_STORAGE_DIR,
     "issue_to_workflow_id": lambda n: get_workflow_state().get_workflow_id(n),
@@ -121,7 +120,7 @@ def _workflow_handler_deps() -> WorkflowHandlerDeps:
         logger=logger,
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
         base_dir=BASE_DIR,
-        default_repo=GITHUB_REPO,
+        default_repo=DEFAULT_REPO,
         project_config=PROJECT_CONFIG,
         workflow_state_plugin_kwargs=_WORKFLOW_STATE_PLUGIN_KWARGS,
         prompt_project_selection=_prompt_project_selection,
@@ -200,7 +199,7 @@ def _issue_handler_deps() -> IssueHandlerDeps:
         logger=logger,
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
         base_dir=BASE_DIR,
-        default_repo=GITHUB_REPO,
+        default_repo=DEFAULT_REPO,
         prompt_project_selection=_prompt_project_selection,
         ensure_project_issue=_ensure_project_issue,
         project_repo=_project_repo,
@@ -242,7 +241,7 @@ def _ops_handler_deps() -> OpsHandlerDeps:
         get_inbox_queue_overview=_get_inbox_queue_overview,
         format_error_for_user=format_error_for_user,
         get_audit_history=AuditStore.get_audit_history,
-        get_github_repo=get_github_repo,
+        get_repo=get_repo,
         get_direct_issue_plugin=_get_direct_issue_plugin,
         orchestrator=orchestrator,
         ai_persona=AI_PERSONA,

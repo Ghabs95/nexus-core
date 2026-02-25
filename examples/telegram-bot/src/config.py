@@ -115,7 +115,7 @@ def _validate_config_with_project_config(config: dict) -> None:
         'workflow_chains',
         'final_agents',
         'require_human_merge_approval',  # PR merge approval policy (deprecated - use nexus-core approval gates)
-        'github_issue_triage',  # GitHub issue → triage agent routing configuration
+        'issue_triage',  # Git issue → triage agent routing configuration
         'shared_agents_dir',  # Shared org-level agent YAML definitions directory
     }
     
@@ -249,7 +249,7 @@ PROJECT_CONFIG = _get_project_config()
 
 # --- WEBHOOK CONFIGURATION ---
 WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8081"))
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")  # GitHub webhook secret for signature verification
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")  # Git webhook secret for signature verification
 
 # --- AI ORCHESTRATOR CONFIGURATION ---
 # These are now loaded from project_config.yaml
@@ -664,8 +664,8 @@ def get_default_project() -> str:
     raise ValueError("No project with repository configuration found in PROJECT_CONFIG")
 
 
-def get_github_repos(project: str) -> list[str]:
-    """Get all GitHub repositories configured for a project.
+def get_repos(project: str) -> list[str]:
+    """Get all git repositories configured for a project.
 
     Uses provider-neutral ``git_repo`` / ``git_repos``.
     """
@@ -775,9 +775,9 @@ def _repo_slug_from_remote_url(remote_url: str) -> str:
     return value
 
 
-def get_default_github_repo() -> str:
-    """Return default GitHub repo for legacy single-repo call sites."""
-    return get_github_repo(get_default_project())
+def get_default_repo() -> str:
+    """Return default git repo for legacy single-repo call sites."""
+    return get_repo(get_default_project())
 
 
 def get_project_platform(project: str) -> str:
@@ -805,19 +805,19 @@ def get_gitlab_base_url(project: str) -> str:
     return os.getenv("GITLAB_BASE_URL", "https://gitlab.com")
 
 
-def get_github_repo(project: str) -> str:
-    """Get GitHub repo for a project from PROJECT_CONFIG.
+def get_repo(project: str) -> str:
+    """Get git repo for a project from PROJECT_CONFIG.
     
     Args:
         project: Project name (e.g., "nexus")
         
     Returns:
-        GitHub repo string (e.g., "Ghabs95/nexus-core")
+        Repo string (e.g., "namespace/repository")
         
     Raises:
         KeyError: If project not found in PROJECT_CONFIG
     """
-    return get_github_repos(project)[0]
+    return get_repos(project)[0]
 
 
 def get_nexus_dir_name() -> str:

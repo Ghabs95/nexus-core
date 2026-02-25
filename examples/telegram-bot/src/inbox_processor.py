@@ -31,8 +31,8 @@ from config import (
     PROJECT_CONFIG,
     SLEEP_INTERVAL,
     get_default_project,
-    get_github_repo,
-    get_github_repos,
+    get_repo,
+    get_repos,
     get_inbox_storage_backend,
     get_inbox_dir,
     get_nexus_dir_name,
@@ -82,21 +82,21 @@ _READY_FOR_COMMENT_RE = re.compile(
 
 # Helper to get issue repo (currently defaults to nexus, should be extended for multi-project)
 def get_issue_repo(project: str = "nexus") -> str:
-    """Get the GitHub repo for issue operations.
+    """Get the Git repo for issue operations.
     
     Args:
         project: Project name (currently unused, defaults to nexus)
         
     Returns:
-        GitHub repo string
+        Git repo string
         
     Note: This should be extended to support per-project repos when multi-project
           issue tracking is implemented.
     """
     try:
-        return get_github_repo(project)
+        return get_repo(project)
     except Exception:
-        return get_github_repo(get_default_project())
+        return get_repo(get_default_project())
 
 # Initialize orchestrator (CLI-only)
 orchestrator = get_orchestrator(ORCHESTRATOR_CONFIG)
@@ -118,10 +118,10 @@ _WORKFLOW_STATE_PLUGIN_KWARGS = {
 }
 
 
-def _get_github_issue_plugin(repo: str, max_attempts: int = 3, timeout: int = 30):
-    """Create a configured GitHub issue plugin instance for a repo."""
+def _get_issue_plugin(repo: str, max_attempts: int = 3, timeout: int = 30):
+    """Create a configured Git issue plugin instance for a repo."""
     return get_profiled_plugin(
-        "github_inbox",
+        "git_inbox",
         overrides={
             "repo": repo,
             "max_attempts": max_attempts,
@@ -192,7 +192,7 @@ def _ensure_workflow_label(issue_num: str, tier_name: str, repo: str) -> None:
     """Add `workflow:<tier>` label to an issue if missing."""
     label = f"workflow:{tier_name}"
     try:
-        plugin = _get_github_issue_plugin(repo, max_attempts=2, timeout=10)
+        plugin = _get_issue_plugin(repo, max_attempts=2, timeout=10)
         plugin.add_label(str(issue_num), label)
         logger.info(f"Added missing label '{label}' to issue #{issue_num}")
     except Exception as e:
@@ -323,7 +323,7 @@ def _resolve_project_from_path(summary_path: str) -> str:
     Matches the path against configured project workspaces.
     Returns project key or empty string if no match.
     """
-    for key, cfg in _iter_project_configs(PROJECT_CONFIG, get_github_repos):
+    for key, cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
         workspace = cfg.get("workspace")
         if not workspace:
             continue
@@ -357,8 +357,8 @@ def _extract_repo_from_issue_url(issue_url: str) -> str:
 
 def _resolve_project_for_repo(repo_name: str) -> str | None:
     """Resolve configured project key for a repository full name."""
-    for key, cfg in _iter_project_configs(PROJECT_CONFIG, get_github_repos):
-        if repo_name in _project_repos_from_config(key, cfg, get_github_repos):
+    for key, cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
+        if repo_name in _project_repos_from_config(key, cfg, get_repos):
             return key
     return None
 
@@ -392,28 +392,28 @@ def _reroute_webhook_task_to_project(filepath: str, target_project: str) -> str 
 def _resolve_repo_for_issue(issue_num: str, default_project: str | None = None) -> str:
     """Resolve the repository that owns an issue across all configured project repos."""
     default_repo = (
-        get_github_repo(default_project)
+        get_repo(default_project)
         if default_project
-        else get_github_repo(get_default_project())
+        else get_repo(get_default_project())
     )
 
     repo_candidates: list[str] = []
     if default_project and default_project in PROJECT_CONFIG:
         repo_candidates.extend(
-            _project_repos_from_config(default_project, PROJECT_CONFIG[default_project], get_github_repos)
+            _project_repos_from_config(default_project, PROJECT_CONFIG[default_project], get_repos)
         )
     if default_repo and default_repo not in repo_candidates:
         repo_candidates.append(default_repo)
 
-    for project_key, cfg in _iter_project_configs(PROJECT_CONFIG, get_github_repos):
-        for repo_name in _project_repos_from_config(project_key, cfg, get_github_repos):
+    for project_key, cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
+        for repo_name in _project_repos_from_config(project_key, cfg, get_repos):
             if repo_name not in repo_candidates:
                 repo_candidates.append(repo_name)
 
     for repo_name in repo_candidates:
         matched_project = None
-        for project_key, cfg in _iter_project_configs(PROJECT_CONFIG, get_github_repos):
-            if repo_name in _project_repos_from_config(project_key, cfg, get_github_repos):
+        for project_key, cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
+            if repo_name in _project_repos_from_config(project_key, cfg, get_repos):
                 matched_project = project_key
                 break
         if not matched_project:
@@ -437,13 +437,13 @@ def _resolve_repo_for_issue(issue_num: str, default_project: str | None = None) 
         task_file_match = re.search(r"\*\*Task File:\*\*\s*`([^`]+)`", body)
         if task_file_match:
             task_file = task_file_match.group(1)
-            for project_key, cfg in _iter_project_configs(PROJECT_CONFIG, get_github_repos):
+            for project_key, cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
                 workspace = cfg.get("workspace")
                 if not workspace:
                     continue
                 workspace_abs = os.path.join(BASE_DIR, workspace)
                 if task_file.startswith(workspace_abs):
-                    project_repos = _project_repos_from_config(project_key, cfg, get_github_repos)
+                    project_repos = _project_repos_from_config(project_key, cfg, get_repos)
                     if repo_name in project_repos:
                         return repo_name
 
@@ -459,7 +459,7 @@ def _resolve_repo_strict(project_name: str, issue_num: str) -> str:
         project_repos = _project_repos_from_config(
             project_name,
             PROJECT_CONFIG[project_name],
-            get_github_repos,
+            get_repos,
         )
 
     issue_repo = _resolve_repo_for_issue(
@@ -476,7 +476,7 @@ def _resolve_repo_strict(project_name: str, issue_num: str) -> str:
         emit_alert(message, severity="error", source="inbox_processor")
         raise ValueError(message)
 
-    return issue_repo or (project_repos[0] if project_repos else get_github_repo(get_default_project()))
+    return issue_repo or (project_repos[0] if project_repos else get_repo(get_default_project()))
 
 
 def _read_latest_local_completion(issue_num: str) -> dict | None:
@@ -580,7 +580,7 @@ def reconcile_completion_signals_on_startup() -> None:
             continue
 
         metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
-        issue_url = str(metadata.get("github_issue_url", "") or "")
+        issue_url = str(metadata.get("issue_url", "") or "")
         repo = _extract_repo_from_issue_url(issue_url)
         project_name = str(metadata.get("project_name", "") or "")
 
@@ -748,7 +748,7 @@ def _resolve_git_dirs(project_name: str) -> dict[str, str]:
     """Return repo -> git_dir map for repos that currently have a checkout on disk."""
     resolved: dict[str, str] = {}
     try:
-        repo_names = get_github_repos(project_name)
+        repo_names = get_repos(project_name)
     except Exception:
         repo_names = []
 
@@ -767,7 +767,7 @@ def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name:
     """Handle workflow completion: close issue, create PR if needed, send Telegram.
 
     Called when the last agent finishes (next_agent is 'none' or empty).
-    Delegates PR creation and issue closing to nexus-core GitHubPlatform.
+    Delegates PR creation and issue closing to nexus-core GitPlatform.
     """
     try:
         workflow_plugin = get_workflow_state_plugin(
@@ -865,7 +865,7 @@ def _archive_closed_task_files(issue_num: str, project_name: str = "") -> int:
 
     projects_to_scan.extend(
         key for key in PROJECT_CONFIG
-        if key not in {"workflow_definition_path", "shared_agents_dir", "nexus_dir", "require_human_merge_approval", "github_issue_triage", "ai_tool_preferences"}
+        if key not in {"workflow_definition_path", "shared_agents_dir", "nexus_dir", "require_human_merge_approval", "issue_triage", "ai_tool_preferences"}
         and key not in projects_to_scan
     )
 
@@ -1044,27 +1044,27 @@ def check_stuck_agents():
 def _resolve_project_for_issue(issue_num: str) -> str | None:
     """Best-effort project resolution from config for an issue number."""
     # Try to find which project this issue belongs to by checking agents data
-    for project_name, _ in _iter_project_configs(PROJECT_CONFIG, get_github_repos):
+    for project_name, _ in _iter_project_configs(PROJECT_CONFIG, get_repos):
         return project_name
     return None
 
 
 def check_agent_comments():
-    """Monitor GitHub issues for agent comments requesting input across all projects."""
+    """Monitor Git issues for agent comments requesting input across all projects."""
     loop_scope = "agent-comments:loop"
     try:
         # Query issues from all project repos
         all_issue_nums = []
-        for project_name, _ in _iter_project_configs(PROJECT_CONFIG, get_github_repos):
+        for project_name, _ in _iter_project_configs(PROJECT_CONFIG, get_repos):
             project_platform = (get_project_platform(project_name) or "github").lower().strip()
             if project_platform != "github":
                 logger.debug(
-                    f"Skipping GitHub issue polling for non-GitHub project "
+                    f"Skipping Git issue polling for non-GitHub project "
                     f"{project_name} (platform={project_platform})"
                 )
                 continue
 
-            repo = get_github_repo(project_name)
+            repo = get_repo(project_name)
             list_scope = f"agent-comments:list-issues:{project_name}"
             try:
                 monitor_policy = get_workflow_monitor_policy_plugin(
@@ -1171,14 +1171,14 @@ def check_and_notify_pr(issue_num, project):
     """
     Check if there's a PR linked to the issue and notify user for review.
 
-    Delegates to nexus-core's GitHubPlatform.search_linked_prs().
+    Delegates to nexus-core's GitPlatform.search_linked_prs().
 
     Args:
-        issue_num: GitHub issue number
+        issue_num: Git issue number
         project: Project name
     """
     try:
-        repo = get_github_repo(project)
+        repo = get_repo(project)
         monitor_policy = get_workflow_monitor_policy_plugin(
             search_linked_prs=lambda **kwargs: asyncio.run(
                 get_git_platform(kwargs["repo"], project_name=project).search_linked_prs(str(kwargs["issue_number"]))
@@ -1316,13 +1316,13 @@ def get_sop_tier(task_type, title=None, body=None):
         return "full", "", "workflow:full"
 
 
-def create_github_issue(title, body, project, workflow_label, task_type, tier_name, github_repo):
-    """Creates a GitHub Issue in the specified repo with SOP checklist."""
+def create_issue(title, body, project, workflow_label, task_type, tier_name, repo_key):
+    """Creates a Git Issue in the specified repo with SOP checklist."""
     type_label = f"type:{task_type}"
     project_label = f"project:{project}"
     labels = [project_label, type_label, workflow_label]
 
-    creator = _get_github_issue_plugin(github_repo, max_attempts=3, timeout=30)
+    creator = _get_issue_plugin(repo_key, max_attempts=3, timeout=30)
 
     try:
         issue_url = creator.create_issue(
@@ -1350,9 +1350,9 @@ def create_github_issue(title, body, project, workflow_label, task_type, tier_na
             logger.info("📋 Issue created via plugin")
             return issue_url
 
-        raise RuntimeError("GitHub issue plugin returned no issue URL")
+        raise RuntimeError("Git issue plugin returned no issue URL")
     except Exception as e:
-        raise RuntimeError(f"GitHub issue plugin create failed: {e}") from e
+        raise RuntimeError(f"Git issue plugin create failed: {e}") from e
 
 
 def generate_issue_name(content, project_name):
@@ -1430,7 +1430,7 @@ def process_file(filepath):
 
         # Fallback: look up project by matching workspace path
         if not config:
-            for key, cfg in _iter_project_configs(PROJECT_CONFIG, get_github_repos):
+            for key, cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
                 workspace = cfg.get("workspace")
                 if not workspace:
                     continue
@@ -1447,7 +1447,7 @@ def process_file(filepath):
 
         logger.info(f"Project: {project_name}")
 
-        # Check if this task came from webhook (already has GitHub issue)
+        # Check if this task came from webhook (already has Git issue)
         source_match = re.search(r'\*\*Source:\*\*\s*(.+)', content)
         source = source_match.group(1).strip().lower() if source_match else None
         
@@ -1478,7 +1478,7 @@ def process_file(filepath):
 
             configured_repos = []
             try:
-                configured_repos = get_github_repos(project_name)
+                configured_repos = get_repos(project_name)
             except Exception:
                 configured_repos = []
 
@@ -1527,7 +1527,7 @@ def process_file(filepath):
             logger.info(f"Moving task to active: {new_filepath}")
             shutil.move(filepath, new_filepath)
             
-            # Launch agent directly for existing GitHub issue
+            # Launch agent directly for existing Git issue
             agents_dir_val = config.get("agents_dir")
             if agents_dir_val and issue_url:
                 agents_abs = os.path.join(BASE_DIR, agents_dir_val)
@@ -1543,7 +1543,7 @@ def process_file(filepath):
                 
                 # Resolve tier (halt if unknown — prevents wrong workflow execution)
                 try:
-                    repo_for_tier = get_github_repo(project_name)
+                    repo_for_tier = get_repo(project_name)
                 except Exception:
                     repo_for_tier = ""
 
@@ -1589,7 +1589,7 @@ def process_file(filepath):
             
             return  # Done processing webhook task
         
-        # Standard task processing (create new GitHub issue)
+        # Standard task processing (create new Git issue)
         # Check if task name was already generated (in telegram_bot)
         precomputed_task_name = _extract_inline_task_name(content)
         if precomputed_task_name:
@@ -1618,7 +1618,7 @@ def process_file(filepath):
         logger.info(f"Moving task to active: {new_filepath}")
         shutil.move(filepath, new_filepath)
 
-        # Create GitHub Issue with SOP checklist
+        # Create Git Issue with SOP checklist
         # Build type prefix for issue title
         type_prefixes = {
             "feature": "feat",
@@ -1650,19 +1650,19 @@ def process_file(filepath):
 **Target Branch:** `{branch_name}`
 **Task File:** `{new_filepath}`"""
 
-        issue_url = create_github_issue(
+        issue_url = create_issue(
             title=issue_title,
             body=issue_body,
             project=project_name,
             workflow_label=workflow_label,
             task_type=task_type,
             tier_name=tier_name,
-            github_repo=get_github_repo(project_name)
+            repo_key=get_repo(project_name)
         )
 
         if issue_url:
             # Rename task file from {task_type}_{telegram_msg_id}.md to
-            # {task_type}_{issue_num}.md so the GitHub issue number is visible
+            # {task_type}_{issue_num}.md so the Git issue number is visible
             # in the filename instead of a random Telegram message ID.
             issue_num = issue_url.split('/')[-1]
             old_basename = os.path.basename(new_filepath)
@@ -1677,7 +1677,7 @@ def process_file(filepath):
                     subprocess.run(
                         ["gh", "issue", "edit", issue_num,
                          "--body", corrected_body,
-                         "--repo", get_github_repo(project_name)],
+                         "--repo", get_repo(project_name)],
                         capture_output=True, timeout=15
                     )
                     new_filepath = renamed_path
@@ -1694,7 +1694,7 @@ def process_file(filepath):
             # Create nexus-core workflow
             workflow_plugin = get_workflow_state_plugin(
                 **_WORKFLOW_STATE_PLUGIN_KWARGS,
-                github_repo=get_github_repo(project_name),
+                repo_key=get_repo(project_name),
                 cache_key="workflow:state-engine",
             )
             workflow_id = asyncio.run(

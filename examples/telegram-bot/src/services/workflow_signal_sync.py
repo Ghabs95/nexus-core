@@ -115,7 +115,7 @@ def write_local_completion_from_signal(
         "status": "complete",
         "agent_type": signal["completed_agent"],
         "summary": (
-            f"Reconciled from GitHub comment {signal.get('comment_id', '')}: "
+            f"Reconciled from Git comment {signal.get('comment_id', '')}: "
             f"{signal['completed_agent']} -> {signal['next_agent']}"
         ),
         "key_findings": key_findings

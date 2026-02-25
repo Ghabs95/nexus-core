@@ -31,8 +31,8 @@ from config import (
     BASE_DIR,
     ORCHESTRATOR_CONFIG,
     PROJECT_CONFIG,
-    get_github_repo,
-    get_github_repos,
+    get_repo,
+    get_repos,
     get_nexus_dir_name,
     get_project_platform,
 )
@@ -75,12 +75,12 @@ def _completed_agent_from_trigger(trigger_source: str) -> str | None:
 
 
 def _get_issue_plugin(repo: str):
-    """Return GitHub issue plugin instance for repository."""
+    """Return Git issue plugin instance for repository."""
     if repo in _issue_plugin_cache:
         return _issue_plugin_cache[repo]
 
     plugin = get_profiled_plugin(
-        "github_agent_launcher",
+        "git_agent_launcher",
         overrides={
             "repo": repo,
         },
@@ -93,7 +93,7 @@ def _get_issue_plugin(repo: str):
 
 def _resolve_project_from_task_file(task_file: str) -> str:
     """Resolve project key by matching task file path against project workspaces."""
-    for project_key, project_cfg in _iter_project_configs(PROJECT_CONFIG, get_github_repos):
+    for project_key, project_cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
         workspace_abs = os.path.join(BASE_DIR, project_cfg["workspace"])
         if task_file.startswith(workspace_abs):
             return project_key
@@ -108,8 +108,8 @@ def _load_issue_body_from_project_repo(issue_number: str):
     """
     issue_number = str(issue_number)
     candidate_repos = []
-    for project_key, cfg in _iter_project_configs(PROJECT_CONFIG, get_github_repos):
-        project_repos = _project_repos(project_key, cfg, get_github_repos)
+    for project_key, cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
+        project_repos = _project_repos(project_key, cfg, get_repos)
         for repo_name in project_repos:
             if repo_name not in candidate_repos:
                 candidate_repos.append(repo_name)
@@ -141,7 +141,7 @@ def _load_issue_body_from_project_repo(issue_number: str):
             continue
 
         project_cfg = PROJECT_CONFIG.get(project_key, {})
-        expected_repos = _project_repos(project_key, project_cfg, get_github_repos)
+        expected_repos = _project_repos(project_key, project_cfg, get_repos)
         if repo_name not in expected_repos:
             continue
 
@@ -410,24 +410,24 @@ def _ensure_agent_definition(agents_dir: str, agent_type: str, workspace_dir: st
 def get_sop_tier_from_issue(issue_number, project="nexus", repo_override: str | None = None):
     """Get workflow tier from issue labels.
 
-    Delegates to nexus-core's GitHubPlatform.get_workflow_type_from_issue().
+    Delegates to nexus-core's GitPlatform.get_workflow_type_from_issue().
 
     Args:
-        issue_number: GitHub issue number
+        issue_number: Git issue number
         project: Project name to determine repo
 
     Returns: tier_name (full/shortened/fast-track) or None
     """
-    from nexus.adapters.git.github import GitHubPlatform
+    from nexus.adapters.git.github import GitPlatform
 
     from orchestration.nexus_core_helpers import get_git_platform
 
     try:
-        repo = repo_override or get_github_repo(project)
+        repo = repo_override or get_repo(project)
         platform_type = get_project_platform(project)
 
         if platform_type == "github":
-            platform = GitHubPlatform(repo)
+            platform = GitPlatform(repo)
             return platform.get_workflow_type_from_issue(int(issue_number))
 
         issue = asyncio.run(get_git_platform(repo, project_name=project).get_issue(str(issue_number)))
@@ -479,7 +479,7 @@ def invoke_copilot_agent(
     Args:
         agents_dir: Path to agents directory
         workspace_dir: Path to workspace directory
-        issue_url: GitHub issue URL
+        issue_url: Git issue URL
         tier_name: Workflow tier (full/shortened/fast-track)
         task_content: Task description
         continuation: If True, this is a continuation of previous work
@@ -675,7 +675,7 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
     This is the main entry point used by both inbox_processor and webhook_server.
 
     Args:
-        issue_number: GitHub issue number (string or int)
+        issue_number: Git issue number (string or int)
         next_agent: Name of the agent to launch (e.g., "Atlas", "Architect")
         trigger_source: Where the trigger came from ("github_webhook", "log_file", "github_comment")
         exclude_tools: List of tool names to exclude from this launch attempt.
@@ -739,7 +739,7 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
         logger.warning(f"No project config for task file: {task_file}")
         return None, None
 
-    expected_repos = _project_repos(project_root, config, get_github_repos)
+    expected_repos = _project_repos(project_root, config, get_repos)
     if resolved_repo and expected_repos and resolved_repo not in expected_repos:
         logger.error(
             f"Project boundary violation for issue #{issue_number}: "
@@ -757,7 +757,7 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
     
     # Get workflow tier: launched_agents tracker → issue labels → halt if unknown
     from state_manager import HostStateManager
-    repo = resolved_repo or get_github_repo(project_root)
+    repo = resolved_repo or get_repo(project_root)
     tracker_tier = HostStateManager.get_last_tier_for_issue(issue_number)
     label_tier = get_sop_tier_from_issue(issue_number, project_root, repo_override=repo)
     tier_name = label_tier or tracker_tier
@@ -786,7 +786,7 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
     continuation_prompt = (
         f"You are a {next_agent} agent. The previous workflow step is complete.\n\n"
         f"Your task: Begin your step in the workflow.\n"
-        f"Read recent GitHub comments to understand what's been completed.\n"
+        f"Read recent Git comments to understand what's been completed.\n"
         f"Then perform your assigned work and post a status update.\n"
         f"End with a completion marker like: 'Ready for `@NextAgent`'"
     )
