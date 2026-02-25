@@ -16,12 +16,19 @@ import os
 import time
 from pathlib import Path
 
-from config import NEXUS_CORE_STORAGE_DIR, NEXUS_STORAGE_DSN, NEXUS_WORKFLOW_BACKEND
+from config import (
+    NEXUS_CORE_STORAGE_DIR,
+    NEXUS_STORAGE_BACKEND,
+    NEXUS_STORAGE_DSN,
+    NEXUS_WORKFLOW_BACKEND,
+)
+from nexus.adapters.storage.base import StorageBackend
 from nexus.core.workflow_state import WorkflowStateStore
 
 logger = logging.getLogger(__name__)
 
 _instance: WorkflowStateStore | None = None
+_storage_backend_instance: StorageBackend | None = None
 
 
 class _BroadcastingStore:
@@ -115,4 +122,36 @@ def get_workflow_state() -> WorkflowStateStore:
         inner = _build_inner_store()
         _instance = _BroadcastingStore(inner)  # type: ignore[assignment]
     return _instance
+
+
+def get_storage_backend() -> StorageBackend:
+    """Return shared StorageBackend for host-state persistence.
+
+    Used by :mod:`state_manager` for keys like ``launched_agents`` and
+    ``tracked_issues``.
+    """
+    global _storage_backend_instance
+    if _storage_backend_instance is not None:
+        return _storage_backend_instance
+
+    storage_type = str(NEXUS_STORAGE_BACKEND).strip().lower()
+
+    if storage_type == "postgres":
+        if not NEXUS_STORAGE_DSN:
+            raise ValueError(
+                "NEXUS_STORAGE_BACKEND=postgres but NEXUS_STORAGE_DSN is empty"
+            )
+        from nexus.adapters.storage.postgres import PostgreSQLStorageBackend
+
+        logger.info("Using PostgreSQLStorageBackend for host state")
+        _storage_backend_instance = PostgreSQLStorageBackend(
+            connection_string=NEXUS_STORAGE_DSN,
+        )
+        return _storage_backend_instance
+
+    from nexus.adapters.storage.file import FileStorage
+
+    logger.info("Using FileStorage for host state (base_path=%s)", NEXUS_CORE_STORAGE_DIR)
+    _storage_backend_instance = FileStorage(base_path=Path(NEXUS_CORE_STORAGE_DIR))
+    return _storage_backend_instance
 

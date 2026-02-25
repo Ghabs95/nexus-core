@@ -10,6 +10,9 @@ from nexus.core.workflow import WorkflowDefinition
 class AgentLaunchPolicyPlugin:
     """Compose workflow/agent prompts for launch and continuation flows."""
 
+    def __init__(self, config: dict | None = None):
+        self.config = config or {}
+
     def build_agent_prompt(
         self,
         *,
@@ -182,6 +185,6 @@ def register_plugins(registry) -> None:
         kind=PluginKind.INPUT_ADAPTER,
         name="agent-launch-policy",
         version="0.1.0",
-        factory=lambda config: AgentLaunchPolicyPlugin(),
+        factory=lambda config: AgentLaunchPolicyPlugin(config),
         description="Agent launch prompt composition policy",
     )

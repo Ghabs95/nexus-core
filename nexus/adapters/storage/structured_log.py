@@ -97,3 +97,19 @@ class StructuredLogAuditBackend(StorageBackend):
 
     async def cleanup_old_workflows(self, older_than_days: int = 30) -> int:
         return await self._backend.cleanup_old_workflows(older_than_days)
+
+    async def save_completion(
+        self, issue_number: str, agent_type: str, data: dict[str, Any]
+    ) -> str:
+        return await self._backend.save_completion(issue_number, agent_type, data)
+
+    async def list_completions(
+        self, issue_number: str | None = None
+    ) -> list[dict[str, Any]]:
+        return await self._backend.list_completions(issue_number)
+
+    async def save_host_state(self, key: str, data: dict[str, Any]) -> None:
+        await self._backend.save_host_state(key, data)
+
+    async def load_host_state(self, key: str) -> dict[str, Any] | None:
+        return await self._backend.load_host_state(key)

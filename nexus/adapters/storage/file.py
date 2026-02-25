@@ -26,9 +26,17 @@ class FileStorage(StorageBackend):
         self.workflows_dir = self.base_path / "workflows"
         self.audit_dir = self.base_path / "audit"
         self.agent_dir = self.base_path / "agents"
+        self.completions_dir = self.base_path / "completions"
+        self.host_state_dir = self.base_path / "host_state"
 
         # Create directories
-        for directory in [self.workflows_dir, self.audit_dir, self.agent_dir]:
+        for directory in [
+            self.workflows_dir,
+            self.audit_dir,
+            self.agent_dir,
+            self.completions_dir,
+            self.host_state_dir,
+        ]:
             directory.mkdir(parents=True, exist_ok=True)
 
     async def save_workflow(self, workflow: Workflow) -> None:
@@ -200,6 +208,72 @@ class FileStorage(StorageBackend):
 
         logger.info(f"Cleaned up {deleted} old workflows")
         return deleted
+
+    async def save_completion(
+        self, issue_number: str, agent_type: str, data: dict[str, Any]
+    ) -> str:
+        """Persist completion summary payload to JSON file."""
+        dedup_key = f"{issue_number}:{agent_type}:{data.get('status', 'complete')}"
+        completion_file = self.completions_dir / f"{issue_number}.json"
+
+        payload = {
+            **dict(data or {}),
+            "_dedup_key": dedup_key,
+            "_issue_number": str(issue_number),
+            "_agent_type": str(agent_type),
+            "_updated_at": datetime.now(UTC).isoformat(),
+        }
+
+        with open(completion_file, "w") as f:
+            json.dump(payload, f, indent=2, default=str)
+
+        return dedup_key
+
+    async def list_completions(
+        self, issue_number: str | None = None
+    ) -> list[dict[str, Any]]:
+        """List latest completion payloads, newest first."""
+        completion_files: list[Path]
+
+        if issue_number:
+            one_file = self.completions_dir / f"{issue_number}.json"
+            completion_files = [one_file] if one_file.exists() else []
+        else:
+            completion_files = sorted(
+                self.completions_dir.glob("*.json"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+
+        completions: list[dict[str, Any]] = []
+        for completion_file in completion_files:
+            try:
+                with open(completion_file) as f:
+                    completions.append(json.load(f))
+            except Exception as e:
+                logger.warning(f"Failed to load completion {completion_file}: {e}")
+
+        return completions
+
+    async def save_host_state(self, key: str, data: dict[str, Any]) -> None:
+        """Persist host state blob by key."""
+        host_state_file = self.host_state_dir / f"{key}.json"
+        with open(host_state_file, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+
+    async def load_host_state(self, key: str) -> dict[str, Any] | None:
+        """Load host state blob by key."""
+        host_state_file = self.host_state_dir / f"{key}.json"
+        if not host_state_file.exists():
+            return None
+
+        try:
+            with open(host_state_file) as f:
+                payload = json.load(f)
+            return payload if isinstance(payload, dict) else None
+        except Exception as e:
+            logger.warning(f"Failed to load host state {host_state_file}: {e}")
+            return None
 
     # Helper methods for serialization
 
