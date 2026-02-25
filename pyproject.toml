@@ -35,6 +35,7 @@ telegram = [
 ]
 slack = [
     "slack-sdk>=3.0",
+    "slack-bolt>=1.18",
 ]
 discord = [
     "discord.py>=2.3.0",
@@ -63,6 +64,7 @@ dev = [
     "pytest-asyncio>=0.21",
     "pytest-cov>=4.0",
     "slack-sdk>=3.0",
+    "slack-bolt>=1.18",
     "sqlalchemy>=2.0",
     "psycopg2-binary>=2.9",
     "black>=23.0",
