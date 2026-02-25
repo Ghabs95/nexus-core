@@ -603,9 +603,9 @@ _STORAGE_BACKEND_ALIASES = {
     "filesystem": "filesystem",
     "postgres": "postgres",
     "postgresql": "postgres",
-    "both": "both",
+    "both": "postgres",  # deprecated: maps to postgres for backward compat
 }
-_VALID_STORAGE_BACKENDS = {"filesystem", "postgres", "both"}
+_VALID_STORAGE_BACKENDS = {"filesystem", "postgres"}
 
 
 def _normalize_storage_backend(raw_value: str | None, default: str = "filesystem") -> str:
@@ -624,7 +624,7 @@ NEXUS_STORAGE_BACKEND = _normalize_storage_backend(
 )
 NEXUS_WORKFLOW_BACKEND = _normalize_storage_backend(
     os.getenv("NEXUS_WORKFLOW_BACKEND"),
-    default="postgres" if NEXUS_STORAGE_BACKEND in {"postgres", "both"} else "filesystem",
+    default="postgres" if NEXUS_STORAGE_BACKEND == "postgres" else "filesystem",
 )
 NEXUS_INBOX_BACKEND = _normalize_storage_backend(
     os.getenv("NEXUS_INBOX_BACKEND"),
@@ -642,7 +642,6 @@ def get_inbox_storage_backend() -> str:
     Values:
     - ``filesystem``: markdown files under ``.nexus/inbox``
     - ``postgres``: queue table in PostgreSQL
-    - ``both``: dual-write on enqueue (processor consumes filesystem)
     """
     return NEXUS_INBOX_BACKEND
 

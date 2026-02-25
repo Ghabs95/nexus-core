@@ -42,6 +42,7 @@ from nexus.core.project.repo_utils import project_repos_from_config as _project_
 from config import (
     BASE_DIR,
     LOGS_DIR,
+    NEXUS_STORAGE_BACKEND,
     NEXUS_CORE_STORAGE_DIR,
     NEXUS_STORAGE_DSN,
     NEXUS_WORKFLOW_BACKEND,
@@ -588,6 +589,74 @@ def completion():
     except Exception as exc:
         logger.error(f"Failed to queue next agent from push completion: {exc}")
         return jsonify({"status": "error", "message": str(exc)}), 500
+
+
+@app.route('/api/v1/completion', methods=['POST'])
+def api_v1_completion():
+    """Persist-and-acknowledge completion endpoint (postgres backend).
+
+    Agents POST their completion JSON here when ``NEXUS_STORAGE_BACKEND``
+    is ``postgres``.  The payload is persisted to the ``nexus_completions``
+    table and acknowledged with ``201 Created``.
+
+    The orchestrator loop (``scan_and_process_completions``) handles
+    auto-chaining separately — this endpoint only persists.
+    """
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        return jsonify({"status": "error", "message": "Invalid JSON"}), 400
+
+    issue_number = str(data.get("issue_number", "")).strip()
+    agent_type = str(data.get("agent_type", "")).strip()
+
+    if not issue_number or not agent_type:
+        return jsonify({
+            "status": "error",
+            "message": "issue_number and agent_type are required",
+        }), 400
+
+    logger.info(
+        "📬 API v1 completion received: issue #%s, agent=%s",
+        issue_number, agent_type,
+    )
+
+    try:
+        from nexus.core.completion_store import CompletionStore
+
+        store = _get_completion_store()
+        dedup_key = store.save(issue_number, agent_type, data)
+        return jsonify({
+            "status": "created",
+            "issue_number": issue_number,
+            "agent_type": agent_type,
+            "dedup_key": dedup_key,
+        }), 201
+    except Exception as exc:
+        logger.error("Failed to persist completion: %s", exc, exc_info=True)
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+
+def _get_completion_store():
+    """Lazy-singleton for the CompletionStore."""
+    if not hasattr(_get_completion_store, "_instance"):
+        from nexus.core.completion_store import CompletionStore
+
+        backend = NEXUS_STORAGE_BACKEND
+        storage = None
+        if backend == "postgres":
+            try:
+                from integrations.workflow_state_factory import get_storage_backend
+                storage = get_storage_backend()
+            except Exception:
+                logger.warning("Could not get postgres storage backend for completions")
+
+        _get_completion_store._instance = CompletionStore(
+            backend=backend,
+            storage=storage,
+            base_dir=BASE_DIR,
+        )
+    return _get_completion_store._instance
 
 
 @app.route('/webhook', methods=['POST'])

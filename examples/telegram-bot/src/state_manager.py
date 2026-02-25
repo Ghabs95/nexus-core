@@ -15,6 +15,7 @@ from typing import Any
 from config import (
     AGENT_RECENT_WINDOW,
     LAUNCHED_AGENTS_FILE,
+    NEXUS_STORAGE_BACKEND,
     TRACKED_ISSUES_FILE,
     ensure_state_dir,
     ensure_logs_dir,
@@ -42,6 +43,27 @@ def _get_state_store_plugin():
     )
 
 
+def _get_storage_backend():
+    """Return the postgres StorageBackend instance (cached)."""
+    if not hasattr(_get_storage_backend, "_instance"):
+        try:
+            from integrations.workflow_state_factory import get_storage_backend
+            _get_storage_backend._instance = get_storage_backend()
+        except Exception as exc:
+            logger.warning("Could not get postgres storage backend for host state: %s", exc)
+            _get_storage_backend._instance = None
+    return _get_storage_backend._instance
+
+
+def _host_state_key_from_path(path: str) -> str:
+    """Derive a stable key from a filesystem path.
+
+    E.g. ``/opt/nexus/.nexus/state/launched_agents.json`` -> ``launched_agents``.
+    """
+    import os
+    return os.path.splitext(os.path.basename(path))[0]
+
+
 class HostStateManager:
     """Manages host-level persistent state for the Nexus bot runtime.
 
@@ -61,7 +83,16 @@ class HostStateManager:
 
     @staticmethod
     def _load_json_state(path: str, default, ensure_logs: bool = False):
-        """Load JSON state via storage plugin."""
+        """Load JSON state — routes to postgres or filesystem based on config."""
+        if NEXUS_STORAGE_BACKEND == "postgres":
+            backend = _get_storage_backend()
+            if backend:
+                import asyncio
+                key = _host_state_key_from_path(path)
+                result = asyncio.run(backend.load_host_state(key))
+                return result if result is not None else default
+            logger.warning("Postgres backend unavailable, falling back to filesystem")
+
         if ensure_logs:
             ensure_logs_dir()
         else:
@@ -74,7 +105,16 @@ class HostStateManager:
 
     @staticmethod
     def _save_json_state(path: str, data, *, context: str, ensure_logs: bool = False) -> None:
-        """Save JSON state via storage plugin."""
+        """Save JSON state — routes to postgres or filesystem based on config."""
+        if NEXUS_STORAGE_BACKEND == "postgres":
+            backend = _get_storage_backend()
+            if backend:
+                import asyncio
+                key = _host_state_key_from_path(path)
+                asyncio.run(backend.save_host_state(key, data))
+                return
+            logger.warning("Postgres backend unavailable, falling back to filesystem for %s", context)
+
         if ensure_logs:
             ensure_logs_dir()
         else:

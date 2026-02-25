@@ -203,18 +203,7 @@ async def process_inbox_task(
         logger.warning(f"Project '{project}' not in PROJECT_CONFIG, using as-is for workspace")
     
     filename = f"task_{message_id_or_unique_id}.md"
-    if inbox_backend in {"filesystem", "both"}:
-        target_dir = get_inbox_dir(os.path.join(BASE_DIR, workspace), project)
-        logger.info(f"Target inbox dir: {target_dir}")
-        os.makedirs(target_dir, exist_ok=True)
-
-        filepath = os.path.join(target_dir, filename)
-        logger.info(f"Writing to file: {filepath}")
-        with open(filepath, "w") as f:
-            f.write(markdown_content)
-        logger.info(f"✅ File saved: {filepath}")
-
-    if inbox_backend in {"postgres", "both"}:
+    if inbox_backend == "postgres":
         try:
             queue_id = enqueue_task(
                 project_key=str(project),
@@ -229,6 +218,16 @@ async def process_inbox_task(
                 "success": False,
                 "message": f"⚠️ Failed to queue task in Postgres inbox: {exc}",
             }
+    else:
+        target_dir = get_inbox_dir(os.path.join(BASE_DIR, workspace), project)
+        logger.info(f"Target inbox dir: {target_dir}")
+        os.makedirs(target_dir, exist_ok=True)
+
+        filepath = os.path.join(target_dir, filename)
+        logger.info(f"Writing to file: {filepath}")
+        with open(filepath, "w") as f:
+            f.write(markdown_content)
+        logger.info(f"✅ File saved: {filepath}")
     
     return {
         "success": True,
@@ -262,15 +261,7 @@ async def save_resolved_task(pending_project: dict, selected_project: str, messa
         raw_text=str(text),
     )
 
-    if inbox_backend in {"filesystem", "both"}:
-        target_dir = get_inbox_dir(os.path.join(BASE_DIR, workspace), str(project))
-        os.makedirs(target_dir, exist_ok=True)
-
-        filepath = os.path.join(target_dir, filename)
-        with open(filepath, "w") as f:
-            f.write(markdown_content)
-
-    if inbox_backend in {"postgres", "both"}:
+    if inbox_backend == "postgres":
         try:
             enqueue_task(
                 project_key=str(project),
@@ -284,6 +275,13 @@ async def save_resolved_task(pending_project: dict, selected_project: str, messa
                 "success": False,
                 "message": f"⚠️ Failed to queue task in Postgres inbox: {exc}",
             }
+    else:
+        target_dir = get_inbox_dir(os.path.join(BASE_DIR, workspace), str(project))
+        os.makedirs(target_dir, exist_ok=True)
+
+        filepath = os.path.join(target_dir, filename)
+        with open(filepath, "w") as f:
+            f.write(markdown_content)
 
     return {
         "success": True,
