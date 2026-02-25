@@ -1,0 +1,79 @@
+"""Agent monitoring and recovery - handles timeouts, retries, and failures.
+
+Provides host-side glue between nexus-core MonitorEngine and the
+runtime-ops plugin for PID management and process killing.
+
+For workflow routing, import directly from ``nexus.core.router``.
+"""
+
+import logging
+import os
+import time
+
+from audit_store import AuditStore
+from orchestration.plugin_runtime import get_runtime_ops_plugin
+from nexus.core.monitor import MonitorEngine
+
+logger = logging.getLogger(__name__)
+
+
+class AgentMonitor:
+    """Monitors agent execution and handles timeouts/failures."""
+
+    @staticmethod
+    def check_timeout(
+        issue_num: str,
+        log_file: str,
+        timeout_seconds: int | None = None,
+    ) -> tuple[bool, int | None]:
+        """Check if an agent has timed out."""
+        threshold = int(timeout_seconds) if timeout_seconds else 3600
+
+        try:
+            last_modified = os.path.getmtime(log_file)
+            timed_out = (time.time() - float(last_modified)) > threshold
+        except Exception:
+            timed_out = MonitorEngine.check_log_timeout(log_file, timeout_seconds=threshold)
+        pid = None
+        
+        if timed_out:
+            # Check if process is still running
+            runtime_ops = get_runtime_ops_plugin(cache_key="runtime-ops:monitor")
+            pid = runtime_ops.find_agent_pid_for_issue(issue_num) if runtime_ops else None
+            if pid:
+                logger.warning("Issue #%s: Agent timeout detected (PID: %s)", issue_num, pid)
+                return (True, pid)
+        
+        return (False, None)
+
+    @staticmethod
+    def should_retry(issue_num: str, agent_name: str) -> bool:
+        """Legacy compatibility hook used by nexus runtime tests."""
+        _ = (issue_num, agent_name)
+        return True
+
+    @staticmethod
+    def kill_agent(pid: int, issue_num: str) -> bool:
+        """Kill a stuck agent process."""
+        try:
+            runtime_ops = get_runtime_ops_plugin(cache_key="runtime-ops:monitor")
+            if not runtime_ops or not runtime_ops.kill_process(pid, force=True):
+                logger.error("Failed to kill agent PID %s", pid)
+                return False
+            
+            logger.warning("Killed stuck agent PID %s for issue #%s", pid, issue_num)
+            AuditStore.audit_log(
+                int(issue_num) if issue_num else 0,
+                "AGENT_TIMEOUT_KILL",
+                f"Killed agent process PID {pid} after timeout"
+            )
+            return True
+        except Exception as e:
+            logger.error("Failed to kill agent PID %s: %s", pid, e)
+            return False
+
+    @staticmethod
+    def mark_failed(issue_num: str, agent_name: str, reason: str) -> None:
+        """Mark an agent as permanently failed."""
+        AuditStore.audit_log(int(issue_num), "AGENT_FAILED", reason)
+

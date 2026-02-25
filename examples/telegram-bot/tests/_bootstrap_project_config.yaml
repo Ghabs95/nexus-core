@@ -1,0 +1,12 @@
+sample_core:
+    agents_dir: sample/agents
+    workspace: sample/core
+    git_repo: sample-org/core-repo
+sample_app:
+    agents_dir: sample/app-agents
+    workspace: sample/app
+    git_repo: sample-org/app-repo
+sample_ops:
+    agents_dir: sample/ops-agents
+    workspace: sample/ops
+    git_repo: sample-org/ops-repo

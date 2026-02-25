@@ -1,0 +1,7 @@
+2026-02-25 02:49:16,129 - INFO - Inbox Processor started on /home/ubuntu/git
+2026-02-25 02:49:16,130 - INFO - Stuck agent monitoring enabled (using workflow agent timeout)
+2026-02-25 02:49:16,130 - INFO - Agent comment monitoring enabled
+2026-02-25 02:49:16,142 - INFO - Using PostgresWorkflowStateStore
+2026-02-25 02:49:16,331 - INFO - PostgresWorkflowStateStore connected (127.0.0.1:5432/nexus)
+2026-02-25 02:50:20,638 - INFO - 📋 Agent completed for issue #35 (summarizer)
+2026-02-25 02:50:20,640 - INFO - ✅ Workflow manual for issue #35 (last agent: summarizer)

@@ -1,0 +1,493 @@
+"""Tests for dead/stuck-agent detection after Phase-3 refactor.
+
+The dead- and stuck-agent detection logic has moved to
+``nexus.core.ProcessOrchestrator`` (nexus-core repo).  The full behavioural
+test suite lives in nexus-core's ``tests/test_process_orchestrator.py``.
+
+This file verifies the nexus-side integration:
+  - ``NexusAgentRuntime`` correctly delegates to ``AgentMonitor``,
+    ``HostStateManager``, and ``notifications``
+  - ``check_stuck_agents()`` in inbox_processor delegates to the orchestrator
+    and records polling failures on exception
+"""
+
+import time
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+# ---------------------------------------------------------------------------
+# NexusAgentRuntime hook tests
+# ---------------------------------------------------------------------------
+
+
+class TestNexusAgentRuntimeShouldRetry:
+    def test_delegates_to_agent_monitor(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        with patch("state_manager.HostStateManager.load_launched_agents", return_value={}), \
+             patch("state_manager.HostStateManager.save_launched_agents"), \
+             patch("runtime.agent_monitor.AgentMonitor") as MockMonitor:
+            MockMonitor.should_retry.return_value = True
+            result = runtime.should_retry("42", "developer")
+
+        MockMonitor.should_retry.assert_called_once_with("42", "developer")
+        assert result is True
+
+    def test_max_retries_returns_false(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        with patch("state_manager.HostStateManager.load_launched_agents", return_value={}), \
+             patch("state_manager.HostStateManager.save_launched_agents"), \
+             patch("runtime.agent_monitor.AgentMonitor") as MockMonitor:
+            MockMonitor.should_retry.return_value = False
+            result = runtime.should_retry("42", "developer")
+
+        assert result is False
+
+    def test_retry_fuse_trips_and_blocks_retry(self):
+        from runtime.nexus_agent_runtime import (
+            RETRY_FUSE_MAX_ATTEMPTS,
+            NexusAgentRuntime,
+        )
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        with patch("state_manager.HostStateManager.load_launched_agents", return_value={"42": {}}), \
+             patch("state_manager.HostStateManager.save_launched_agents") as save_mock, \
+             patch("runtime.agent_monitor.AgentMonitor") as MockMonitor, \
+             patch.object(runtime, "send_alert", return_value=True) as alert_mock:
+            MockMonitor.should_retry.return_value = True
+
+            # First calls are allowed by fuse and delegated to AgentMonitor
+            for _ in range(RETRY_FUSE_MAX_ATTEMPTS):
+                assert runtime.should_retry("42", "debug") is True
+
+            # Next call trips fuse and blocks retry
+            assert runtime.should_retry("42", "debug") is False
+
+        assert alert_mock.called
+        assert save_mock.called
+
+
+class TestRetryFuseStatus:
+    def test_returns_empty_status_when_missing(self):
+        from runtime.nexus_agent_runtime import get_retry_fuse_status
+
+        with patch("state_manager.HostStateManager.load_launched_agents", return_value={}):
+            status = get_retry_fuse_status("404", now_ts=1700000000.0)
+
+        assert status["exists"] is False
+        assert status["attempts"] == 0
+        assert status["trip_count_in_hard_window"] == 0
+
+    def test_prunes_old_trip_times_from_hard_window(self):
+        from runtime.nexus_agent_runtime import (
+            RETRY_FUSE_HARD_WINDOW_SECONDS,
+            get_retry_fuse_status,
+        )
+
+        now = 1700000000.0
+        entry = {
+            "retry_fuse": {
+                "agent": "debug",
+                "window_start": now - 30,
+                "attempts": 2,
+                "tripped": False,
+                "alerted": False,
+                "hard_tripped": False,
+            },
+            "retry_fuse_trip_times": [
+                now - 10,
+                now - (RETRY_FUSE_HARD_WINDOW_SECONDS + 1),
+            ],
+        }
+
+        with patch("state_manager.HostStateManager.load_launched_agents", return_value={"44": entry}):
+            status = get_retry_fuse_status("44", now_ts=now)
+
+        assert status["exists"] is True
+        assert status["agent"] == "debug"
+        assert status["attempts"] == 2
+        assert status["trip_count_in_hard_window"] == 1
+
+    def test_retry_fuse_hard_stop_after_two_trips(self):
+        from runtime.nexus_agent_runtime import (
+            RETRY_FUSE_HARD_WINDOW_SECONDS,
+            RETRY_FUSE_MAX_ATTEMPTS,
+            NexusAgentRuntime,
+        )
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        now = time.time()
+        prior_trip = now - min(60, RETRY_FUSE_HARD_WINDOW_SECONDS - 1)
+
+        seeded_entry = {
+            "retry_fuse": {
+                "agent": "debug",
+                "window_start": now,
+                "attempts": RETRY_FUSE_MAX_ATTEMPTS,
+                "tripped": False,
+                "alerted": False,
+                "hard_tripped": False,
+            },
+            "retry_fuse_trip_times": [prior_trip],
+        }
+
+        with patch("state_manager.HostStateManager.load_launched_agents", return_value={"44": seeded_entry}), \
+             patch("state_manager.HostStateManager.save_launched_agents") as save_mock, \
+             patch("runtime.agent_monitor.AgentMonitor") as MockMonitor, \
+             patch.object(runtime, "send_alert", return_value=True) as alert_mock:
+            MockMonitor.should_retry.return_value = True
+
+            assert runtime.should_retry("44", "debug") is False
+
+        assert alert_mock.called
+        assert save_mock.called
+
+
+class TestNexusAgentRuntimeGetWorkflowState:
+    def test_returns_cancelled_string(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        with patch("integrations.workflow_state_factory.get_workflow_state") as mock_wf:
+            with patch("builtins.open", create=True):
+                with patch("json.load", return_value={"state": "cancelled"}):
+                    result = runtime.get_workflow_state("10")
+
+        assert result == "CANCELLED"
+
+    def test_returns_paused_string(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        with patch("integrations.workflow_state_factory.get_workflow_state") as mock_wf:
+            with patch("builtins.open", create=True):
+                with patch("json.load", return_value={"state": "paused"}):
+                    result = runtime.get_workflow_state("11")
+
+        assert result == "PAUSED"
+
+    def test_returns_none_for_active(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        with patch("integrations.workflow_state_factory.get_workflow_state") as mock_wf:
+            with patch("builtins.open", create=True):
+                with patch("json.load", return_value={"state": "active"}):
+                    result = runtime.get_workflow_state("12")
+
+        assert result is None
+
+    def test_returns_none_for_missing_mapping(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        with patch("integrations.workflow_state_factory.get_workflow_state") as mock_wf:
+            mock_wf.return_value.get_workflow_id.return_value = None
+            result = runtime.get_workflow_state("10")
+
+        assert result is None
+
+
+class TestNexusAgentRuntimeShouldRetryDeadAgent:
+    def test_true_when_matching_running_step(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        payload = {
+            "state": "active",
+            "steps": [
+                {"status": "RUNNING", "agent": {"name": "triage", "display_name": "Triage"}},
+            ],
+        }
+
+        with patch("integrations.workflow_state_factory.get_workflow_state") as mock_wf:
+            with patch("builtins.open", create=True):
+                with patch("json.load", return_value=payload):
+                    result = runtime.should_retry_dead_agent("44", "triage")
+
+        assert result is True
+
+    def test_false_when_no_running_step_matches(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        payload = {
+            "state": "active",
+            "steps": [
+                {"status": "COMPLETED", "agent": {"name": "triage"}},
+                {"status": "RUNNING", "agent": {"name": "debug"}},
+            ],
+        }
+
+        with patch("integrations.workflow_state_factory.get_workflow_state") as mock_wf:
+            with patch("builtins.open", create=True):
+                with patch("json.load", return_value=payload):
+                    result = runtime.should_retry_dead_agent("44", "triage")
+
+        assert result is False
+
+
+class TestNexusAgentRuntimeGetExpectedRunningAgent:
+    def test_returns_running_agent_name(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        payload = {
+            "state": "active",
+            "steps": [
+                {"status": "COMPLETED", "agent": {"name": "triage"}},
+                {"status": "RUNNING", "agent": {"name": "debug", "display_name": "Debug"}},
+            ],
+        }
+
+        with patch("integrations.workflow_state_factory.get_workflow_state") as mock_wf:
+            with patch("builtins.open", create=True):
+                with patch("json.load", return_value=payload):
+                    result = runtime.get_expected_running_agent("44")
+
+        assert result == "debug"
+
+    def test_returns_none_for_terminal_workflow(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        payload = {"state": "completed", "steps": []}
+
+        with patch("integrations.workflow_state_factory.get_workflow_state") as mock_wf:
+            with patch("builtins.open", create=True):
+                with patch("json.load", return_value=payload):
+                    result = runtime.get_expected_running_agent("44")
+
+        assert result is None
+
+    def test_false_when_workflow_terminal(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        payload = {"state": "completed", "steps": []}
+
+        with patch("integrations.workflow_state_factory.get_workflow_state") as mock_wf:
+            with patch("builtins.open", create=True):
+                with patch("json.load", return_value=payload):
+                    result = runtime.should_retry_dead_agent("44", "triage")
+
+        assert result is False
+
+
+class TestNexusAgentRuntimeAuditLog:
+    def test_delegates_to_audit_store(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        with patch("audit_store.AuditStore") as MockAudit:
+            runtime.audit_log("55", "AGENT_DEAD", "PID 1234 exited")
+
+        MockAudit.audit_log.assert_called_once_with(55, "AGENT_DEAD", "PID 1234 exited")
+
+    def test_empty_details_passes_none(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        with patch("audit_store.AuditStore") as MockAudit:
+            runtime.audit_log("55", "AGENT_DEAD")
+
+        MockAudit.audit_log.assert_called_once_with(55, "AGENT_DEAD", None)
+
+
+class TestNexusAgentRuntimeSendAlert:
+    def test_delegates_to_telegram(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        with patch("integrations.notifications.emit_alert", return_value=True) as mock_tg:
+            result = runtime.send_alert("hello")
+
+        mock_tg.assert_called_once_with("hello", severity="warning", source="agent_runtime")
+        assert result is True
+
+    def test_returns_false_on_failure(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        with patch("integrations.notifications.emit_alert", return_value=False):
+            result = runtime.send_alert("hello")
+
+        assert result is False
+
+
+class TestNexusAgentRuntimePostCompletionComment:
+    def test_returns_true_on_success(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        mock_platform = MagicMock()
+        mock_platform.add_comment = AsyncMock(return_value=True)
+        mock_platform.get_comments = AsyncMock(return_value=[])
+
+        with patch("orchestration.nexus_core_helpers.get_git_platform", return_value=mock_platform):
+            result = runtime.post_completion_comment("44", "owner/repo", "body")
+
+        assert result is True
+
+    def test_skips_automated_comment_when_recent_agent_comment_exists(self):
+        from nexus.adapters.git.base import Comment
+
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        recent_comment = Comment(
+            id="1",
+            issue_id="44",
+            author="bot-user",
+            body="## 🔨 Implement Change Complete — developer\n\nReady for **@Reviewer**",
+            created_at=datetime.now(UTC) - timedelta(minutes=2),
+            url="https://example.com/comment/1",
+        )
+        mock_platform = MagicMock()
+        mock_platform.get_comments = AsyncMock(return_value=[recent_comment])
+        mock_platform.add_comment = AsyncMock(return_value=True)
+
+        with patch("orchestration.nexus_core_helpers.get_git_platform", return_value=mock_platform):
+            result = runtime.post_completion_comment("44", "owner/repo", "body")
+
+        assert result is True
+        mock_platform.add_comment.assert_not_called()
+
+    def test_does_not_skip_when_ready_for_without_structured_header(self):
+        from nexus.adapters.git.base import Comment
+
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        recent_comment = Comment(
+            id="2",
+            issue_id="44",
+            author="bot-user",
+            body="Ready for **@Reviewer**",
+            created_at=datetime.now(UTC) - timedelta(minutes=2),
+            url="https://example.com/comment/2",
+        )
+        mock_platform = MagicMock()
+        mock_platform.get_comments = AsyncMock(return_value=[recent_comment])
+        mock_platform.add_comment = AsyncMock(return_value=True)
+
+        with patch("orchestration.nexus_core_helpers.get_git_platform", return_value=mock_platform):
+            result = runtime.post_completion_comment("44", "owner/repo", "body")
+
+        assert result is True
+        mock_platform.add_comment.assert_called_once()
+
+    def test_env_override_extends_recent_comment_window(self, monkeypatch):
+        from nexus.adapters.git.base import Comment
+
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        monkeypatch.setenv("NEXUS_RECENT_AGENT_COMMENT_WINDOW_SECONDS", "3600")
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        older_comment = Comment(
+            id="3",
+            issue_id="44",
+            author="bot-user",
+            body="## 🔨 Implement Change Complete — developer\n\nReady for **@Reviewer**",
+            created_at=datetime.now(UTC) - timedelta(minutes=20),
+            url="https://example.com/comment/3",
+        )
+        mock_platform = MagicMock()
+        mock_platform.get_comments = AsyncMock(return_value=[older_comment])
+        mock_platform.add_comment = AsyncMock(return_value=True)
+
+        with patch("orchestration.nexus_core_helpers.get_git_platform", return_value=mock_platform):
+            result = runtime.post_completion_comment("44", "owner/repo", "body")
+
+        assert result is True
+        mock_platform.add_comment.assert_not_called()
+
+    def test_invalid_env_uses_default_window(self, monkeypatch):
+        from nexus.adapters.git.base import Comment
+
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        monkeypatch.setenv("NEXUS_RECENT_AGENT_COMMENT_WINDOW_SECONDS", "invalid")
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        older_comment = Comment(
+            id="4",
+            issue_id="44",
+            author="bot-user",
+            body="## 🔨 Implement Change Complete — developer\n\nReady for **@Reviewer**",
+            created_at=datetime.now(UTC) - timedelta(minutes=20),
+            url="https://example.com/comment/4",
+        )
+        mock_platform = MagicMock()
+        mock_platform.get_comments = AsyncMock(return_value=[older_comment])
+        mock_platform.add_comment = AsyncMock(return_value=True)
+
+        with patch("orchestration.nexus_core_helpers.get_git_platform", return_value=mock_platform):
+            result = runtime.post_completion_comment("44", "owner/repo", "body")
+
+        assert result is True
+        mock_platform.add_comment.assert_called_once()
+
+    def test_returns_false_on_exception(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+
+        with patch("orchestration.nexus_core_helpers.get_git_platform", side_effect=RuntimeError("boom")):
+            result = runtime.post_completion_comment("44", "owner/repo", "body")
+
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# check_stuck_agents delegation smoke test
+# ---------------------------------------------------------------------------
+
+
+class TestCheckStuckAgentsDelegates:
+    def test_delegates_to_process_orchestrator(self):
+        """check_stuck_agents() must delegate to ProcessOrchestrator."""
+        from inbox_processor import check_stuck_agents
+
+        with patch("inbox_processor._get_process_orchestrator") as mock_factory:
+            mock_orc = MagicMock()
+            mock_factory.return_value = mock_orc
+            check_stuck_agents()
+
+        mock_orc.check_stuck_agents.assert_called_once()
+
+    def test_records_polling_failure_on_exception(self):
+        """An exception in check_stuck_agents must record a polling failure."""
+        from inbox_processor import check_stuck_agents, polling_failure_counts
+
+        with patch("inbox_processor._get_process_orchestrator") as mock_factory:
+            mock_orc = MagicMock()
+            mock_orc.check_stuck_agents.side_effect = RuntimeError("boom")
+            mock_factory.return_value = mock_orc
+
+            check_stuck_agents()
+
+        assert polling_failure_counts.get("stuck-agents:loop", 0) >= 1
+
+
