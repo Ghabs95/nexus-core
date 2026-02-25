@@ -93,7 +93,7 @@ full_workflow:
         - github:request_changes
         - github:approve_pr
       inputs:
-        - implementation_pr_url: "string"
+        - pr_urls: "list[string]"
       outputs:
         - review_status: "enum[approved|changes_requested|rejected]"
         - review_comments: "list[string]"
@@ -239,7 +239,7 @@ shortened_workflow:
         - github:approve_pr
         - github:add_comment
       inputs:
-        - fix_pr_url: "string"
+        - pr_urls: "list[string]"
       outputs:
         - review_status: "enum[approved|changes_requested]"
       on_success: "route_review"
@@ -325,7 +325,7 @@ fast_track_workflow:
         - github:review_pr
         - github:approve_pr
       inputs:
-        - fast_track_pr_url: "string"
+        - pr_urls: "list[string]"
       outputs:
         - review_status: "enum[approved|rejected]"
       on_success: "route_review"

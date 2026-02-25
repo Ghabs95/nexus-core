@@ -166,6 +166,7 @@ Swap any component via configuration:
 **Interactive Clients**:
 - `TelegramInteractivePlugin` - Two-way chat bot polling apps
 - `DiscordInteractivePlugin` - Two-way chat bot via HTTP app commands
+- `SlackInteractivePlugin` - Two-way chat bot via Slack Bolt Socket Mode
 
 ### 🛡️ Production-Ready Error Handling
 

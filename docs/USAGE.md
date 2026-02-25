@@ -450,6 +450,7 @@ That's YOUR integration layer's job.
 | **Git adapters (GitHub, GitLab)** | ✅ Yes | ❌ No |
 | **Your tier system** | ❌ No | ✅ Yes |
 | **Your project structure** | ❌ No | ✅ Yes |
+| **Your Slack bot** | ❌ No | ✅ Yes |
 | **Your Telegram bot** | ❌ No | ✅ Yes |
 | **Issue → Workflow mapping** | ❌ No | ✅ Yes |
 | **WORKFLOW_CHAIN config** | ❌ No | ✅ Yes |

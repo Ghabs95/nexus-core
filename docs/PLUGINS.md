@@ -113,6 +113,12 @@ telegram_integration = "nexus_telegram_plugin:register_plugins"
 - Discord interactive client plugin: `nexus.plugins.builtin.discord_interactive_plugin`
     - Class: `DiscordInteractivePlugin`
     - Registration entry: `register_plugins(registry)`
+- Slack event handler plugin: `nexus.plugins.builtin.slack_event_handler_plugin`
+    - Class: `SlackEventHandler`
+    - Registration entry: `register_plugins(registry)`
+- Slack interactive client plugin: `nexus.plugins.builtin.slack_interactive_plugin`
+    - Class: `SlackInteractivePlugin`
+    - Registration entry: `register_plugins(registry)`
 - JSON state storage plugin: `nexus.plugins.builtin.json_state_plugin`
     - Class: `JsonStateStorePlugin`
     - Registration entry: `register_plugins(registry)`

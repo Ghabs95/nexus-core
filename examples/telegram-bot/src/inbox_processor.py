@@ -796,8 +796,10 @@ def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name:
         project_name=project_name,
     )
 
-    if result.get("pr_url"):
-        logger.info(f"🔀 Created PR for issue #{issue_num}: {result['pr_url']}")
+    pr_urls = result.get("pr_urls") if isinstance(result, dict) else None
+    if isinstance(pr_urls, list) and pr_urls:
+        for pr_link in pr_urls:
+            logger.info(f"🔀 Created/linked PR for issue #{issue_num}: {pr_link}")
     if result.get("issue_closed"):
         logger.info(f"🔒 Closed issue #{issue_num}")
         archived = _archive_closed_task_files(issue_num, project_name)
@@ -1142,7 +1144,7 @@ def check_and_notify_pr(issue_num, project):
         if pr:
             logger.info(f"✅ Found PR #{pr.number} for issue #{issue_num}")
             notify_workflow_completed(
-                issue_num, project, pr_number=str(pr.number), pr_url=pr.url,
+                issue_num, project, pr_urls=[pr.url],
             )
             return
 
