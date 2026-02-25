@@ -113,6 +113,12 @@ class WorkflowEngine:
             first_step.status = StepStatus.RUNNING
             first_step.started_at = datetime.now(UTC)
             workflow.current_step = first_step.step_num
+            await self._emit(StepStarted(
+                workflow_id=workflow_id,
+                step_num=first_step.step_num,
+                step_name=first_step.name,
+                agent_type=first_step.agent.name,
+            ))
 
         await self.storage.save_workflow(workflow)
         await self._audit(workflow_id, "WORKFLOW_STARTED", {})
@@ -227,8 +233,22 @@ class WorkflowEngine:
                 )
                 return workflow
             step.status = StepStatus.FAILED
+            await self._emit(StepFailed(
+                workflow_id=workflow_id,
+                step_num=step_num,
+                step_name=step.name,
+                agent_type=step.agent.name,
+                error=error,
+            ))
         else:
             step.status = StepStatus.COMPLETED
+            await self._emit(StepCompleted(
+                workflow_id=workflow_id,
+                step_num=step_num,
+                step_name=step.name,
+                agent_type=step.agent.name,
+                outputs=outputs,
+            ))
 
         activated_step: WorkflowStep | None = None
 
@@ -244,6 +264,7 @@ class WorkflowEngine:
                     "error": error,
                 })
                 logger.info(f"Completed step {step_num} in workflow {workflow_id}")
+                await self._emit(WorkflowCompleted(workflow_id=workflow_id))
                 if self._on_workflow_complete:
                     try:
                         await self._on_workflow_complete(workflow, outputs)
@@ -314,6 +335,12 @@ class WorkflowEngine:
                     next_step.status = StepStatus.RUNNING
                     next_step.started_at = datetime.now(UTC)
                     activated_step = next_step
+                    await self._emit(StepStarted(
+                        workflow_id=workflow_id,
+                        step_num=next_step.step_num,
+                        step_name=next_step.name,
+                        agent_type=next_step.agent.name,
+                    ))
                     break
                 else:
                     # Condition failed – skip this step
@@ -335,10 +362,15 @@ class WorkflowEngine:
                 # No more steps
                 workflow.state = WorkflowState.COMPLETED
                 workflow.completed_at = datetime.now(UTC)
+                await self._emit(WorkflowCompleted(workflow_id=workflow_id))
         else:
             # Workflow failed
             workflow.state = WorkflowState.FAILED
             workflow.completed_at = datetime.now(UTC)
+            await self._emit(WorkflowFailed(
+                workflow_id=workflow_id,
+                error=error or "Unknown error",
+            ))
 
         workflow.updated_at = datetime.now(UTC)
         await self.storage.save_workflow(workflow)

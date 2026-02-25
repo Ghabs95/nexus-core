@@ -82,6 +82,20 @@ class HostStateManager:
                 logger.warning(f"SocketIO emit failed for {event_type}: {exc}")
 
     @staticmethod
+    def emit_step_status_changed(
+        issue: str, workflow_id: str, step_id: str, agent_type: str, status: str
+    ) -> None:
+        """Broadcast a step status change via SocketIO."""
+        HostStateManager.emit_transition("step_status_changed", {
+            "issue": issue,
+            "workflow_id": workflow_id,
+            "step_id": step_id,
+            "agent_type": agent_type,
+            "status": status,
+            "timestamp": time.time(),
+        })
+
+    @staticmethod
     def _load_json_state(path: str, default, ensure_logs: bool = False):
         """Load JSON state — routes to postgres or filesystem based on config."""
         if NEXUS_STORAGE_BACKEND == "postgres":

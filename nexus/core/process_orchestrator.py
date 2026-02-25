@@ -760,13 +760,36 @@ class ProcessOrchestrator:
         pid: int | None,
     ) -> None:
         """Kill a timed-out agent and trigger a retry if allowed."""
+        state = self._runtime.get_workflow_state(str(issue_num))
+        if state in ("STOPPED", "PAUSED", "COMPLETED", "FAILED", "CANCELLED"):
+            logger.debug(
+                "Skipping timeout handling for issue #%s: workflow state is %s",
+                issue_num,
+                state,
+            )
+            return
+
         launched = self._runtime.load_launched_agents(recent_only=False)
         agent_data = launched.get(str(issue_num), {})
         tracker_pid = agent_data.get("pid")
+        launch_ts = float(agent_data.get("timestamp", 0.0) or 0.0)
         effective_pid = tracker_pid or pid
         agent_type = agent_data.get("agent_type", "unknown")
         crashed_tool = agent_data.get("tool", "")
-        age = time.time() - os.path.getmtime(log_file)
+        log_mtime = os.path.getmtime(log_file)
+        age = time.time() - log_mtime
+
+        if launch_ts > 0 and log_mtime + 5 < launch_ts:
+            logger.info(
+                "Ignoring stale timeout log for issue #%s: log mtime predates current launch",
+                issue_num,
+            )
+            return
+
+        if not isinstance(agent_type, str) or not agent_type.strip() or agent_type == "unknown":
+            expected_agent = self._runtime.get_expected_running_agent(str(issue_num))
+            if expected_agent:
+                agent_type = expected_agent
 
         if (
             isinstance(agent_type, str)
@@ -875,8 +898,6 @@ class ProcessOrchestrator:
         self._runtime.notify_timeout(issue_num, agent_type, will_retry)
 
         if will_retry:
-            launched.pop(str(issue_num), None)
-            self._runtime.save_launched_agents(launched)
             self._runtime.clear_launch_guard(issue_num)
             try:
                 self._runtime.launch_agent(

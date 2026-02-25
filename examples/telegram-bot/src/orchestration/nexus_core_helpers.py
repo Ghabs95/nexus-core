@@ -6,12 +6,13 @@ and the nexus-core workflow framework.
 """
 import logging
 import os
+import time
 from typing import Any
 
 from nexus.adapters.git.github import GitHubPlatform
 from nexus.adapters.git.gitlab import GitLabPlatform
 from nexus.adapters.storage.file import FileStorage
-from nexus.core.events import EventBus
+from nexus.core.events import EventBus, NexusEvent
 from nexus.core.workflow import WorkflowEngine
 
 from audit_store import AuditStore
@@ -25,6 +26,7 @@ from config import (
     get_project_platform,
 )
 from orchestration.plugin_runtime import get_workflow_state_plugin
+from services.mermaid_render_service import build_mermaid_diagram
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,75 @@ def get_workflow_engine() -> WorkflowEngine:
     return WorkflowEngine(storage=storage, event_bus=get_event_bus())
 
 
+async def _setup_socketio_event_bridge(bus: EventBus) -> None:
+    """Subscribe to workflow events and bridge them to SocketIO broadcasts."""
+    from state_manager import HostStateManager
+    from integrations.workflow_state_factory import get_workflow_state
+
+    async def handle_event(event: NexusEvent) -> None:
+        workflow_id = event.workflow_id
+        if not workflow_id:
+            return
+
+        # 1. Resolve issue number from workflow_id
+        mappings = get_workflow_state().load_all_mappings()
+        issue = next((k for k, v in mappings.items() if v == workflow_id), None)
+        if not issue:
+            return
+
+        # 2. Handle step status changes
+        if event.event_type.startswith("step."):
+            status_map = {
+                "step.started": "running",
+                "step.completed": "done",
+                "step.failed": "failed",
+            }
+            status = status_map.get(event.event_type)
+            if status:
+                HostStateManager.emit_step_status_changed(
+                    issue=issue,
+                    workflow_id=workflow_id,
+                    step_id=getattr(event, "step_name", ""),
+                    agent_type=getattr(event, "agent_type", ""),
+                    status=status,
+                )
+
+                # 3. Emit updated mermaid diagram
+                engine = get_workflow_engine()
+                workflow = await engine.get_workflow(workflow_id)
+                if workflow:
+                    steps_data = []
+                    for s in workflow.steps:
+                        steps_data.append({
+                            "name": s.name,
+                            "status": s.status.value,
+                            "agent": {"name": s.agent.name}
+                        })
+                    diagram = build_mermaid_diagram(steps_data, issue)
+                    HostStateManager.emit_transition("mermaid_diagram", {
+                        "issue": issue,
+                        "workflow_id": workflow_id,
+                        "diagram": diagram,
+                        "timestamp": event.timestamp.timestamp(),
+                    })
+
+        # 4. Handle workflow completion
+        elif event.event_type in ("workflow.completed", "workflow.failed"):
+            status = "success" if event.event_type == "workflow.completed" else "failed"
+            HostStateManager.emit_transition("workflow_completed", {
+                "issue": issue,
+                "workflow_id": workflow_id,
+                "status": status,
+                "summary": f"Workflow {status}",
+                "timestamp": event.timestamp.timestamp(),
+            })
+
+    # Register handlers for step and workflow transitions
+    bus.subscribe_pattern("step.*", handle_event)
+    bus.subscribe_pattern("workflow.*", handle_event)
+    logger.info("✅ SocketIO event bridge attached to EventBus")
+
+
 def setup_event_handlers() -> None:
     """Attach event handler plugins to the shared EventBus.
 
@@ -62,6 +133,17 @@ def setup_event_handlers() -> None:
     if getattr(setup_event_handlers, "_done", False):
         return
     setup_event_handlers._done = True  # type: ignore[attr-defined]
+
+    # Initialize SocketIO bridge
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(_setup_socketio_event_bridge(bus))
+        else:
+            asyncio.run(_setup_socketio_event_bridge(bus))
+    except Exception as exc:
+        logger.warning("Failed to setup SocketIO event bridge: %s", exc)
 
     import os
 

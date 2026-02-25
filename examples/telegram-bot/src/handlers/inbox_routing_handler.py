@@ -203,6 +203,7 @@ async def process_inbox_task(
         logger.warning(f"Project '{project}' not in PROJECT_CONFIG, using as-is for workspace")
     
     filename = f"task_{message_id_or_unique_id}.md"
+    queue_id: int | None = None
     if inbox_backend == "postgres":
         try:
             queue_id = enqueue_task(
@@ -231,7 +232,16 @@ async def process_inbox_task(
     
     return {
         "success": True,
-        "message": f"✅ Routed to `{project}`\n📝 *{content}*",
+        "message": (
+            f"✅ Routed to `{project}`\n"
+            f"📝 *{content}*\n"
+            + (
+                f"\n📥 Queued for processor dispatch (queue id: {queue_id}). "
+                "Issue/workflow creation will start shortly."
+                if queue_id is not None
+                else "\n📥 Task saved for processor dispatch. Issue/workflow creation will start shortly."
+            )
+        ),
         "project": project,
         "content": content
     }
@@ -285,5 +295,9 @@ async def save_resolved_task(pending_project: dict, selected_project: str, messa
 
     return {
         "success": True,
-        "message": f"✅ Routed to `{project}`\n📝 *{content}*"
+        "message": (
+            f"✅ Routed to `{project}`\n"
+            f"📝 *{content}*\n"
+            "\n📥 Task saved for processor dispatch. Issue/workflow creation will start shortly."
+        )
     }

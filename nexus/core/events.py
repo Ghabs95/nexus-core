@@ -80,6 +80,7 @@ class StepStarted(NexusEvent):
     event_type: str = "step.started"
     step_num: int = 0
     step_name: str = ""
+    agent_type: str = ""
 
 
 @dataclass
@@ -88,6 +89,7 @@ class StepCompleted(NexusEvent):
     event_type: str = "step.completed"
     step_num: int = 0
     step_name: str = ""
+    agent_type: str = ""
     outputs: dict[str, Any] = field(default_factory=dict)
 
 
@@ -97,6 +99,7 @@ class StepFailed(NexusEvent):
     event_type: str = "step.failed"
     step_num: int = 0
     step_name: str = ""
+    agent_type: str = ""
     error: str = ""
 
 

@@ -1767,6 +1767,11 @@ def process_file(filepath):
 
 def main():
     logger.info(f"Inbox Processor started on {BASE_DIR}")
+    
+    # Initialize event handlers (including SocketIO bridge)
+    from orchestration.nexus_core_helpers import setup_event_handlers
+    setup_event_handlers()
+    
     logger.info("Inbox storage backend (effective): %s", get_inbox_storage_backend())
     logger.info("Stuck agent monitoring enabled (using workflow agent timeout)")
     logger.info("Agent comment monitoring enabled")

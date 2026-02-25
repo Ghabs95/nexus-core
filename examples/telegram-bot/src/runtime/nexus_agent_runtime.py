@@ -217,6 +217,14 @@ class NexusAgentRuntime(AgentRuntime):
         normalized_agent = str(agent_type or "").strip().lstrip("@").strip().lower()
         issue_key = str(issue_number)
 
+        state = self.get_workflow_state(issue_key)
+        if state in {"STOPPED", "PAUSED", "COMPLETED", "FAILED", "CANCELLED"}:
+            return False
+
+        issue_open = self._is_issue_open_for_retry(issue_key)
+        if issue_open is False:
+            return False
+
         try:
             from runtime.agent_monitor import AgentMonitor
 
@@ -396,6 +404,46 @@ class NexusAgentRuntime(AgentRuntime):
         # Fuse didn't trip — allow the retry.
         # (The actual retry-budget decision lives in the fuse logic above.)
         return True
+
+    def _is_issue_open_for_retry(self, issue_number: str) -> bool | None:
+        """Best-effort issue status check used by retry gating."""
+        try:
+            from config import get_default_project, get_repo
+            from integrations.workflow_state_factory import get_workflow_state
+
+            workflow_id = get_workflow_state().get_workflow_id(str(issue_number))
+            project_hint = ""
+            if workflow_id:
+                project_hint = str(workflow_id).split("-", 1)[0].strip().lower()
+
+            repo_candidates: list[str] = []
+            if project_hint:
+                try:
+                    repo_candidates.append(get_repo(project_hint))
+                except Exception:
+                    pass
+
+            try:
+                default_project = get_default_project()
+                repo_candidates.append(get_repo(default_project))
+            except Exception:
+                pass
+
+            seen: set[str] = set()
+            for repo in repo_candidates:
+                repo_name = str(repo or "").strip()
+                if not repo_name or repo_name in seen:
+                    continue
+                seen.add(repo_name)
+                status = self.is_issue_open(str(issue_number), repo_name)
+                if status is False:
+                    return False
+                if status is True:
+                    return True
+        except Exception:
+            return None
+
+        return None
 
     def send_alert(self, message: str) -> bool:
         from integrations.notifications import emit_alert
