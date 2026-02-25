@@ -86,7 +86,10 @@ nexus:
   # git_repos:
   #  - Ghabs95/nexus-core
   chat_agents:
-    designer: {}
+    designer:
+      context_path: nexus-core/examples/telegram-bot/docs
+      context_files:
+        - AGENTS.md
     triage: {}
     compliance: {}
     writer: {}
