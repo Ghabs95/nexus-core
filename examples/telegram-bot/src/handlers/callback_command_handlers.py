@@ -31,11 +31,19 @@ class CallbackHandlerDeps:
 
 async def core_callback_router(ctx: InteractiveContext, deps: CallbackHandlerDeps):
     data = ctx.query.data
+    monitor_prefixes = (
+        "status:",
+        "active:",
+        "logs:",
+        "logsfull:",
+        "tail:",
+        "fuse:",
+    )
     if data.startswith("pickcmd:"):
         await project_picker_handler(ctx, deps)
     elif data.startswith("pickissue") or data.startswith("pickissue_manual:") or data.startswith("pickissue_state:"):
         await issue_picker_handler(ctx, deps)
-    elif data.startswith("pickmonitor:"):
+    elif data.startswith("pickmonitor:") or data.startswith(monitor_prefixes):
         await monitor_project_picker_handler(ctx, deps)
     elif data.startswith("flow:close"):
         await flow_close_handler(ctx, deps)
@@ -116,17 +124,36 @@ async def monitor_project_picker_handler(ctx: InteractiveContext, deps: Callback
     await ctx.answer_callback_query()
     query_data = ctx.query.data
 
-    if not query_data or not query_data.startswith("pickmonitor:"):
+    if not query_data:
         return
 
-    _, command, project_key = query_data.split(":", 2)
-    ctx.args = [project_key]
+    command = ""
+    project_key = ""
+    extra_args: list[str] = []
+
+    if query_data.startswith("pickmonitor:"):
+        _, command, project_key = query_data.split(":", 2)
+    else:
+        parts = query_data.split(":")
+        if len(parts) < 2:
+            return
+        command = parts[0]
+        project_key = parts[1]
+        extra_args = parts[2:]
 
     if command == "status":
+        ctx.args = [project_key] + extra_args
         await deps.status_handler(ctx)
         return
     if command == "active":
+        ctx.args = [project_key] + extra_args
         await deps.active_handler(ctx)
+        return
+
+    if command in {"logs", "logsfull", "tail", "fuse"}:
+        ctx.user_state["pending_command"] = command
+        ctx.user_state["pending_project"] = project_key
+        await deps.prompt_issue_selection(ctx, command, project_key, edit_message=True)
         return
 
     await ctx.edit_message_text("Unsupported monitoring command.")

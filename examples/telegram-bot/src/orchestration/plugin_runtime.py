@@ -229,6 +229,8 @@ def clear_cached_plugin(cache_key: str) -> None:
 def get_workflow_state_plugin(
     *,
     storage_dir: str,
+    storage_type: str | None = None,
+    storage_config: dict[str, Any] | None = None,
     issue_to_workflow_id: Callable[[str], str | None] | None = None,
     issue_to_workflow_map_setter: Callable[[str, str], None] | None = None,
     workflow_definition_path_resolver: Callable[[str], str | None] | None = None,
@@ -245,6 +247,8 @@ def get_workflow_state_plugin(
     }
 
     optional_overrides = {
+        "storage_type": storage_type,
+        "storage_config": storage_config,
         "issue_to_workflow_id": issue_to_workflow_id,
         "issue_to_workflow_map_setter": issue_to_workflow_map_setter,
         "workflow_definition_path_resolver": workflow_definition_path_resolver,

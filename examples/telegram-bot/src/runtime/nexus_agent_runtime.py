@@ -9,9 +9,12 @@ Bridges ProcessOrchestrator (nexus-core) with the concrete nexus host:
 """
 
 import glob
+import asyncio
+import json
 import logging
 import os
 import re
+import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -31,6 +34,36 @@ _STEP_COMPLETE_HEADER_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _READY_FOR_RE = re.compile(r"\bready\s+for\b", re.IGNORECASE)
+
+
+def _run_coro_sync(coro_factory: Callable[[], object]) -> object | None:
+    """Run an async coroutine from sync code, even if a loop is already running."""
+    try:
+        asyncio.get_running_loop()
+        in_running_loop = True
+    except RuntimeError:
+        in_running_loop = False
+
+    if not in_running_loop:
+        try:
+            return asyncio.run(coro_factory())
+        except Exception:
+            return None
+
+    holder: dict[str, object] = {"value": None, "error": None}
+
+    def _runner() -> None:
+        try:
+            holder["value"] = asyncio.run(coro_factory())
+        except Exception as inner_exc:
+            holder["error"] = inner_exc
+
+    worker = threading.Thread(target=_runner, daemon=True)
+    worker.start()
+    worker.join(timeout=10)
+    if worker.is_alive() or holder["error"] is not None:
+        return None
+    return holder["value"]
 
 
 def get_recent_agent_comment_window_seconds() -> int:
@@ -266,7 +299,7 @@ class NexusAgentRuntime(AgentRuntime):
                 if not alerted:
                     try:
                         from audit_store import AuditStore
-                        from config import NEXUS_CORE_STORAGE_DIR
+                        from config import NEXUS_CORE_STORAGE_DIR, NEXUS_STORAGE_DSN, NEXUS_WORKFLOW_BACKEND
                         from orchestration.plugin_runtime import (
                             get_workflow_state_plugin,
                         )
@@ -275,6 +308,14 @@ class NexusAgentRuntime(AgentRuntime):
 
                         workflow_plugin = get_workflow_state_plugin(
                             storage_dir=NEXUS_CORE_STORAGE_DIR,
+                            storage_type=(
+                                "postgres" if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} else "file"
+                            ),
+                            storage_config=(
+                                {"connection_string": NEXUS_STORAGE_DSN}
+                                if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} and NEXUS_STORAGE_DSN
+                                else {}
+                            ),
                             issue_to_workflow_id=lambda n: get_workflow_state().get_workflow_id(n),
                             clear_pending_approval=lambda n: get_workflow_state().clear_pending_approval(n),
                             audit_log=AuditStore.audit_log,
@@ -484,77 +525,53 @@ class NexusAgentRuntime(AgentRuntime):
     # ------------------------------------------------------------------
 
     def get_workflow_state(self, issue_number: str) -> str | None:
-        """Read workflow state directly from nexus-core FileStorage on disk."""
-        import json
-        import os
-
-        from config import NEXUS_CORE_STORAGE_DIR
+        """Read workflow state from workflow backend via workflow plugin."""
+        from config import NEXUS_CORE_STORAGE_DIR, NEXUS_STORAGE_DSN, NEXUS_WORKFLOW_BACKEND
+        from orchestration.plugin_runtime import get_workflow_state_plugin
         from integrations.workflow_state_factory import get_workflow_state
 
         workflow_id = get_workflow_state().get_workflow_id(str(issue_number))
         if not workflow_id:
             return None
-        wf_file = os.path.join(
-            NEXUS_CORE_STORAGE_DIR, "workflows", f"{workflow_id}.json"
+
+        workflow_plugin = get_workflow_state_plugin(
+            storage_dir=NEXUS_CORE_STORAGE_DIR,
+            storage_type=(
+                "postgres" if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} else "file"
+            ),
+            storage_config=(
+                {"connection_string": NEXUS_STORAGE_DSN}
+                if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} and NEXUS_STORAGE_DSN
+                else {}
+            ),
+            issue_to_workflow_id=lambda n: get_workflow_state().get_workflow_id(n),
+            clear_pending_approval=lambda n: get_workflow_state().clear_pending_approval(n),
+            cache_key="workflow:state-engine:runtime-state",
         )
-        try:
-            with open(wf_file) as f:
-                state_str = json.load(f).get("state", "")
-        except (FileNotFoundError, json.JSONDecodeError):
+
+        async def _load_workflow() -> object:
+            engine = workflow_plugin._get_engine()
+            return await engine.get_workflow(workflow_id)
+
+        workflow = _run_coro_sync(_load_workflow)
+        if not workflow:
             return None
-        # WorkflowEngine stores e.g. "running", "paused", "cancelled", "completed", "failed"
-        normalized = str(state_str).strip().lower()
+
+        state_obj = getattr(workflow, "state", None)
+        normalized = str(getattr(state_obj, "value", state_obj or "")).strip().lower()
         if normalized in {"paused", "cancelled", "completed", "failed"}:
             return normalized.upper()
         return None
 
     def should_retry_dead_agent(self, issue_number: str, agent_type: str) -> bool:
         """Allow dead-agent retry only when workflow still has a matching RUNNING step."""
-        import json
-        import os
-
-        from config import NEXUS_CORE_STORAGE_DIR
-        from integrations.workflow_state_factory import get_workflow_state
-
-        workflow_id = get_workflow_state().get_workflow_id(str(issue_number))
-        if not workflow_id:
+        expected_agent = self.get_expected_running_agent(issue_number)
+        if not expected_agent:
             return False
 
-        wf_file = os.path.join(NEXUS_CORE_STORAGE_DIR, "workflows", f"{workflow_id}.json")
-        try:
-            with open(wf_file) as f:
-                payload = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return False
-
-        state_str = str(payload.get("state", "")).strip().lower()
-        if state_str in {"completed", "failed", "cancelled"}:
-            return False
-
-        remote_issue_open = self._is_remote_issue_open(payload, issue_number)
-        if remote_issue_open is False:
-            return False
-
-        running_steps = []
-        for step in payload.get("steps", []):
-            if not isinstance(step, dict):
-                continue
-            if str(step.get("status", "")).strip().upper() == "RUNNING":
-                running_steps.append(step)
-
-        if not running_steps:
-            return False
-
-        for step in running_steps:
-            agent = step.get("agent")
-            if not isinstance(agent, dict):
-                continue
-            name = str(agent.get("name", "")).strip()
-            display_name = str(agent.get("display_name", "")).strip()
-            if agent_type in {name, display_name}:
-                return True
-
-        return False
+        requested = str(agent_type or "").strip().lower().lstrip("@")
+        expected = str(expected_agent or "").strip().lower().lstrip("@")
+        return bool(requested and expected and requested == expected)
 
     def _is_remote_issue_open(self, payload: dict, issue_number: str) -> bool | None:
         """Best-effort check whether the source issue still exists and is open.
@@ -606,37 +623,50 @@ class NexusAgentRuntime(AgentRuntime):
 
     def get_expected_running_agent(self, issue_number: str) -> str | None:
         """Return the current RUNNING step agent type from workflow storage."""
-        import json
-        import os
-
-        from config import NEXUS_CORE_STORAGE_DIR
+        from config import NEXUS_CORE_STORAGE_DIR, NEXUS_STORAGE_DSN, NEXUS_WORKFLOW_BACKEND
+        from orchestration.plugin_runtime import get_workflow_state_plugin
         from integrations.workflow_state_factory import get_workflow_state
 
         workflow_id = get_workflow_state().get_workflow_id(str(issue_number))
         if not workflow_id:
             return None
 
-        wf_file = os.path.join(NEXUS_CORE_STORAGE_DIR, "workflows", f"{workflow_id}.json")
-        try:
-            with open(wf_file) as f:
-                payload = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
+        workflow_plugin = get_workflow_state_plugin(
+            storage_dir=NEXUS_CORE_STORAGE_DIR,
+            storage_type=(
+                "postgres" if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} else "file"
+            ),
+            storage_config=(
+                {"connection_string": NEXUS_STORAGE_DSN}
+                if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} and NEXUS_STORAGE_DSN
+                else {}
+            ),
+            issue_to_workflow_id=lambda n: get_workflow_state().get_workflow_id(n),
+            clear_pending_approval=lambda n: get_workflow_state().clear_pending_approval(n),
+            cache_key="workflow:state-engine:runtime-expected-agent",
+        )
+
+        async def _load_workflow() -> object:
+            engine = workflow_plugin._get_engine()
+            return await engine.get_workflow(workflow_id)
+
+        workflow = _run_coro_sync(_load_workflow)
+        if not workflow:
             return None
 
-        state_str = str(payload.get("state", "")).strip().lower()
+        state_obj = getattr(workflow, "state", None)
+        state_str = str(getattr(state_obj, "value", state_obj or "")).strip().lower()
         if state_str in {"completed", "failed", "cancelled"}:
             return None
 
-        for step in payload.get("steps", []):
-            if not isinstance(step, dict):
+        for step in list(getattr(workflow, "steps", []) or []):
+            status_obj = getattr(step, "status", None)
+            status = str(getattr(status_obj, "value", status_obj or "")).strip().upper()
+            if status != "RUNNING":
                 continue
-            if str(step.get("status", "")).strip().upper() != "RUNNING":
-                continue
-            agent = step.get("agent")
-            if not isinstance(agent, dict):
-                continue
-            name = str(agent.get("name", "")).strip()
-            display_name = str(agent.get("display_name", "")).strip()
+            agent = getattr(step, "agent", None)
+            name = str(getattr(agent, "name", "") or "").strip()
+            display_name = str(getattr(agent, "display_name", "") or "").strip()
             if name:
                 return name
             if display_name:

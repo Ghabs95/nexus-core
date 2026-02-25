@@ -77,8 +77,8 @@ async def status_handler(ctx: InteractiveContext, deps: MonitoringHandlersDeps) 
                 issue_num = candidate
     else:
         # Replaced prompt_monitor_project_selection
-        buttons = [[Button(label=deps.get_project_label(pk), callback_data=f"status:{pk}")] for pk in deps.iter_project_keys()]
-        buttons.append([Button(label="All Projects", callback_data="status:all")])
+        buttons = [[Button(label=deps.get_project_label(pk), callback_data=f"pickmonitor:status:{pk}")] for pk in deps.iter_project_keys()]
+        buttons.append([Button(label="All Projects", callback_data="pickmonitor:status:all")])
         await ctx.reply_text("Please select a project to view its status:", buttons=buttons)
         return
 
@@ -205,10 +205,10 @@ async def active_handler(ctx: InteractiveContext, deps: MonitoringHandlersDeps) 
                 return
     elif not cleanup_mode:
         # Replaced prompt_monitor_project_selection
-        buttons = [[Button(label=deps.get_project_label(pk), callback_data=f"active:{pk}")] for pk in deps.iter_project_keys()]
-        buttons.append([Button(label="All Projects", callback_data="active:all")])
+        buttons = [[Button(label=deps.get_project_label(pk), callback_data=f"pickmonitor:active:{pk}")] for pk in deps.iter_project_keys()]
+        buttons.append([Button(label="All Projects", callback_data="pickmonitor:active:all")])
         if cleanup_mode:
-            buttons.append([Button(label="All Projects (Cleanup)", callback_data="active:all:cleanup")])
+            buttons.append([Button(label="All Projects (Cleanup)", callback_data="pickmonitor:active:all:cleanup")])
         await ctx.reply_text("Please select a project to view its active tasks:", buttons=buttons)
         return
 
@@ -336,7 +336,7 @@ async def logs_handler(ctx: InteractiveContext, deps: MonitoringHandlersDeps) ->
 
     if not ctx.args:
         # Replaced prompt_project_selection
-        buttons = [[Button(label=deps.get_project_label(pk), callback_data=f"logs:{pk}")] for pk in deps.iter_project_keys()]
+        buttons = [[Button(label=deps.get_project_label(pk), callback_data=f"pickmonitor:logs:{pk}")] for pk in deps.iter_project_keys()]
         await ctx.reply_text("Please select a project to view logs:", buttons=buttons)
         return
 
@@ -372,16 +372,16 @@ async def logs_handler(ctx: InteractiveContext, deps: MonitoringHandlersDeps) ->
         deps.logger.info(f"Reading log file: {latest}")
         try:
             with open(latest, encoding="utf-8") as handle:
-                lines = handle.readlines()[-50:]
+                lines = handle.readlines()[-200:]
             deps.logger.info(f"Read {len(lines)} lines from log file")
-            timeline += f"\n**{os.path.basename(latest)}** (last 50 lines):\n"
+            timeline += f"\n**{os.path.basename(latest)}** (last 200 lines):\n"
             for line in lines:
                 timeline += f"{line.rstrip()}\n"
         except Exception as exc:
             deps.logger.error(f"Error reading log file: {exc}", exc_info=True)
             timeline += f"\n❌ Failed to read {os.path.basename(latest)}: {exc}\n"
     else:
-        latest_tail = deps.read_latest_log_tail(task_file, max_lines=50)
+        latest_tail = deps.read_latest_log_tail(task_file, max_lines=200)
         if not latest_tail:
             issue_refs = deps.search_logs_for_issue(issue_num)
             if issue_refs:
@@ -430,7 +430,7 @@ async def logsfull_handler(
 
     if not ctx.args:
         # Replaced prompt_project_selection
-        buttons = [[Button(label=deps.get_project_label(pk), callback_data=f"logsfull:{pk}")] for pk in deps.iter_project_keys()]
+        buttons = [[Button(label=deps.get_project_label(pk), callback_data=f"pickmonitor:logsfull:{pk}")] for pk in deps.iter_project_keys()]
         await ctx.reply_text("Please select a project to view full logs:", buttons=buttons)
         return
 
@@ -506,7 +506,7 @@ async def tail_handler(ctx: InteractiveContext, deps: MonitoringHandlersDeps) ->
 
     if not ctx.args:
         # Replaced prompt_project_selection
-        buttons = [[Button(label=deps.get_project_label(pk), callback_data=f"tail:{pk}")] for pk in deps.iter_project_keys()]
+        buttons = [[Button(label=deps.get_project_label(pk), callback_data=f"pickmonitor:tail:{pk}")] for pk in deps.iter_project_keys()]
         await ctx.reply_text("Please select a project to tail logs:", buttons=buttons)
         return
 
@@ -659,7 +659,7 @@ async def fuse_handler(ctx: InteractiveContext, deps: MonitoringHandlersDeps) ->
 
     if not ctx.args:
         # Replaced prompt_project_selection
-        buttons = [[Button(label=deps.get_project_label(pk), callback_data=f"fuse:{pk}")] for pk in deps.iter_project_keys()]
+        buttons = [[Button(label=deps.get_project_label(pk), callback_data=f"pickmonitor:fuse:{pk}")] for pk in deps.iter_project_keys()]
         await ctx.reply_text("Please select a project to view fuse status:", buttons=buttons)
         return
 

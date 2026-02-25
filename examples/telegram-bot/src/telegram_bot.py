@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from functools import partial
 from types import SimpleNamespace
@@ -50,6 +51,8 @@ from config import (
     BASE_DIR,
     LOGS_DIR,
     NEXUS_CORE_STORAGE_DIR,
+    NEXUS_STORAGE_DSN,
+    NEXUS_WORKFLOW_BACKEND,
     ORCHESTRATOR_CONFIG,
     PROJECT_CONFIG,
     TELEGRAM_ALLOWED_USER_IDS,
@@ -303,6 +306,12 @@ from integrations.workflow_state_factory import get_workflow_state as _get_wf_st
 
 _WORKFLOW_STATE_PLUGIN_KWARGS = {
     "storage_dir": NEXUS_CORE_STORAGE_DIR,
+    "storage_type": "postgres" if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} else "file",
+    "storage_config": (
+        {"connection_string": NEXUS_STORAGE_DSN}
+        if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} and NEXUS_STORAGE_DSN
+        else {}
+    ),
     "issue_to_workflow_id": lambda n: _get_wf_state().get_workflow_id(n),
     "clear_pending_approval": lambda n: _get_wf_state().clear_pending_approval(n),
     "audit_log": AuditStore.audit_log,
@@ -607,33 +616,80 @@ def _get_expected_running_agent_from_workflow(issue_num: str) -> str | None:
     if not workflow_id:
         return None
 
-    workflow_path = os.path.join(
-        NEXUS_CORE_STORAGE_DIR,
-        "workflows",
-        f"{workflow_id}.json",
+    workflow_plugin = get_workflow_state_plugin(
+        **_WORKFLOW_STATE_PLUGIN_KWARGS,
+        cache_key="workflow:state-engine:expected-agent:telegram",
     )
-    try:
-        with open(workflow_path, encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+
+    def _load_workflow() -> Any:
+        async def _runner() -> Any:
+            engine = workflow_plugin._get_engine()
+            return await engine.get_workflow(workflow_id)
+
+        try:
+            asyncio.get_running_loop()
+            in_running_loop = True
+        except RuntimeError:
+            in_running_loop = False
+
+        if not in_running_loop:
+            try:
+                return asyncio.run(_runner())
+            except Exception:
+                return None
+
+            holder: dict[str, Any] = {"value": None, "error": None}
+
+            def _thread_target() -> None:
+                try:
+                    holder["value"] = asyncio.run(_runner())
+                except Exception as inner_exc:
+                    holder["error"] = inner_exc
+
+            worker = threading.Thread(target=_thread_target, daemon=True)
+            worker.start()
+            worker.join(timeout=10)
+            if worker.is_alive():
+                return None
+            if holder["error"] is not None:
+                return None
+            return holder["value"]
+
+        holder: dict[str, Any] = {"value": None, "error": None}
+
+        def _thread_target() -> None:
+            try:
+                holder["value"] = asyncio.run(_runner())
+            except Exception as inner_exc:
+                holder["error"] = inner_exc
+
+        worker = threading.Thread(target=_thread_target, daemon=True)
+        worker.start()
+        worker.join(timeout=10)
+        if worker.is_alive():
+            return None
+        if holder["error"] is not None:
+            return None
+        return holder["value"]
+
+    workflow = _load_workflow()
+    if not workflow:
         return None
 
-    state = str(payload.get("state", "")).strip().lower()
+    state_obj = getattr(workflow, "state", None)
+    state = str(getattr(state_obj, "value", state_obj or "")).strip().lower()
     if state in {"completed", "failed", "cancelled"}:
         return None
 
-    for step in payload.get("steps", []):
-        if not isinstance(step, dict):
-            continue
-        if str(step.get("status", "")).strip().lower() != "running":
-            continue
-
-        agent = step.get("agent")
-        if not isinstance(agent, dict):
+    for step in list(getattr(workflow, "steps", []) or []):
+        status_obj = getattr(step, "status", None)
+        status = str(getattr(status_obj, "value", status_obj or "")).strip().lower()
+        if status != "running":
             continue
 
-        name = str(agent.get("name", "")).strip()
-        display_name = str(agent.get("display_name", "")).strip()
+        agent = getattr(step, "agent", None)
+        name = str(getattr(agent, "name", "") or "").strip()
+        display_name = str(getattr(agent, "display_name", "") or "").strip()
         if name:
             return name
         if display_name:
@@ -663,18 +719,28 @@ def _read_latest_local_completion(issue_num: str) -> dict[str, Any] | None:
     return read_latest_local_completion(BASE_DIR, get_nexus_dir_name(), issue_num)
 
 
+def _resolve_project_root_from_task_path(task_file: str) -> str:
+    """Resolve project/worktree root for a task path under `.nexus/tasks/...`."""
+    normalized = os.path.abspath(task_file).replace("\\", "/")
+    match = re.search(r"^(.*)/\.nexus/tasks/[^/]+/", normalized)
+    if match:
+        return os.path.normpath(match.group(1))
+    if "/.nexus/" in normalized:
+        return os.path.normpath(normalized.split("/.nexus/", 1)[0])
+    return os.path.dirname(os.path.dirname(os.path.dirname(normalized)))
+
+
 def find_task_logs(task_file):
     """Find task log files for the task file's project."""
     if not task_file:
         return []
 
     try:
-        if "/.nexus/" in task_file:
-            project_root = task_file.split("/.nexus/")[0]
-        else:
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(task_file)))
+        project_root = _resolve_project_root_from_task_path(task_file)
 
         project_key = _extract_project_from_nexus_path(task_file)
+        if not project_key:
+            return []
         logs_dir = get_tasks_logs_dir(project_root, project_key)
         if not os.path.isdir(logs_dir):
             return []
@@ -749,15 +815,13 @@ def find_issue_log_files(issue_num, task_file=None):
 
     # If task file is known, search its project logs dir first
     if task_file:
-        if "/.nexus/" in task_file:
-            project_root = task_file.split("/.nexus/")[0]
-        else:
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(task_file)))
+        project_root = _resolve_project_root_from_task_path(task_file)
         project_key = _extract_project_from_nexus_path(task_file)
-        logs_dir = get_tasks_logs_dir(project_root, project_key)
-        if os.path.isdir(logs_dir):
-            pattern = os.path.join(logs_dir, "**", f"*_{issue_num}_*.log")
-            matches.extend(glob.glob(pattern, recursive=True))
+        if project_key:
+            logs_dir = get_tasks_logs_dir(project_root, project_key)
+            if os.path.isdir(logs_dir):
+                pattern = os.path.join(logs_dir, "**", f"*_{issue_num}_*.log")
+                matches.extend(glob.glob(pattern, recursive=True))
 
     if matches:
         return matches
@@ -774,7 +838,31 @@ def find_issue_log_files(issue_num, task_file=None):
         "**",
         f"*_{issue_num}_*.log"
     )
-    return glob.glob(pattern, recursive=True)
+    matches.extend(glob.glob(pattern, recursive=True))
+
+    worktree_pattern = os.path.join(
+        BASE_DIR,
+        "**",
+        nexus_dir_name,
+        "worktrees",
+        "*",
+        nexus_dir_name,
+        "tasks",
+        "*",
+        "logs",
+        "**",
+        f"*_{issue_num}_*.log",
+    )
+    matches.extend(glob.glob(worktree_pattern, recursive=True))
+
+    unique = []
+    seen = set()
+    for path in matches:
+        if path in seen:
+            continue
+        seen.add(path)
+        unique.append(path)
+    return unique
 
 
 def read_latest_log_full(task_file):
@@ -1056,19 +1144,37 @@ async def _prompt_project_selection(update: Update, context: ContextTypes.DEFAUL
 
 
 def _parse_project_issue_args(args: list[str]) -> tuple[str | None, str | None, list[str]]:
-    if len(args) < 2:
+    sanitized_args: list[str] = []
+    for token in args:
+        value = str(token or "").strip()
+        if not value:
+            continue
+        if all(ch in {"=", ">", "-", "→"} for ch in value):
+            continue
+        sanitized_args.append(value)
+
+    if len(sanitized_args) < 2:
         return None, None, []
-    project_key = _normalize_project_key(args[0])
-    issue_num = args[1].lstrip("#")
-    rest = args[2:]
+    project_key = _normalize_project_key(sanitized_args[0])
+    issue_num = sanitized_args[1].lstrip("#")
+    rest = sanitized_args[2:]
     return project_key, issue_num, rest
 
 
 async def _ensure_project_issue(update: Update, context: ContextTypes.DEFAULT_TYPE, command: str) -> tuple[str | None, str | None, list[str]]:
-    project_key, issue_num, rest = _parse_project_issue_args(context.args)
+    sanitized_args: list[str] = []
+    for token in list(context.args or []):
+        value = str(token or "").strip()
+        if not value:
+            continue
+        if all(ch in {"=", ">", "-", "→"} for ch in value):
+            continue
+        sanitized_args.append(value)
+
+    project_key, issue_num, rest = _parse_project_issue_args(sanitized_args)
     if not project_key or not issue_num:
-        if len(context.args) == 1:
-            arg = context.args[0]
+        if len(sanitized_args) == 1:
+            arg = sanitized_args[0]
             maybe_issue = arg.lstrip("#")
             if maybe_issue.isdigit():
                 # Just an issue number — still need project selection

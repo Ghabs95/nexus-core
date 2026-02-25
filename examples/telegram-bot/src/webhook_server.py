@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import sys
+import asyncio
 
 from flask import Flask, jsonify, request, send_from_directory
 try:
@@ -41,6 +42,9 @@ from nexus.core.project.repo_utils import project_repos_from_config as _project_
 from config import (
     BASE_DIR,
     LOGS_DIR,
+    NEXUS_CORE_STORAGE_DIR,
+    NEXUS_STORAGE_DSN,
+    NEXUS_WORKFLOW_BACKEND,
     PROJECT_CONFIG,
     WEBHOOK_PORT,
     WEBHOOK_SECRET,
@@ -72,6 +76,53 @@ socketio = SocketIO(app, async_mode="eventlet", cors_allowed_origins="*")
 
 # Track processed events to avoid duplicates
 processed_events = set()
+
+
+def _collect_visualizer_snapshot() -> list[dict]:
+    """Return a best-effort snapshot of mapped workflows for visualizer bootstrap."""
+    try:
+        from integrations.workflow_state_factory import get_workflow_state
+        from orchestration.plugin_runtime import get_workflow_state_plugin
+
+        workflow_state = get_workflow_state()
+        mappings = workflow_state.load_all_mappings() or {}
+        if not isinstance(mappings, dict) or not mappings:
+            return []
+
+        workflow_plugin = get_workflow_state_plugin(
+            storage_dir=NEXUS_CORE_STORAGE_DIR,
+            storage_type=("postgres" if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} else "file"),
+            storage_config=(
+                {"connection_string": NEXUS_STORAGE_DSN}
+                if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} and NEXUS_STORAGE_DSN
+                else {}
+            ),
+            issue_to_workflow_id=lambda n: workflow_state.get_workflow_id(n),
+            clear_pending_approval=lambda n: workflow_state.clear_pending_approval(n),
+            cache_key="workflow:state-engine:visualizer-snapshot",
+        )
+
+        async def _load() -> list[dict]:
+            records: list[dict] = []
+            for issue_num, workflow_id in sorted(mappings.items(), key=lambda kv: str(kv[0])):
+                try:
+                    status = await workflow_plugin.get_workflow_status(str(issue_num))
+                except Exception:
+                    status = None
+
+                records.append(
+                    {
+                        "issue": str(issue_num),
+                        "workflow_id": str(workflow_id),
+                        "status": status or {},
+                    }
+                )
+            return records
+
+        return asyncio.run(_load())
+    except Exception as exc:
+        logger.warning("Failed to collect visualizer snapshot: %s", exc)
+        return []
 
 # Register SocketIO emitter with HostStateManager for real-time transition broadcasting
 try:
@@ -608,6 +659,16 @@ def index():
 def visualizer():
     """Serve the real-time workflow visualizer dashboard."""
     return send_from_directory(app.static_folder, "visualizer.html")
+
+
+@app.route('/visualizer/snapshot', methods=['GET'])
+def visualizer_snapshot():
+    """Return a snapshot payload for initial visualizer rendering."""
+    records = _collect_visualizer_snapshot()
+    return jsonify({
+        "count": len(records),
+        "workflows": records,
+    }), 200
 
 
 def main():

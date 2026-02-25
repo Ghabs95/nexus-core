@@ -48,44 +48,53 @@
 </div>
 <script>
 // ---- Graph ----
-const cy = cytoscape({
-  container: document.getElementById('cy'),
-  style: [
-    { selector: 'node', style: {
-        'background-color': '#21262d',
-        'border-color': '#58a6ff',
-        'border-width': 2,
-        'color': '#e6edf3',
-        'label': 'data(label)',
-        'text-valign': 'center',
-        'text-halign': 'center',
-        'font-size': '11px',
-        'width': 100, 'height': 40,
-        'shape': 'round-rectangle',
-        'text-wrap': 'wrap',
-        'text-max-width': '90px',
-    }},
-    { selector: 'node.workflow', style: { 'background-color': '#1f2d1f', 'border-color': '#3fb950', 'border-width': 2 }},
-    { selector: 'node.agent', style: { 'background-color': '#1e2538', 'border-color': '#58a6ff' }},
-    { selector: 'edge', style: {
-        'width': 2,
-        'line-color': '#30363d',
-        'target-arrow-color': '#30363d',
-        'target-arrow-shape': 'triangle',
-        'curve-style': 'bezier',
-        'label': 'data(label)',
-        'font-size': '9px',
-        'color': '#8b949e',
-        'text-background-color': '#0d1117',
-        'text-background-opacity': 1,
-        'text-background-padding': '2px',
-    }},
-  ],
-  layout: { name: 'cose', padding: 30 },
-  elements: [],
-});
+let cy = null;
+const fallbackRows = new Map();
+const cyContainer = document.getElementById('cy');
+
+if (typeof window.cytoscape === 'function') {
+  cy = window.cytoscape({
+    container: cyContainer,
+    style: [
+      { selector: 'node', style: {
+          'background-color': '#21262d',
+          'border-color': '#58a6ff',
+          'border-width': 2,
+          'color': '#e6edf3',
+          'label': 'data(label)',
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'font-size': '11px',
+          'width': 100, 'height': 40,
+          'shape': 'round-rectangle',
+          'text-wrap': 'wrap',
+          'text-max-width': '90px',
+      }},
+      { selector: 'node.workflow', style: { 'background-color': '#1f2d1f', 'border-color': '#3fb950', 'border-width': 2 }},
+      { selector: 'node.agent', style: { 'background-color': '#1e2538', 'border-color': '#58a6ff' }},
+      { selector: 'edge', style: {
+          'width': 2,
+          'line-color': '#30363d',
+          'target-arrow-color': '#30363d',
+          'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier',
+          'label': 'data(label)',
+          'font-size': '9px',
+          'color': '#8b949e',
+          'text-background-color': '#0d1117',
+          'text-background-opacity': 1,
+          'text-background-padding': '2px',
+      }},
+    ],
+    layout: { name: 'cose', padding: 30 },
+    elements: [],
+  });
+} else {
+  cyContainer.innerHTML = '<div style="padding:16px;color:#8b949e;font-size:14px;">Graph library unavailable; showing workflow list fallback.</div>';
+}
 
 function ensureNode(id, label, cls) {
+  if (!cy) return;
   if (!cy.getElementById(id).length) {
     cy.add({ data: { id, label }, classes: cls });
     relayout();
@@ -93,6 +102,7 @@ function ensureNode(id, label, cls) {
 }
 
 function ensureEdge(source, target, label) {
+  if (!cy) return;
   const eid = `${source}->${target}`;
   if (!cy.getElementById(eid).length) {
     cy.add({ data: { id: eid, source, target, label } });
@@ -102,6 +112,7 @@ function ensureEdge(source, target, label) {
 
 let layoutTimer = null;
 function relayout() {
+  if (!cy) return;
   clearTimeout(layoutTimer);
   layoutTimer = setTimeout(() => {
     cy.layout({ name: 'cose', animate: true, animationDuration: 400, padding: 30 }).run();
@@ -109,7 +120,80 @@ function relayout() {
 }
 
 function clearGraph() {
-  cy.elements().remove();
+  if (cy) {
+    cy.elements().remove();
+  }
+  fallbackRows.clear();
+  if (cyContainer) {
+    cyContainer.innerHTML = '';
+  }
+}
+
+function renderFallbackList() {
+  if (cy || !cyContainer) return;
+  const rows = Array.from(fallbackRows.values());
+  if (!rows.length) {
+    cyContainer.innerHTML = '<div style="padding:16px;color:#8b949e;font-size:14px;">No active workflows in snapshot.</div>';
+    return;
+  }
+
+  const html = rows.map((row) => (
+    `<div style="margin:10px;padding:10px;border:1px solid #30363d;border-radius:6px;background:#161b22;">`
+    + `<div style="font-weight:600;">Issue #${row.issue}</div>`
+    + `<div style="color:#8b949e;font-size:12px;">Workflow: ${row.workflowId}</div>`
+    + `<div style="color:#8b949e;font-size:12px;">State: ${row.state || 'unknown'}</div>`
+    + `<div style="color:#8b949e;font-size:12px;">Agent: ${row.agent || 'n/a'}</div>`
+    + `</div>`
+  )).join('');
+  cyContainer.innerHTML = html;
+}
+
+function applyWorkflowSnapshot(items) {
+  if (!Array.isArray(items)) return;
+  for (const item of items) {
+    const issue = String(item.issue || '').trim();
+    const workflowId = String(item.workflow_id || '').trim();
+    const status = item.status || {};
+    if (!issue || !workflowId) continue;
+
+    const issueId = `issue-${issue}`;
+    const wfId = `wf-${workflowId}`;
+
+    fallbackRows.set(issue, {
+      issue,
+      workflowId,
+      state: String(status.state || ''),
+      agent: String(status.current_agent || ''),
+    });
+
+    ensureNode(issueId, `Issue #${issue}`, 'workflow');
+    ensureNode(wfId, workflowId, 'workflow');
+    ensureEdge(issueId, wfId, String(status.state || 'mapped'));
+
+    const currentAgent = String(status.current_agent || '').trim();
+    if (currentAgent && currentAgent.toLowerCase() !== 'unknown') {
+      const agentId = `agent-${issue}-${currentAgent}`;
+      ensureNode(agentId, currentAgent, 'agent');
+      ensureEdge(wfId, agentId, String(status.current_step_name || 'current'));
+    }
+  }
+
+  if (cy) {
+    cy.fit(undefined, 40);
+  } else {
+    renderFallbackList();
+  }
+}
+
+async function refreshSnapshot() {
+  try {
+    const response = await fetch('/visualizer/snapshot', { cache: 'no-store' });
+    if (!response.ok) return;
+    const payload = await response.json();
+    applyWorkflowSnapshot(payload.workflows || []);
+  } catch (_) {
+    // Silent fallback: visualizer can still run via live socket events.
+  }
 }
 
 // ---- Event log ----
@@ -125,35 +209,42 @@ function logEvent(type, data) {
 }
 
 // ---- SocketIO ----
-const socket = io('/visualizer');
+if (typeof window.io === 'function') {
+  const socket = window.io('/visualizer');
 
-socket.on('connect', () => {
-  document.getElementById('status-dot').classList.add('connected');
-  document.getElementById('status-text').textContent = 'Connected';
-});
+  socket.on('connect', () => {
+    document.getElementById('status-dot').classList.add('connected');
+    document.getElementById('status-text').textContent = 'Connected';
+  });
 
-socket.on('disconnect', () => {
-  document.getElementById('status-dot').classList.remove('connected');
-  document.getElementById('status-text').textContent = 'Disconnected — reconnecting…';
-});
+  socket.on('disconnect', () => {
+    document.getElementById('status-dot').classList.remove('connected');
+    document.getElementById('status-text').textContent = 'Disconnected — reconnecting…';
+  });
 
-socket.on('agent_registered', (data) => {
-  logEvent('agent_registered', data);
-  const issueId = `issue-${data.issue}`;
-  const agentId = `agent-${data.issue}-${data.agent}`;
-  ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
-  ensureNode(agentId, data.agent, 'agent');
-  ensureEdge(issueId, agentId, 'launched');
-});
+  socket.on('agent_registered', (data) => {
+    logEvent('agent_registered', data);
+    const issueId = `issue-${data.issue}`;
+    const agentId = `agent-${data.issue}-${data.agent}`;
+    ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
+    ensureNode(agentId, data.agent, 'agent');
+    ensureEdge(issueId, agentId, 'launched');
+  });
 
-socket.on('workflow_mapped', (data) => {
-  logEvent('workflow_mapped', data);
-  const issueId = `issue-${data.issue}`;
-  const wfId = `wf-${data.workflow_id}`;
-  ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
-  ensureNode(wfId, data.workflow_id, 'workflow');
-  ensureEdge(issueId, wfId, 'workflow');
-});
+  socket.on('workflow_mapped', (data) => {
+    logEvent('workflow_mapped', data);
+    const issueId = `issue-${data.issue}`;
+    const wfId = `wf-${data.workflow_id}`;
+    ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
+    ensureNode(wfId, data.workflow_id, 'workflow');
+    ensureEdge(issueId, wfId, 'workflow');
+  });
+} else {
+  document.getElementById('status-text').textContent = 'Live socket unavailable — using snapshot mode';
+}
+
+refreshSnapshot();
+setInterval(refreshSnapshot, 15000);
 </script>
 </body>
 </html>
