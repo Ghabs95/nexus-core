@@ -10,7 +10,7 @@ def resolve_repo(config: dict[str, Any] | None, default_repo: str) -> str:
     if not isinstance(config, dict):
         return default_repo
 
-    repo = config.get("git_repo") or config.get("github_repo")
+    repo = config.get("git_repo")
     if isinstance(repo, str) and repo.strip():
         return repo.strip()
     return default_repo
