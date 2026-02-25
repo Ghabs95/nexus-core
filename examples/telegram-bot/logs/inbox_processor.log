@@ -5,3 +5,12 @@
 2026-02-25 02:49:16,331 - INFO - PostgresWorkflowStateStore connected (127.0.0.1:5432/nexus)
 2026-02-25 02:50:20,638 - INFO - 📋 Agent completed for issue #35 (summarizer)
 2026-02-25 02:50:20,640 - INFO - ✅ Workflow manual for issue #35 (last agent: summarizer)
+2026-02-25 02:50:24,643 - INFO - Created PR for issue #35: https://github.com/Ghabs95/nexus-core/pull/80
+2026-02-25 02:50:26,523 - INFO - Closed issue #35
+2026-02-25 02:50:26,656 - INFO - 🔀 Created PR for issue #35: https://github.com/Ghabs95/nexus-core/pull/80
+2026-02-25 02:50:27,109 - INFO - 📋 Agent completed for issue #36 (reviewer)
+2026-02-25 02:50:28,885 - INFO - 🔗 Launching next agent @summarizer for issue #36 (trigger: completion-scan)
+2026-02-25 02:50:39,119 - WARNING - Task file not found: /home/ubuntu/git/ghabs/.nexus/tasks/active/feature-simple_829.md
+2026-02-25 02:50:39,119 - ERROR - ❌ Failed to auto-chain to summarizer for issue #36
+2026-02-25 02:50:39,622 - INFO - 📋 Agent completed for issue #39 (deployer)
+2026-02-25 02:50:39,624 - INFO - ✅ Workflow manual for issue #39 (last agent: deployer)
