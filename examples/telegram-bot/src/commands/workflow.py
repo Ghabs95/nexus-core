@@ -1,11 +1,9 @@
 """Workflow control commands: pause, resume, stop, continue, new."""
 import logging
 
-from telegram import Update
-from telegram.ext import ContextTypes
-
 from audit_store import AuditStore
 from config import NEXUS_CORE_STORAGE_DIR, PROJECT_CONFIG, TELEGRAM_ALLOWED_USER_IDS
+from interactive_context import InteractiveContext
 from orchestration.plugin_runtime import (
     get_profiled_plugin,
     get_runtime_ops_plugin,
@@ -48,25 +46,25 @@ def _get_issue_plugin(repo: str):
     return plugin
 
 
-async def pause_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def pause_handler(ctx: InteractiveContext):
     """Pause auto-chaining for a workflow."""
-    if TELEGRAM_ALLOWED_USER_IDS and update.effective_user.id not in TELEGRAM_ALLOWED_USER_IDS:
+    if TELEGRAM_ALLOWED_USER_IDS and int(ctx.user_id) not in TELEGRAM_ALLOWED_USER_IDS:
         return
 
-    if not context.args or len(context.args) < 2:
-        await update.effective_message.reply_text(
+    if not ctx.args or len(ctx.args) < 2:
+        await ctx.reply_text(
             "⚠️ Usage: /pause <project> <issue#>"
         )
         return
 
-    project_key = _normalize_project_key(context.args[0])
+    project_key = _normalize_project_key(ctx.args[0])
     if project_key not in PROJECT_CONFIG:
-        await update.effective_message.reply_text("❌ Invalid project.")
+        await ctx.reply_text("❌ Invalid project.")
         return
 
-    issue_num = context.args[1].lstrip("#")
+    issue_num = ctx.args[1].lstrip("#")
     if not issue_num.isdigit():
-        await update.effective_message.reply_text("❌ Invalid issue number.")
+        await ctx.reply_text("❌ Invalid issue number.")
         return
 
     workflow_plugin = get_workflow_state_plugin(
@@ -78,7 +76,7 @@ async def pause_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reason="User requested via Telegram",
     )
     if not success:
-        await update.effective_message.reply_text(
+        await ctx.reply_text(
             f"⚠️ Unable to pause workflow for issue #{issue_num}."
         )
         return
@@ -91,32 +89,32 @@ async def pause_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status_text = (f"\n\n**Workflow:** {status['name']}\n"
                      f"**Step:** {status['current_step']}/{status['total_steps']} - {status['current_step_name']}")
 
-    await update.effective_message.reply_text(
+    await ctx.reply_text(
         f"⏸️ **Workflow paused for issue #{issue_num}**{status_text}\n\n"
         f"Auto-chaining is disabled. Agents can still complete work, but the next agent won't be launched automatically.\n\n"
         f"Use /resume {project_key} {issue_num} to re-enable auto-chaining."
     )
 
 
-async def resume_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def resume_handler(ctx: InteractiveContext):
     """Resume auto-chaining for a paused workflow."""
-    if TELEGRAM_ALLOWED_USER_IDS and update.effective_user.id not in TELEGRAM_ALLOWED_USER_IDS:
+    if TELEGRAM_ALLOWED_USER_IDS and int(ctx.user_id) not in TELEGRAM_ALLOWED_USER_IDS:
         return
 
-    if not context.args or len(context.args) < 2:
-        await update.effective_message.reply_text(
+    if not ctx.args or len(ctx.args) < 2:
+        await ctx.reply_text(
             "⚠️ Usage: /resume <project> <issue#>"
         )
         return
 
-    project_key = _normalize_project_key(context.args[0])
+    project_key = _normalize_project_key(ctx.args[0])
     if project_key not in PROJECT_CONFIG:
-        await update.effective_message.reply_text("❌ Invalid project.")
+        await ctx.reply_text("❌ Invalid project.")
         return
 
-    issue_num = context.args[1].lstrip("#")
+    issue_num = ctx.args[1].lstrip("#")
     if not issue_num.isdigit():
-        await update.effective_message.reply_text("❌ Invalid issue number.")
+        await ctx.reply_text("❌ Invalid issue number.")
         return
 
     workflow_plugin = get_workflow_state_plugin(
@@ -125,7 +123,7 @@ async def resume_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     success = await workflow_plugin.resume_workflow(issue_num)
     if not success:
-        await update.effective_message.reply_text(
+        await ctx.reply_text(
             f"⚠️ Unable to resume workflow for issue #{issue_num}."
         )
         return
@@ -138,7 +136,7 @@ async def resume_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status_text = (f"\n\n**Workflow:** {status['name']}\n"
                      f"**Step:** {status['current_step']}/{status['total_steps']} - {status['current_step_name']}")
 
-    await update.effective_message.reply_text(
+    await ctx.reply_text(
         f"▶️ **Workflow resumed for issue #{issue_num}**{status_text}\n\n"
         f"Auto-chaining is re-enabled. This command does not launch an agent immediately.\n"
         f"Use /continue {project_key} {issue_num} to launch the next agent now, or wait for the current step to complete.\n"
@@ -146,25 +144,25 @@ async def resume_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def stop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stop_handler(ctx: InteractiveContext):
     """Stop a workflow and close the issue."""
-    if TELEGRAM_ALLOWED_USER_IDS and update.effective_user.id not in TELEGRAM_ALLOWED_USER_IDS:
+    if TELEGRAM_ALLOWED_USER_IDS and int(ctx.user_id) not in TELEGRAM_ALLOWED_USER_IDS:
         return
 
-    if not context.args or len(context.args) < 2:
-        await update.effective_message.reply_text(
+    if not ctx.args or len(ctx.args) < 2:
+        await ctx.reply_text(
             "⚠️ Usage: /stop <project> <issue#>"
         )
         return
 
-    project_key = _normalize_project_key(context.args[0])
+    project_key = _normalize_project_key(ctx.args[0])
     if project_key not in PROJECT_CONFIG:
-        await update.effective_message.reply_text("❌ Invalid project.")
+        await ctx.reply_text("❌ Invalid project.")
         return
 
-    issue_num = context.args[1].lstrip("#")
+    issue_num = ctx.args[1].lstrip("#")
     if not issue_num.isdigit():
-        await update.effective_message.reply_text("❌ Invalid issue number.")
+        await ctx.reply_text("❌ Invalid issue number.")
         return
 
     # Kill any running agent first
@@ -206,7 +204,7 @@ async def stop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Failed to close issue: {e}")
 
-    await update.effective_message.reply_text(
+    await ctx.reply_text(
         f"🛑 **Workflow stopped for issue #{issue_num}**\n\n"
         f"Auto-chaining disabled and issue closed.\n\n"
         f"Status: {pid and '✅ Agent killed' or '✅ No running agent'} | Issue closed"

@@ -55,19 +55,7 @@ class MonitoringHandlersDeps:
     extract_structured_completion_signals: Callable[[list[dict]], list[dict[str, str]]]
     read_latest_local_completion: Callable[[str], dict[str, Any] | None]
     build_workflow_snapshot: Callable[..., dict[str, Any]]
-    # Added for monitoring_callback_handler
-    default_repo: str | None
-    project_issue_url: Callable[[str, str, dict[str, Any] | None], str]
-    projects: dict[str, Any]
-    tasks_dir: Callable[[str, str], str]
-    resolve_project_config_from_task: Callable[[str], dict[str, Any] | None]
-    run_cli_agent: Callable[[str, str, str, str | None], Awaitable[tuple[bool, str]]]
-    user_manager: Any
-    save_tracked_issues: Callable[[], None]
-    tracked_issues_ref: list[str]
-    track_short_projects: bool
-    default_issue_url: Callable[[str, dict[str, Any] | None], str]
-    state_manager: Any
+
 async def status_handler(ctx: InteractiveContext, deps: MonitoringHandlersDeps) -> None:
     deps.logger.info(f"Status triggered by user: {ctx.user_id}")
     if deps.allowed_user_ids and int(ctx.user_id) not in deps.allowed_user_ids:

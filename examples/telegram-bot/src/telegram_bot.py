@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import time
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 
@@ -96,9 +97,9 @@ from handlers.callback_command_handlers import (
     project_picker_handler as callback_project_picker_handler,
 )
 from handlers.chat_command_handlers import (
-    chat_agents_handler,
-    chat_callback_handler,
-    chat_menu_handler,
+    chat_agents_handler as core_chat_agents_handler,
+    chat_callback_handler as core_chat_callback_handler,
+    chat_menu_handler as core_chat_menu_handler,
 )
 from handlers.common_routing import extract_json_dict, route_task_with_context
 from handlers.feature_ideation_handlers import (
@@ -312,8 +313,8 @@ def _workflow_handler_deps() -> WorkflowHandlerDeps:
         default_repo=GITHUB_REPO,
         project_config=PROJECT_CONFIG,
         workflow_state_plugin_kwargs=_WORKFLOW_STATE_PLUGIN_KWARGS,
-        prompt_project_selection=_prompt_project_selection,
-        ensure_project_issue=_ensure_project_issue,
+        prompt_project_selection=_ctx_prompt_project_selection,
+        ensure_project_issue=_ctx_ensure_project_issue,
         find_task_file_by_issue=find_task_file_by_issue,
         project_repo=_project_repo,
         get_issue_details=get_issue_details,
@@ -345,8 +346,8 @@ def _visualize_handler_deps() -> VisualizeHandlerDeps:
     return VisualizeHandlerDeps(
         logger=logger,
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
-        prompt_project_selection=_prompt_project_selection,
-        ensure_project_issue=_ensure_project_issue,
+        prompt_project_selection=_ctx_prompt_project_selection,
+        ensure_project_issue=_ctx_ensure_project_issue,
     )
 
 
@@ -359,9 +360,8 @@ def _monitoring_handler_deps() -> MonitoringHandlersDeps:
         base_dir=BASE_DIR,
         project_config=PROJECT_CONFIG,
         types_map=TYPES,
-        prompt_monitor_project_selection=_prompt_monitor_project_selection,
-        prompt_project_selection=_prompt_project_selection,
-        ensure_project_issue=_ensure_project_issue,
+        ensure_project=_ctx_ensure_project,
+        ensure_project_issue=_ctx_ensure_project_issue,
         normalize_project_key=_normalize_project_key,
         iter_project_keys=_iter_project_keys,
         get_project_label=_get_project_label,
@@ -398,8 +398,8 @@ def _issue_handler_deps() -> IssueHandlerDeps:
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
         base_dir=BASE_DIR,
         default_repo=GITHUB_REPO,
-        prompt_project_selection=_prompt_project_selection,
-        ensure_project_issue=_ensure_project_issue,
+        prompt_project_selection=_ctx_prompt_project_selection,
+        ensure_project_issue=_ctx_ensure_project_issue,
         project_repo=_project_repo,
         project_issue_url=_project_issue_url,
         get_issue_details=get_issue_details,
@@ -426,8 +426,8 @@ def _ops_handler_deps() -> OpsHandlerDeps:
         base_dir=BASE_DIR,
         nexus_dir_name=get_nexus_dir_name(),
         project_config=PROJECT_CONFIG,
-        prompt_project_selection=_prompt_project_selection,
-        ensure_project_issue=_ensure_project_issue,
+        prompt_project_selection=_ctx_prompt_project_selection,
+        ensure_project_issue=_ctx_ensure_project_issue,
         get_project_label=_get_project_label,
         get_stats_report=get_stats_report,
         format_error_for_user=format_error_for_user,
@@ -450,20 +450,20 @@ def _callback_handler_deps() -> CallbackHandlerDeps:
         prompt_project_selection=_ctx_prompt_project_selection,
         dispatch_command=_ctx_dispatch_command,
         get_project_label=_get_project_label,
-        status_handler=_ctx_status_handler,
-        active_handler=_ctx_active_handler,
+        status_handler=partial(_ctx_call_telegram_handler, handler=status_handler),
+        active_handler=partial(_ctx_call_telegram_handler, handler=active_handler),
         get_direct_issue_plugin=_get_direct_issue_plugin,
         get_workflow_state_plugin=get_workflow_state_plugin,
         workflow_state_plugin_kwargs=_WORKFLOW_STATE_PLUGIN_KWARGS,
         action_handlers={
-            "logs": _ctx_logs_handler,
-            "logsfull": _ctx_logsfull_handler,
-            "status": _ctx_status_handler,
-            "pause": _ctx_pause_handler,
-            "resume": _ctx_resume_handler,
-            "stop": _ctx_stop_handler,
-            "audit": _ctx_audit_handler,
-            "reprocess": _ctx_reprocess_handler,
+            "logs": partial(_ctx_call_telegram_handler, handler=logs_handler),
+            "logsfull": partial(_ctx_call_telegram_handler, handler=logsfull_handler),
+            "status": partial(_ctx_call_telegram_handler, handler=status_handler),
+            "pause": partial(_ctx_call_telegram_handler, handler=pause_handler),
+            "resume": partial(_ctx_call_telegram_handler, handler=resume_handler),
+            "stop": partial(_ctx_call_telegram_handler, handler=stop_handler),
+            "audit": partial(_ctx_call_telegram_handler, handler=audit_handler),
+            "reprocess": partial(_ctx_call_telegram_handler, handler=reprocess_handler),
         },
     )
 
@@ -1183,6 +1183,7 @@ def _build_telegram_interactive_ctx(update: Update, context: ContextTypes.DEFAUL
             self.query = (
                 SimpleNamespace(
                     data=str(getattr(query_obj, "data", "") or ""),
+                    action_data=str(getattr(query_obj, "data", "") or ""),
                     message_id=str(getattr(getattr(query_obj, "message", None), "message_id", "")),
                 )
                 if query_obj is not None
@@ -1251,6 +1252,11 @@ def _ctx_telegram_runtime(ctx) -> tuple[Update, ContextTypes.DEFAULT_TYPE]:
     return update, context
 
 
+async def _ctx_call_telegram_handler(ctx, handler) -> None:
+    update, context = _ctx_telegram_runtime(ctx)
+    await handler(update, context)
+
+
 async def _ctx_prompt_issue_selection(
     ctx,
     command: str,
@@ -1275,6 +1281,27 @@ async def _ctx_prompt_project_selection(ctx, command: str) -> None:
     await _prompt_project_selection(update, context, command)
 
 
+async def _ctx_ensure_project_issue(
+    ctx,
+    command: str,
+) -> tuple[str | None, str | None, list[str]]:
+    update, context = _ctx_telegram_runtime(ctx)
+    context.args = list(getattr(ctx, "args", []) or [])
+    return await _ensure_project_issue(update, context, command)
+
+
+async def _ctx_ensure_project(ctx, command: str) -> str | None:
+    args = list(getattr(ctx, "args", []) or [])
+    if not args:
+        await _ctx_prompt_project_selection(ctx, command)
+        return None
+    candidate = _normalize_project_key(str(args[0]))
+    if candidate in _iter_project_keys():
+        return candidate
+    await ctx.reply_text(f"❌ Unknown project '{args[0]}'.")
+    return None
+
+
 async def _ctx_dispatch_command(
     ctx,
     command: str,
@@ -1286,49 +1313,12 @@ async def _ctx_dispatch_command(
     await _dispatch_command(update, context, command, project_key, issue_num, rest)
 
 
-async def _ctx_status_handler(ctx) -> None:
-    update, context = _ctx_telegram_runtime(ctx)
-    await status_handler(update, context)
+async def _call_core_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, handler) -> None:
+    await handler(_build_telegram_interactive_ctx(update, context), _callback_handler_deps())
 
 
-async def _ctx_active_handler(ctx) -> None:
-    update, context = _ctx_telegram_runtime(ctx)
-    await active_handler(update, context)
-
-
-async def _ctx_logs_handler(ctx) -> None:
-    update, context = _ctx_telegram_runtime(ctx)
-    await logs_handler(update, context)
-
-
-async def _ctx_logsfull_handler(ctx) -> None:
-    update, context = _ctx_telegram_runtime(ctx)
-    await logsfull_handler(update, context)
-
-
-async def _ctx_pause_handler(ctx) -> None:
-    update, context = _ctx_telegram_runtime(ctx)
-    await pause_handler(update, context)
-
-
-async def _ctx_resume_handler(ctx) -> None:
-    update, context = _ctx_telegram_runtime(ctx)
-    await resume_handler(update, context)
-
-
-async def _ctx_stop_handler(ctx) -> None:
-    update, context = _ctx_telegram_runtime(ctx)
-    await stop_handler(update, context)
-
-
-async def _ctx_audit_handler(ctx) -> None:
-    update, context = _ctx_telegram_runtime(ctx)
-    await audit_handler(update, context)
-
-
-async def _ctx_reprocess_handler(ctx) -> None:
-    update, context = _ctx_telegram_runtime(ctx)
-    await reprocess_handler(update, context)
+async def _call_core_chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, handler) -> None:
+    await handler(_build_telegram_interactive_ctx(update, context))
 
 
 async def _dispatch_command(
@@ -1352,31 +1342,19 @@ async def _dispatch_command(
 
 
 async def project_picker_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await callback_project_picker_handler(
-        _build_telegram_interactive_ctx(update, context),
-        _callback_handler_deps(),
-    )
+    await _call_core_callback_handler(update, context, callback_project_picker_handler)
 
 
 async def issue_picker_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await callback_issue_picker_handler(
-        _build_telegram_interactive_ctx(update, context),
-        _callback_handler_deps(),
-    )
+    await _call_core_callback_handler(update, context, callback_issue_picker_handler)
 
 
 async def monitor_project_picker_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await callback_monitor_project_picker_handler(
-        _build_telegram_interactive_ctx(update, context),
-        _callback_handler_deps(),
-    )
+    await _call_core_callback_handler(update, context, callback_monitor_project_picker_handler)
 
 
 async def close_flow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await callback_close_flow_handler(
-        _build_telegram_interactive_ctx(update, context),
-        _callback_handler_deps(),
-    )
+    await _call_core_callback_handler(update, context, callback_close_flow_handler)
 
 # --- STATES ---
 SELECT_PROJECT, SELECT_TYPE, INPUT_TASK = range(3)
@@ -1407,6 +1385,18 @@ async def rename_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     rename_chat(user_id, active_chat_id, new_name)
     await update.message.reply_text(f"✅ Active chat renamed to: *{new_name}*", parse_mode="Markdown")
+
+
+async def chat_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _call_core_chat_handler(update, context, core_chat_menu_handler)
+
+
+async def chat_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _call_core_chat_handler(update, context, core_chat_callback_handler)
+
+
+async def chat_agents_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _call_core_chat_handler(update, context, core_chat_agents_handler)
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lists available commands and usage info."""
@@ -1508,10 +1498,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await callback_menu_callback_handler(
-        _build_telegram_interactive_ctx(update, context),
-        _callback_handler_deps(),
-    )
+    await _call_core_callback_handler(update, context, callback_menu_callback_handler)
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1660,7 +1647,10 @@ def _refine_task_description(text: str, project_key: str | None = None) -> str:
 
 
 async def feature_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await core_feature_callback_handler(update, context, _feature_ideation_handler_deps())
+    await core_feature_callback_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _feature_ideation_handler_deps(),
+    )
 
 
 async def task_confirmation_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1820,7 +1810,10 @@ async def hands_free_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             logger.info(f"Ignoring command in hands_free_handler: {update.message.text}")
             return
 
-        if await resolve_pending_project_selection(update, context, _hands_free_routing_handler_deps()):
+        if await resolve_pending_project_selection(
+            _build_telegram_interactive_ctx(update, context),
+            _hands_free_routing_handler_deps(),
+        ):
             return
 
         text = ""
@@ -1852,9 +1845,8 @@ async def hands_free_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             preferred_agent_type = active_chat_metadata.get("primary_agent_type")
 
         if await handle_feature_ideation_request(
-            update,
-            context,
-            status_msg,
+            _build_telegram_interactive_ctx(update, context),
+            str(getattr(status_msg, "message_id", "")),
             text,
             _feature_ideation_handler_deps(),
             preferred_project_key=preferred_project_key,
@@ -1993,10 +1985,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def flow_close_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle Close button for the /new flow."""
-    return await callback_flow_close_handler(
-        _build_telegram_interactive_ctx(update, context),
-        _callback_handler_deps(),
-    )
+    return await _call_core_callback_handler(update, context, callback_flow_close_handler)
 
 
 # --- MONITORING COMMANDS ---
@@ -2015,7 +2004,10 @@ def extract_issue_number_from_file(file_path):
 
 async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows pending tasks in inbox folders."""
-    await monitoring_status_handler(update, context, _monitoring_handler_deps())
+    await monitoring_status_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _monitoring_handler_deps(),
+    )
 
 
 async def progress_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2062,12 +2054,15 @@ async def progress_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def active_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows active tasks being worked on."""
-    await monitoring_active_handler(update, context, _monitoring_handler_deps())
+    await monitoring_active_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _monitoring_handler_deps(),
+    )
 
 
 async def assign_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Assigns a GitHub issue to the user."""
-    await issue_assign_handler(update, context, _issue_handler_deps())
+    await issue_assign_handler(_build_telegram_interactive_ctx(update, context), _issue_handler_deps())
 
 
 @rate_limited("implement")
@@ -2077,12 +2072,12 @@ async def implement_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Adds an `agent:requested` label and notifies `@ProjectLead` with a comment
     so they can approve (add `agent:approved`) or click "Code with agent mode".
     """
-    await issue_implement_handler(update, context, _issue_handler_deps())
+    await issue_implement_handler(_build_telegram_interactive_ctx(update, context), _issue_handler_deps())
 
 
 async def prepare_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Augments an issue with Copilot-friendly instructions and acceptance criteria."""
-    await issue_prepare_handler(update, context, _issue_handler_deps())
+    await issue_prepare_handler(_build_telegram_interactive_ctx(update, context), _issue_handler_deps())
 
 
 async def track_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2096,12 +2091,12 @@ async def track_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
       /track 123
       /track nxs 456
     """
-    await issue_track_handler(update, context, _issue_handler_deps())
+    await issue_track_handler(_build_telegram_interactive_ctx(update, context), _issue_handler_deps())
 
 
 async def tracked_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show active globally tracked issues."""
-    await issue_tracked_handler(update, context, _issue_handler_deps())
+    await issue_tracked_handler(_build_telegram_interactive_ctx(update, context), _issue_handler_deps())
 
 
 async def untrack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2111,104 +2106,107 @@ async def untrack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
       /untrack <issue#>              - Stop global tracking
       /untrack <project> <issue#>    - Stop per-project tracking
     """
-    await issue_untrack_handler(update, context, _issue_handler_deps())
+    await issue_untrack_handler(_build_telegram_interactive_ctx(update, context), _issue_handler_deps())
 
 
 async def myissues_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show all issues tracked by the user across projects."""
-    await issue_myissues_handler(update, context, _issue_handler_deps())
+    await issue_myissues_handler(_build_telegram_interactive_ctx(update, context), _issue_handler_deps())
 
 
 @rate_limited("logs")
 async def logs_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show combined timeline of GitHub activity and bot/processor logs for an issue."""
-    await monitoring_logs_handler(update, context, _monitoring_handler_deps())
+    await monitoring_logs_handler(_build_telegram_interactive_ctx(update, context), _monitoring_handler_deps())
 
 
 @rate_limited("logs")
 async def logsfull_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show combined timeline of GitHub activity and full log lines for an issue."""
-    await monitoring_logsfull_handler(update, context, _monitoring_handler_deps())
+    await monitoring_logsfull_handler(_build_telegram_interactive_ctx(update, context), _monitoring_handler_deps())
 
 
 @rate_limited("logs")
 async def tail_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show a short tail of the latest task log for an issue."""
-    await monitoring_tail_handler(update, context, _monitoring_handler_deps())
+    await monitoring_tail_handler(_build_telegram_interactive_ctx(update, context), _monitoring_handler_deps())
 
 
 @rate_limited("logs")
 async def tailstop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Stop an active live tail session for the current user/chat."""
-    await monitoring_tailstop_handler(update, context, _monitoring_handler_deps())
+    await monitoring_tailstop_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _monitoring_handler_deps(),
+    )
 
 
 @rate_limited("logs")
 async def fuse_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show retry-fuse status for an issue."""
-    await monitoring_fuse_handler(update, context, _monitoring_handler_deps())
+    await monitoring_fuse_handler(_build_telegram_interactive_ctx(update, context), _monitoring_handler_deps())
 
 
 async def audit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Display workflow audit trail for an issue (timeline of state changes, agent launches, etc)."""
-    await ops_audit_handler(update, context, _ops_handler_deps())
+    await ops_audit_handler(_build_telegram_interactive_ctx(update, context), _ops_handler_deps())
 
 
 @rate_limited("stats")
 async def stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Display system analytics and performance statistics."""
-    await ops_stats_handler(update, context, _ops_handler_deps())
+    await ops_stats_handler(_build_telegram_interactive_ctx(update, context), _ops_handler_deps())
 
 
 @rate_limited("reprocess")
 async def reprocess_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Re-run agent processing for an open issue."""
-    await workflow_reprocess_handler(update, context, _workflow_handler_deps())
+    await workflow_reprocess_handler(_build_telegram_interactive_ctx(update, context), _workflow_handler_deps())
 
 
 async def continue_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Continue/resume agent processing for an issue with a continuation prompt."""
-    await workflow_continue_handler(update, context, _workflow_handler_deps())
+    await workflow_continue_handler(_build_telegram_interactive_ctx(update, context), _workflow_handler_deps())
 
 
 async def forget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Permanently forget local workflow/tracker state for an issue."""
-    await workflow_forget_handler(update, context, _workflow_handler_deps())
+    await workflow_forget_handler(_build_telegram_interactive_ctx(update, context), _workflow_handler_deps())
 
 
 async def kill_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Kill a running Copilot agent process."""
-    await workflow_kill_handler(update, context, _workflow_handler_deps())
+    await workflow_kill_handler(_build_telegram_interactive_ctx(update, context), _workflow_handler_deps())
 
 
 async def reconcile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Reconcile workflow and local completion from structured GitHub comments."""
-    await workflow_reconcile_handler(update, context, _workflow_handler_deps())
+    await workflow_reconcile_handler(_build_telegram_interactive_ctx(update, context), _workflow_handler_deps())
 
 
 async def wfstate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show workflow state + signal drift snapshot for an issue."""
-    await workflow_wfstate_handler(update, context, _workflow_handler_deps())
+    await workflow_wfstate_handler(_build_telegram_interactive_ctx(update, context), _workflow_handler_deps())
 
 
 async def visualize_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Render a Mermaid workflow diagram for an issue."""
-    await workflow_visualize_handler(update, context, _visualize_handler_deps())
+    await workflow_visualize_handler(_build_telegram_interactive_ctx(update, context), _visualize_handler_deps())
 
 
 async def pause_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Pause auto-chaining with project picker support."""
-    await workflow_pause_picker_handler(update, context, _workflow_handler_deps())
+    await workflow_pause_picker_handler(_build_telegram_interactive_ctx(update, context), _workflow_handler_deps())
 
 
 async def resume_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Resume auto-chaining with project picker support."""
-    await workflow_resume_picker_handler(update, context, _workflow_handler_deps())
+    await workflow_resume_picker_handler(_build_telegram_interactive_ctx(update, context), _workflow_handler_deps())
 
 
 async def stop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Stop workflow with project picker support."""
-    await workflow_stop_picker_handler(update, context, _workflow_handler_deps())
+    await workflow_stop_picker_handler(_build_telegram_interactive_ctx(update, context), _workflow_handler_deps())
 
 
 # pause_handler, resume_handler, and stop_handler now wrap commands.workflow handlers
@@ -2216,31 +2214,39 @@ async def stop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def agents_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """List all agents for a specific project."""
-    await ops_agents_handler(update, context, _ops_handler_deps())
+    await ops_agents_handler(_build_telegram_interactive_ctx(update, context), _ops_handler_deps())
 
 
 @rate_limited("direct")
 async def direct_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a direct request to a specific agent for a project."""
-    await ops_direct_handler(update, context, _ops_handler_deps())
+    await ops_direct_handler(_build_telegram_interactive_ctx(update, context), _ops_handler_deps())
 
 
 async def comments_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """View recent comments on an issue."""
-    await issue_comments_handler(update, context, _issue_handler_deps())
+    await issue_comments_handler(_build_telegram_interactive_ctx(update, context), _issue_handler_deps())
 
 
 async def respond_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Post a response to an issue and automatically continue the agent."""
-    await issue_respond_handler(update, context, _issue_handler_deps())
+    await issue_respond_handler(_build_telegram_interactive_ctx(update, context), _issue_handler_deps())
 
 
 async def inline_keyboard_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle inline keyboard button presses from notifications."""
-    await callback_inline_keyboard_handler(
-        _build_telegram_interactive_ctx(update, context),
-        _callback_handler_deps(),
-    )
+    await _call_core_callback_handler(update, context, callback_inline_keyboard_handler)
+
+
+async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global Telegram error handler for uncaught update exceptions."""
+    logger.exception("Unhandled exception while processing update", exc_info=context.error)
+
+    if isinstance(update, Update) and update.effective_message:
+        with contextlib.suppress(Exception):
+            await update.effective_message.reply_text(
+                "⚠️ Something went wrong while processing that request. Please try again."
+            )
 
 
 # --- MAIN ---
@@ -2356,6 +2362,7 @@ if __name__ == '__main__':
     app.add_handler(CallbackQueryHandler(inline_keyboard_handler, pattern=r'^(logs|logsfull|status|pause|resume|stop|audit|reprocess|respond|approve|reject)_'))
     # Exclude commands from the auto-router catch-all
     app.add_handler(MessageHandler((filters.TEXT | filters.VOICE) & (~filters.COMMAND), hands_free_handler))
+    app.add_error_handler(telegram_error_handler)
 
     print("Nexus Online...")
     app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
