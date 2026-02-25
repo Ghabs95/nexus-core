@@ -124,7 +124,7 @@ class AgentRuntime(ABC):
     ) -> dict:
         """Handle workflow completion: close issue, create PR, send notifications.
 
-        Returns a result dict with optional keys ``pr_url`` and ``issue_closed``.
+        Returns a result dict with optional keys ``pr_urls`` and ``issue_closed``.
         """
 
     # --- Optional hooks (concrete defaults provided) ---
@@ -703,6 +703,26 @@ class ProcessOrchestrator:
         agent_type = agent_data.get("agent_type", "unknown")
         crashed_tool = agent_data.get("tool", "")
         age = time.time() - os.path.getmtime(log_file)
+
+        if (
+            isinstance(agent_type, str)
+            and agent_type
+            and agent_type != "unknown"
+            and not self._runtime.should_retry_dead_agent(str(issue_num), agent_type)
+        ):
+            logger.info(
+                "Skipping timeout retry for issue #%s: workflow no longer expects agent %s",
+                issue_num,
+                agent_type,
+            )
+            self._runtime.audit_log(
+                issue_num,
+                "AGENT_TIMEOUT_STALE",
+                f"Timed-out agent {agent_type} no longer matches workflow RUNNING step",
+            )
+            launched.pop(str(issue_num), None)
+            self._runtime.save_launched_agents(launched)
+            return
 
         # True orphan: workflow expects a RUNNING step but there is no tracker/runtime PID.
         # If we have a dead PID from the tracker, let detect_dead_agents() handle it.

@@ -18,19 +18,24 @@ def find_agent_definition(agent_name: str, search_dirs: list[str]) -> str | None
     """Find the YAML definition for an agent."""
     # Strip @ prefix if present
     normalized_name = agent_name.lstrip("@").lower()
-    
-    # Common extensions to search for
-    extensions = [".yaml", ".yml", "_agent.yaml", "_agent.yml"]
+
+    # Common filename variants to search for
+    candidates = [
+        normalized_name,
+        f"{normalized_name}_agent",
+        f"{normalized_name}-agent",
+    ]
+    extensions = [".yaml", ".yml"]
     
     for directory in search_dirs:
         if not os.path.exists(directory):
             continue
             
-        # Try direct name
-        for ext in extensions:
-            path = os.path.join(directory, f"{normalized_name}{ext}")
-            if os.path.exists(path):
-                return path
+        for candidate in candidates:
+            for ext in extensions:
+                path = os.path.join(directory, f"{candidate}{ext}")
+                if os.path.exists(path):
+                    return path
                 
     return None
 

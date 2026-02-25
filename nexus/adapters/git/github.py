@@ -368,8 +368,8 @@ class GitHubPlatform(GitPlatform):
                 _git(["checkout", resolved_base])
                 return None
 
-            pr_url = pr_result.stdout.strip()
-            logger.info(f"Created PR for issue #{issue_number}: {pr_url}")
+            pr_link = pr_result.stdout.strip()
+            logger.info(f"Created PR for issue #{issue_number}: {pr_link}")
 
             return PullRequest(
                 id="0",
@@ -378,7 +378,7 @@ class GitHubPlatform(GitPlatform):
                 state="open",
                 head_branch=branch_name,
                 base_branch=resolved_base,
-                url=pr_url,
+                url=pr_link,
                 linked_issues=[issue_number],
             )
         except Exception as exc:

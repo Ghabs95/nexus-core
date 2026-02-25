@@ -109,7 +109,7 @@ steps:
       - github:request_changes
       - github:approve_pr
     inputs:
-      - pr_url: "string"
+      - pr_urls: "list[string]"
     outputs:
       - review_comments: "list[string]"
       - approval_status: "enum[approved|changes_requested]"

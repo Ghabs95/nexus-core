@@ -40,3 +40,11 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Nexus runtime
+.nexus/
+
+# Misc
+.cache/
+*.pid
+.env

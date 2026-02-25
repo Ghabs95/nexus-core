@@ -30,9 +30,10 @@ spec:
     - ai:completion
   
   inputs:
-    pr_url:
-      type: string
-      description: "URL to pull request"
+    pr_urls:
+      type: array
+      items: string
+      description: "URLs to one or more pull requests"
       required: true
     review_depth:
       type: enum

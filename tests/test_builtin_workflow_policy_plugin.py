@@ -22,7 +22,7 @@ def test_workflow_policy_builders():
         issue_number="42",
         last_agent="qa",
         repo="org/repo",
-        pr_url="https://github.com/org/repo/pull/1",
+        pr_urls=["https://github.com/org/repo/pull/1"],
     )
 
     assert "Agent Transition" in transition
@@ -63,7 +63,7 @@ def test_workflow_policy_finalize_workflow():
         project_name="nexus",
     )
 
-    assert result["pr_url"] == "https://github.com/org/repo/pull/10"
+    assert result["pr_urls"] == ["https://github.com/org/repo/pull/10"]
     assert result["issue_closed"] is True
     assert result["notification_sent"] is True
     assert "Workflow Complete" in captured["notify"]
@@ -103,6 +103,6 @@ def test_workflow_policy_finalize_workflow_reuses_existing_pr():
         project_name="nexus",
     )
 
-    assert result["pr_url"] == "https://github.com/org/repo/pull/50"
+    assert result["pr_urls"] == ["https://github.com/org/repo/pull/50"]
     assert captured["created"] is False
     assert "https://github.com/org/repo/pull/50" in captured["closed_kwargs"]["comment"]

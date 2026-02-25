@@ -64,15 +64,17 @@ class WorkflowPolicyPlugin:
         issue_number: str,
         last_agent: str,
         repo: str,
-        pr_url: str | None = None,
+        pr_urls: list[str] | None = None,
     ) -> str:
         parts = [
             "✅ **Workflow Complete**\n\n"
             f"Issue: #{issue_number}\n"
             f"Last agent: `{last_agent}`\n"
         ]
-        if pr_url:
-            parts.append(f"PR: {pr_url}\n")
+        urls = [url for url in (pr_urls or []) if url]
+        if urls:
+            parts.append("PRs:\n")
+            parts.extend(f"- {url}\n" for url in urls)
         parts.append(f"\n🔗 https://github.com/{repo}/issues/{issue_number}")
         return "".join(parts)
 
@@ -89,6 +91,7 @@ class WorkflowPolicyPlugin:
         repo_dir: str,
         issue_number: str,
         last_agent: str,
+        issue_repo: str | None = None,
     ) -> str | None:
         creator = self._callback("create_pr_from_changes")
         if not creator:
@@ -101,15 +104,15 @@ class WorkflowPolicyPlugin:
             f"Last agent: `{last_agent}`"
         )
 
-        pr_url = creator(
+        pr_link = creator(
             repo=repo,
             repo_dir=repo_dir,
             issue_number=str(issue_number),
             title=title,
             body=body,
-            issue_repo=repo,
+            issue_repo=issue_repo or repo,
         )
-        return str(pr_url) if pr_url else None
+        return str(pr_link) if pr_link else None
 
     def _find_existing_pr(self, *, repo: str, issue_number: str) -> str | None:
         finder = self._callback("find_existing_pr")
@@ -117,14 +120,21 @@ class WorkflowPolicyPlugin:
             return None
 
         try:
-            pr_url = finder(repo=repo, issue_number=str(issue_number))
+            pr_link = finder(repo=repo, issue_number=str(issue_number))
         except Exception as exc:
             logger.warning("Error finding existing PR for issue #%s: %s", issue_number, exc)
             return None
 
-        return str(pr_url) if pr_url else None
+        return str(pr_link) if pr_link else None
 
-    def _close_issue(self, *, repo: str, issue_number: str, last_agent: str, pr_url: str | None) -> bool:
+    def _close_issue(
+        self,
+        *,
+        repo: str,
+        issue_number: str,
+        last_agent: str,
+        pr_urls: list[str] | None = None,
+    ) -> bool:
         closer = self._callback("close_issue")
         if not closer:
             return False
@@ -133,12 +143,20 @@ class WorkflowPolicyPlugin:
             "✅ Workflow completed. All agent steps finished successfully.\n"
             f"Last agent: `{last_agent}`"
         )
-        if pr_url:
-            close_comment += f"\nPR: {pr_url}"
+        urls = [url for url in (pr_urls or []) if url]
+        if urls:
+            close_comment += "\nPRs:\n" + "\n".join(f"- {url}" for url in urls)
 
         return bool(closer(repo=repo, issue_number=str(issue_number), comment=close_comment))
 
-    def _notify(self, *, repo: str, issue_number: str, last_agent: str, pr_url: str | None) -> None:
+    def _notify(
+        self,
+        *,
+        repo: str,
+        issue_number: str,
+        last_agent: str,
+        pr_urls: list[str] | None = None,
+    ) -> None:
         notifier = self._callback("send_notification")
         if not notifier:
             return
@@ -148,7 +166,7 @@ class WorkflowPolicyPlugin:
             issue_number=str(issue_number),
             last_agent=last_agent,
             repo=repo,
-            pr_url=pr_url,
+            pr_urls=pr_urls or [],
         )
         notifier(message)
 
@@ -162,34 +180,67 @@ class WorkflowPolicyPlugin:
     ) -> dict[str, Any]:
         """Finalize workflow and return outcome summary."""
         result: dict[str, Any] = {
-            "pr_url": None,
+            "pr_urls": [],
             "issue_closed": False,
             "notification_sent": False,
         }
 
         if project_name:
-            existing_pr_url = self._find_existing_pr(repo=repo, issue_number=issue_number)
-            if existing_pr_url:
-                result["pr_url"] = existing_pr_url
-            else:
-                git_dir = self._resolve_git_dir(project_name)
-                if git_dir:
-                    try:
-                        result["pr_url"] = self._create_pr(
-                            repo=repo,
-                            repo_dir=git_dir,
-                            issue_number=issue_number,
-                            last_agent=last_agent,
-                        )
-                    except Exception as exc:
-                        logger.warning("Error creating PR for issue #%s: %s", issue_number, exc)
+            git_dirs_by_repo: dict[str, str] = {}
+            resolve_many = self._callback("resolve_git_dirs")
+            if resolve_many:
+                try:
+                    resolved = resolve_many(project_name)
+                    if isinstance(resolved, dict):
+                        git_dirs_by_repo = {
+                            str(repo_name): str(path)
+                            for repo_name, path in resolved.items()
+                            if repo_name and path
+                        }
+                except Exception as exc:
+                    logger.warning("Error resolving git dirs for project %s: %s", project_name, exc)
+
+            if not git_dirs_by_repo:
+                single_dir = self._resolve_git_dir(project_name)
+                if single_dir:
+                    git_dirs_by_repo = {repo: single_dir}
+
+            target_repos = list(git_dirs_by_repo.keys()) or [repo]
+
+            for target_repo in target_repos:
+                existing_pr_url = self._find_existing_pr(repo=target_repo, issue_number=issue_number)
+                if existing_pr_url:
+                    result["pr_urls"].append(existing_pr_url)
+                    continue
+
+                git_dir = git_dirs_by_repo.get(target_repo)
+                if not git_dir:
+                    continue
+
+                try:
+                    created_pr_url = self._create_pr(
+                        repo=target_repo,
+                        repo_dir=git_dir,
+                        issue_number=issue_number,
+                        last_agent=last_agent,
+                        issue_repo=repo,
+                    )
+                    if created_pr_url:
+                        result["pr_urls"].append(created_pr_url)
+                except Exception as exc:
+                    logger.warning(
+                        "Error creating PR for issue #%s in repo %s: %s",
+                        issue_number,
+                        target_repo,
+                        exc,
+                    )
 
         try:
             result["issue_closed"] = self._close_issue(
                 repo=repo,
                 issue_number=issue_number,
                 last_agent=last_agent,
-                pr_url=result["pr_url"],
+                pr_urls=result.get("pr_urls", []),
             )
         except Exception as exc:
             logger.warning("Error closing issue #%s: %s", issue_number, exc)
@@ -199,7 +250,7 @@ class WorkflowPolicyPlugin:
                 repo=repo,
                 issue_number=issue_number,
                 last_agent=last_agent,
-                pr_url=result["pr_url"],
+                pr_urls=result.get("pr_urls", []),
             )
             result["notification_sent"] = self._callback("send_notification") is not None
         except Exception as exc:
