@@ -13,7 +13,7 @@ class WorkspaceManager:
     """Manages Git worktree creation and cleanup for isolated agent execution."""
 
     @staticmethod
-    def provision_worktree(base_repo_path: str, issue_number: str) -> str:
+    def provision_worktree(base_repo_path: str, issue_number: str, branch_name: str | None = None) -> str:
         """
         Provision an isolated Git worktree for the given issue.
 
@@ -23,13 +23,16 @@ class WorkspaceManager:
         Args:
             base_repo_path: The absolute path to the main git repository checkout.
             issue_number: The GitHub issue number (used to generate branch/folder names).
+            branch_name: Optional branch name to use (e.g. from the issue's
+                Target Branch field). Falls back to ``feature/issue-{N}`` when
+                not provided.
 
         Returns:
             The absolute path to the provisioned worktree directory.
         """
         issue_number_str = str(issue_number).strip()
         worktree_dir = os.path.join(base_repo_path, ".nexus", "worktrees", f"issue-{issue_number_str}")
-        branch_name = f"feature/issue-{issue_number_str}"
+        branch_name = branch_name or f"feature/issue-{issue_number_str}"
 
         logger.info(f"Provisioning worktree for issue {issue_number_str} at {worktree_dir}")
 

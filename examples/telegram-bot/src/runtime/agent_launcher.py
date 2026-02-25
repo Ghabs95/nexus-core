@@ -550,8 +550,22 @@ def invoke_copilot_agent(
 
         worktree_base_repo = _resolve_worktree_base_repo(workspace_dir, issue_url)
         isolated_workspace = worktree_base_repo
+
+        # Extract branch name from issue body if available
+        target_branch = None
+        if issue_url and issue_num != "unknown":
+            try:
+                body, _, _ = _load_issue_body_from_project_repo(issue_num)
+                if body:
+                    branch_match = re.search(r"Target Branch:\s*`([^`]+)`", body)
+                    if branch_match:
+                        target_branch = branch_match.group(1)
+                        logger.info(f"Using target branch from issue: {target_branch}")
+            except Exception as e:
+                logger.warning(f"Could not extract target branch: {e}")
+
         if issue_num != "unknown" and _is_git_repo(worktree_base_repo):
-            isolated_workspace = WorkspaceManager.provision_worktree(worktree_base_repo, issue_num)
+            isolated_workspace = WorkspaceManager.provision_worktree(worktree_base_repo, issue_num, branch_name=target_branch)
         elif issue_num != "unknown":
             logger.warning(
                 "Skipping worktree provisioning for issue %s: not a git repo (%s)",
