@@ -38,6 +38,7 @@ class StubRuntime(AgentRuntime):
         self._agent_timeout_seconds: int = 3600
         self._post_comment_success = True
         self.posted_comments: list[dict] = []
+        self._is_issue_open_fn = lambda issue, repo: None
 
     def launch_agent(self, issue_number, agent_type, *, trigger_source="", exclude_tools=None):
         self.launched.append(
@@ -87,6 +88,9 @@ class StubRuntime(AgentRuntime):
 
     def get_expected_running_agent(self, issue_number):
         return self._running_agents.get(str(issue_number))
+
+    def is_issue_open(self, issue_number: str, repo: str) -> bool | None:
+        return self._is_issue_open_fn(issue_number, repo)
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +358,55 @@ class TestScanAndProcessCompletions:
         assert len(runtime.posted_comments) == 0
         assert runtime.launched == []
         assert det.dedup_key in dedup_seen
+
+    def test_closed_before_comment_blocks_post_and_chain(self):
+        """If issue closes after completion step, skip comment and auto-chain."""
+        runtime = StubRuntime()
+        wf = _make_workflow(WorkflowState.RUNNING)
+        wf.steps[0].agent.name = "reviewer"
+
+        checks = iter([True, False])
+        runtime._is_issue_open_fn = lambda issue, repo: next(checks, False)
+
+        async def complete(issue, agent, outputs, event_id=""):
+            return wf
+
+        orc = _orchestrator(runtime, complete)
+        dedup_seen = set()
+        det = self._fake_detection(dedup_key="k-closed-race")
+
+        with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
+            orc.scan_and_process_completions("/base", dedup_seen)
+
+        assert runtime.posted_comments == []
+        assert runtime.launched == []
+        assert "k-closed-race" in dedup_seen
+
+    def test_stale_completion_replay_is_skipped(self):
+        """Old completion files are skipped when replay guard threshold is enabled."""
+        runtime = StubRuntime()
+
+        async def complete(issue, agent, outputs, event_id=""):
+            return None
+
+        orc = _orchestrator(runtime, complete)
+        dedup_seen = set()
+        det = self._fake_detection(dedup_key="k-stale", file_path="/tmp/stale_completion.json")
+
+        with (
+            patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]),
+            patch("os.path.getmtime", return_value=1000),
+        ):
+            orc.scan_and_process_completions(
+                "/base",
+                dedup_seen,
+                stale_completion_seconds=300,
+                stale_reference_ts=2000,
+            )
+
+        assert runtime.posted_comments == []
+        assert runtime.launched == []
+        assert "k-stale" in dedup_seen
 
     def test_failed_launch_sends_autochain_failed_alert(self):
         """When launch returns (None, None), an alert about the failure is sent."""

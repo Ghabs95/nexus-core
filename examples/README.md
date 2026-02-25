@@ -6,6 +6,10 @@ This folder demonstrates how to use Nexus Core with real examples.
 
 ```
 examples/
+├── telegram-bot/              # Full Telegram bot runtime example (migrated)
+│   ├── src/                   # Bot + processor + webhook + handlers
+│   ├── config/                # Example project config
+│   └── README.md              # Setup/run instructions
 ├── workflows/                  # Workflow orchestration (YAML)
 │   └── development_workflow.yaml  # Example: Multi-agent development workflow
 ├── agents/                     # Agent definitions (YAML)
@@ -56,6 +60,15 @@ examples/
 ---
 
 ## Quick Start
+
+### 0. Telegram Bot Runtime Example
+
+```bash
+cd examples/telegram-bot
+cat README.md
+```
+
+This is the migrated production-style Telegram runtime from the `nexus` repo.
 
 ### 1. Explore Agent Definitions
 

@@ -201,6 +201,15 @@ class AgentRuntime(ABC):
         """
         return True
 
+    def is_issue_open(self, issue_number: str, repo: str) -> bool | None:
+        """Best-effort issue-open check used by auto-completion flows.
+
+        Returns:
+            ``True`` when confirmed open, ``False`` when confirmed closed,
+            ``None`` when status cannot be determined.
+        """
+        return None
+
     def get_latest_issue_log(self, issue_number: str) -> str | None:
         """Return latest session log path for *issue_number*, if available.
 
@@ -293,6 +302,8 @@ class ProcessOrchestrator:
         resolve_repo: Callable[[str, str], str] | None = None,
         build_transition_message: Callable[..., str] | None = None,
         build_autochain_failed_message: Callable[..., str] | None = None,
+        stale_completion_seconds: int | None = None,
+        stale_reference_ts: float | None = None,
     ) -> None:
         """Scan *base_dir* for completion files and handle each new one.
 
@@ -309,7 +320,14 @@ class ProcessOrchestrator:
                 ``next_agent``, ``repo``.
             build_autochain_failed_message: Factory for the failure alert.
                 Receives the same kwargs.
+            stale_completion_seconds: Optional replay guard for fresh startups.
+                When set to a positive integer, completion files older than
+                this threshold (measured against ``stale_reference_ts``) are
+                skipped and marked as deduped.
+            stale_reference_ts: Optional reference unix timestamp for replay
+                cutoff calculations. Defaults to ``time.time()`` when omitted.
         """
+        replay_ref = stale_reference_ts if stale_reference_ts is not None else time.time()
         detected = scan_for_completions(base_dir, nexus_dir=self._nexus_dir)
         for detection in detected:
             issue_num = detection.issue_number
@@ -318,6 +336,25 @@ class ProcessOrchestrator:
                 comment_key = detection.dedup_key
                 if comment_key in dedup_seen:
                     continue
+
+                if isinstance(stale_completion_seconds, int) and stale_completion_seconds > 0:
+                    try:
+                        mtime = os.path.getmtime(detection.file_path)
+                        age_seconds = max(0.0, replay_ref - mtime)
+                        if age_seconds > stale_completion_seconds:
+                            logger.info(
+                                "Skipping stale completion replay for issue #%s (%s), age=%ss",
+                                issue_num,
+                                detection.file_path,
+                                int(age_seconds),
+                            )
+                            dedup_seen.add(comment_key)
+                            continue
+                    except OSError:
+                        logger.debug(
+                            "Unable to read completion mtime for replay guard: %s",
+                            detection.file_path,
+                        )
 
                 # Skip if the agent process is still running (completion may be
                 # partial / not yet flushed).
@@ -332,6 +369,15 @@ class ProcessOrchestrator:
 
                 completed_agent = summary.agent_type
                 logger.info(f"📋 Agent completed for issue #{issue_num} ({completed_agent})")
+
+                issue_open = self._runtime.is_issue_open(issue_num, repo)
+                if issue_open is False:
+                    logger.info(
+                        "Skipping auto-completion processing for closed issue #%s",
+                        issue_num,
+                    )
+                    dedup_seen.add(comment_key)
+                    continue
 
                 # Ask the workflow engine what happens next.
                 engine_workflow = asyncio.run(
@@ -395,7 +441,25 @@ class ProcessOrchestrator:
                     )
 
                 comment_body = build_completion_comment(comment_summary)
+
+                issue_open = self._runtime.is_issue_open(issue_num, repo)
+                if issue_open is False:
+                    logger.info(
+                        "Skipping completion comment/chain for now-closed issue #%s",
+                        issue_num,
+                    )
+                    dedup_seen.add(comment_key)
+                    continue
+
                 if not self._runtime.post_completion_comment(issue_num, repo, comment_body):
+                    issue_open_after_fail = self._runtime.is_issue_open(issue_num, repo)
+                    if issue_open_after_fail is False:
+                        logger.info(
+                            "Comment delivery skipped for closed issue #%s",
+                            issue_num,
+                        )
+                        dedup_seen.add(comment_key)
+                        continue
                     self._runtime.send_alert(
                         "⚠️ Completion detected but Git comment delivery failed; "
                         f"auto-chain blocked for issue #{issue_num} ({completed_agent})."

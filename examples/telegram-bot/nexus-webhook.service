@@ -1,0 +1,21 @@
+[Unit]
+Description=Nexus GitHub Webhook Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/nexus-core/examples/telegram-bot
+ExecStart=/opt/nexus-core/examples/telegram-bot/venv/bin/python3 /opt/nexus-core/examples/telegram-bot/src/webhook_server.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/nexus-core/examples/telegram-bot/logs/webhook.log
+StandardError=append:/opt/nexus-core/examples/telegram-bot/logs/webhook_error.log
+
+# Environment
+Environment="PATH=/opt/nexus-core/examples/telegram-bot/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=/opt/nexus/.env
+
+[Install]
+WantedBy=multi-user.target

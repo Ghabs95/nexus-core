@@ -1,0 +1,785 @@
+"""NexusAgentRuntime — nexus-specific implementation of AgentRuntime.
+
+Bridges ProcessOrchestrator (nexus-core) with the concrete nexus host:
+  - Copilot / Gemini CLI invocations (via agent_launcher.launch_next_agent)
+  - HostStateManager-backed process tracking
+  - AgentMonitor stuck/dead detection hooks
+  - Telegram alerting
+  - Workflow finalisation (close issue + PR)
+"""
+
+import glob
+import logging
+import os
+import re
+import time
+from collections.abc import Callable
+from datetime import UTC, datetime
+from urllib.parse import urlparse
+
+from nexus.core.process_orchestrator import AgentRuntime
+
+logger = logging.getLogger(__name__)
+
+RETRY_FUSE_MAX_ATTEMPTS = 3
+RETRY_FUSE_WINDOW_SECONDS = 600
+RETRY_FUSE_HARD_TRIP_COUNT = 2
+RETRY_FUSE_HARD_WINDOW_SECONDS = 3600
+DEFAULT_RECENT_AGENT_COMMENT_WINDOW_SECONDS = 900
+_STEP_COMPLETE_HEADER_RE = re.compile(
+    r"^\s*##\s+.+?\bcomplete\b\s+—\s+.+$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_READY_FOR_RE = re.compile(r"\bready\s+for\b", re.IGNORECASE)
+
+
+def get_recent_agent_comment_window_seconds() -> int:
+    """Return duplicate-suppression window (seconds) from env or default."""
+    raw = os.getenv(
+        "NEXUS_RECENT_AGENT_COMMENT_WINDOW_SECONDS",
+        str(DEFAULT_RECENT_AGENT_COMMENT_WINDOW_SECONDS),
+    )
+    try:
+        value = int(str(raw).strip())
+        if value < 60:
+            return DEFAULT_RECENT_AGENT_COMMENT_WINDOW_SECONDS
+        return value
+    except Exception:
+        return DEFAULT_RECENT_AGENT_COMMENT_WINDOW_SECONDS
+
+
+def get_retry_fuse_status(issue_number: str, now_ts: float | None = None) -> dict[str, object]:
+    """Return retry-fuse status snapshot for an issue.
+
+    The status is read from launched-agents state and computed without mutating
+    persisted data.
+    """
+    now = now_ts if now_ts is not None else time.time()
+    issue_key = str(issue_number)
+
+    try:
+        from state_manager import HostStateManager
+
+        launched = HostStateManager.load_launched_agents(recent_only=False)
+    except Exception:
+        launched = {}
+
+    entry = launched.get(issue_key, {}) if isinstance(launched, dict) else {}
+    if not isinstance(entry, dict):
+        entry = {}
+
+    fuse = entry.get("retry_fuse", {})
+    if not isinstance(fuse, dict):
+        fuse = {}
+
+    trip_times_raw = entry.get("retry_fuse_trip_times", [])
+    if not isinstance(trip_times_raw, list):
+        trip_times_raw = []
+    trip_times = [
+        float(ts)
+        for ts in trip_times_raw
+        if isinstance(ts, (int, float)) and (now - float(ts)) <= RETRY_FUSE_HARD_WINDOW_SECONDS
+    ]
+
+    window_start = float(fuse.get("window_start", 0) or 0)
+    attempts = int(fuse.get("attempts", 0) or 0)
+    window_elapsed_seconds = max(0.0, now - window_start) if window_start > 0 else None
+    window_remaining_seconds = (
+        max(0.0, RETRY_FUSE_WINDOW_SECONDS - window_elapsed_seconds)
+        if window_elapsed_seconds is not None
+        else None
+    )
+
+    return {
+        "issue": issue_key,
+        "exists": bool(fuse),
+        "agent": str(fuse.get("agent", "")).strip().lower() or None,
+        "attempts": attempts,
+        "max_attempts": RETRY_FUSE_MAX_ATTEMPTS,
+        "window_start": window_start or None,
+        "window_elapsed_seconds": window_elapsed_seconds,
+        "window_remaining_seconds": window_remaining_seconds,
+        "window_seconds": RETRY_FUSE_WINDOW_SECONDS,
+        "tripped": bool(fuse.get("tripped", False)),
+        "hard_tripped": bool(fuse.get("hard_tripped", False)),
+        "tripped_at": float(fuse.get("tripped_at", 0) or 0) or None,
+        "alerted": bool(fuse.get("alerted", False)),
+        "trip_count_in_hard_window": len(trip_times),
+        "hard_trip_threshold": RETRY_FUSE_HARD_TRIP_COUNT,
+        "hard_window_seconds": RETRY_FUSE_HARD_WINDOW_SECONDS,
+        "trip_times": trip_times,
+    }
+
+
+class NexusAgentRuntime(AgentRuntime):
+    """AgentRuntime implementation for the nexus host application.
+
+    Args:
+        finalize_fn: Callable ``(issue_number, repo, last_agent, project_name) -> None``
+            that closes the issue and creates a PR when a workflow completes.
+            Typically :func:`inbox_processor._finalize_workflow`.
+        resolve_project: ``(file_path) -> project_name | None`` resolver used
+            in :meth:`is_process_running` and forwarded via the orchestrator
+            callbacks.  Can be ``None`` when not needed.
+        resolve_repo: ``(project_name, issue_number) -> repo_string`` resolver.
+            Falls back to the ``"nexus"`` project repo when omitted.
+    """
+
+    def __init__(
+        self,
+        finalize_fn: Callable,
+        resolve_project: Callable | None = None,
+        resolve_repo: Callable | None = None,
+    ) -> None:
+        self._finalize_fn = finalize_fn
+        self._resolve_project = resolve_project
+        self._resolve_repo = resolve_repo
+
+    # ------------------------------------------------------------------
+    # AgentRuntime interface
+    # ------------------------------------------------------------------
+
+    def launch_agent(
+        self,
+        issue_number: str,
+        agent_type: str,
+        *,
+        trigger_source: str = "orchestrator",
+        exclude_tools: list[str] | None = None,
+    ) -> tuple[int | None, str | None]:
+        state = self.get_workflow_state(str(issue_number))
+        if state in {"COMPLETED", "FAILED", "CANCELLED"}:
+            logger.info(
+                "Skipping launch for issue #%s (%s): workflow is terminal (%s)",
+                issue_number,
+                agent_type,
+                state,
+            )
+            return None, "workflow-terminal"
+
+        from runtime.agent_launcher import launch_next_agent
+
+        return launch_next_agent(
+            issue_number=issue_number,
+            next_agent=agent_type,
+            trigger_source=trigger_source,
+            exclude_tools=exclude_tools,
+        )
+    def load_launched_agents(self, recent_only: bool = True) -> dict[str, dict]:
+        from state_manager import HostStateManager
+
+        return HostStateManager.load_launched_agents(recent_only=recent_only)
+
+    def save_launched_agents(self, data: dict[str, dict]) -> None:
+        from state_manager import HostStateManager
+
+        HostStateManager.save_launched_agents(data)
+
+    def clear_launch_guard(self, issue_number: str) -> None:
+        from runtime.agent_launcher import clear_launch_guard
+
+        clear_launch_guard(issue_number)
+
+    def should_retry(self, issue_number: str, agent_type: str) -> bool:
+        normalized_agent = str(agent_type or "").strip().lstrip("@").strip().lower()
+        issue_key = str(issue_number)
+
+        try:
+            from runtime.agent_monitor import AgentMonitor
+
+            if not AgentMonitor.should_retry(issue_key, normalized_agent):
+                return False
+        except Exception:
+            pass
+
+        try:
+            from state_manager import HostStateManager
+
+            launched = HostStateManager.load_launched_agents(recent_only=False)
+            entry = launched.get(issue_key, {}) if isinstance(launched, dict) else {}
+            if not isinstance(entry, dict):
+                entry = {}
+
+            now = time.time()
+            fuse = entry.get("retry_fuse", {})
+            if not isinstance(fuse, dict):
+                fuse = {}
+
+            agent_in_fuse = str(fuse.get("agent", "")).strip().lower()
+            window_start = float(fuse.get("window_start", 0) or 0)
+            attempts = int(fuse.get("attempts", 0) or 0)
+            tripped = bool(fuse.get("tripped", False))
+            alerted = bool(fuse.get("alerted", False))
+            hard_tripped = bool(fuse.get("hard_tripped", False))
+
+            trip_times = entry.get("retry_fuse_trip_times", [])
+            if not isinstance(trip_times, list):
+                trip_times = []
+            trip_times = [
+                float(ts) for ts in trip_times
+                if isinstance(ts, (int, float)) and (now - float(ts)) <= RETRY_FUSE_HARD_WINDOW_SECONDS
+            ]
+
+            # Reset rolling window for different agent or expired time window.
+            if (
+                agent_in_fuse != normalized_agent
+                or window_start <= 0
+                or (now - window_start) > RETRY_FUSE_WINDOW_SECONDS
+            ):
+                window_start = now
+                attempts = 0
+                tripped = False
+                alerted = False
+                hard_tripped = False
+
+            if tripped or hard_tripped:
+                logger.error(
+                    "Retry fuse already tripped for issue #%s agent %s",
+                    issue_number,
+                    normalized_agent,
+                )
+                return False
+
+            attempts += 1
+            fuse = {
+                "agent": normalized_agent,
+                "window_start": window_start,
+                "attempts": attempts,
+                "tripped": False,
+                "alerted": alerted,
+                "hard_tripped": False,
+            }
+
+            if attempts > RETRY_FUSE_MAX_ATTEMPTS:
+                fuse["tripped"] = True
+                fuse["tripped_at"] = now
+
+                trip_times.append(now)
+                hard_trip = len(trip_times) >= RETRY_FUSE_HARD_TRIP_COUNT
+                fuse["hard_tripped"] = hard_trip
+
+                entry["retry_fuse"] = fuse
+                entry["retry_fuse_trip_times"] = trip_times
+                launched[issue_key] = entry
+                HostStateManager.save_launched_agents(launched)
+
+                if not alerted:
+                    try:
+                        from audit_store import AuditStore
+                        from config import NEXUS_CORE_STORAGE_DIR
+                        from orchestration.plugin_runtime import (
+                            get_workflow_state_plugin,
+                        )
+
+                        from integrations.workflow_state_factory import get_workflow_state
+
+                        workflow_plugin = get_workflow_state_plugin(
+                            storage_dir=NEXUS_CORE_STORAGE_DIR,
+                            issue_to_workflow_id=lambda n: get_workflow_state().get_workflow_id(n),
+                            clear_pending_approval=lambda n: get_workflow_state().clear_pending_approval(n),
+                            audit_log=AuditStore.audit_log,
+                            cache_key="workflow:state-engine:retry-fuse",
+                        )
+                        if workflow_plugin:
+                            try:
+                                import asyncio
+
+                                asyncio.run(
+                                    workflow_plugin.pause_workflow(
+                                        issue_key,
+                                        reason=(
+                                            "Auto-paused: retry fuse tripped "
+                                            f"for {normalized_agent}"
+                                        ),
+                                    )
+                                )
+                            except Exception as pause_exc:
+                                logger.warning(
+                                    "Failed to auto-pause workflow for issue #%s after retry fuse trip: %s",
+                                    issue_number,
+                                    pause_exc,
+                                )
+                    except Exception as exc:
+                        logger.warning(
+                            "Retry fuse pause hook setup failed for issue #%s: %s",
+                            issue_number,
+                            exc,
+                        )
+
+                    self.send_alert(
+                        (
+                            "🛑 **Retry Fuse Hard-Stop**\n\n"
+                            f"Issue: #{issue_number}\n"
+                            f"Agent: {normalized_agent}\n"
+                            f"Status: Fuse tripped {len(trip_times)} times within "
+                            f"{RETRY_FUSE_HARD_WINDOW_SECONDS // 60} minutes. "
+                            "Workflow auto-chain is hard-stopped and requires manual intervention.\n\n"
+                            "Review logs/comments, then use /reprocess or /resume when ready."
+                        )
+                        if hard_trip
+                        else (
+                            "🛑 **Retry Fuse Tripped**\n\n"
+                            f"Issue: #{issue_number}\n"
+                            f"Agent: {normalized_agent}\n"
+                            f"Status: Auto-chain paused after {attempts} retry attempts "
+                            f"within {RETRY_FUSE_WINDOW_SECONDS // 60} minutes.\n\n"
+                            "Use /reprocess or /resume after investigating logs."
+                        )
+                    )
+
+                    fuse["alerted"] = True
+                    entry["retry_fuse"] = fuse
+                    entry["retry_fuse_trip_times"] = trip_times
+                    launched[issue_key] = entry
+                    HostStateManager.save_launched_agents(launched)
+
+                logger.error(
+                    "Retry fuse tripped for issue #%s agent %s (%d attempts in window, %d trips in hard window)",
+                    issue_number,
+                    normalized_agent,
+                    attempts,
+                    len(trip_times),
+                )
+                return False
+
+            entry["retry_fuse"] = fuse
+            launched[issue_key] = entry
+            HostStateManager.save_launched_agents(launched)
+        except Exception as exc:
+            logger.debug(
+                "Retry fuse bookkeeping failed for issue #%s (%s); falling back to monitor retry logic",
+                issue_number,
+                exc,
+            )
+
+        # Fuse didn't trip — allow the retry.
+        # (The actual retry-budget decision lives in the fuse logic above.)
+        return True
+
+    def send_alert(self, message: str) -> bool:
+        from integrations.notifications import emit_alert
+
+        return bool(emit_alert(message, severity="warning", source="agent_runtime"))
+
+    def _has_recent_agent_completion_comment(
+        self,
+        platform,
+        issue_number: str,
+    ) -> bool:
+        try:
+            import asyncio
+
+            comments = asyncio.run(platform.get_comments(str(issue_number)))
+        except Exception as exc:
+            logger.warning(
+                "Could not inspect existing comments for issue #%s: %s",
+                issue_number,
+                exc,
+            )
+            return False
+
+        now = datetime.now(UTC)
+        window_seconds = get_recent_agent_comment_window_seconds()
+        for comment in reversed(comments or []):
+            body = str(getattr(comment, "body", "") or "")
+            if "_Automated comment from Nexus._" in body:
+                continue
+            if not _STEP_COMPLETE_HEADER_RE.search(body):
+                continue
+            if not _READY_FOR_RE.search(body):
+                continue
+
+            created_at = getattr(comment, "created_at", None)
+            if not isinstance(created_at, datetime):
+                return True
+
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=UTC)
+
+            age_seconds = (now - created_at).total_seconds()
+            if age_seconds <= window_seconds:
+                return True
+
+        return False
+
+    def post_completion_comment(self, issue_number: str, repo: str, body: str) -> bool:
+        from orchestration.nexus_core_helpers import get_git_platform
+
+        try:
+            platform = get_git_platform(repo)
+            import asyncio
+
+            if self._has_recent_agent_completion_comment(platform, issue_number):
+                logger.info(
+                    "Skipping automated completion comment for issue #%s: "
+                    "recent agent-authored completion comment already exists",
+                    issue_number,
+                )
+                return True
+
+            asyncio.run(platform.add_comment(str(issue_number), body))
+            return True
+        except Exception as exc:
+            logger.error(
+                "Failed to post completion comment for issue #%s in %s: %s",
+                issue_number,
+                repo,
+                exc,
+            )
+            return False
+
+    def is_issue_open(self, issue_number: str, repo: str) -> bool | None:
+        """Return issue open/closed status for auto-completion guardrails."""
+        try:
+            from orchestration.nexus_core_helpers import get_git_platform
+
+            platform = get_git_platform(repo)
+            if not platform:
+                return None
+
+            details = platform.get_issue(str(issue_number), ["state"])
+            if not details:
+                return False
+
+            state_value = ""
+            if isinstance(details, dict):
+                state_value = str(details.get("state", "")).strip().lower()
+            else:
+                state_value = str(getattr(details, "state", "")).strip().lower()
+
+            if state_value == "closed":
+                return False
+            if state_value == "open":
+                return True
+            return None
+        except Exception as exc:
+            error_text = str(exc).lower()
+            if "404" in error_text or "not found" in error_text:
+                return False
+            logger.debug(
+                "is_issue_open check failed for #%s in %s: %s",
+                issue_number,
+                repo,
+                exc,
+            )
+            return None
+
+    def audit_log(self, issue_number: str, event: str, details: str = "") -> None:
+        from audit_store import AuditStore
+
+        AuditStore.audit_log(int(issue_number), event, details or None)
+
+    def finalize_workflow(
+        self,
+        issue_number: str,
+        repo: str,
+        last_agent: str,
+        project_name: str,
+    ) -> dict:
+        self._finalize_fn(issue_number, repo, last_agent, project_name)
+        return {}
+
+    # ------------------------------------------------------------------
+    # Optional hooks (override base-class no-ops)
+    # ------------------------------------------------------------------
+
+    def get_workflow_state(self, issue_number: str) -> str | None:
+        """Read workflow state directly from nexus-core FileStorage on disk."""
+        import json
+        import os
+
+        from config import NEXUS_CORE_STORAGE_DIR
+        from integrations.workflow_state_factory import get_workflow_state
+
+        workflow_id = get_workflow_state().get_workflow_id(str(issue_number))
+        if not workflow_id:
+            return None
+        wf_file = os.path.join(
+            NEXUS_CORE_STORAGE_DIR, "workflows", f"{workflow_id}.json"
+        )
+        try:
+            with open(wf_file) as f:
+                state_str = json.load(f).get("state", "")
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+        # WorkflowEngine stores e.g. "running", "paused", "cancelled", "completed", "failed"
+        normalized = str(state_str).strip().lower()
+        if normalized in {"paused", "cancelled", "completed", "failed"}:
+            return normalized.upper()
+        return None
+
+    def should_retry_dead_agent(self, issue_number: str, agent_type: str) -> bool:
+        """Allow dead-agent retry only when workflow still has a matching RUNNING step."""
+        import json
+        import os
+
+        from config import NEXUS_CORE_STORAGE_DIR
+        from integrations.workflow_state_factory import get_workflow_state
+
+        workflow_id = get_workflow_state().get_workflow_id(str(issue_number))
+        if not workflow_id:
+            return False
+
+        wf_file = os.path.join(NEXUS_CORE_STORAGE_DIR, "workflows", f"{workflow_id}.json")
+        try:
+            with open(wf_file) as f:
+                payload = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return False
+
+        state_str = str(payload.get("state", "")).strip().lower()
+        if state_str in {"completed", "failed", "cancelled"}:
+            return False
+
+        remote_issue_open = self._is_remote_issue_open(payload, issue_number)
+        if remote_issue_open is False:
+            return False
+
+        running_steps = []
+        for step in payload.get("steps", []):
+            if not isinstance(step, dict):
+                continue
+            if str(step.get("status", "")).strip().upper() == "RUNNING":
+                running_steps.append(step)
+
+        if not running_steps:
+            return False
+
+        for step in running_steps:
+            agent = step.get("agent")
+            if not isinstance(agent, dict):
+                continue
+            name = str(agent.get("name", "")).strip()
+            display_name = str(agent.get("display_name", "")).strip()
+            if agent_type in {name, display_name}:
+                return True
+
+        return False
+
+    def _is_remote_issue_open(self, payload: dict, issue_number: str) -> bool | None:
+        """Best-effort check whether the source issue still exists and is open.
+
+        Returns:
+            True when confirmed open, False when confirmed closed/missing,
+            None when status cannot be determined.
+        """
+        try:
+            from orchestration.nexus_core_helpers import get_git_platform
+        except Exception:
+            return None
+
+        metadata = payload.get("metadata") if isinstance(payload, dict) else None
+        if not isinstance(metadata, dict):
+            return None
+
+        issue_url = str(metadata.get("github_issue_url", "")).strip()
+        project_name = str(metadata.get("project", "")).strip() or None
+
+        repo_name = ""
+        issue_num = str(issue_number)
+        if issue_url:
+            parsed = urlparse(issue_url)
+            path_parts = [part for part in parsed.path.strip("/").split("/") if part]
+            if "issues" in path_parts:
+                idx = path_parts.index("issues")
+                if idx >= 2:
+                    repo_name = f"{path_parts[idx - 2]}/{path_parts[idx - 1]}"
+                if idx + 1 < len(path_parts):
+                    issue_num = path_parts[idx + 1]
+
+        try:
+            platform = get_git_platform(repo=repo_name or None, project_name=project_name)
+            details = platform.get_issue(str(issue_num), ["state"]) if platform else None
+            if not details:
+                return False
+            state = str(details.get("state", "")).strip().lower()
+            if state == "closed":
+                return False
+            if state:
+                return True
+            return None
+        except Exception as exc:
+            error_text = str(exc).lower()
+            if "404" in error_text or "not found" in error_text:
+                return False
+            return None
+
+    def get_expected_running_agent(self, issue_number: str) -> str | None:
+        """Return the current RUNNING step agent type from workflow storage."""
+        import json
+        import os
+
+        from config import NEXUS_CORE_STORAGE_DIR
+        from integrations.workflow_state_factory import get_workflow_state
+
+        workflow_id = get_workflow_state().get_workflow_id(str(issue_number))
+        if not workflow_id:
+            return None
+
+        wf_file = os.path.join(NEXUS_CORE_STORAGE_DIR, "workflows", f"{workflow_id}.json")
+        try:
+            with open(wf_file) as f:
+                payload = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return None
+
+        state_str = str(payload.get("state", "")).strip().lower()
+        if state_str in {"completed", "failed", "cancelled"}:
+            return None
+
+        for step in payload.get("steps", []):
+            if not isinstance(step, dict):
+                continue
+            if str(step.get("status", "")).strip().upper() != "RUNNING":
+                continue
+            agent = step.get("agent")
+            if not isinstance(agent, dict):
+                continue
+            name = str(agent.get("name", "")).strip()
+            display_name = str(agent.get("display_name", "")).strip()
+            if name:
+                return name
+            if display_name:
+                return display_name
+        return None
+
+    def get_agent_timeout_seconds(
+        self,
+        issue_number: str,
+        agent_type: str | None = None,
+    ) -> int | None:
+        """Return workflow-defined timeout for issue/agent when available."""
+        import json
+
+        from config import NEXUS_CORE_STORAGE_DIR
+        from integrations.workflow_state_factory import get_workflow_state
+
+        workflow_id = get_workflow_state().get_workflow_id(str(issue_number))
+        if not workflow_id:
+            return None
+
+        wf_file = os.path.join(NEXUS_CORE_STORAGE_DIR, "workflows", f"{workflow_id}.json")
+        try:
+            with open(wf_file) as f:
+                payload = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return None
+
+        steps = payload.get("steps", [])
+        if not isinstance(steps, list):
+            return None
+
+        requested = str(agent_type or "").strip().lower()
+
+        def _step_agent_name(step: dict) -> str:
+            agent = step.get("agent")
+            if not isinstance(agent, dict):
+                return ""
+            return str(agent.get("name", "")).strip().lower()
+
+        def _timeout_from_step(step: dict) -> int | None:
+            step_timeout = step.get("timeout")
+            if isinstance(step_timeout, (int, float)) and int(step_timeout) > 0:
+                return int(step_timeout)
+            agent = step.get("agent")
+            if not isinstance(agent, dict):
+                return None
+            agent_timeout = agent.get("timeout")
+            if isinstance(agent_timeout, (int, float)) and int(agent_timeout) > 0:
+                return int(agent_timeout)
+            return None
+
+        prioritized_steps = []
+        if requested:
+            prioritized_steps.extend(
+                step for step in steps
+                if isinstance(step, dict)
+                and str(step.get("status", "")).strip().upper() == "RUNNING"
+                and _step_agent_name(step) == requested
+            )
+        prioritized_steps.extend(
+            step for step in steps
+            if isinstance(step, dict)
+            and str(step.get("status", "")).strip().upper() == "RUNNING"
+        )
+        if requested:
+            prioritized_steps.extend(
+                step for step in steps
+                if isinstance(step, dict) and _step_agent_name(step) == requested
+            )
+
+        for step in prioritized_steps:
+            timeout = _timeout_from_step(step)
+            if timeout:
+                return timeout
+
+        return None
+
+    def is_process_running(self, issue_number: str) -> bool:
+        """Return True if an agent process is still active for this issue."""
+        try:
+            from orchestration.plugin_runtime import get_runtime_ops_plugin
+
+            ops = get_runtime_ops_plugin(cache_key="runtime-ops:inbox")
+            if ops:
+                return bool(ops.is_issue_process_running(issue_number))
+        except Exception as exc:
+            logger.debug(f"is_process_running check failed for #{issue_number}: {exc}")
+        return False
+
+    def check_log_timeout(
+        self,
+        issue_number: str,
+        log_file: str,
+        timeout_seconds: int | None = None,
+    ) -> tuple[bool, int | None]:
+        from runtime.agent_monitor import AgentMonitor
+
+        resolved_timeout = timeout_seconds or self.get_agent_timeout_seconds(issue_number)
+        return AgentMonitor.check_timeout(
+            issue_number,
+            log_file,
+            timeout_seconds=resolved_timeout,
+        )
+
+    def kill_process(self, pid: int) -> bool:
+        """Delegate to AgentMonitor.kill_agent for consistent kill + cleanup."""
+        from runtime.agent_monitor import AgentMonitor
+
+        # AgentMonitor.kill_agent expects an issue_num string but uses it only
+        # for logging; pass empty string when we don't have it readily.
+        return bool(AgentMonitor.kill_agent(pid, ""))
+
+    def notify_timeout(
+        self, issue_number: str, agent_type: str, will_retry: bool
+    ) -> None:
+        try:
+            from integrations.notifications import notify_agent_timeout
+
+            notify_agent_timeout(issue_number, agent_type, will_retry, project="nexus")
+        except Exception as exc:
+            logger.warning(
+                f"notify_timeout failed for #{issue_number} / {agent_type}: {exc}"
+            )
+
+    def get_latest_issue_log(self, issue_number: str) -> str | None:
+        """Return latest task session log path for an issue, if present."""
+        try:
+            from config import BASE_DIR, get_nexus_dir_name
+
+            nexus_dir_name = get_nexus_dir_name()
+            pattern = os.path.join(
+                BASE_DIR,
+                "**",
+                nexus_dir_name,
+                "tasks",
+                "*",
+                "logs",
+                f"*_{issue_number}_*.log",
+            )
+            matches = glob.glob(pattern, recursive=True)
+            if not matches:
+                return None
+            return max(matches, key=os.path.getmtime)
+        except Exception:
+            return None
