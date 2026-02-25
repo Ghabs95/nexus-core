@@ -8,7 +8,7 @@ import logging
 import os
 from typing import Any
 
-from nexus.adapters.git.github import GitPlatform
+from nexus.adapters.git.github import GitHubPlatform
 from nexus.adapters.git.gitlab import GitLabPlatform
 from nexus.adapters.storage.file import FileStorage
 from nexus.core.events import EventBus
@@ -121,7 +121,7 @@ def get_git_platform(repo: str = None, project_name: str = None):
 
     if not token:
         logger.warning(f"{token_var} is missing for project '{project_key}'. Git operations may fail.")
-    return GitPlatform(repo=repo_name, token=token)
+    return GitHubPlatform(repo=repo_name, token=token)
 
 
 def get_workflow_definition_path(project_name: str) -> str | None:

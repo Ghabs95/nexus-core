@@ -418,7 +418,7 @@ def get_sop_tier_from_issue(issue_number, project="nexus", repo_override: str | 
 
     Returns: tier_name (full/shortened/fast-track) or None
     """
-    from nexus.adapters.git.github import GitPlatform
+    from nexus.adapters.git.github import GitHubPlatform
 
     from orchestration.nexus_core_helpers import get_git_platform
 
@@ -427,7 +427,7 @@ def get_sop_tier_from_issue(issue_number, project="nexus", repo_override: str | 
         platform_type = get_project_platform(project)
 
         if platform_type == "github":
-            platform = GitPlatform(repo)
+            platform = GitHubPlatform(repo)
             return platform.get_workflow_type_from_issue(int(issue_number))
 
         issue = asyncio.run(get_git_platform(repo, project_name=project).get_issue(str(issue_number)))
