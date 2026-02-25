@@ -6,6 +6,70 @@
   <title>Nexus Workflow Visualizer</title>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+
+    // ---- SocketIO ----
+    const socket = io('/visualizer');
+
+    socket.on('connect', () => {
+      document.getElementById('status-dot').classList.add('connected');
+      document.getElementById('status-text').textContent = 'Connected';
+    });
+
+    socket.on('disconnect', () => {
+      document.getElementById('status-dot').classList.remove('connected');
+      document.getElementById('status-text').textContent = 'Disconnected — reconnecting…';
+    });
+
+    socket.on('agent_registered', (data) => {
+      logEvent('agent_registered', data);
+      const issueId = `issue-${data.issue}`;
+      const agentId = `agent-${data.issue}-${data.agent}`;
+      ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
+      ensureNode(agentId, data.agent, 'agent');
+      ensureEdge(issueId, agentId, 'launched');
+    });
+
+    socket.on('workflow_mapped', (data) => {
+      logEvent('workflow_mapped', data);
+      const issueId = `issue-${data.issue}`;
+      const wfId = `wf-${data.workflow_id}`;
+      ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
+      ensureNode(wfId, data.workflow_id, 'workflow');
+      ensureEdge(issueId, wfId, 'workflow');
+    });
+
+    socket.on('step_status_changed', (data) => {
+      logEvent('step_status_changed', data);
+      const agentId = `agent-${data.issue}-${data.agent_type}`;
+      ensureNode(agentId, data.agent_type, 'agent');
+      
+      const node = cy.getElementById(agentId);
+      node.removeClass('running done failed skipped pending');
+      node.addClass(data.status);
+    });
+
+    socket.on('workflow_completed', (data) => {
+      logEvent('workflow_completed', data);
+      const wfId = `wf-${data.workflow_id}`;
+      const node = cy.getElementById(wfId);
+      if (node.length) {
+        node.style('border-color', data.status === 'success' ? '#3fb950' : '#f85149');
+      }
+    });
+
+    socket.on('mermaid_diagram', async (data) => {
+      logEvent('mermaid_diagram', { issue: data.issue, diagram: '...' });
+      try {
+        const { svg } = await mermaid.render('mermaid-svg', data.diagram);
+        document.getElementById('mermaid-view').innerHTML = svg;
+      } catch (err) {
+        console.error('Mermaid render error:', err);
+      }
+    });
+  </script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #e6edf3; height: 100vh; display: flex; flex-direction: column; }
@@ -14,14 +78,21 @@
     #status-dot { width: 10px; height: 10px; border-radius: 50%; background: #f85149; flex-shrink: 0; }
     #status-dot.connected { background: #3fb950; }
     #status-text { font-size: 0.8rem; color: #8b949e; }
-    #main { display: flex; flex: 1; overflow: hidden; }
+    #main { display: flex; flex: 1; overflow: hidden; position: relative; }
     #cy { flex: 1; background: #0d1117; }
-    #sidebar { width: 300px; background: #161b22; border-left: 1px solid #30363d; display: flex; flex-direction: column; }
+    #mermaid-container { flex: 1; background: #0d1117; display: none; overflow: auto; padding: 20px; }
+    #mermaid-view { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+    #sidebar { width: 350px; background: #161b22; border-left: 1px solid #30363d; display: flex; flex-direction: column; }
+    #tabs { display: flex; background: #161b22; border-bottom: 1px solid #30363d; }
+    .tab { flex: 1; padding: 10px; text-align: center; font-size: 0.8rem; cursor: pointer; color: #8b949e; border-bottom: 2px solid transparent; }
+    .tab.active { color: #58a6ff; border-bottom-color: #58a6ff; background: #1c2128; }
     #sidebar h2 { padding: 12px 16px; font-size: 0.85rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #30363d; }
     #event-log { flex: 1; overflow-y: auto; padding: 8px; }
     .event-item { padding: 8px 10px; margin: 4px 0; border-radius: 6px; font-size: 0.8rem; border-left: 3px solid #58a6ff; background: #1c2128; }
     .event-item.agent_registered { border-color: #3fb950; }
     .event-item.workflow_mapped { border-color: #d29922; }
+    .event-item.step_status_changed { border-color: #58a6ff; }
+    .event-item.workflow_completed { border-color: #f0883e; }
     .event-item .event-time { font-size: 0.7rem; color: #8b949e; margin-bottom: 3px; }
     .event-item .event-body { color: #e6edf3; word-break: break-word; }
     #controls { padding: 12px 16px; border-top: 1px solid #30363d; display: flex; gap: 8px; }
@@ -35,8 +106,15 @@
   <h1>Nexus Workflow Visualizer</h1>
   <span id="status-text">Connecting…</span>
 </header>
+<div id="tabs">
+  <div class="tab active" onclick="showTab('graph')">Network Graph (Cytoscape)</div>
+  <div class="tab" onclick="showTab('mermaid')">Workflow Diagram (Mermaid)</div>
+</div>
 <div id="main">
   <div id="cy"></div>
+  <div id="mermaid-container">
+    <div id="mermaid-view"></div>
+  </div>
   <div id="sidebar">
     <h2>Live Events</h2>
     <div id="event-log"></div>
@@ -67,6 +145,11 @@ const cy = cytoscape({
     }},
     { selector: 'node.workflow', style: { 'background-color': '#1f2d1f', 'border-color': '#3fb950', 'border-width': 2 }},
     { selector: 'node.agent', style: { 'background-color': '#1e2538', 'border-color': '#58a6ff' }},
+    { selector: 'node.running', style: { 'border-color': '#58a6ff', 'border-width': 3 }},
+    { selector: 'node.done', style: { 'border-color': '#3fb950', 'border-width': 3 }},
+    { selector: 'node.failed', style: { 'border-color': '#f85149', 'border-width': 3 }},
+    { selector: 'node.skipped', style: { 'border-color': '#d29922', 'border-width': 2 }},
+    { selector: 'node.pending', style: { 'border-color': '#8b949e', 'border-width': 2 }},
     { selector: 'edge', style: {
         'width': 2,
         'line-color': '#30363d',
@@ -110,6 +193,26 @@ function relayout() {
 
 function clearGraph() {
   cy.elements().remove();
+  document.getElementById('mermaid-view').innerHTML = '';
+}
+
+function showTab(tab) {
+  const cyEl = document.getElementById('cy');
+  const mermaidEl = document.getElementById('mermaid-container');
+  const tabs = document.querySelectorAll('.tab');
+  
+  tabs.forEach(t => t.classList.remove('active'));
+  
+  if (tab === 'graph') {
+    cyEl.style.display = 'block';
+    mermaidEl.style.display = 'none';
+    tabs[0].classList.add('active');
+    relayout();
+  } else {
+    cyEl.style.display = 'none';
+    mermaidEl.style.display = 'block';
+    tabs[1].classList.add('active');
+  }
 }
 
 // ---- Event log ----
@@ -123,37 +226,6 @@ function logEvent(type, data) {
   // Cap log to 100 items
   while (log.children.length > 100) log.removeChild(log.lastChild);
 }
-
-// ---- SocketIO ----
-const socket = io('/visualizer');
-
-socket.on('connect', () => {
-  document.getElementById('status-dot').classList.add('connected');
-  document.getElementById('status-text').textContent = 'Connected';
-});
-
-socket.on('disconnect', () => {
-  document.getElementById('status-dot').classList.remove('connected');
-  document.getElementById('status-text').textContent = 'Disconnected — reconnecting…';
-});
-
-socket.on('agent_registered', (data) => {
-  logEvent('agent_registered', data);
-  const issueId = `issue-${data.issue}`;
-  const agentId = `agent-${data.issue}-${data.agent}`;
-  ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
-  ensureNode(agentId, data.agent, 'agent');
-  ensureEdge(issueId, agentId, 'launched');
-});
-
-socket.on('workflow_mapped', (data) => {
-  logEvent('workflow_mapped', data);
-  const issueId = `issue-${data.issue}`;
-  const wfId = `wf-${data.workflow_id}`;
-  ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
-  ensureNode(wfId, data.workflow_id, 'workflow');
-  ensureEdge(issueId, wfId, 'workflow');
-});
 </script>
 </body>
 </html>

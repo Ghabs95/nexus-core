@@ -614,6 +614,15 @@ def main():
     """Start the webhook server."""
     port = WEBHOOK_PORT
     logger.info(f"🚀 Starting webhook server on port {port}")
+    
+    # Initialize event handlers (including SocketIO bridge)
+    try:
+        from orchestration.nexus_core_helpers import setup_event_handlers
+        setup_event_handlers()
+        logger.info("✅ Event handlers initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not initialize event handlers: {e}")
+    
     logger.info(f"📍 Webhook URL: http://localhost:{port}/webhook")
     logger.info(f"📊 Visualizer: http://localhost:{port}/visualizer")
     
