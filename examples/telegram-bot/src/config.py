@@ -229,6 +229,7 @@ def _load_and_validate_project_config() -> dict:
             f"Failed to load PROJECT_CONFIG from {resolved_config_path}: {e}"
         )
     
+    
     # Validate the loaded config
     _validate_config_with_project_config(_project_config_cache)
     return _project_config_cache

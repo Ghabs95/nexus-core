@@ -200,7 +200,7 @@ def test_webhook_maps_secondary_repo_to_same_project(_mock_alert, _mock_notify, 
                 "git_repo": "acme/sampleco-backend",
                 "git_repos": ["acme/sampleco-backend", "acme/sampleco-mobile"],
             },
-            "github_issue_triage": {
+            "issue_triage": {
                 "default_agent_type": "triage",
             },
         },

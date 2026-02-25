@@ -36,7 +36,7 @@ require_human_merge_approval: always  # Enforce human review for all projects
 # Each project's workflow defines which actual agent implements each type.
 # Example:
 #   - nexus uses enterprise_workflow.yaml: triage → @triage, escalation → @triage (with priority flag)
-github_issue_triage:
+issue_triage:
   # Default agent type when no specific mapping applies
   # Routes to whatever agent is configured for this type in the current workflow
   default_agent_type: "triage"

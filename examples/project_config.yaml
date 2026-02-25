@@ -35,7 +35,7 @@ require_human_merge_approval: workflow-based  # Overrideable per project
 #   - debug: Bug analysis and root cause analysis
 #
 # Each project's workflow defines which actual agent implements each type.
-github_issue_triage:
+issue_triage:
   # Default agent type for issues with no matching labels
   default_agent_type: "triage"
   
@@ -68,7 +68,7 @@ github_issue_triage:
 ai_tool_preferences:
   # ===== SYSTEM AGENT TYPES (abstract roles used by workflows) =====
   # These types are used by:
-  # - github_issue_triage config (routes issues to agent types)
+  # - issue_triage config (routes issues to agent types)
   # - workflow YAML (assigns work to agent types)
   # - task assignment (looks for agents with matching system_type)
   
