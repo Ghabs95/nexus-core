@@ -244,47 +244,42 @@ async def active_handler(ctx: InteractiveContext, deps: MonitoringHandlersDeps) 
                         filename_match = re.search(r"_(\d+)\.md$", filename)
                         issue_number = filename_match.group(1) if filename_match else None
 
-                    if not issue_number:
-                        open_files.append((filename, None))
-                        continue
+                    # Resolve issue state
+                    issue_state = "unknown"
+                    if issue_number:
+                        cache_key = f"{repo}:{issue_number}"
+                        if cache_key not in issue_state_cache:
+                            details = deps.get_issue_details(issue_number, repo=repo)
+                            if not details:
+                                issue_state_cache[cache_key] = "orphan"
+                            else:
+                                issue_state_cache[cache_key] = details.get("state", "unknown").lower()
+                        issue_state = issue_state_cache[cache_key]
+                    else:
+                        issue_state = "orphan"
 
-                    cache_key = f"{repo}:{issue_number}"
-                    if cache_key not in issue_state_cache:
-                        details = deps.get_issue_details(issue_number, repo=repo)
-                        if not details:
-                            issue_state_cache[cache_key] = "orphan"
-                        else:
-                            issue_state_cache[cache_key] = details.get("state", "unknown").lower()
-
-                    issue_state = issue_state_cache[cache_key]
-
-                    if issue_state == "orphan":
-                        open_files.append((filename, None))
-                        continue
-
-                    if issue_state == "closed":
-                        stale_count += 1
-                        if cleanup_mode:
-                            try:
-                                closed_dir = deps.get_tasks_closed_dir(project_root, project_key)
-                                os.makedirs(closed_dir, exist_ok=True)
-                                target_path = os.path.join(closed_dir, filename)
-                                if os.path.exists(target_path):
-                                    base, ext = os.path.splitext(filename)
-                                    target_path = os.path.join(closed_dir, f"{base}_{int(time.time())}{ext}")
-                                os.replace(file_path, target_path)
-                                total_archived += 1
-                                deps.logger.info(
-                                    f"Archived closed task file: {file_path} -> {target_path}"
-                                )
-                            except Exception as exc:
-                                deps.logger.warning(f"Failed to archive {file_path}: {exc}")
-                        continue
-
+                    # If it's a valid open task (or state unknown), keep it in the active list
                     if issue_state in {"open", "unknown"}:
                         open_files.append((filename, issue_number))
-                    else:
-                        stale_count += 1
+                        continue
+
+                    # Otherwise it's archivable (closed or orphan)
+                    stale_count += 1
+                    if cleanup_mode:
+                        try:
+                            closed_dir = deps.get_tasks_closed_dir(project_root, project_key)
+                            os.makedirs(closed_dir, exist_ok=True)
+                            target_path = os.path.join(closed_dir, filename)
+                            if os.path.exists(target_path):
+                                base, ext = os.path.splitext(filename)
+                                target_path = os.path.join(closed_dir, f"{base}_{int(time.time())}{ext}")
+                            os.replace(file_path, target_path)
+                            total_archived += 1
+                            deps.logger.info(
+                                f"Archived {issue_state} task file: {file_path} -> {target_path}"
+                            )
+                        except Exception as exc:
+                            deps.logger.warning(f"Failed to archive {file_path}: {exc}")
 
                 if not open_files:
                     total_skipped_closed += stale_count
@@ -317,7 +312,7 @@ async def active_handler(ctx: InteractiveContext, deps: MonitoringHandlersDeps) 
         active_text += f"Total: {total_active} active task(s)"
 
     if total_skipped_closed:
-        active_text += f"\n\nℹ️ Skipped {total_skipped_closed} closed task file(s)."
+        active_text += f"\n\nℹ️ Skipped {total_skipped_closed} closed or orphan task file(s)."
     if cleanup_mode:
         active_text += f"\n📦 Archived {total_archived} closed task file(s) to `tasks/closed`."
 

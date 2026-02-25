@@ -1198,6 +1198,11 @@ async def _handle_pending_issue_input(update: Update, context: ContextTypes.DEFA
 
     text = (update.message.text or "").strip()
     if pending_issue is None:
+        # If it looks like a feature ideation request or a long descriptive message,
+        # don't treat it as an issue number input.
+        if is_feature_ideation_request(text) or (len(text) > 15 and " " in text):
+            return False
+
         issue_num = text.lstrip("#")
         if not issue_num.isdigit():
             await update.effective_message.reply_text("Please enter a valid issue number (e.g., 1).")

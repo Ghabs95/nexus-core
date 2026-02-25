@@ -176,10 +176,12 @@ class GitHubIssueCLIPlugin:
         limit: int = 10,
         fields: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """List issues from the configured repository."""
+        """List issues/PRs from the configured repository using a broad search."""
         fields = fields or ["number", "title", "state"]
+        # Use 'search issues' instead of 'issue list' to capture both issues and PRs,
+        # and to handle archived states more gracefully.
         cmd = [
-            "gh", "issue", "list",
+            "gh", "search", "issues",
             "--repo", self.repo,
             "--state", state,
             "--limit", str(limit),
@@ -190,7 +192,7 @@ class GitHubIssueCLIPlugin:
             data = json.loads(result.stdout or "[]")
             return data if isinstance(data, list) else []
         except Exception as exc:
-            logger.error("Failed to list issues for %s: %s", self.repo, exc)
+            logger.error("Failed to list issues/PRs via search for %s: %s", self.repo, exc)
             return []
 
     def _run_with_retry(
