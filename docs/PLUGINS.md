@@ -125,3 +125,11 @@ telegram_integration = "nexus_telegram_plugin:register_plugins"
 - Workflow state engine adapter plugin: `nexus.plugins.builtin.workflow_state_engine_plugin`
     - Class: `WorkflowStateEnginePlugin`
     - Registration entry: `register_plugins(registry)`
+- Slack event handler plugin: `nexus.plugins.builtin.slack_event_handler_plugin`
+    - Class: `SlackEventHandler`
+    - Registration entry: `register_plugins(registry)`
+    - Requires: `slack-sdk` optional dependency (`pip install nexus-core[slack]`)
+- Slack interactive client plugin: `nexus.plugins.builtin.slack_interactive_plugin`
+    - Class: `SlackInteractivePlugin`
+    - Registration entry: `register_plugins(registry)`
+    - Requires: `slack-bolt>=1.18` optional dependency (`pip install nexus-core[slack]`)
