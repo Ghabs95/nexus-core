@@ -132,10 +132,14 @@ async def monitor_project_picker_handler(ctx: InteractiveContext, deps: Callback
     project_key = ""
     extra_args: list[str] = []
 
+    parts = query_data.split(":")
     if query_data.startswith("pickmonitor:"):
-        _, command, project_key = query_data.split(":", 2)
+        if len(parts) < 3:
+            return
+        command = parts[1]
+        project_key = parts[2]
+        extra_args = parts[3:]
     else:
-        parts = query_data.split(":")
         if len(parts) < 2:
             return
         command = parts[0]
@@ -147,9 +151,22 @@ async def monitor_project_picker_handler(ctx: InteractiveContext, deps: Callback
         ctx.user_state["pending_project"] = project_key
         await deps.prompt_issue_selection(ctx, command, project_key, edit_message=True)
         return
-        ctx.user_state["pending_command"] = command
-        ctx.user_state["pending_project"] = project_key
-        await deps.prompt_issue_selection(ctx, command, project_key, edit_message=True)
+
+    # Check for direct handlers in action_handlers first (status, active, etc.)
+    handler = deps.action_handlers.get(command)
+    if handler:
+        ctx.args = [project_key] + extra_args
+        await handler(ctx)
+        return
+
+    # Fallback to specifically named handlers for backward compatibility
+    if command == "status":
+        ctx.args = [project_key]
+        await deps.status_handler(ctx)
+        return
+    elif command == "active":
+        ctx.args = [project_key] + extra_args
+        await deps.active_handler(ctx)
         return
 
     await ctx.edit_message_text("Unsupported monitoring command.")

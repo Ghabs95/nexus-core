@@ -488,6 +488,7 @@ def _callback_handler_deps() -> CallbackHandlerDeps:
             "resume": partial(_ctx_call_telegram_handler, handler=resume_handler),
             "stop": partial(_ctx_call_telegram_handler, handler=stop_handler),
             "audit": partial(_ctx_call_telegram_handler, handler=audit_handler),
+            "active": partial(_ctx_call_telegram_handler, handler=active_handler),
             "reprocess": partial(_ctx_call_telegram_handler, handler=reprocess_handler),
         },
         report_bug_action=_report_bug_action_wrapper,
@@ -1223,6 +1224,10 @@ async def _handle_pending_issue_input(update: Update, context: ContextTypes.DEFA
 
 def _command_handler_map():
     return {
+        "status": status_handler,
+        "active": active_handler,
+        "inboxq": inboxq_handler,
+        "stats": stats_handler,
         "logs": logs_handler,
         "logsfull": logsfull_handler,
         "tail": tail_handler,
@@ -1358,6 +1363,7 @@ def _ctx_telegram_runtime(ctx) -> tuple[Update, ContextTypes.DEFAULT_TYPE]:
 
 async def _ctx_call_telegram_handler(ctx, handler) -> None:
     update, context = _ctx_telegram_runtime(ctx)
+    context.args = list(ctx.args or [])
     await handler(update, context)
 
 
