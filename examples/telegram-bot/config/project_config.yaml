@@ -1,0 +1,105 @@
+# Global workflow definition path (YAML workflow file - single source of truth)
+workflow_definition_path: nexus-core/examples/workflows/enterprise_workflow.yaml
+
+# Shared agent YAML definitions (org-level agents used across all projects)
+# Searched as fallback when agent_type is not found in project-specific agents_dir
+shared_agents_dir: agents/nxs-agents
+
+# VCS-agnostic inbox/tasks directory (can be .nexus, .gitlab, .gitea, etc.)
+# Relative to project workspace root
+nexus_dir: .nexus
+
+# Project key registry (single source of truth for short keys and aliases)
+projects:
+  nxs:
+    code: nexus
+    aliases:
+      - nexus core
+      - nexus-core
+
+# PR Merge Policy (project-level enforcement)
+# Controls whether @deployer can auto-merge PRs or must wait for human approval
+# Options:
+#   - always: Human approval REQUIRED for all PRs (overrides workflow settings)
+#   - workflow-based: Workflow YAML controls per-workflow/per-step merge behavior
+#   - never: Auto-merge allowed (NOT recommended for production)
+require_human_merge_approval: always  # Enforce human review for all projects
+
+# GitHub Issue Triage Configuration
+# Maps incoming GitHub issues to agent types (not specific agents)
+# 
+# Agent types are abstract roles that workflows implement:
+#   - triage: Initial issue analysis and classification
+#   - escalation: High-priority/urgent issues (escalate to senior agent)
+#   - debug: Bug analysis and root cause
+#
+# Each project's workflow defines which actual agent implements each type.
+# Example:
+#   - nexus uses enterprise_workflow.yaml: triage → @triage, escalation → @triage (with priority flag)
+github_issue_triage:
+  # Default agent type when no specific mapping applies
+  # Routes to whatever agent is configured for this type in the current workflow
+  default_agent_type: "triage"
+  
+  # Per-repository agent type override (if different from default)
+  per_repo:
+    "Ghabs95/nexus-core": "triage" # Nexus core issues use triage workflow
+
+  # Label-based routing to agent types
+  label_based:
+    "docs": "triage"              # Documentation issues → triage agent
+    "good first issue": "triage"  # Beginner issues → triage agent
+    "bug": "debug"                # Bugs → debug agent (root cause analysis)
+    "urgent": "escalation"        # Urgent → escalation agent (senior review)
+    "critical": "escalation"      # Critical → escalation agent
+
+# Global AI tool preferences (which AI tool each AGENT TYPE uses)
+# Maps AGENT TYPES (not individual agents) to AI providers
+#
+# Architecture:
+# 1. Agent YAML files define: spec.agent_type (e.g., "triage", "debug", "escalation")
+# 2. Tasks are routed to agent types (not specific agent names)
+# 3. The first available agent with that type handles the task
+# 4. This config maps type → AI tool, so all agents of that type use the same tool
+#
+# Example agent YAML:
+#   spec:
+#     agent_type: "triage"       # This agent handles type: triage
+#     provider_preference: null  # Will use value from ai_tool_preferences
+ai_tool_preferences:
+  triage: copilot            # Generic intake and routing
+  developer: copilot         # Generic code implementation
+  reviewer: copilot          # Generic code/quality review
+  compliance: copilot        # Generic security/privacy checks
+  deployer: copilot          # Generic deployment and ops
+  debug: copilot             # Generic root-cause analysis
+  designer: gemini           # Generic UX/UI and product design
+  docs: gemini               # Generic docs and summaries
+  writer: gemini             # Generic close-loop writing
+  finalizer: gemini          # Generic rejected/closure handling
+
+# Project configurations
+nexus:
+  agents_dir: ghabs/nexus-core/examples/agents
+  workspace: nexus
+  git_repo: Ghabs95/nexus-core
+  # git_repos:
+  #  - Ghabs95/nexus-core
+  chat_agents:
+    designer: {}
+    triage: {}
+    compliance: {}
+    writer: {}
+  # Uses the enterprise workflow (multi-tier: full/shortened/fast-track)
+  workflow_definition_path: nexus/nexus-core/examples/workflows/enterprise_workflow.yaml
+  # AI tool preferences for enterprise workflow agent types
+  ai_tool_preferences:
+    triage: copilot          # Triage agent - issue classification
+    designer: copilot        # Design agent - architecture proposals
+    debug: copilot           # Debug agent - root cause analysis
+    developer: copilot       # Develop agent - code implementation
+    reviewer: copilot        # Review agent - PR reviews
+    compliance: copilot      # Compliance agent - security/privacy review
+    deployer: copilot        # Deploy agent - merge & release
+    writer: gemini           # Write agent - docs & close (faster)
+    finalizer: gemini        # Finalize agent - rejected issue close (faster)

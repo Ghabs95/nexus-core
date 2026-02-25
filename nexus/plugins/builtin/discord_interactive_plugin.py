@@ -8,7 +8,8 @@ from typing import Any
 
 from nexus.adapters.notifications.base import Message
 from nexus.adapters.notifications.interactive import InteractiveClientPlugin
-from nexus.plugins import PluginKind, PluginRegistry
+from nexus.plugins.base import PluginKind
+from nexus.plugins.registry import PluginRegistry
 
 logger = logging.getLogger(__name__)
 
