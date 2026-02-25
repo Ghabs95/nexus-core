@@ -57,3 +57,43 @@ class StorageBackend(ABC):
     async def cleanup_old_workflows(self, older_than_days: int = 30) -> int:
         """Delete workflows older than specified days. Returns count deleted."""
         pass
+
+    # --- Completion storage ---
+
+    @abstractmethod
+    async def save_completion(
+        self, issue_number: str, agent_type: str, data: dict[str, Any]
+    ) -> str:
+        """Persist an agent completion summary.
+
+        Args:
+            issue_number: GitHub issue number.
+            agent_type: Agent that produced the completion.
+            data: Full completion payload (matches CompletionSummary schema).
+
+        Returns:
+            Dedup key for idempotent processing.
+        """
+        pass
+
+    @abstractmethod
+    async def list_completions(
+        self, issue_number: str | None = None
+    ) -> list[dict[str, Any]]:
+        """List completion summaries, optionally filtered by issue.
+
+        Returns newest-first for each issue (only latest per issue).
+        """
+        pass
+
+    # --- Host state storage ---
+
+    @abstractmethod
+    async def save_host_state(self, key: str, data: dict[str, Any]) -> None:
+        """Persist a host state blob (e.g. launched_agents, tracked_issues)."""
+        pass
+
+    @abstractmethod
+    async def load_host_state(self, key: str) -> dict[str, Any] | None:
+        """Load a host state blob by key. Returns None if not found."""
+        pass

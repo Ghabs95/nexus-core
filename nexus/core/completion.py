@@ -130,6 +130,8 @@ def generate_completion_instructions(
     workflow_steps_text: str = "",
     nexus_dir: str = ".nexus",
     project_name: str = "",
+    completion_backend: str = "filesystem",
+    webhook_url: str = "",
 ) -> str:
     """Generate prompt instructions that tell an agent how to produce output.
 
@@ -144,16 +146,56 @@ def generate_completion_instructions(
         nexus_dir: Name of the .nexus directory (default ".nexus").
         project_name: Project subdirectory name (e.g. "nexus"). Completions are
             written to ``tasks/<project_name>/completions/``.
+        completion_backend: Storage backend for completions — ``"filesystem"``
+            or ``"postgres"``.  When ``"postgres"``, the agent POSTs to the
+            webhook endpoint instead of writing a local JSON file.
+        webhook_url: Base URL of the webhook server (e.g.
+            ``http://localhost:8081``).  Required when *completion_backend*
+            is ``"postgres"``.
 
     Returns:
         Prompt text to append to the agent's instructions.
     """
-    completions_script = (
-        f"```bash\n"
-        f'WORKSPACE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n'
-        f'COMPLETIONS_DIR=$(find "$WORKSPACE_ROOT" -maxdepth 4 -path \'*/{nexus_dir}/tasks/{project_name}/completions\' -type d 2>/dev/null | head -1)\n'
-        f'if [ -z "$COMPLETIONS_DIR" ]; then COMPLETIONS_DIR="$WORKSPACE_ROOT/{nexus_dir}/tasks/{project_name}/completions"; mkdir -p "$COMPLETIONS_DIR"; fi\n'
-    )
+
+    # --- Build Deliverable 2 based on backend ---
+    if completion_backend == "postgres":
+        deliverable_2 = (
+            f"## Deliverable 2: POST completion summary to the API\n\n"
+            f"POST your structured results to the completion endpoint. "
+            f"Use this exact command:\n\n"
+            f"```bash\n"
+            f"curl -s -X POST {webhook_url}/api/v1/completion \\\n"
+            f'  -H "Content-Type: application/json" \\\n'
+            f"  -d '{{\n"
+            f'    "issue_number": "{issue_number}",\n'
+            f'    "agent_type": "{agent_type}",\n'
+            f'    "status": "complete",\n'
+            f'    "summary": "<one-line summary of what you did>",\n'
+            f'    "key_findings": ["<finding 1>", "<finding 2>"],\n'
+            f'    "next_agent": "<agent_type from workflow steps — NOT the step id or display name>"\n'
+            f"  }}'\n"
+            f"```\n\n"
+            f"Replace the `<placeholder>` values with real data from your analysis.\n"
+            f"**Do NOT write any local JSON files.**"
+        )
+    else:
+        completions_script = (
+            f"```bash\n"
+            f'WORKSPACE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n'
+            f'COMPLETIONS_DIR=$(find "$WORKSPACE_ROOT" -maxdepth 4 -path \'*/{nexus_dir}/tasks/{project_name}/completions\' -type d 2>/dev/null | head -1)\n'
+            f'if [ -z "$COMPLETIONS_DIR" ]; then COMPLETIONS_DIR="$WORKSPACE_ROOT/{nexus_dir}/tasks/{project_name}/completions"; mkdir -p "$COMPLETIONS_DIR"; fi\n'
+        )
+        deliverable_2 = (
+            f"## Deliverable 2: Write completion summary JSON\n\n"
+            f"Write a JSON file with your structured results. Use this exact command:\n\n"
+            f"**IMPORTANT:** The `{nexus_dir}/` directory lives at the **workspace root** "
+            f"(the top-level directory you were launched in). "
+            f"Do NOT create a new `{nexus_dir}/` folder inside sub-repos or subdirectories.\n\n"
+            + completions_script +
+            f"python3 -c 'import json,os; p=os.path.join(os.environ[\"COMPLETIONS_DIR\"], \"completion_summary_{issue_number}.json\"); d={{\"status\":\"complete\",\"agent_type\":\"{agent_type}\",\"summary\":\"<one-line summary of what you did>\",\"key_findings\":[\"<finding 1>\",\"<finding 2>\"],\"next_agent\":\"<agent_type from workflow steps — NOT the step id or display name>\"}}; open(p, \"w\", encoding=\"utf-8\").write(json.dumps(d, indent=2))'\n"
+            f"```\n\n"
+            f"Replace the `<placeholder>` values with real data from your analysis."
+        )
 
     return (
         f"**WHEN YOU FINISH — TWO MANDATORY DELIVERABLES:**\n\n"
@@ -189,16 +231,10 @@ def generate_completion_instructions(
         f"'Ready for @...' line. Never write `@none` in comments.\n"
         f"Before posting, quickly check recent comments: if a completion comment from your same "
         f"agent already exists for this run, do not post a duplicate completion comment.\n\n"
-        f"## Deliverable 2: Write completion summary JSON\n\n"
-        f"Write a JSON file with your structured results. Use this exact command:\n\n"
-        f"**IMPORTANT:** The `{nexus_dir}/` directory lives at the **workspace root** "
-        f"(the top-level directory you were launched in). "
-        f"Do NOT create a new `{nexus_dir}/` folder inside sub-repos or subdirectories.\n\n"
-        + completions_script +
-        f"python3 -c 'import json,os; p=os.path.join(os.environ[\"COMPLETIONS_DIR\"], \"completion_summary_{issue_number}.json\"); d={{\"status\":\"complete\",\"agent_type\":\"{agent_type}\",\"summary\":\"<one-line summary of what you did>\",\"key_findings\":[\"<finding 1>\",\"<finding 2>\"],\"next_agent\":\"<agent_type from workflow steps — NOT the step id or display name>\"}}; open(p, \"w\", encoding=\"utf-8\").write(json.dumps(d, indent=2))'\n"
-        f"```\n\n"
-        f"Replace the `<placeholder>` values with real data from your analysis.\n\n"
-        f"After posting the comment and writing the JSON, **EXIT immediately**.\n"
+        f"{deliverable_2}\n\n"
+        f"After posting the comment and "
+        f"{'POSTing the completion' if completion_backend == 'postgres' else 'writing the JSON'}"
+        f", **EXIT immediately**.\n"
         f"DO NOT attempt to invoke or launch any other agent."
     )
 

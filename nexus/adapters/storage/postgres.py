@@ -88,6 +88,71 @@ if _SA_AVAILABLE:
             onupdate=lambda: datetime.now(tz=UTC),
         )
 
+    class _CompletionRow(_Base):
+        __tablename__ = "nexus_completions"
+
+        id: sa.orm.Mapped[int] = sa.orm.mapped_column(
+            sa.Integer, primary_key=True, autoincrement=True
+        )
+        issue_number: sa.orm.Mapped[str] = sa.orm.mapped_column(
+            sa.String(32), index=True, nullable=False
+        )
+        agent_type: sa.orm.Mapped[str] = sa.orm.mapped_column(
+            sa.String(128), nullable=False
+        )
+        status: sa.orm.Mapped[str] = sa.orm.mapped_column(
+            sa.String(32), default="complete"
+        )
+        summary_text: sa.orm.Mapped[str] = sa.orm.mapped_column(
+            sa.Text, default=""
+        )
+        data: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.Text)  # full JSON blob
+        dedup_key: sa.orm.Mapped[str] = sa.orm.mapped_column(
+            sa.String(256), unique=True, nullable=False
+        )
+        created_at: sa.orm.Mapped[datetime] = sa.orm.mapped_column(
+            sa.DateTime(timezone=True), default=lambda: datetime.now(tz=UTC)
+        )
+
+    class _HostStateRow(_Base):
+        __tablename__ = "nexus_host_state"
+
+        key: sa.orm.Mapped[str] = sa.orm.mapped_column(
+            sa.String(128), primary_key=True
+        )
+        data: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.Text)  # JSON blob
+        updated_at: sa.orm.Mapped[datetime] = sa.orm.mapped_column(
+            sa.DateTime(timezone=True),
+            default=lambda: datetime.now(tz=UTC),
+            onupdate=lambda: datetime.now(tz=UTC),
+        )
+
+    class _TaskFileRow(_Base):
+        __tablename__ = "nexus_task_files"
+
+        id: sa.orm.Mapped[int] = sa.orm.mapped_column(
+            sa.Integer, primary_key=True, autoincrement=True
+        )
+        project: sa.orm.Mapped[str] = sa.orm.mapped_column(
+            sa.String(64), index=True
+        )
+        issue_number: sa.orm.Mapped[str | None] = sa.orm.mapped_column(
+            sa.String(32), index=True, nullable=True
+        )
+        filename: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(256))
+        content: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.Text)
+        state: sa.orm.Mapped[str] = sa.orm.mapped_column(
+            sa.String(16), default="active"
+        )
+        created_at: sa.orm.Mapped[datetime] = sa.orm.mapped_column(
+            sa.DateTime(timezone=True), default=lambda: datetime.now(tz=UTC)
+        )
+        updated_at: sa.orm.Mapped[datetime] = sa.orm.mapped_column(
+            sa.DateTime(timezone=True),
+            default=lambda: datetime.now(tz=UTC),
+            onupdate=lambda: datetime.now(tz=UTC),
+        )
+
 
 # ---------------------------------------------------------------------------
 # Storage backend
@@ -169,6 +234,24 @@ class PostgreSQLStorageBackend(StorageBackend):
 
     async def cleanup_old_workflows(self, older_than_days: int = 30) -> int:
         return await asyncio.to_thread(self._sync_cleanup, older_than_days)
+
+    async def save_completion(
+        self, issue_number: str, agent_type: str, data: dict[str, Any]
+    ) -> str:
+        return await asyncio.to_thread(
+            self._sync_save_completion, issue_number, agent_type, data
+        )
+
+    async def list_completions(
+        self, issue_number: str | None = None
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._sync_list_completions, issue_number)
+
+    async def save_host_state(self, key: str, data: dict[str, Any]) -> None:
+        await asyncio.to_thread(self._sync_save_host_state, key, data)
+
+    async def load_host_state(self, key: str) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self._sync_load_host_state, key)
 
     # ------------------------------------------------------------------
     # Synchronous DB helpers
@@ -310,6 +393,79 @@ class PostgreSQLStorageBackend(StorageBackend):
                 session.delete(row)
             session.commit()
             return count
+
+    def _sync_save_completion(
+        self, issue_number: str, agent_type: str, data: dict[str, Any]
+    ) -> str:
+        dedup_key = f"{issue_number}:{agent_type}:{data.get('status', 'complete')}"
+        with Session(self._engine) as session:
+            existing = (
+                session.query(_CompletionRow)
+                .filter(_CompletionRow.dedup_key == dedup_key)
+                .first()
+            )
+            if existing:
+                existing.data = json.dumps(data, default=str)
+                existing.summary_text = data.get("summary", "")
+                existing.status = data.get("status", "complete")
+            else:
+                session.add(
+                    _CompletionRow(
+                        issue_number=issue_number,
+                        agent_type=agent_type,
+                        status=data.get("status", "complete"),
+                        summary_text=data.get("summary", ""),
+                        data=json.dumps(data, default=str),
+                        dedup_key=dedup_key,
+                    )
+                )
+            session.commit()
+        return dedup_key
+
+    def _sync_list_completions(
+        self, issue_number: str | None
+    ) -> list[dict[str, Any]]:
+        with Session(self._engine) as session:
+            q = session.query(_CompletionRow).order_by(
+                _CompletionRow.created_at.desc()
+            )
+            if issue_number:
+                q = q.filter(_CompletionRow.issue_number == issue_number)
+
+            results: list[dict[str, Any]] = []
+            seen_issues: set[str] = set()
+            for row in q.all():
+                if row.issue_number in seen_issues:
+                    continue
+                seen_issues.add(row.issue_number)
+                try:
+                    payload = json.loads(row.data)
+                except Exception:
+                    payload = {}
+                payload["_db_id"] = row.id
+                payload["_dedup_key"] = row.dedup_key
+                payload["_created_at"] = row.created_at.isoformat() if row.created_at else None
+                results.append(payload)
+            return results
+
+    def _sync_save_host_state(self, key: str, data: dict[str, Any]) -> None:
+        with Session(self._engine) as session:
+            existing = session.get(_HostStateRow, key)
+            if existing:
+                existing.data = json.dumps(data, default=str)
+            else:
+                session.add(_HostStateRow(key=key, data=json.dumps(data, default=str)))
+            session.commit()
+
+    def _sync_load_host_state(self, key: str) -> dict[str, Any] | None:
+        with Session(self._engine) as session:
+            row = session.get(_HostStateRow, key)
+            if not row:
+                return None
+            try:
+                return json.loads(row.data)
+            except Exception:
+                return None
 
     # ------------------------------------------------------------------
     # Serialization helpers — shared with FileStorage

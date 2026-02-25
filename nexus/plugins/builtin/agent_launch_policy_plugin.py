@@ -169,6 +169,8 @@ class AgentLaunchPolicyPlugin:
             workflow_steps_text=workflow_steps,
             nexus_dir=nexus_dir,
             project_name=project_name,
+            completion_backend=self.config.get("completion_backend", "filesystem"),
+            webhook_url=self.config.get("webhook_url", ""),
         )
 
 
