@@ -7,7 +7,9 @@ from importlib.metadata import entry_points
 from typing import Any
 
 from nexus.plugins.base import (
+    PluginHealthStatus,
     PluginKind,
+    PluginLifecycle,
     PluginSpec,
     RegistryContributor,
     make_plugin_spec,
@@ -30,6 +32,7 @@ class PluginRegistry:
 
     def __init__(self):
         self._plugins: dict[tuple[PluginKind, str], PluginSpec] = {}
+        self._instances: dict[tuple[PluginKind, str], Any] = {}
         self._lock = threading.Lock()
 
     def register(self, spec: PluginSpec, *, force: bool = False) -> None:
@@ -70,6 +73,7 @@ class PluginRegistry:
             if key not in self._plugins:
                 raise PluginNotFoundError(f"No plugin found: kind={kind.value} name={name}")
             del self._plugins[key]
+            self._instances.pop(key, None)
         logger.info("Unregistered plugin: kind=%s name=%s", kind.value, name)
 
     def register_factory(
@@ -92,7 +96,10 @@ class PluginRegistry:
             spec = self._plugins.get(key)
         if not spec:
             raise PluginNotFoundError(f"No plugin found: kind={kind.value} name={name}")
-        return spec.factory(config or {})
+        instance = spec.factory(config or {})
+        with self._lock:
+            self._instances[key] = instance
+        return instance
 
     def get_spec(self, kind: PluginKind, name: str) -> PluginSpec | None:
         """Get plugin spec by kind/name."""
@@ -111,6 +118,33 @@ class PluginRegistry:
         """Check whether a plugin is registered."""
         with self._lock:
             return (kind, normalize_plugin_name(name)) in self._plugins
+
+    def get_event_handlers(self) -> list[PluginSpec]:
+        """List all registered event handler plugins."""
+        return self.list_specs(kind=PluginKind.EVENT_HANDLER)
+
+    async def health_check_all(self) -> list[PluginHealthStatus]:
+        """Run health checks on all plugin instances that support PluginLifecycle.
+
+        Returns:
+            List of health status results, one per plugin that implements health_check.
+        """
+        results: list[PluginHealthStatus] = []
+        with self._lock:
+            instances = list(self._instances.items())
+
+        for (kind, name), instance in instances:
+            if isinstance(instance, PluginLifecycle):
+                try:
+                    status = await instance.health_check()
+                    results.append(status)
+                except Exception as exc:
+                    results.append(PluginHealthStatus(
+                        healthy=False,
+                        name=name,
+                        details=f"Health check failed: {exc}",
+                    ))
+        return results
 
     def load_entrypoint_plugins(self, group: str = "nexus_core.plugins") -> int:
         """Load plugins from setuptools entry points.

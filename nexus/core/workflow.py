@@ -8,6 +8,17 @@ from typing import Any
 
 import yaml
 
+from nexus.core.events import (
+    EventBus,
+    StepCompleted,
+    StepFailed,
+    StepStarted,
+    WorkflowCancelled,
+    WorkflowCompleted,
+    WorkflowFailed,
+    WorkflowPaused,
+    WorkflowStarted,
+)
 from nexus.adapters.storage.base import StorageBackend
 from nexus.core.models import (
     Agent,
@@ -43,6 +54,7 @@ class WorkflowEngine:
         storage: StorageBackend,
         on_step_transition: OnStepTransition | None = None,
         on_workflow_complete: OnWorkflowComplete | None = None,
+        event_bus: EventBus | None = None,
     ):
         """
         Initialize workflow engine.
@@ -53,10 +65,12 @@ class WorkflowEngine:
                 Signature: ``async (workflow, next_step, completed_step_outputs) -> None``
             on_workflow_complete: Async callback invoked when the workflow finishes.
                 Signature: ``async (workflow, last_step_outputs) -> None``
+            event_bus: Optional EventBus for reactive event emission.
         """
         self.storage = storage
         self._on_step_transition = on_step_transition
         self._on_workflow_complete = on_workflow_complete
+        self._event_bus = event_bus
 
     async def create_workflow(self, workflow: Workflow) -> Workflow:
         """Create and persist a new workflow."""
@@ -102,6 +116,7 @@ class WorkflowEngine:
 
         await self.storage.save_workflow(workflow)
         await self._audit(workflow_id, "WORKFLOW_STARTED", {})
+        await self._emit(WorkflowStarted(workflow_id=workflow_id))
 
         logger.info(f"Started workflow {workflow_id}")
         return workflow
@@ -120,6 +135,7 @@ class WorkflowEngine:
 
         await self.storage.save_workflow(workflow)
         await self._audit(workflow_id, "WORKFLOW_PAUSED", {})
+        await self._emit(WorkflowPaused(workflow_id=workflow_id))
 
         logger.info(f"Paused workflow {workflow_id}")
         return workflow
@@ -157,6 +173,7 @@ class WorkflowEngine:
 
         await self.storage.save_workflow(workflow)
         await self._audit(workflow_id, "WORKFLOW_CANCELLED", {})
+        await self._emit(WorkflowCancelled(workflow_id=workflow_id))
 
         logger.info(f"Cancelled workflow {workflow_id}")
         return workflow
@@ -545,6 +562,14 @@ class WorkflowEngine:
             data=data
         )
         await self.storage.append_audit_event(event)
+
+    async def _emit(self, event: WorkflowStarted | WorkflowCompleted | WorkflowFailed | WorkflowPaused | WorkflowCancelled | StepStarted | StepCompleted | StepFailed) -> None:
+        """Emit event to EventBus if configured."""
+        if self._event_bus:
+            try:
+                await self._event_bus.emit(event)
+            except Exception as exc:
+                logger.warning("EventBus emit failed for %s: %s", event.event_type, exc)
 
 
 class WorkflowDefinition:

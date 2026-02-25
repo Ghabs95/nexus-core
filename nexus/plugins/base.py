@@ -1,7 +1,8 @@
 """Plugin protocols and metadata for Nexus Core extension points."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
@@ -23,6 +24,7 @@ class PluginKind(Enum):
     INPUT_ADAPTER = "input_adapter"
     TRANSCRIPTION_PROVIDER = "transcription_provider"
     INTERACTIVE_CLIENT = "interactive_client"
+    EVENT_HANDLER = "event_handler"
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,36 @@ class InteractiveClientPluginProtocol(Protocol):
 
     def __call__(self, config: dict[str, Any]) -> InteractiveClientPlugin:
         """Build and return an InteractiveClientPlugin implementation."""
+
+
+@dataclass
+class PluginHealthStatus:
+    """Health status of a plugin."""
+    healthy: bool
+    name: str
+    details: str = ""
+    last_check: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@runtime_checkable
+class PluginLifecycle(Protocol):
+    """Optional lifecycle hooks for plugins.
+
+    Plugins that implement this protocol gain access to initialization,
+    teardown, and health-check hooks managed by the PluginRegistry.
+    """
+
+    async def on_load(self, registry: "PluginRegistry") -> None:
+        """Called after the plugin is registered."""
+        ...
+
+    async def on_unload(self) -> None:
+        """Called before the plugin is removed."""
+        ...
+
+    async def health_check(self) -> PluginHealthStatus:
+        """Return current plugin health."""
+        ...
 
 
 def normalize_plugin_name(name: str) -> str:

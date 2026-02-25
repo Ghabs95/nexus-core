@@ -27,6 +27,12 @@ from nexus.plugins.builtin.github_webhook_policy_plugin import (
 from nexus.plugins.builtin.github_webhook_policy_plugin import (
     register_plugins as register_github_webhook_policy_plugins,
 )
+from nexus.plugins.builtin.github_workflow_policy_plugin import (
+    WorkflowMonitorPolicyPlugin as GithubWorkflowPolicyPlugin,
+)
+from nexus.plugins.builtin.github_workflow_policy_plugin import (
+    register_plugins as register_github_workflow_policy_plugins,
+)
 from nexus.plugins.builtin.json_state_plugin import (
     JsonStateStorePlugin,
 )
@@ -51,6 +57,12 @@ from nexus.plugins.builtin.telegram_notification_plugin import (
 from nexus.plugins.builtin.telegram_notification_plugin import (
     register_plugins as register_telegram_notification_plugins,
 )
+from nexus.plugins.builtin.discord_interactive_plugin import (
+    DiscordInteractivePlugin,
+)
+from nexus.plugins.builtin.discord_interactive_plugin import (
+    register_plugins as register_discord_interactive_plugins,
+)
 from nexus.plugins.builtin.workflow_monitor_policy_plugin import (
     WorkflowMonitorPolicyPlugin,
 )
@@ -69,6 +81,18 @@ from nexus.plugins.builtin.workflow_state_engine_plugin import (
 from nexus.plugins.builtin.workflow_state_engine_plugin import (
     register_plugins as register_workflow_state_engine_plugins,
 )
+from nexus.plugins.builtin.telegram_event_handler_plugin import (
+    TelegramEventHandler,
+)
+from nexus.plugins.builtin.telegram_event_handler_plugin import (
+    register_plugins as register_telegram_event_handler_plugins,
+)
+from nexus.plugins.builtin.discord_event_handler_plugin import (
+    DiscordEventHandler,
+)
+from nexus.plugins.builtin.discord_event_handler_plugin import (
+    register_plugins as register_discord_event_handler_plugins,
+)
 
 __all__ = [
     "AIOrchestrator",
@@ -85,15 +109,23 @@ __all__ = [
     "WorkflowStateEnginePlugin",
     "WorkflowMonitorPolicyPlugin",
     "GithubWebhookPolicyPlugin",
+    "GithubWorkflowPolicyPlugin",
+    "TelegramEventHandler",
+    "DiscordEventHandler",
+    "DiscordInteractivePlugin",
     "register_ai_runtime_plugins",
     "register_agent_launch_policy_plugins",
     "register_github_issue_plugins",
     "register_json_state_plugins",
     "register_telegram_notification_plugins",
     "register_telegram_interactive_plugins",
+    "register_telegram_event_handler_plugins",
+    "register_discord_interactive_plugins",
+    "register_discord_event_handler_plugins",
     "register_runtime_ops_plugins",
     "register_workflow_policy_plugins",
     "register_workflow_state_engine_plugins",
     "register_workflow_monitor_policy_plugins",
     "register_github_webhook_policy_plugins",
+    "register_github_workflow_policy_plugins",
 ]

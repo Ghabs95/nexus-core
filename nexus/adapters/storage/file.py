@@ -152,6 +152,7 @@ class FileStorage(StorageBackend):
             logger.error(f"Failed to read audit log for {workflow_id}: {e}")
             return []
 
+
     async def save_agent_metadata(
         self, workflow_id: str, agent_name: str, metadata: dict[str, Any]
     ) -> None:
