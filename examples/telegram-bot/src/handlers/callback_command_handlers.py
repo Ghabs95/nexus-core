@@ -16,7 +16,7 @@ from nexus.adapters.notifications.base import Button
 @dataclass
 class CallbackHandlerDeps:
     logger: logging.Logger
-    repo_key: str
+    git_repo: str
     prompt_issue_selection: Callable[..., Awaitable[None]]
     prompt_project_selection: Callable[..., Awaitable[None]]
     dispatch_command: Callable[..., Awaitable[None]]
@@ -27,6 +27,7 @@ class CallbackHandlerDeps:
     get_workflow_state_plugin: Callable[..., Any]
     workflow_state_plugin_kwargs: dict[str, Any]
     action_handlers: dict[str, Callable[..., Awaitable[None]]]
+    report_bug_action: Callable[..., Awaitable[None]]
 
 
 async def core_callback_router(ctx: InteractiveContext, deps: CallbackHandlerDeps):
@@ -300,7 +301,7 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
         await ctx.edit_message_text(f"✅ Approving implementation for issue #{issue_num}...")
 
         try:
-            plugin = deps.get_direct_issue_plugin(deps.repo_key)
+            plugin = deps.get_direct_issue_plugin(deps.git_repo)
             if not plugin or not plugin.add_comment(
                 issue_num,
                 "✅ Implementation approved. Please proceed.",
@@ -318,7 +319,7 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
         await ctx.edit_message_text(f"❌ Rejecting implementation for issue #{issue_num}...")
 
         try:
-            plugin = deps.get_direct_issue_plugin(deps.repo_key)
+            plugin = deps.get_direct_issue_plugin(deps.git_repo)
             if not plugin or not plugin.add_comment(
                 issue_num,
                 "❌ Implementation rejected. Please revise.",
