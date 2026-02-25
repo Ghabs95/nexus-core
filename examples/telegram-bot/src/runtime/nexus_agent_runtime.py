@@ -428,6 +428,42 @@ class NexusAgentRuntime(AgentRuntime):
             )
             return False
 
+    def is_issue_open(self, issue_number: str, repo: str) -> bool | None:
+        """Return issue open/closed status for auto-completion guardrails."""
+        try:
+            from orchestration.nexus_core_helpers import get_git_platform
+
+            platform = get_git_platform(repo)
+            if not platform:
+                return None
+
+            details = platform.get_issue(str(issue_number), ["state"])
+            if not details:
+                return False
+
+            state_value = ""
+            if isinstance(details, dict):
+                state_value = str(details.get("state", "")).strip().lower()
+            else:
+                state_value = str(getattr(details, "state", "")).strip().lower()
+
+            if state_value == "closed":
+                return False
+            if state_value == "open":
+                return True
+            return None
+        except Exception as exc:
+            error_text = str(exc).lower()
+            if "404" in error_text or "not found" in error_text:
+                return False
+            logger.debug(
+                "is_issue_open check failed for #%s in %s: %s",
+                issue_number,
+                repo,
+                exc,
+            )
+            return None
+
     def audit_log(self, issue_number: str, event: str, details: str = "") -> None:
         from audit_store import AuditStore
 

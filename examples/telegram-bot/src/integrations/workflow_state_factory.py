@@ -3,7 +3,8 @@
 Selects the backend based on ``NEXUS_STORAGE_TYPE``:
 
 - ``postgres`` → :class:`PostgresWorkflowStateStore` (requires ``NEXUS_STORAGE_DSN``)
-- ``file`` (default) → :class:`FileWorkflowStateStore` backed by ``DATA_DIR``
+- ``file`` (default) → :class:`FileWorkflowStateStore` backed by
+    ``NEXUS_CORE_STORAGE_DIR``
 
 Includes post-hook broadcasting via SocketIO when configured.
 """
@@ -15,7 +16,7 @@ import os
 import time
 from pathlib import Path
 
-from config import DATA_DIR
+from config import NEXUS_CORE_STORAGE_DIR
 from nexus.core.workflow_state import WorkflowStateStore
 
 logger = logging.getLogger(__name__)
@@ -103,8 +104,8 @@ def _build_inner_store() -> WorkflowStateStore:
 
     # Default: file-based
     from nexus.adapters.storage.file_workflow_state import FileWorkflowStateStore
-    logger.info("Using FileWorkflowStateStore (base_path=%s)", DATA_DIR)
-    return FileWorkflowStateStore(base_path=Path(DATA_DIR))  # type: ignore[return-value]
+    logger.info("Using FileWorkflowStateStore (base_path=%s)", NEXUS_CORE_STORAGE_DIR)
+    return FileWorkflowStateStore(base_path=Path(NEXUS_CORE_STORAGE_DIR))  # type: ignore[return-value]
 
 
 def get_workflow_state() -> WorkflowStateStore:

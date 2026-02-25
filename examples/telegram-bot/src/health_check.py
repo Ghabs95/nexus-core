@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from flask import Flask, jsonify
 
-from config import DATA_DIR, LOGS_DIR
+from config import LOGS_DIR, NEXUS_RUNTIME_DIR
 from integrations.audit_query_factory import get_audit_query
 from rate_limiter import get_rate_limiter
 
@@ -142,12 +142,12 @@ def get_disk_usage() -> dict:
                         total += get_dir_size(entry.path)
             return total
         
-        data_size = get_dir_size(DATA_DIR)
+        data_size = get_dir_size(NEXUS_RUNTIME_DIR)
         logs_size = get_dir_size(LOGS_DIR)
         
         return {
-            "data_dir": {
-                "path": DATA_DIR,
+            "runtime_dir": {
+                "path": NEXUS_RUNTIME_DIR,
                 "size_bytes": data_size,
                 "size_mb": round(data_size / 1024 / 1024, 2)
             },

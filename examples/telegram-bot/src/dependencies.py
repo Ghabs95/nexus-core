@@ -42,7 +42,7 @@ from handlers.issue_command_handlers import (
     IssueHandlerDeps,
 )
 from handlers.monitoring_command_handlers import (
-    MonitoringHandlerDeps,
+    MonitoringHandlersDeps,
 )
 from handlers.ops_command_handlers import (
     OpsHandlerDeps,
@@ -152,10 +152,10 @@ def _workflow_handler_deps() -> WorkflowHandlerDeps:
     )
 
 
-def _monitoring_handler_deps() -> MonitoringHandlerDeps:
+def _monitoring_handler_deps() -> MonitoringHandlersDeps:
     from runtime.nexus_agent_runtime import get_retry_fuse_status
 
-    return MonitoringHandlerDeps(
+    return MonitoringHandlersDeps(
         logger=logger,
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
         base_dir=BASE_DIR,

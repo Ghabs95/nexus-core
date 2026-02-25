@@ -16,7 +16,7 @@ from config import (
     AGENT_RECENT_WINDOW,
     LAUNCHED_AGENTS_FILE,
     TRACKED_ISSUES_FILE,
-    ensure_data_dir,
+    ensure_state_dir,
     ensure_logs_dir,
 )
 from orchestration.plugin_runtime import get_profiled_plugin
@@ -65,7 +65,7 @@ class HostStateManager:
         if ensure_logs:
             ensure_logs_dir()
         else:
-            ensure_data_dir()
+            ensure_state_dir()
 
         plugin = _get_state_store_plugin()
         if not plugin:
@@ -78,7 +78,7 @@ class HostStateManager:
         if ensure_logs:
             ensure_logs_dir()
         else:
-            ensure_data_dir()
+            ensure_state_dir()
 
         plugin = _get_state_store_plugin()
         if not plugin:

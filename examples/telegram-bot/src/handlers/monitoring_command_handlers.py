@@ -17,7 +17,7 @@ from utils.log_utils import log_unauthorized_access
 
 
 @dataclass
-class MonitoringHandlersDeps:  # Renamed to MonitoringHandlersDeps
+class MonitoringHandlersDeps:
     logger: Any
     allowed_user_ids: list[int]
     base_dir: str
@@ -68,8 +68,6 @@ class MonitoringHandlersDeps:  # Renamed to MonitoringHandlersDeps
     track_short_projects: bool
     default_issue_url: Callable[[str, dict[str, Any] | None], str]
     state_manager: Any
-
-
 async def status_handler(ctx: InteractiveContext, deps: MonitoringHandlersDeps) -> None:
     deps.logger.info(f"Status triggered by user: {ctx.user_id}")
     if deps.allowed_user_ids and int(ctx.user_id) not in deps.allowed_user_ids:

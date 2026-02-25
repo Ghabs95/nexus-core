@@ -49,17 +49,15 @@ DISCORD_GUILD_ID = int(os.getenv("DISCORD_GUILD_ID")) if os.getenv("DISCORD_GUIL
 
 # --- PATHS & DIRECTORIES ---
 BASE_DIR = os.getenv("BASE_DIR", "/home/ubuntu/git")
-DATA_DIR = os.getenv(
-    "DATA_DIR",
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "data"),
-)
+NEXUS_RUNTIME_DIR = os.getenv("NEXUS_RUNTIME_DIR", "/var/lib/nexus")
+NEXUS_STATE_DIR = os.path.join(NEXUS_RUNTIME_DIR, "state")
 LOGS_DIR = os.getenv(
     "LOGS_DIR",
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs"),
+    "/var/log/nexus",
 )
-TRACKED_ISSUES_FILE = os.path.join(DATA_DIR, "tracked_issues.json")
-LAUNCHED_AGENTS_FILE = os.path.join(DATA_DIR, "launched_agents.json")
-WORKFLOW_STATE_FILE = os.path.join(DATA_DIR, "workflow_state.json")
+TRACKED_ISSUES_FILE = os.path.join(NEXUS_STATE_DIR, "tracked_issues.json")
+LAUNCHED_AGENTS_FILE = os.path.join(NEXUS_STATE_DIR, "launched_agents.json")
+WORKFLOW_STATE_FILE = os.path.join(NEXUS_STATE_DIR, "workflow_state.json")
 AUDIT_LOG_FILE = os.path.join(LOGS_DIR, "audit.log")
 INBOX_PROCESSOR_LOG_FILE = os.path.join(LOGS_DIR, "inbox_processor.log")
 TELEGRAM_BOT_LOG_FILE = os.path.join(LOGS_DIR, "telegram_bot.log")
@@ -591,9 +589,12 @@ ORCHESTRATOR_CONFIG = _LazyOrchestrator()
 
 # --- NEXUS-CORE FRAMEWORK CONFIGURATION ---
 # nexus-core workflow engine is mandatory
-NEXUS_CORE_STORAGE_DIR = os.path.join(DATA_DIR, "nexus-core-workflows")
-WORKFLOW_ID_MAPPING_FILE = os.path.join(DATA_DIR, "workflow_id_mapping.json")
-APPROVAL_STATE_FILE = os.path.join(DATA_DIR, "approval_state.json")
+NEXUS_CORE_STORAGE_DIR = os.getenv(
+    "NEXUS_CORE_STORAGE_DIR",
+    os.path.join(NEXUS_RUNTIME_DIR, "nexus-core"),
+)
+WORKFLOW_ID_MAPPING_FILE = os.path.join(NEXUS_STATE_DIR, "workflow_id_mapping.json")
+APPROVAL_STATE_FILE = os.path.join(NEXUS_STATE_DIR, "approval_state.json")
 
 # Nexus-Core storage backend configuration
 NEXUS_CORE_STORAGE_BACKEND = os.getenv("NEXUS_CORE_STORAGE", "file")  # Options: file, postgres, redis
@@ -943,10 +944,16 @@ def validate_configuration():
     logger.info("✅ Configuration validation passed")
 
 
-def ensure_data_dir():
-    """Ensure data directory exists."""
-    os.makedirs(DATA_DIR, exist_ok=True)
-    logger.debug(f"✅ Data directory ready: {DATA_DIR}")
+def ensure_state_dir():
+    """Ensure runtime state directory exists."""
+    os.makedirs(NEXUS_STATE_DIR, exist_ok=True)
+    logger.debug(f"✅ State directory ready: {NEXUS_STATE_DIR}")
+
+
+def ensure_nexus_storage_dir():
+    """Ensure nexus-core file storage directory exists."""
+    os.makedirs(NEXUS_CORE_STORAGE_DIR, exist_ok=True)
+    logger.debug(f"✅ Nexus storage directory ready: {NEXUS_CORE_STORAGE_DIR}")
 
 
 def ensure_logs_dir():
@@ -957,7 +964,8 @@ def ensure_logs_dir():
 
 # Initialize directories (non-blocking)
 try:
-    ensure_data_dir()
+    ensure_state_dir()
+    ensure_nexus_storage_dir()
     ensure_logs_dir()
 except Exception as e:
     logger.warning(f"Could not initialize directories: {e}")

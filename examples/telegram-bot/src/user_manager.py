@@ -9,12 +9,12 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
-from config import DATA_DIR
+from config import NEXUS_STATE_DIR
 
 logger = logging.getLogger(__name__)
 
 # User tracking file
-USER_DATA_FILE = Path(DATA_DIR) / "user_tracking.json"
+USER_DATA_FILE = Path(NEXUS_STATE_DIR) / "user_tracking.json"
 
 
 @dataclass

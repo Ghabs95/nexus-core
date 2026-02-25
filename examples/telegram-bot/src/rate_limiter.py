@@ -298,7 +298,7 @@ def get_rate_limiter(state_file: str | None = None) -> RateLimiter:
     if rate_limiter is None:
         if state_file is None:
             # Default location
-            from config import DATA_DIR
-            state_file = os.path.join(DATA_DIR, "rate_limits.json")
+            from config import NEXUS_STATE_DIR
+            state_file = os.path.join(NEXUS_STATE_DIR, "rate_limits.json")
         rate_limiter = RateLimiter(state_file)
     return rate_limiter

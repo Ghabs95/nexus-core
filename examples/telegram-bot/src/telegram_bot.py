@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import time
+from types import SimpleNamespace
 from typing import Any
 
 from nexus.adapters.git.utils import build_issue_url, resolve_repo
@@ -149,7 +150,7 @@ from handlers.issue_command_handlers import (
     untrack_handler as issue_untrack_handler,
 )
 from handlers.monitoring_command_handlers import (
-    MonitoringHandlerDeps,
+    MonitoringHandlersDeps,
 )
 from handlers.monitoring_command_handlers import (
     active_handler as monitoring_active_handler,
@@ -349,10 +350,10 @@ def _visualize_handler_deps() -> VisualizeHandlerDeps:
     )
 
 
-def _monitoring_handler_deps() -> MonitoringHandlerDeps:
+def _monitoring_handler_deps() -> MonitoringHandlersDeps:
     from runtime.nexus_agent_runtime import get_retry_fuse_status
 
-    return MonitoringHandlerDeps(
+    return MonitoringHandlersDeps(
         logger=logger,
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
         base_dir=BASE_DIR,
@@ -445,24 +446,24 @@ def _callback_handler_deps() -> CallbackHandlerDeps:
     return CallbackHandlerDeps(
         logger=logger,
         github_repo=GITHUB_REPO,
-        prompt_issue_selection=_prompt_issue_selection,
-        prompt_project_selection=_prompt_project_selection,
-        dispatch_command=_dispatch_command,
+        prompt_issue_selection=_ctx_prompt_issue_selection,
+        prompt_project_selection=_ctx_prompt_project_selection,
+        dispatch_command=_ctx_dispatch_command,
         get_project_label=_get_project_label,
-        status_handler=status_handler,
-        active_handler=active_handler,
+        status_handler=_ctx_status_handler,
+        active_handler=_ctx_active_handler,
         get_direct_issue_plugin=_get_direct_issue_plugin,
         get_workflow_state_plugin=get_workflow_state_plugin,
         workflow_state_plugin_kwargs=_WORKFLOW_STATE_PLUGIN_KWARGS,
         action_handlers={
-            "logs": logs_handler,
-            "logsfull": logsfull_handler,
-            "status": status_handler,
-            "pause": pause_handler,
-            "resume": resume_handler,
-            "stop": stop_handler,
-            "audit": audit_handler,
-            "reprocess": reprocess_handler,
+            "logs": _ctx_logs_handler,
+            "logsfull": _ctx_logsfull_handler,
+            "status": _ctx_status_handler,
+            "pause": _ctx_pause_handler,
+            "resume": _ctx_resume_handler,
+            "stop": _ctx_stop_handler,
+            "audit": _ctx_audit_handler,
+            "reprocess": _ctx_reprocess_handler,
         },
     )
 
@@ -1146,6 +1147,190 @@ def _command_handler_map():
     }
 
 
+def _buttons_to_reply_markup(buttons):
+    if not buttons:
+        return None
+
+    keyboard: list[list[InlineKeyboardButton]] = []
+    for row in buttons:
+        keyboard_row: list[InlineKeyboardButton] = []
+        for btn in row:
+            label = getattr(btn, "label", "")
+            callback_data = getattr(btn, "callback_data", None)
+            url = getattr(btn, "url", None)
+            if url:
+                keyboard_row.append(InlineKeyboardButton(label, url=url))
+            else:
+                keyboard_row.append(InlineKeyboardButton(label, callback_data=callback_data or ""))
+        if keyboard_row:
+            keyboard.append(keyboard_row)
+    return InlineKeyboardMarkup(keyboard) if keyboard else None
+
+
+def _build_telegram_interactive_ctx(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query_obj = update.callback_query
+    effective_message = update.effective_message
+
+    class _TelegramInteractiveCtx:
+        def __init__(self):
+            self.user_id = str(getattr(getattr(update, "effective_user", None), "id", ""))
+            self.text = str(getattr(effective_message, "text", "") or "")
+            self.args = list(getattr(context, "args", []) or [])
+            self.raw_event = update
+            self.telegram_context = context
+            self.user_state = getattr(context, "user_data", {})
+            self.client = SimpleNamespace(name="telegram")
+            self.query = (
+                SimpleNamespace(
+                    data=str(getattr(query_obj, "data", "") or ""),
+                    message_id=str(getattr(getattr(query_obj, "message", None), "message_id", "")),
+                )
+                if query_obj is not None
+                else None
+            )
+
+        async def reply_text(
+            self,
+            text: str,
+            buttons=None,
+            parse_mode: str | None = "Markdown",
+            disable_web_page_preview: bool = True,
+        ) -> str:
+            reply_markup = _buttons_to_reply_markup(buttons)
+            msg = await effective_message.reply_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+            return str(getattr(msg, "message_id", ""))
+
+        async def edit_message_text(
+            self,
+            text: str,
+            message_id: str | None = None,
+            buttons=None,
+            parse_mode: str | None = "Markdown",
+            disable_web_page_preview: bool = True,
+        ) -> None:
+            reply_markup = _buttons_to_reply_markup(buttons)
+            if query_obj is not None and hasattr(query_obj, "edit_message_text"):
+                await query_obj.edit_message_text(
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                    disable_web_page_preview=disable_web_page_preview,
+                )
+                return
+
+            target_message_id = message_id
+            if target_message_id is None and effective_message is not None:
+                target_message_id = str(getattr(effective_message, "message_id", ""))
+
+            await context.bot.edit_message_text(
+                chat_id=getattr(getattr(update, "effective_chat", None), "id", None),
+                message_id=target_message_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+
+        async def answer_callback_query(self, text: str | None = None) -> None:
+            if query_obj is not None and hasattr(query_obj, "answer"):
+                await query_obj.answer(text=text)
+
+    return _TelegramInteractiveCtx()
+
+
+def _ctx_telegram_runtime(ctx) -> tuple[Update, ContextTypes.DEFAULT_TYPE]:
+    update = getattr(ctx, "raw_event", None)
+    context = getattr(ctx, "telegram_context", None)
+    if update is None or context is None:
+        raise RuntimeError("Missing Telegram runtime in interactive context")
+    return update, context
+
+
+async def _ctx_prompt_issue_selection(
+    ctx,
+    command: str,
+    project_key: str,
+    *,
+    edit_message: bool = False,
+    issue_state: str = "open",
+) -> None:
+    update, context = _ctx_telegram_runtime(ctx)
+    await _prompt_issue_selection(
+        update,
+        context,
+        command,
+        project_key,
+        edit_message=edit_message,
+        issue_state=issue_state,
+    )
+
+
+async def _ctx_prompt_project_selection(ctx, command: str) -> None:
+    update, context = _ctx_telegram_runtime(ctx)
+    await _prompt_project_selection(update, context, command)
+
+
+async def _ctx_dispatch_command(
+    ctx,
+    command: str,
+    project_key: str,
+    issue_num: str,
+    rest: list[str] | None = None,
+) -> None:
+    update, context = _ctx_telegram_runtime(ctx)
+    await _dispatch_command(update, context, command, project_key, issue_num, rest)
+
+
+async def _ctx_status_handler(ctx) -> None:
+    update, context = _ctx_telegram_runtime(ctx)
+    await status_handler(update, context)
+
+
+async def _ctx_active_handler(ctx) -> None:
+    update, context = _ctx_telegram_runtime(ctx)
+    await active_handler(update, context)
+
+
+async def _ctx_logs_handler(ctx) -> None:
+    update, context = _ctx_telegram_runtime(ctx)
+    await logs_handler(update, context)
+
+
+async def _ctx_logsfull_handler(ctx) -> None:
+    update, context = _ctx_telegram_runtime(ctx)
+    await logsfull_handler(update, context)
+
+
+async def _ctx_pause_handler(ctx) -> None:
+    update, context = _ctx_telegram_runtime(ctx)
+    await pause_handler(update, context)
+
+
+async def _ctx_resume_handler(ctx) -> None:
+    update, context = _ctx_telegram_runtime(ctx)
+    await resume_handler(update, context)
+
+
+async def _ctx_stop_handler(ctx) -> None:
+    update, context = _ctx_telegram_runtime(ctx)
+    await stop_handler(update, context)
+
+
+async def _ctx_audit_handler(ctx) -> None:
+    update, context = _ctx_telegram_runtime(ctx)
+    await audit_handler(update, context)
+
+
+async def _ctx_reprocess_handler(ctx) -> None:
+    update, context = _ctx_telegram_runtime(ctx)
+    await reprocess_handler(update, context)
+
+
 async def _dispatch_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -1167,19 +1352,31 @@ async def _dispatch_command(
 
 
 async def project_picker_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await callback_project_picker_handler(update, context, _callback_handler_deps())
+    await callback_project_picker_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _callback_handler_deps(),
+    )
 
 
 async def issue_picker_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await callback_issue_picker_handler(update, context, _callback_handler_deps())
+    await callback_issue_picker_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _callback_handler_deps(),
+    )
 
 
 async def monitor_project_picker_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await callback_monitor_project_picker_handler(update, context, _callback_handler_deps())
+    await callback_monitor_project_picker_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _callback_handler_deps(),
+    )
 
 
 async def close_flow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await callback_close_flow_handler(update, context, _callback_handler_deps())
+    await callback_close_flow_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _callback_handler_deps(),
+    )
 
 # --- STATES ---
 SELECT_PROJECT, SELECT_TYPE, INPUT_TASK = range(3)
@@ -1311,7 +1508,10 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await callback_menu_callback_handler(update, context, _callback_handler_deps())
+    await callback_menu_callback_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _callback_handler_deps(),
+    )
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1793,7 +1993,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def flow_close_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle Close button for the /new flow."""
-    return await callback_flow_close_handler(update, context, _callback_handler_deps())
+    return await callback_flow_close_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _callback_handler_deps(),
+    )
 
 
 # --- MONITORING COMMANDS ---
@@ -2034,7 +2237,10 @@ async def respond_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def inline_keyboard_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle inline keyboard button presses from notifications."""
-    await callback_inline_keyboard_handler(update, context, _callback_handler_deps())
+    await callback_inline_keyboard_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _callback_handler_deps(),
+    )
 
 
 # --- MAIN ---

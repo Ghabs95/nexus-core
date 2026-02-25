@@ -23,9 +23,9 @@ from nexus.core.project.repo_utils import (
 # Import centralized configuration
 from config import (
     BASE_DIR,
-    DATA_DIR,
     INBOX_PROCESSOR_LOG_FILE,
     NEXUS_CORE_STORAGE_DIR,
+    NEXUS_STATE_DIR,
     ORCHESTRATOR_CONFIG,
     PROJECT_CONFIG,
     SLEEP_INTERVAL,
@@ -102,6 +102,7 @@ orchestrator = get_orchestrator(ORCHESTRATOR_CONFIG)
 alerted_agents = set()
 notified_comments = set()  # Track comment IDs we've already notified about
 auto_chained_agents = {}  # Track issue -> log_file to avoid re-chaining same completion
+INBOX_PROCESSOR_STARTED_AT = time.time()
 POLLING_FAILURE_THRESHOLD = 3
 polling_failure_counts: dict[str, int] = {}
 from integrations.workflow_state_factory import get_workflow_state as _get_wf_state
@@ -209,8 +210,8 @@ launched_agents_tracker = HostStateManager.load_launched_agents()
 # PROJECT_CONFIG is now imported from config.py
 
 # Failed task file lookup tracking (stop checking after 3 failures)
-FAILED_LOOKUPS_FILE = os.path.join(DATA_DIR, "failed_task_lookups.json")
-COMPLETION_COMMENTS_FILE = os.path.join(DATA_DIR, "completion_comments.json")
+FAILED_LOOKUPS_FILE = os.path.join(NEXUS_STATE_DIR, "failed_task_lookups.json")
+COMPLETION_COMMENTS_FILE = os.path.join(NEXUS_STATE_DIR, "completion_comments.json")
 
 def load_failed_lookups():
     """Load failed task file lookup counters."""
@@ -249,6 +250,20 @@ def save_completion_comments(comments):
             json.dump(comments, f, indent=2)
     except Exception as e:
         logger.warning(f"Failed to save completion comments file: {e}")
+
+
+def get_completion_replay_window_seconds() -> int:
+    """Return startup replay window (seconds) for completion file scans.
+
+    Completions older than this window at process startup are ignored to avoid
+    replaying historical summaries when dedup state is reset.
+    """
+    raw = os.getenv("NEXUS_COMPLETION_REPLAY_WINDOW_SECONDS", "1800")
+    try:
+        value = int(str(raw).strip())
+        return max(0, value)
+    except Exception:
+        return 1800
 
 failed_task_lookups = load_failed_lookups()
 completion_comments = load_completion_comments()
@@ -898,6 +913,8 @@ def _post_completion_comments_from_logs() -> None:
     wfp = get_workflow_policy_plugin(cache_key="workflow-policy:inbox")
 
     dedup = set(completion_comments.keys())
+    replay_window_seconds = get_completion_replay_window_seconds()
+    replay_ref_ts = INBOX_PROCESSOR_STARTED_AT
     orc.scan_and_process_completions(
         BASE_DIR,
         dedup,
@@ -905,6 +922,10 @@ def _post_completion_comments_from_logs() -> None:
         resolve_repo=lambda proj, issue: _resolve_repo_strict(proj, issue),
         build_transition_message=lambda **kw: wfp.build_transition_message(**kw),
         build_autochain_failed_message=lambda **kw: wfp.build_autochain_failed_message(**kw),
+        stale_completion_seconds=(
+            replay_window_seconds if replay_window_seconds > 0 else None
+        ),
+        stale_reference_ts=replay_ref_ts,
     )
 
     # Sync newly-seen dedup keys back to the persistent dict.
