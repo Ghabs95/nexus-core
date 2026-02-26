@@ -9,6 +9,7 @@ Usage::
     registry = AgentRegistry(agents_dir=Path("examples/agents"))
     provider = registry.resolve("triage", providers)   # returns an AIProvider
 """
+
 import logging
 from pathlib import Path
 

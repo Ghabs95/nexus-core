@@ -16,7 +16,7 @@ from nexus.core.models import AuditEvent, Workflow, WorkflowState
 class StructuredLogAuditBackend(StorageBackend):
     """
     Storage Backend decorator that emits structured JSON logs.
-    
+
     Wraps an existing storage backend (like Postgres or FileStorage)
     and intercepts `append_audit_event` to emit structured logs
     for external observability tools like Loki or elasticsearch.
@@ -30,17 +30,17 @@ class StructuredLogAuditBackend(StorageBackend):
     ):
         """
         Initialize structured log decorator.
-        
+
         Args:
             backend: The underlying StorageBackend to delegate to.
             logger_name: The logger to emit structured JSON logs to.
-            extra_labels: Additional key-value pairs to include in every log payload 
+            extra_labels: Additional key-value pairs to include in every log payload
                           (e.g., {"app": "nexus", "env": "prod"}).
         """
         self._backend = backend
         self._logger = logging.getLogger(logger_name)
         self._extra_labels = extra_labels or {}
-        
+
         # Ensure the logger doesn't propagate up if we only want it writing to a specific handler
         # Usually configured by the host application.
 
@@ -61,7 +61,7 @@ class StructuredLogAuditBackend(StorageBackend):
             }
             # Inject any static labels configured (e.g., app, env)
             log_payload.update(self._extra_labels)
-            
+
             # For Promtail/Fluentbit to scrape easily
             self._logger.info(json.dumps(log_payload))
         except Exception as e:
@@ -89,8 +89,10 @@ class StructuredLogAuditBackend(StorageBackend):
     ) -> list[AuditEvent]:
         return await self._backend.get_audit_log(workflow_id, since)
 
-    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: dict[str, Any]) -> None:
-         await self._backend.save_agent_metadata(workflow_id, agent_name, metadata)
+    async def save_agent_metadata(
+        self, workflow_id: str, agent_name: str, metadata: dict[str, Any]
+    ) -> None:
+        await self._backend.save_agent_metadata(workflow_id, agent_name, metadata)
 
     async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> dict[str, Any] | None:
         return await self._backend.get_agent_metadata(workflow_id, agent_name)
@@ -103,9 +105,7 @@ class StructuredLogAuditBackend(StorageBackend):
     ) -> str:
         return await self._backend.save_completion(issue_number, agent_type, data)
 
-    async def list_completions(
-        self, issue_number: str | None = None
-    ) -> list[dict[str, Any]]:
+    async def list_completions(self, issue_number: str | None = None) -> list[dict[str, Any]]:
         return await self._backend.list_completions(issue_number)
 
     async def save_host_state(self, key: str, data: dict[str, Any]) -> None:

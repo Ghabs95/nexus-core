@@ -34,7 +34,9 @@ class SecretRedactingFilter(logging.Filter):
         return True
 
 
-def install_secret_redaction(secrets: Iterable[str], target_logger: logging.Logger | None = None) -> None:
+def install_secret_redaction(
+    secrets: Iterable[str], target_logger: logging.Logger | None = None
+) -> None:
     """Attach secret redaction filter to all handlers of target logger."""
     logger = target_logger or logging.getLogger()
     redaction_filter = SecretRedactingFilter(secrets)

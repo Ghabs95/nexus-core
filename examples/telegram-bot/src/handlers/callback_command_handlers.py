@@ -11,23 +11,21 @@ if TYPE_CHECKING:
     from interactive_context import InteractiveContext
 
 from nexus.adapters.notifications.base import Button
+from state_manager import HostStateManager
 
 
 @dataclass
 class CallbackHandlerDeps:
     logger: logging.Logger
-    git_repo: str
     prompt_issue_selection: Callable[..., Awaitable[None]]
-    prompt_project_selection: Callable[..., Awaitable[None]]
     dispatch_command: Callable[..., Awaitable[None]]
     get_project_label: Callable[[str], str]
-    status_handler: Callable[..., Awaitable[None]]
-    active_handler: Callable[..., Awaitable[None]]
+    get_repo: Callable[[str], str]
     get_direct_issue_plugin: Callable[[str], Any]
     get_workflow_state_plugin: Callable[..., Any]
     workflow_state_plugin_kwargs: dict[str, Any]
     action_handlers: dict[str, Callable[..., Awaitable[None]]]
-    report_bug_action: Callable[..., Awaitable[None]]
+    report_bug_action: Callable[[InteractiveContext, str, str], Awaitable[None]]
 
 
 async def core_callback_router(ctx: InteractiveContext, deps: CallbackHandlerDeps):
@@ -42,7 +40,11 @@ async def core_callback_router(ctx: InteractiveContext, deps: CallbackHandlerDep
     )
     if data.startswith("pickcmd:"):
         await project_picker_handler(ctx, deps)
-    elif data.startswith("pickissue") or data.startswith("pickissue_manual:") or data.startswith("pickissue_state:"):
+    elif (
+        data.startswith("pickissue")
+        or data.startswith("pickissue_manual:")
+        or data.startswith("pickissue_state:")
+    ):
         await issue_picker_handler(ctx, deps)
     elif data.startswith("pickmonitor:") or data.startswith(monitor_prefixes):
         await monitor_project_picker_handler(ctx, deps)
@@ -159,16 +161,6 @@ async def monitor_project_picker_handler(ctx: InteractiveContext, deps: Callback
         await handler(ctx)
         return
 
-    # Fallback to specifically named handlers for backward compatibility
-    if command == "status":
-        ctx.args = [project_key]
-        await deps.status_handler(ctx)
-        return
-    elif command == "active":
-        ctx.args = [project_key] + extra_args
-        await deps.active_handler(ctx)
-        return
-
     await ctx.edit_message_text("Unsupported monitoring command.")
 
 
@@ -206,10 +198,7 @@ async def menu_callback_handler(ctx: InteractiveContext, deps: CallbackHandlerDe
             [Button("ℹ️ Help", callback_data="menu:help")],
             [Button("❌ Close", callback_data="menu:close")],
         ]
-        await ctx.edit_message_text(
-            "📍 **Nexus Menu**\nChoose a category:",
-            buttons=keyboard
-        )
+        await ctx.edit_message_text("📍 **Nexus Menu**\nChoose a category:", buttons=keyboard)
         return
 
     menu_texts = {
@@ -278,7 +267,7 @@ async def menu_callback_handler(ctx: InteractiveContext, deps: CallbackHandlerDe
         buttons=[
             [Button("⬅️ Back", callback_data="menu:root")],
             [Button("❌ Close", callback_data="menu:close")],
-        ]
+        ],
     )
 
 
@@ -294,31 +283,115 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
         return
 
     action = parts[0]
-    issue_num = parts[1]
+    payload = parts[1]
+
+    issue_num = payload
+    project_hint: str | None = None
+    if "|" in payload:
+        raw_issue, raw_project = payload.split("|", 1)
+        issue_num = raw_issue.strip()
+        project_hint = raw_project.strip() or None
+
+    issue_num = issue_num.lstrip("#")
+
+    if not project_hint:
+        await ctx.edit_message_text(
+            "❌ This action is missing project context and is no longer supported.\n"
+            "Please trigger the latest message/action again."
+        )
+        return
 
     if action == "report_bug":
-        await deps.report_bug_action(ctx, issue_num)
+        await deps.report_bug_action(ctx, issue_num, project_hint)
         return
 
     deps.logger.info(f"Inline keyboard action: {action} for issue #{issue_num}")
 
     if action in deps.action_handlers:
-        ctx.user_state["pending_command"] = action
-        ctx.user_state["pending_issue"] = issue_num
-        await deps.prompt_project_selection(ctx, action)
+        await deps.dispatch_command(ctx, action, project_hint, issue_num)
+        return
+    elif action in {"mqapprove", "mqretry", "mqmerge"}:
+        try:
+            queue = HostStateManager.load_merge_queue()
+            if not isinstance(queue, dict):
+                queue = {}
+
+            changed = 0
+            for pr_url, item in list(queue.items()):
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("issue") or "") != str(issue_num):
+                    continue
+                if str(item.get("project") or "") != str(project_hint):
+                    continue
+
+                status = str(item.get("status") or "").strip().lower()
+                review_mode = str(item.get("review_mode") or "manual").strip().lower()
+
+                target_status: str | None = None
+                if action == "mqapprove":
+                    if status == "pending_manual_review":
+                        target_status = "pending_auto_merge"
+                elif action == "mqretry":
+                    if status in {"blocked", "failed"}:
+                        target_status = (
+                            "pending_auto_merge"
+                            if review_mode == "auto"
+                            else "pending_manual_review"
+                        )
+                elif action == "mqmerge":
+                    if status in {"pending_manual_review", "blocked", "failed"}:
+                        target_status = "pending_auto_merge"
+
+                if not target_status:
+                    continue
+
+                updated = HostStateManager.update_merge_candidate(
+                    pr_url,
+                    status=target_status,
+                    last_error="",
+                    manual_override=(action in {"mqapprove", "mqmerge"}),
+                )
+                if updated is not None:
+                    changed += 1
+
+            if changed == 0:
+                await ctx.edit_message_text(
+                    f"ℹ️ No merge-queue entries updated for issue #{issue_num} ({project_hint})."
+                )
+                return
+
+            if action == "mqapprove":
+                await ctx.edit_message_text(
+                    f"✅ Merge approved for {changed} PR(s) on issue #{issue_num}.\n\n"
+                    "Queue worker will process them automatically."
+                )
+            elif action == "mqretry":
+                await ctx.edit_message_text(
+                    f"🔄 Merge retry queued for {changed} PR(s) on issue #{issue_num}."
+                )
+            else:
+                await ctx.edit_message_text(
+                    f"🚀 Merge requested for {changed} PR(s) on issue #{issue_num}.\n\n"
+                    "Queue worker will attempt merge on the next cycle."
+                )
+        except Exception as exc:
+            await ctx.edit_message_text(f"❌ Merge queue action failed: {exc}")
+        return
     elif action == "respond":
         await ctx.edit_message_text(
             f"✍️ To respond to issue #{issue_num}, use:\n\n"
-            f"`/respond {issue_num} <your message>`\n\n"
+            f"`/respond {project_hint} {issue_num} <your message>`\n\n"
             f"Example:\n"
-            f"`/respond {issue_num} Approved, proceed with implementation`"
+            f"`/respond {project_hint} {issue_num} Approved, proceed with implementation`"
         )
     elif action == "approve":
         ctx.args = [issue_num]
         await ctx.edit_message_text(f"✅ Approving implementation for issue #{issue_num}...")
 
         try:
-            plugin = deps.get_direct_issue_plugin(deps.git_repo)
+            repo = deps.get_repo(project_hint)
+            plugin = deps.get_direct_issue_plugin(repo)
             if not plugin or not plugin.add_comment(
                 issue_num,
                 "✅ Implementation approved. Please proceed.",
@@ -336,7 +409,8 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
         await ctx.edit_message_text(f"❌ Rejecting implementation for issue #{issue_num}...")
 
         try:
-            plugin = deps.get_direct_issue_plugin(deps.git_repo)
+            repo = deps.get_repo(project_hint)
+            plugin = deps.get_direct_issue_plugin(repo)
             if not plugin or not plugin.add_comment(
                 issue_num,
                 "❌ Implementation rejected. Please revise.",
@@ -344,8 +418,7 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
                 await ctx.edit_message_text(f"❌ Error rejecting issue #{issue_num}")
                 return
             await ctx.edit_message_text(
-                f"❌ Implementation rejected for issue #{issue_num}\n\n"
-                f"Agent has been notified."
+                f"❌ Implementation rejected for issue #{issue_num}\n\n" f"Agent has been notified."
             )
         except Exception as exc:
             await ctx.edit_message_text(f"❌ Error rejecting: {exc}")
@@ -362,10 +435,10 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
                 cache_key="workflow:state-engine",
             )
             approved_by = ctx.client.name
-            if not workflow_plugin or not await workflow_plugin.approve_step(real_issue, approved_by):
-                await ctx.edit_message_text(
-                    f"❌ No workflow found for issue #{real_issue}"
-                )
+            if not workflow_plugin or not await workflow_plugin.approve_step(
+                real_issue, approved_by
+            ):
+                await ctx.edit_message_text(f"❌ No workflow found for issue #{real_issue}")
                 return
             await ctx.edit_message_text(
                 f"✅ Step {step_num} approved for issue #{real_issue}\n\n"
@@ -391,9 +464,7 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
                 denied_by,
                 reason="Denied via Interactive Client",
             ):
-                await ctx.edit_message_text(
-                    f"❌ No workflow found for issue #{real_issue}"
-                )
+                await ctx.edit_message_text(f"❌ No workflow found for issue #{real_issue}")
                 return
             await ctx.edit_message_text(
                 f"❌ Step {step_num} denied for issue #{real_issue}\n\n"

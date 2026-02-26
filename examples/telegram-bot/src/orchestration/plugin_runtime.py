@@ -31,38 +31,6 @@ _PLUGIN_PROFILES: dict[str, dict[str, Any]] = {
             "timeout": 10,
         },
     },
-    "git_inbox": {
-        "kind": "GIT_PLATFORM",
-        "name": "github-issue-cli",
-        "config": {
-            "max_attempts": 3,
-            "timeout": 30,
-        },
-    },
-    "git_telegram": {
-        "kind": "GIT_PLATFORM",
-        "name": "github-issue-cli",
-        "config": {
-            "max_attempts": 3,
-            "timeout": 15,
-        },
-    },
-    "git_workflow": {
-        "kind": "GIT_PLATFORM",
-        "name": "github-issue-cli",
-        "config": {
-            "max_attempts": 3,
-            "timeout": 10,
-        },
-    },
-    "git_agent_launcher": {
-        "kind": "GIT_PLATFORM",
-        "name": "github-issue-cli",
-        "config": {
-            "max_attempts": 2,
-            "timeout": 10,
-        },
-    },
     "ai_runtime_default": {
         "kind": "AI_PROVIDER",
         "name": "ai-runtime-orchestrator",

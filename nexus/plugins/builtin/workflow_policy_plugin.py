@@ -161,7 +161,10 @@ class WorkflowPolicyPlugin:
         if not notifier:
             return
 
-        builder = self._callback("build_workflow_complete_message") or self.build_workflow_complete_message
+        builder = (
+            self._callback("build_workflow_complete_message")
+            or self.build_workflow_complete_message
+        )
         message = builder(
             issue_number=str(issue_number),
             last_agent=last_agent,
@@ -169,6 +172,21 @@ class WorkflowPolicyPlugin:
             pr_urls=pr_urls or [],
         )
         notifier(message)
+
+    def _cleanup_worktree(self, *, repo_dir: str, issue_number: str) -> bool:
+        cleaner = self._callback("cleanup_worktree")
+        if not cleaner:
+            return False
+        try:
+            return bool(cleaner(repo_dir=repo_dir, issue_number=str(issue_number)))
+        except Exception as exc:
+            logger.warning(
+                "Error cleaning up worktree for issue #%s in repo %s: %s",
+                issue_number,
+                repo_dir,
+                exc,
+            )
+            return False
 
     def finalize_workflow(
         self,
@@ -208,7 +226,9 @@ class WorkflowPolicyPlugin:
             target_repos = list(git_dirs_by_repo.keys()) or [repo]
 
             for target_repo in target_repos:
-                existing_pr_url = self._find_existing_pr(repo=target_repo, issue_number=issue_number)
+                existing_pr_url = self._find_existing_pr(
+                    repo=target_repo, issue_number=issue_number
+                )
                 if existing_pr_url:
                     result["pr_urls"].append(existing_pr_url)
                     continue
@@ -227,6 +247,7 @@ class WorkflowPolicyPlugin:
                     )
                     if created_pr_url:
                         result["pr_urls"].append(created_pr_url)
+                        self._cleanup_worktree(repo_dir=git_dir, issue_number=issue_number)
                 except Exception as exc:
                     logger.warning(
                         "Error creating PR for issue #%s in repo %s: %s",
@@ -254,7 +275,9 @@ class WorkflowPolicyPlugin:
             )
             result["notification_sent"] = self._callback("send_notification") is not None
         except Exception as exc:
-            logger.warning("Error sending finalization notification for issue #%s: %s", issue_number, exc)
+            logger.warning(
+                "Error sending finalization notification for issue #%s: %s", issue_number, exc
+            )
 
         return result
 

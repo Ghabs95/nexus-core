@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import Any
 
 import redis
-
 from config import REDIS_URL, get_chat_agent_types, get_workflow_profile
 
 logger = logging.getLogger(__name__)
@@ -18,11 +17,17 @@ def _resolve_project_agent_types(project_key: str | None) -> list[str]:
         configured_types = []
     if not isinstance(configured_types, list):
         return []
-    return [str(agent_type).strip().lower() for agent_type in configured_types if str(agent_type).strip()]
+    return [
+        str(agent_type).strip().lower()
+        for agent_type in configured_types
+        if str(agent_type).strip()
+    ]
 
 
 def _resolve_primary_agent_type(project_key: str | None, allowed_agent_types: list[str]) -> str:
-    candidates = [agent for agent in allowed_agent_types if isinstance(agent, str) and agent.strip()]
+    candidates = [
+        agent for agent in allowed_agent_types if isinstance(agent, str) and agent.strip()
+    ]
     if not candidates:
         candidates = _resolve_project_agent_types(project_key)
 
@@ -95,14 +100,18 @@ def _normalize_chat_data(chat_data: dict[str, Any]) -> dict[str, Any]:
 
     current_profile = str(normalized_metadata.get("workflow_profile") or "").strip()
     expected_profile = _resolve_workflow_profile(project_key)
-    if not current_profile or (current_profile in {"ghabs_org_workflow", "default_workflow"} and expected_profile):
+    if not current_profile or (
+        current_profile in {"ghabs_org_workflow", "default_workflow"} and expected_profile
+    ):
         normalized_metadata["workflow_profile"] = expected_profile
 
     merged["metadata"] = normalized_metadata
     return merged
 
+
 # Singleton redis client
 _redis_client = None
+
 
 def get_redis() -> redis.Redis:
     global _redis_client
@@ -115,33 +124,37 @@ def get_redis() -> redis.Redis:
             raise
     return _redis_client
 
+
 def create_chat(user_id: int, title: str = None, metadata: dict[str, Any] | None = None) -> str:
     """Creates a new chat and sets it as active."""
     r = get_redis()
     chat_id = uuid.uuid4().hex
     if not title:
         title = f"Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        
-    chat_data = _normalize_chat_data({
-        "id": chat_id,
-        "title": title,
-        "created_at": datetime.now().isoformat(),
-        "metadata": metadata or {},
-    })
-    
+
+    chat_data = _normalize_chat_data(
+        {
+            "id": chat_id,
+            "title": title,
+            "created_at": datetime.now().isoformat(),
+            "metadata": metadata or {},
+        }
+    )
+
     r.hset(f"user_chats:{user_id}", chat_id, json.dumps(chat_data))
     set_active_chat(user_id, chat_id)
     return chat_id
+
 
 def get_active_chat(user_id: int) -> str:
     """Gets the active chat_id for a user. Creates a default one if none exists."""
     r = get_redis()
     active_chat_id = r.get(f"active_chat:{user_id}")
-    
+
     # Verify the chat still exists
     if active_chat_id and r.hexists(f"user_chats:{user_id}", active_chat_id):
         return active_chat_id
-        
+
     # If no active chat, see if they have *any* chats
     chats = r.hgetall(f"user_chats:{user_id}")
     if chats:
@@ -149,9 +162,10 @@ def get_active_chat(user_id: int) -> str:
         first_chat_id = list(chats.keys())[0]
         set_active_chat(user_id, first_chat_id)
         return first_chat_id
-        
+
     # No chats exist at all, create a new one
     return create_chat(user_id, "Main Chat")
+
 
 def set_active_chat(user_id: int, chat_id: str) -> bool:
     """Sets the active chat for a user. Returns True if successful."""
@@ -160,6 +174,7 @@ def set_active_chat(user_id: int, chat_id: str) -> bool:
         r.set(f"active_chat:{user_id}", chat_id)
         return True
     return False
+
 
 def list_chats(user_id: int) -> list:
     """Lists all chats for a user, sorted by newest first."""
@@ -172,7 +187,7 @@ def list_chats(user_id: int) -> list:
             chats.append(_normalize_chat_data(chat_data))
         except json.JSONDecodeError:
             continue
-            
+
     # Sort by created_at descending
     chats.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return chats
@@ -230,16 +245,17 @@ def update_chat_metadata(user_id: int, chat_id: str, updates: dict[str, Any]) ->
     r.hset(f"user_chats:{user_id}", chat_id, json.dumps(chat_data))
     return True
 
+
 def rename_chat(user_id: int, chat_id: str, new_title: str) -> bool:
     """Renames a chat. Returns True if successful."""
     if not chat_id or not new_title:
         return False
-        
+
     r = get_redis()
     raw_chat = r.hget(f"user_chats:{user_id}", chat_id)
     if not raw_chat:
         return False
-        
+
     try:
         chat_data = json.loads(raw_chat)
         chat_data["title"] = new_title
@@ -248,13 +264,14 @@ def rename_chat(user_id: int, chat_id: str, new_title: str) -> bool:
     except json.JSONDecodeError:
         return False
 
+
 def delete_chat(user_id: int, chat_id: str) -> bool:
     """Deletes a chat and its history. Returns True if successful."""
     r = get_redis()
     if r.hexists(f"user_chats:{user_id}", chat_id):
         r.hdel(f"user_chats:{user_id}", chat_id)
         r.delete(f"chat_history:{chat_id}")
-        
+
         # If the deleted chat was active, un-set it
         active = r.get(f"active_chat:{user_id}")
         if active == chat_id:
@@ -262,18 +279,19 @@ def delete_chat(user_id: int, chat_id: str) -> bool:
         return True
     return False
 
+
 def get_chat_history(user_id: int, limit: int = 10, chat_id: str = None) -> str:
     """Retrieve the recent chat history for a given chat. Uses active chat if not provided."""
     try:
         r = get_redis()
         if not chat_id:
             chat_id = get_active_chat(user_id)
-            
+
         key = f"chat_history:{chat_id}"
         messages = r.lrange(key, -limit, -1)
         if not messages:
             return ""
-        
+
         history = []
         for msg in messages:
             try:
@@ -288,16 +306,19 @@ def get_chat_history(user_id: int, limit: int = 10, chat_id: str = None) -> str:
         logger.error(f"Error retrieving chat history for {user_id}: {e}")
         return ""
 
-def append_message(user_id: int, role: str, text: str, ttl_seconds: int = 604800, chat_id: str = None):
+
+def append_message(
+    user_id: int, role: str, text: str, ttl_seconds: int = 604800, chat_id: str = None
+):
     """Append a message to the chat history with a TTL (default 7 days)."""
     try:
         r = get_redis()
         if not chat_id:
             chat_id = get_active_chat(user_id)
-            
+
         key = f"chat_history:{chat_id}"
         message = json.dumps({"role": role, "text": text})
-        
+
         pipe = r.pipeline()
         pipe.rpush(key, message)
         # Keep only the last 30 messages to avoid indefinitely growing lists

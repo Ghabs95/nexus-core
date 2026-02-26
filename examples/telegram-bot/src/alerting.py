@@ -6,6 +6,7 @@ Sends alerts for critical issues via the EventBus (emit_alert):
 - Repeated agent failures
 - System degradation
 """
+
 import logging
 import os
 from datetime import datetime, timedelta
@@ -32,24 +33,30 @@ class AlertingSystem:
         self.state_manager = HostStateManager()
 
         # Thresholds (configurable via environment)
-        self.error_rate_threshold = int(os.getenv('ALERT_ERROR_RATE_THRESHOLD', '10'))  # errors per hour
-        self.stuck_workflow_hours = int(os.getenv('ALERT_STUCK_WORKFLOW_HOURS', '2'))  # hours without progress
-        self.agent_failure_threshold = int(os.getenv('ALERT_AGENT_FAILURE_THRESHOLD', '3'))  # failures in 1 hour
+        self.error_rate_threshold = int(
+            os.getenv("ALERT_ERROR_RATE_THRESHOLD", "10")
+        )  # errors per hour
+        self.stuck_workflow_hours = int(
+            os.getenv("ALERT_STUCK_WORKFLOW_HOURS", "2")
+        )  # hours without progress
+        self.agent_failure_threshold = int(
+            os.getenv("ALERT_AGENT_FAILURE_THRESHOLD", "3")
+        )  # failures in 1 hour
 
         # Alert cooldown (prevent spam)
-        self.alert_cooldown_minutes = int(os.getenv('ALERT_COOLDOWN_MINUTES', '30'))
+        self.alert_cooldown_minutes = int(os.getenv("ALERT_COOLDOWN_MINUTES", "30"))
         self.last_alerts: dict[str, datetime] = {}
 
     def start(self) -> None:
         """Start the alerting scheduler."""
-        check_interval_minutes = int(os.getenv('ALERT_CHECK_INTERVAL_MINUTES', '15'))
+        check_interval_minutes = int(os.getenv("ALERT_CHECK_INTERVAL_MINUTES", "15"))
 
         self.scheduler.add_job(
             self.check_for_alerts,
             trigger=IntervalTrigger(minutes=check_interval_minutes),
-            id='alert_check',
-            name='Alert System Check',
-            replace_existing=True
+            id="alert_check",
+            name="Alert System Check",
+            replace_existing=True,
         )
 
         self.scheduler.start()
@@ -79,7 +86,7 @@ class AlertingSystem:
         """Check for high error rates."""
         try:
             query = get_audit_query()
-            error_events = {'AGENT_FAILED', 'AGENT_TIMEOUT_KILL', 'ERROR', 'WORKFLOW_ERROR'}
+            error_events = {"AGENT_FAILED", "AGENT_TIMEOUT_KILL", "ERROR", "WORKFLOW_ERROR"}
             error_count = query.count_events(error_events, since_hours=1)
 
             if error_count >= self.error_rate_threshold:
@@ -108,9 +115,9 @@ class AlertingSystem:
                     message = f"⏰ Stuck Workflows Detected\n\nFound {len(stuck_workflows)} stuck workflow(s):\n\n"
 
                     for workflow in stuck_workflows[:5]:
-                        issue = workflow['issue_number']
-                        status = workflow['status']
-                        hours_stuck = workflow['hours_stuck']
+                        issue = workflow["issue_number"]
+                        status = workflow["status"]
+                        hours_stuck = workflow["hours_stuck"]
                         message += f"• Issue #{issue} - {status} ({hours_stuck:.1f}h)\n"
 
                     if len(stuck_workflows) > 5:
@@ -129,7 +136,7 @@ class AlertingSystem:
         """Check for repeated agent failures."""
         try:
             query = get_audit_query()
-            failure_events = {'AGENT_FAILED', 'AGENT_TIMEOUT_KILL'}
+            failure_events = {"AGENT_FAILED", "AGENT_TIMEOUT_KILL"}
             failures = query.count_events(failure_events, since_hours=1)
 
             if failures >= self.agent_failure_threshold:
@@ -160,12 +167,12 @@ class AlertingSystem:
             tracked_issues = self.state_manager.load_tracked_issues()
 
             for issue_key, issue_data in tracked_issues.items():
-                status = issue_data.get('status', 'unknown')
+                status = issue_data.get("status", "unknown")
 
-                if status in ['implemented', 'rejected', 'stopped']:
+                if status in ["implemented", "rejected", "stopped"]:
                     continue
 
-                last_update_str = issue_data.get('updated_at')
+                last_update_str = issue_data.get("updated_at")
                 if last_update_str:
                     try:
                         last_update = datetime.fromisoformat(last_update_str)
@@ -173,12 +180,14 @@ class AlertingSystem:
                         if last_update < cutoff_time:
                             hours_stuck = (datetime.now() - last_update).total_seconds() / 3600
 
-                            stuck.append({
-                                'issue_number': issue_key,
-                                'status': status,
-                                'last_update': last_update_str,
-                                'hours_stuck': hours_stuck
-                            })
+                            stuck.append(
+                                {
+                                    "issue_number": issue_key,
+                                    "status": status,
+                                    "last_update": last_update_str,
+                                    "hours_stuck": hours_stuck,
+                                }
+                            )
                     except Exception:
                         continue
 

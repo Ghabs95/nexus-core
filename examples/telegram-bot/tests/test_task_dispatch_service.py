@@ -1,0 +1,120 @@
+import types
+from pathlib import Path
+from unittest.mock import MagicMock
+
+from services.task_dispatch_service import handle_new_task, handle_webhook_task
+
+
+def test_handle_webhook_task_reroutes_mismatched_project(tmp_path):
+    inbox_file = tmp_path / "task.md"
+    inbox_file.write_text(
+        "**Source:** webhook\n"
+        "**Issue Number:** 42\n"
+        "**URL:** https://github.com/acme/repo/issues/42\n"
+        "**Agent Type:** triage\n"
+    )
+
+    logger = MagicMock()
+    emit_alert = MagicMock()
+
+    handled = handle_webhook_task(
+        filepath=str(inbox_file),
+        content=inbox_file.read_text(),
+        project_name="proj-a",
+        project_root=str(tmp_path),
+        config={"workspace": "ws", "agents_dir": None},
+        base_dir=str(tmp_path),
+        logger=logger,
+        emit_alert=emit_alert,
+        get_repos_for_project=lambda _p: ["other/repo"],
+        extract_repo_from_issue_url=lambda _u: "acme/repo",
+        resolve_project_for_repo=lambda _r: "proj-b",
+        reroute_webhook_task_to_project=lambda _f, _p: str(tmp_path / "rerouted.md"),
+        get_tasks_active_dir=lambda _root, _proj: str(tmp_path / "active"),
+        is_recent_launch=lambda _n: False,
+        get_initial_agent_from_workflow=lambda _p: "triage",
+        get_repo_for_project=lambda _p: "acme/repo",
+        resolve_tier_for_issue=lambda *args, **kwargs: "full",
+        invoke_copilot_agent=lambda **kwargs: (None, None),
+    )
+
+    assert handled is True
+    emit_alert.assert_called_once()
+    assert "Re-routed webhook task" in emit_alert.call_args.args[0]
+
+
+def test_handle_new_task_happy_path_smoke(tmp_path):
+    inbox_file = tmp_path / "feature_123.md"
+    inbox_file.write_text("placeholder")
+    active_dir = tmp_path / "active"
+    active_dir.mkdir()
+
+    logger = MagicMock()
+    emit_alert = MagicMock()
+    workflow_plugin = types.SimpleNamespace(
+        create_workflow_for_issue=lambda **kwargs: "wf-1",
+    )
+
+    # emulate async methods with coroutines
+    async def _create_workflow_for_issue(**kwargs):
+        return "wf-1"
+
+    workflow_plugin.create_workflow_for_issue = _create_workflow_for_issue
+
+    captured = {"create_issue_called": False, "rename_called": False}
+
+    def _create_issue(**kwargs):
+        captured["create_issue_called"] = True
+        return "https://github.com/acme/repo/issues/77"
+
+    def _rename_task_file_and_sync_issue_body(**kwargs):
+        captured["rename_called"] = True
+        path = Path(kwargs["task_file_path"])
+        new_path = path.with_name("feature_77.md")
+        path.rename(new_path)
+        return str(new_path)
+
+    async def _start_workflow(_wf, _issue):
+        return True
+
+    def _get_workflow_state_plugin(**kwargs):
+        return workflow_plugin
+
+    pid_tool = {"pid": None}
+
+    def _invoke_copilot_agent(**kwargs):
+        pid_tool["pid"] = 1234
+        return 1234, "copilot"
+
+    handle_new_task(
+        filepath=str(inbox_file),
+        content="Implement feature\n**Task Name:** Nice feature",
+        task_type="feature",
+        project_name="proj-a",
+        project_root=str(tmp_path),
+        config={"workspace": "ws", "agents_dir": "agents"},
+        base_dir=str(tmp_path),
+        logger=logger,
+        emit_alert=emit_alert,
+        get_repo_for_project=lambda _p: "acme/repo",
+        get_tasks_active_dir=lambda _root, _proj: str(active_dir),
+        refine_issue_content=lambda content, _p: content,
+        extract_inline_task_name=lambda _c: "Nice feature",
+        slugify=lambda s: "nice-feature",
+        generate_issue_name=lambda _c, _p: "fallback-name",
+        get_sop_tier=lambda **kwargs: ("full", "SOP", "workflow:full"),
+        render_checklist_from_workflow=lambda _p, _t: "",
+        render_fallback_checklist=lambda _t: "- [ ] do thing",
+        create_issue=_create_issue,
+        rename_task_file_and_sync_issue_body=_rename_task_file_and_sync_issue_body,
+        get_workflow_state_plugin=_get_workflow_state_plugin,
+        workflow_state_plugin_kwargs={},
+        start_workflow=_start_workflow,
+        get_initial_agent_from_workflow=lambda _p: "triage",
+        invoke_copilot_agent=_invoke_copilot_agent,
+    )
+
+    assert captured["create_issue_called"] is True
+    assert captured["rename_called"] is True
+    assert pid_tool["pid"] == 1234
+    assert (active_dir / "feature_77.md").exists()

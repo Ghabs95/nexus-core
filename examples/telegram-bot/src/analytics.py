@@ -15,10 +15,10 @@ LOKI_URL = os.getenv("LOKI_URL", "http://localhost:3100")
 
 def get_stats_report(lookback_days: int = 30) -> str:
     """Generate a statistics report using Loki observability backend.
-    
+
     Args:
         lookback_days: Number of days to include in analysis
-    
+
     Returns:
         Formatted statistics report
     """

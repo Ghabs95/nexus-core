@@ -1,353 +1,511 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Nexus Workflow Visualizer</title>
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-  <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
-  <script type="module">
-    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+    <meta charset="UTF-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Nexus Workflow Visualizer</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
 
-    // ---- SocketIO ----
-    const socket = io('/visualizer');
+        mermaid.initialize({startOnLoad: false, theme: 'dark'});
 
-    socket.on('connect', () => {
-      document.getElementById('status-dot').classList.add('connected');
-      document.getElementById('status-text').textContent = 'Connected';
-    });
+        // ---- SocketIO ----
+        const socket = io('/visualizer');
 
-    socket.on('disconnect', () => {
-      document.getElementById('status-dot').classList.remove('connected');
-      document.getElementById('status-text').textContent = 'Disconnected — reconnecting…';
-    });
+        socket.on('connect', () => {
+            document.getElementById('status-dot').classList.add('connected');
+            document.getElementById('status-text').textContent = 'Connected';
+        });
 
-    socket.on('agent_registered', (data) => {
-      logEvent('agent_registered', data);
-      const issueId = `issue-${data.issue}`;
-      const agentId = `agent-${data.issue}-${data.agent}`;
-      ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
-      ensureNode(agentId, data.agent, 'agent');
-      ensureEdge(issueId, agentId, 'launched');
-    });
+        socket.on('disconnect', () => {
+            document.getElementById('status-dot').classList.remove('connected');
+            document.getElementById('status-text').textContent = 'Disconnected — reconnecting…';
+        });
 
-    socket.on('workflow_mapped', (data) => {
-      logEvent('workflow_mapped', data);
-      const issueId = `issue-${data.issue}`;
-      const wfId = `wf-${data.workflow_id}`;
-      ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
-      ensureNode(wfId, data.workflow_id, 'workflow');
-      ensureEdge(issueId, wfId, 'workflow');
-    });
+        socket.on('agent_registered', (data) => {
+            logEvent('agent_registered', data);
+            const issueId = `issue-${data.issue}`;
+            const agentId = `agent-${data.issue}-${data.agent}`;
+            ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
+            ensureNode(agentId, data.agent, 'agent');
+            ensureEdge(issueId, agentId, 'launched');
+        });
 
-    socket.on('step_status_changed', (data) => {
-      logEvent('step_status_changed', data);
-      const agentId = `agent-${data.issue}-${data.agent_type}`;
-      ensureNode(agentId, data.agent_type, 'agent');
-      
-      const node = cy.getElementById(agentId);
-      node.removeClass('running done failed skipped pending');
-      node.addClass(data.status);
-    });
+        socket.on('workflow_mapped', (data) => {
+            logEvent('workflow_mapped', data);
+            const issueId = `issue-${data.issue}`;
+            const wfId = `wf-${data.workflow_id}`;
+            ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
+            ensureNode(wfId, data.workflow_id, 'workflow');
+            ensureEdge(issueId, wfId, 'workflow');
+        });
 
-    socket.on('workflow_completed', (data) => {
-      logEvent('workflow_completed', data);
-      const wfId = `wf-${data.workflow_id}`;
-      const node = cy.getElementById(wfId);
-      if (node.length) {
-        node.style('border-color', data.status === 'success' ? '#3fb950' : '#f85149');
-      }
-    });
+        socket.on('step_status_changed', (data) => {
+            logEvent('step_status_changed', data);
+            const agentId = `agent-${data.issue}-${data.agent_type}`;
+            ensureNode(agentId, data.agent_type, 'agent');
 
-    socket.on('mermaid_diagram', async (data) => {
-      logEvent('mermaid_diagram', { issue: data.issue, diagram: '...' });
-      try {
-        const { svg } = await mermaid.render('mermaid-svg', data.diagram);
-        document.getElementById('mermaid-view').innerHTML = svg;
-      } catch (err) {
-        console.error('Mermaid render error:', err);
-      }
-    });
-  </script>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #e6edf3; height: 100vh; display: flex; flex-direction: column; }
-    header { padding: 12px 20px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; align-items: center; gap: 16px; }
-    header h1 { font-size: 1.1rem; font-weight: 600; }
-    #status-dot { width: 10px; height: 10px; border-radius: 50%; background: #f85149; flex-shrink: 0; }
-    #status-dot.connected { background: #3fb950; }
-    #status-text { font-size: 0.8rem; color: #8b949e; }
-    #main { display: flex; flex: 1; overflow: hidden; position: relative; }
-    #cy { flex: 1; background: #0d1117; }
-    #mermaid-container { flex: 1; background: #0d1117; display: none; overflow: auto; padding: 20px; }
-    #mermaid-view { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
-    #sidebar { width: 350px; background: #161b22; border-left: 1px solid #30363d; display: flex; flex-direction: column; }
-    #tabs { display: flex; background: #161b22; border-bottom: 1px solid #30363d; }
-    .tab { flex: 1; padding: 10px; text-align: center; font-size: 0.8rem; cursor: pointer; color: #8b949e; border-bottom: 2px solid transparent; }
-    .tab.active { color: #58a6ff; border-bottom-color: #58a6ff; background: #1c2128; }
-    #sidebar h2 { padding: 12px 16px; font-size: 0.85rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #30363d; }
-    #event-log { flex: 1; overflow-y: auto; padding: 8px; }
-    .event-item { padding: 8px 10px; margin: 4px 0; border-radius: 6px; font-size: 0.8rem; border-left: 3px solid #58a6ff; background: #1c2128; }
-    .event-item.agent_registered { border-color: #3fb950; }
-    .event-item.workflow_mapped { border-color: #d29922; }
-    .event-item.step_status_changed { border-color: #58a6ff; }
-    .event-item.workflow_completed { border-color: #f0883e; }
-    .event-item .event-time { font-size: 0.7rem; color: #8b949e; margin-bottom: 3px; }
-    .event-item .event-body { color: #e6edf3; word-break: break-word; }
-    #controls { padding: 12px 16px; border-top: 1px solid #30363d; display: flex; gap: 8px; }
-    button { flex: 1; padding: 6px 10px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #e6edf3; cursor: pointer; font-size: 0.8rem; }
-    button:hover { background: #30363d; }
-  </style>
+            const node = cy.getElementById(agentId);
+            node.removeClass('running done failed skipped pending');
+            node.addClass(data.status);
+        });
+
+        socket.on('workflow_completed', (data) => {
+            logEvent('workflow_completed', data);
+            const wfId = `wf-${data.workflow_id}`;
+            const node = cy.getElementById(wfId);
+            if (node.length) {
+                node.style('border-color', data.status === 'success' ? '#3fb950' : '#f85149');
+            }
+        });
+
+        socket.on('mermaid_diagram', async (data) => {
+            logEvent('mermaid_diagram', {issue: data.issue, diagram: '...'});
+            try {
+                const {svg} = await mermaid.render('mermaid-svg', data.diagram);
+                document.getElementById('mermaid-view').innerHTML = svg;
+            } catch (err) {
+                console.error('Mermaid render error:', err);
+            }
+        });
+    </script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            padding: 12px 20px;
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        header h1 {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        #status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #f85149;
+            flex-shrink: 0;
+        }
+
+        #status-dot.connected {
+            background: #3fb950;
+        }
+
+        #status-text {
+            font-size: 0.8rem;
+            color: #8b949e;
+        }
+
+        #main {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #cy {
+            flex: 1;
+            background: #0d1117;
+        }
+
+        #mermaid-container {
+            flex: 1;
+            background: #0d1117;
+            display: none;
+            overflow: auto;
+            padding: 20px;
+        }
+
+        #mermaid-view {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #sidebar {
+            width: 350px;
+            background: #161b22;
+            border-left: 1px solid #30363d;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #tabs {
+            display: flex;
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 10px;
+            text-align: center;
+            font-size: 0.8rem;
+            cursor: pointer;
+            color: #8b949e;
+            border-bottom: 2px solid transparent;
+        }
+
+        .tab.active {
+            color: #58a6ff;
+            border-bottom-color: #58a6ff;
+            background: #1c2128;
+        }
+
+        #sidebar h2 {
+            padding: 12px 16px;
+            font-size: 0.85rem;
+            color: #8b949e;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid #30363d;
+        }
+
+        #event-log {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .event-item {
+            padding: 8px 10px;
+            margin: 4px 0;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            border-left: 3px solid #58a6ff;
+            background: #1c2128;
+        }
+
+        .event-item.agent_registered {
+            border-color: #3fb950;
+        }
+
+        .event-item.workflow_mapped {
+            border-color: #d29922;
+        }
+
+        .event-item.step_status_changed {
+            border-color: #58a6ff;
+        }
+
+        .event-item.workflow_completed {
+            border-color: #f0883e;
+        }
+
+        .event-item .event-time {
+            font-size: 0.7rem;
+            color: #8b949e;
+            margin-bottom: 3px;
+        }
+
+        .event-item .event-body {
+            color: #e6edf3;
+            word-break: break-word;
+        }
+
+        #controls {
+            padding: 12px 16px;
+            border-top: 1px solid #30363d;
+            display: flex;
+            gap: 8px;
+        }
+
+        button {
+            flex: 1;
+            padding: 6px 10px;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            background: #21262d;
+            color: #e6edf3;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+
+        button:hover {
+            background: #30363d;
+        }
+    </style>
 </head>
 <body>
 <header>
-  <div id="status-dot"></div>
-  <h1>Nexus Workflow Visualizer</h1>
-  <span id="status-text">Connecting…</span>
+    <div id="status-dot"></div>
+    <h1>Nexus Workflow Visualizer</h1>
+    <span id="status-text">Connecting…</span>
 </header>
 <div id="tabs">
-  <div class="tab active" onclick="showTab('graph')">Network Graph (Cytoscape)</div>
-  <div class="tab" onclick="showTab('mermaid')">Workflow Diagram (Mermaid)</div>
+    <div class="tab active" onclick="showTab('graph')">Network Graph (Cytoscape)</div>
+    <div class="tab" onclick="showTab('mermaid')">Workflow Diagram (Mermaid)</div>
 </div>
 <div id="main">
-  <div id="cy"></div>
-  <div id="mermaid-container">
-    <div id="mermaid-view"></div>
-  </div>
-  <div id="sidebar">
-    <h2>Live Events</h2>
-    <div id="event-log"></div>
-    <div id="controls">
-      <button onclick="cy.fit()">Fit</button>
-      <button onclick="clearGraph()">Clear</button>
+    <div id="cy"></div>
+    <div id="mermaid-container">
+        <div id="mermaid-view"></div>
     </div>
-  </div>
+    <div id="sidebar">
+        <h2>Live Events</h2>
+        <div id="event-log"></div>
+        <div id="controls">
+            <button onclick="cy.fit()">Fit</button>
+            <button onclick="clearGraph()">Clear</button>
+        </div>
+    </div>
 </div>
 <script>
-// ---- Graph ----
-let cy = null;
-const fallbackRows = new Map();
-const cyContainer = document.getElementById('cy');
+    // ---- Graph ----
+    let cy = null;
+    const fallbackRows = new Map();
+    const cyContainer = document.getElementById('cy');
 
-if (typeof window.cytoscape === 'function') {
-  cy = window.cytoscape({
-    container: cyContainer,
-    style: [
-      { selector: 'node', style: {
-          'background-color': '#21262d',
-          'border-color': '#58a6ff',
-          'border-width': 2,
-          'color': '#e6edf3',
-          'label': 'data(label)',
-          'text-valign': 'center',
-          'text-halign': 'center',
-          'font-size': '11px',
-          'width': 100, 'height': 40,
-          'shape': 'round-rectangle',
-          'text-wrap': 'wrap',
-          'text-max-width': '90px',
-      }},
-      { selector: 'node.workflow', style: { 'background-color': '#1f2d1f', 'border-color': '#3fb950', 'border-width': 2 }},
-      { selector: 'node.agent', style: { 'background-color': '#1e2538', 'border-color': '#58a6ff' }},
-      { selector: 'node.running', style: { 'border-color': '#58a6ff', 'border-width': 3 }},
-    { selector: 'node.done', style: { 'border-color': '#3fb950', 'border-width': 3 }},
-    { selector: 'node.failed', style: { 'border-color': '#f85149', 'border-width': 3 }},
-    { selector: 'node.skipped', style: { 'border-color': '#d29922', 'border-width': 2 }},
-    { selector: 'node.pending', style: { 'border-color': '#8b949e', 'border-width': 2 }},
-    { selector: 'edge', style: {
-          'width': 2,
-          'line-color': '#30363d',
-          'target-arrow-color': '#30363d',
-          'target-arrow-shape': 'triangle',
-          'curve-style': 'bezier',
-          'label': 'data(label)',
-          'font-size': '9px',
-          'color': '#8b949e',
-          'text-background-color': '#0d1117',
-          'text-background-opacity': 1,
-          'text-background-padding': '2px',
-      }},
-    ],
-    layout: { name: 'cose', padding: 30 },
-    elements: [],
-  });
-} else {
-  cyContainer.innerHTML = '<div style="padding:16px;color:#8b949e;font-size:14px;">Graph library unavailable; showing workflow list fallback.</div>';
-}
-
-function ensureNode(id, label, cls) {
-  if (!cy) return;
-  if (!cy.getElementById(id).length) {
-    cy.add({ data: { id, label }, classes: cls });
-    relayout();
-  }
-}
-
-function ensureEdge(source, target, label) {
-  if (!cy) return;
-  const eid = `${source}->${target}`;
-  if (!cy.getElementById(eid).length) {
-    cy.add({ data: { id: eid, source, target, label } });
-    relayout();
-  }
-}
-
-let layoutTimer = null;
-function relayout() {
-  if (!cy) return;
-  clearTimeout(layoutTimer);
-  layoutTimer = setTimeout(() => {
-    cy.layout({ name: 'cose', animate: true, animationDuration: 400, padding: 30 }).run();
-  }, 300);
-}
-
-function clearGraph() {
-  if (cy) {
-    cy.elements().remove();
-  }
-  fallbackRows.clear();
-  if (cyContainer) {
-    cyContainer.innerHTML = '';
-  }
-}
-
-function renderFallbackList() {
-  if (cy || !cyContainer) return;
-  const rows = Array.from(fallbackRows.values());
-  if (!rows.length) {
-    cyContainer.innerHTML = '<div style="padding:16px;color:#8b949e;font-size:14px;">No active workflows in snapshot.</div>';
-    return;
-  }
-
-  const html = rows.map((row) => (
-    `<div style="margin:10px;padding:10px;border:1px solid #30363d;border-radius:6px;background:#161b22;">`
-    + `<div style="font-weight:600;">Issue #${row.issue}</div>`
-    + `<div style="color:#8b949e;font-size:12px;">Workflow: ${row.workflowId}</div>`
-    + `<div style="color:#8b949e;font-size:12px;">State: ${row.state || 'unknown'}</div>`
-    + `<div style="color:#8b949e;font-size:12px;">Agent: ${row.agent || 'n/a'}</div>`
-    + `</div>`
-  )).join('');
-  cyContainer.innerHTML = html;
-}
-
-function applyWorkflowSnapshot(items) {
-  if (!Array.isArray(items)) return;
-  for (const item of items) {
-    const issue = String(item.issue || '').trim();
-    const workflowId = String(item.workflow_id || '').trim();
-    const status = item.status || {};
-    if (!issue || !workflowId) continue;
-
-    const issueId = `issue-${issue}`;
-    const wfId = `wf-${workflowId}`;
-
-    fallbackRows.set(issue, {
-      issue,
-      workflowId,
-      state: String(status.state || ''),
-      agent: String(status.current_agent || ''),
-    });
-
-    ensureNode(issueId, `Issue #${issue}`, 'workflow');
-    ensureNode(wfId, workflowId, 'workflow');
-    ensureEdge(issueId, wfId, String(status.state || 'mapped'));
-
-    const currentAgent = String(status.current_agent || '').trim();
-    if (currentAgent && currentAgent.toLowerCase() !== 'unknown') {
-      const agentId = `agent-${issue}-${currentAgent}`;
-      ensureNode(agentId, currentAgent, 'agent');
-      ensureEdge(wfId, agentId, String(status.current_step_name || 'current'));
+    if (typeof window.cytoscape === 'function') {
+        cy = window.cytoscape({
+            container: cyContainer,
+            style: [
+                {
+                    selector: 'node', style: {
+                        'background-color': '#21262d',
+                        'border-color': '#58a6ff',
+                        'border-width': 2,
+                        'color': '#e6edf3',
+                        'label': 'data(label)',
+                        'text-valign': 'center',
+                        'text-halign': 'center',
+                        'font-size': '11px',
+                        'width': 100, 'height': 40,
+                        'shape': 'round-rectangle',
+                        'text-wrap': 'wrap',
+                        'text-max-width': '90px',
+                    }
+                },
+                {
+                    selector: 'node.workflow',
+                    style: {'background-color': '#1f2d1f', 'border-color': '#3fb950', 'border-width': 2}
+                },
+                {selector: 'node.agent', style: {'background-color': '#1e2538', 'border-color': '#58a6ff'}},
+                {selector: 'node.running', style: {'border-color': '#58a6ff', 'border-width': 3}},
+                {selector: 'node.done', style: {'border-color': '#3fb950', 'border-width': 3}},
+                {selector: 'node.failed', style: {'border-color': '#f85149', 'border-width': 3}},
+                {selector: 'node.skipped', style: {'border-color': '#d29922', 'border-width': 2}},
+                {selector: 'node.pending', style: {'border-color': '#8b949e', 'border-width': 2}},
+                {
+                    selector: 'edge', style: {
+                        'width': 2,
+                        'line-color': '#30363d',
+                        'target-arrow-color': '#30363d',
+                        'target-arrow-shape': 'triangle',
+                        'curve-style': 'bezier',
+                        'label': 'data(label)',
+                        'font-size': '9px',
+                        'color': '#8b949e',
+                        'text-background-color': '#0d1117',
+                        'text-background-opacity': 1,
+                        'text-background-padding': '2px',
+                    }
+                },
+            ],
+            layout: {name: 'cose', padding: 30},
+            elements: [],
+        });
+    } else {
+        cyContainer.innerHTML = '<div style="padding:16px;color:#8b949e;font-size:14px;">Graph library unavailable; showing workflow list fallback.</div>';
     }
-  }
 
-  if (cy) {
-    cy.fit(undefined, 40);
-  } else {
-    renderFallbackList();
-  }
-}
+    function ensureNode(id, label, cls) {
+        if (!cy) return;
+        if (!cy.getElementById(id).length) {
+            cy.add({data: {id, label}, classes: cls});
+            relayout();
+        }
+    }
 
-async function refreshSnapshot() {
-  try {
-    const response = await fetch('/visualizer/snapshot', { cache: 'no-store' });
-    if (!response.ok) return;
-    const payload = await response.json();
-    applyWorkflowSnapshot(payload.workflows || []);
-  } catch (_) {
-    // Silent fallback: visualizer can still run via live socket events.
-  }
-  document.getElementById('mermaid-view').innerHTML = '';
-}
+    function ensureEdge(source, target, label) {
+        if (!cy) return;
+        const eid = `${source}->${target}`;
+        if (!cy.getElementById(eid).length) {
+            cy.add({data: {id: eid, source, target, label}});
+            relayout();
+        }
+    }
 
-function showTab(tab) {
-  const cyEl = document.getElementById('cy');
-  const mermaidEl = document.getElementById('mermaid-container');
-  const tabs = document.querySelectorAll('.tab');
-  
-  tabs.forEach(t => t.classList.remove('active'));
-  
-  if (tab === 'graph') {
-    cyEl.style.display = 'block';
-    mermaidEl.style.display = 'none';
-    tabs[0].classList.add('active');
-    relayout();
-  } else {
-    cyEl.style.display = 'none';
-    mermaidEl.style.display = 'block';
-    tabs[1].classList.add('active');
-  }
-}
+    let layoutTimer = null;
 
-// ---- Event log ----
-function logEvent(type, data) {
-  const log = document.getElementById('event-log');
-  const item = document.createElement('div');
-  item.className = `event-item ${type}`;
-  const time = new Date().toLocaleTimeString();
-  item.innerHTML = `<div class="event-time">${time} — <strong>${type}</strong></div><div class="event-body">${JSON.stringify(data)}</div>`;
-  log.prepend(item);
-  // Cap log to 100 items
-  while (log.children.length > 100) log.removeChild(log.lastChild);
-}
+    function relayout() {
+        if (!cy) return;
+        clearTimeout(layoutTimer);
+        layoutTimer = setTimeout(() => {
+            cy.layout({name: 'cose', animate: true, animationDuration: 400, padding: 30}).run();
+        }, 300);
+    }
 
-// ---- SocketIO ----
-if (typeof window.io === 'function') {
-  const socket = window.io('/visualizer');
+    function clearGraph() {
+        if (cy) {
+            cy.elements().remove();
+        }
+        fallbackRows.clear();
+        if (cyContainer) {
+            cyContainer.innerHTML = '';
+        }
+    }
 
-  socket.on('connect', () => {
-    document.getElementById('status-dot').classList.add('connected');
-    document.getElementById('status-text').textContent = 'Connected';
-  });
+    function renderFallbackList() {
+        if (cy || !cyContainer) return;
+        const rows = Array.from(fallbackRows.values());
+        if (!rows.length) {
+            cyContainer.innerHTML = '<div style="padding:16px;color:#8b949e;font-size:14px;">No active workflows in snapshot.</div>';
+            return;
+        }
 
-  socket.on('disconnect', () => {
-    document.getElementById('status-dot').classList.remove('connected');
-    document.getElementById('status-text').textContent = 'Disconnected — reconnecting…';
-  });
+        const html = rows.map((row) => (
+            `<div style="margin:10px;padding:10px;border:1px solid #30363d;border-radius:6px;background:#161b22;">`
+            + `<div style="font-weight:600;">Issue #${row.issue}</div>`
+            + `<div style="color:#8b949e;font-size:12px;">Workflow: ${row.workflowId}</div>`
+            + `<div style="color:#8b949e;font-size:12px;">State: ${row.state || 'unknown'}</div>`
+            + `<div style="color:#8b949e;font-size:12px;">Agent: ${row.agent || 'n/a'}</div>`
+            + `</div>`
+        )).join('');
+        cyContainer.innerHTML = html;
+    }
 
-  socket.on('agent_registered', (data) => {
-    logEvent('agent_registered', data);
-    const issueId = `issue-${data.issue}`;
-    const agentId = `agent-${data.issue}-${data.agent}`;
-    ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
-    ensureNode(agentId, data.agent, 'agent');
-    ensureEdge(issueId, agentId, 'launched');
-  });
+    function applyWorkflowSnapshot(items) {
+        if (!Array.isArray(items)) return;
+        for (const item of items) {
+            const issue = String(item.issue || '').trim();
+            const workflowId = String(item.workflow_id || '').trim();
+            const status = item.status || {};
+            if (!issue || !workflowId) continue;
 
-  socket.on('workflow_mapped', (data) => {
-    logEvent('workflow_mapped', data);
-    const issueId = `issue-${data.issue}`;
-    const wfId = `wf-${data.workflow_id}`;
-    ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
-    ensureNode(wfId, data.workflow_id, 'workflow');
-    ensureEdge(issueId, wfId, 'workflow');
-  });
-} else {
-  document.getElementById('status-text').textContent = 'Live socket unavailable — using snapshot mode';
-}
+            const issueId = `issue-${issue}`;
+            const wfId = `wf-${workflowId}`;
 
-refreshSnapshot();
-setInterval(refreshSnapshot, 15000);
+            fallbackRows.set(issue, {
+                issue,
+                workflowId,
+                state: String(status.state || ''),
+                agent: String(status.current_agent || ''),
+            });
+
+            ensureNode(issueId, `Issue #${issue}`, 'workflow');
+            ensureNode(wfId, workflowId, 'workflow');
+            ensureEdge(issueId, wfId, String(status.state || 'mapped'));
+
+            const currentAgent = String(status.current_agent || '').trim();
+            if (currentAgent && currentAgent.toLowerCase() !== 'unknown') {
+                const agentId = `agent-${issue}-${currentAgent}`;
+                ensureNode(agentId, currentAgent, 'agent');
+                ensureEdge(wfId, agentId, String(status.current_step_name || 'current'));
+            }
+        }
+
+        if (cy) {
+            cy.fit(undefined, 40);
+        } else {
+            renderFallbackList();
+        }
+    }
+
+    async function refreshSnapshot() {
+        try {
+            const response = await fetch('/visualizer/snapshot', {cache: 'no-store'});
+            if (!response.ok) return;
+            const payload = await response.json();
+            applyWorkflowSnapshot(payload.workflows || []);
+        } catch (_) {
+            // Silent fallback: visualizer can still run via live socket events.
+        }
+        document.getElementById('mermaid-view').innerHTML = '';
+    }
+
+    function showTab(tab) {
+        const cyEl = document.getElementById('cy');
+        const mermaidEl = document.getElementById('mermaid-container');
+        const tabs = document.querySelectorAll('.tab');
+
+        tabs.forEach(t => t.classList.remove('active'));
+
+        if (tab === 'graph') {
+            cyEl.style.display = 'block';
+            mermaidEl.style.display = 'none';
+            tabs[0].classList.add('active');
+            relayout();
+        } else {
+            cyEl.style.display = 'none';
+            mermaidEl.style.display = 'block';
+            tabs[1].classList.add('active');
+        }
+    }
+
+    // ---- Event log ----
+    function logEvent(type, data) {
+        const log = document.getElementById('event-log');
+        const item = document.createElement('div');
+        item.className = `event-item ${type}`;
+        const time = new Date().toLocaleTimeString();
+        item.innerHTML = `<div class="event-time">${time} — <strong>${type}</strong></div><div class="event-body">${JSON.stringify(data)}</div>`;
+        log.prepend(item);
+        // Cap log to 100 items
+        while (log.children.length > 100) log.removeChild(log.lastChild);
+    }
+
+    // ---- SocketIO ----
+    if (typeof window.io === 'function') {
+        const socket = window.io('/visualizer');
+
+        socket.on('connect', () => {
+            document.getElementById('status-dot').classList.add('connected');
+            document.getElementById('status-text').textContent = 'Connected';
+        });
+
+        socket.on('disconnect', () => {
+            document.getElementById('status-dot').classList.remove('connected');
+            document.getElementById('status-text').textContent = 'Disconnected — reconnecting…';
+        });
+
+        socket.on('agent_registered', (data) => {
+            logEvent('agent_registered', data);
+            const issueId = `issue-${data.issue}`;
+            const agentId = `agent-${data.issue}-${data.agent}`;
+            ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
+            ensureNode(agentId, data.agent, 'agent');
+            ensureEdge(issueId, agentId, 'launched');
+        });
+
+        socket.on('workflow_mapped', (data) => {
+            logEvent('workflow_mapped', data);
+            const issueId = `issue-${data.issue}`;
+            const wfId = `wf-${data.workflow_id}`;
+            ensureNode(issueId, `Issue #${data.issue}`, 'workflow');
+            ensureNode(wfId, data.workflow_id, 'workflow');
+            ensureEdge(issueId, wfId, 'workflow');
+        });
+    } else {
+        document.getElementById('status-text').textContent = 'Live socket unavailable — using snapshot mode';
+    }
+
+    refreshSnapshot();
+    setInterval(refreshSnapshot, 15000);
 </script>
 </body>
 </html>

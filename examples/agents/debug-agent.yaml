@@ -21,7 +21,7 @@ spec:
     4. Provides reproduction steps
     5. Identifies affected versions
     6. Posts analysis as issue comment
-    
+
   requires_tools:
     - github:read_issue
     - github:search_codebase
@@ -48,7 +48,7 @@ spec:
       description: "List of affected software versions"
     severity:
       type: enum
-      values: ["critical", "high", "medium", "low"]
+      values: [ "critical", "high", "medium", "low" ]
       description: "Bug severity assessment"
 
   # Example prompt template
@@ -69,5 +69,5 @@ spec:
 
   # Success criteria
   validation:
-    required_outputs: ["suspected_cause", "reproduction_steps"]
+    required_outputs: [ "suspected_cause", "reproduction_steps" ]
     max_duration_seconds: 600

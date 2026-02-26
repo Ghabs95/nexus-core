@@ -32,7 +32,7 @@ def test_workflow_policy_builders():
 
 
 def test_workflow_policy_finalize_workflow():
-    captured = {"notify": None, "pr_kwargs": None}
+    captured = {"notify": None, "pr_kwargs": None, "cleanup_kwargs": None}
 
     def _resolve_git_dir(_project_name):
         return "/tmp/repo"
@@ -44,6 +44,10 @@ def test_workflow_policy_finalize_workflow():
     def _close_issue(**_kwargs):
         return True
 
+    def _cleanup_worktree(**_kwargs):
+        captured["cleanup_kwargs"] = _kwargs
+        return True
+
     def _send_notification(message):
         captured["notify"] = message
 
@@ -51,6 +55,7 @@ def test_workflow_policy_finalize_workflow():
         {
             "resolve_git_dir": _resolve_git_dir,
             "create_pr_from_changes": _create_pr_from_changes,
+            "cleanup_worktree": _cleanup_worktree,
             "close_issue": _close_issue,
             "send_notification": _send_notification,
         }
@@ -68,10 +73,11 @@ def test_workflow_policy_finalize_workflow():
     assert result["notification_sent"] is True
     assert "Workflow Complete" in captured["notify"]
     assert captured["pr_kwargs"]["issue_repo"] == "org/repo"
+    assert captured["cleanup_kwargs"] == {"repo_dir": "/tmp/repo", "issue_number": "42"}
 
 
 def test_workflow_policy_finalize_workflow_reuses_existing_pr():
-    captured = {"created": False, "closed_kwargs": None}
+    captured = {"created": False, "closed_kwargs": None, "cleanup_called": False}
 
     def _resolve_git_dir(_project_name):
         return "/tmp/repo"
@@ -87,11 +93,16 @@ def test_workflow_policy_finalize_workflow_reuses_existing_pr():
         captured["closed_kwargs"] = _kwargs
         return True
 
+    def _cleanup_worktree(**_kwargs):
+        captured["cleanup_called"] = True
+        return True
+
     plugin = WorkflowPolicyPlugin(
         {
             "resolve_git_dir": _resolve_git_dir,
             "find_existing_pr": _find_existing_pr,
             "create_pr_from_changes": _create_pr_from_changes,
+            "cleanup_worktree": _cleanup_worktree,
             "close_issue": _close_issue,
         }
     )
@@ -105,4 +116,5 @@ def test_workflow_policy_finalize_workflow_reuses_existing_pr():
 
     assert result["pr_urls"] == ["https://github.com/org/repo/pull/50"]
     assert captured["created"] is False
+    assert captured["cleanup_called"] is False
     assert "https://github.com/org/repo/pull/50" in captured["closed_kwargs"]["comment"]

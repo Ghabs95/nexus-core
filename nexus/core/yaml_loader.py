@@ -36,6 +36,7 @@ RETRY_BACKOFF_STRATEGIES = ("exponential", "linear", "constant")
 # YamlWorkflowLoader
 # ---------------------------------------------------------------------------
 
+
 class YamlWorkflowLoader:
     """Load and validate Nexus workflow definitions from YAML.
 
@@ -145,8 +146,7 @@ class YamlWorkflowLoader:
 
         if errors:
             raise ValueError(
-                "Workflow YAML schema validation failed:\n"
-                + "\n".join(f"  - {e}" for e in errors)
+                "Workflow YAML schema validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
             )
 
         if strict and warnings:

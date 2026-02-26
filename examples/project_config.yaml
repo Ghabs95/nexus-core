@@ -18,13 +18,12 @@ workflow_definition_path: your-org/workflows/your_org_workflow.yaml
 # This allows the system to work with any VCS platform by changing a single config value
 nexus_dir: .nexus
 
-# PR Merge Policy (project-level enforcement)
-# Controls whether @OpsCommander can auto-merge PRs or must wait for human approval
-# Options:
-#   - always: Human approval REQUIRED for all PRs (overrides workflow settings)
-#   - workflow-based: Workflow YAML controls per-workflow/per-step merge behavior
-#   - never: Auto-merge allowed (NOT recommended for production)
-require_human_merge_approval: workflow-based  # Overrideable per project
+# Merge queue behavior (project-level enforcement)
+# review_mode:
+#   - manual: PR merge requires human approval
+#   - auto: PR can be merged automatically by the queue worker when ready
+merge_queue:
+  review_mode: manual  # Overrideable per project
 
 # GitHub Issue Triage Configuration (optional)
 # Maps incoming GitHub issues to agent types based on labels and repository
@@ -41,7 +40,7 @@ issue_triage:
   
   # Per-repository override (use different agent type for specific repos)
   per_repo:
-    # "your-org/important-repo": "escalation"  # All issues in this repo → escalation
+  # "your-org/important-repo": "escalation"  # All issues in this repo → escalation
   
   # Label-based routing to agent types
   label_based:
@@ -81,6 +80,26 @@ ai_tool_preferences:
   summarizer: gemini       # Workflow summaries (faster)
   escalation: copilot      # High-priority escalation to senior agent
 
+# Global operation task -> agent type mapping.
+# These are non-agent orchestration tasks (classification, naming, refinement);
+# provider is resolved via ai_tool_preferences for the selected agent type.
+operation_agents:
+  default: triage
+  classify: triage
+  route: triage
+  detect_intent: triage
+  generate_name: triage
+  refine_description: triage
+  transcribe_audio: triage
+  chat:
+    designer:
+      context_path: your-org/docs
+      context_files:
+        - AGENTS.md
+    triage: { }
+    compliance: { }
+    writer: { }
+
 # --- PROJECT CONFIGURATIONS ---
 # Each project must have: agents_dir, workspace
 # Recommended: git_repo (primary). Optional: git_repos for multi-repo projects.
@@ -111,6 +130,22 @@ custom_project:
   agents_dir: custom-project/agents
   workspace: custom_project
   git_repo: acme/custom-project
+
+  # Optional per-project overrides for operation task routing.
+  operation_agents:
+    default: triage
+    refine_description: designer
+    overrides:
+      issue:
+        refine_description: triage
+    chat:
+      designer:
+        label: "Product Designer"
+        context_path: custom-project/docs
+        context_files:
+          - PRODUCT.md
+      triage:
+        label: "Technical Lead"
   
   # Use a different workflow YAML file for this project  
   # (defaults to global workflow_definition_path if not specified)

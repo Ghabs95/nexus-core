@@ -58,9 +58,7 @@ class WorkflowStateEnginePlugin:
 
     def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
-        self.storage_dir: str = self.config.get(
-            "storage_dir", os.environ.get(_STORAGE_DIR_ENV, "")
-        )
+        self.storage_dir: str = self.config.get("storage_dir", os.environ.get(_STORAGE_DIR_ENV, ""))
         self.engine_factory: Callable[[], WorkflowEngine] | None = self.config.get("engine_factory")
         self.issue_to_workflow_id = self.config.get("issue_to_workflow_id")
 
@@ -72,8 +70,7 @@ class WorkflowStateEnginePlugin:
             return prebuilt
 
         storage_type = (
-            self.config.get("storage_type")
-            or os.environ.get(_STORAGE_TYPE_ENV, "file")
+            self.config.get("storage_type") or os.environ.get(_STORAGE_TYPE_ENV, "file")
         ).lower()
 
         registry = AdapterRegistry()
@@ -214,7 +211,9 @@ class WorkflowStateEnginePlugin:
 
             route_points_to_next = WorkflowStateEnginePlugin._refs_match(target_ref, next_agent)
             if not route_points_to_next and target_step:
-                route_points_to_next = WorkflowStateEnginePlugin._refs_match(target_step.name, next_agent)
+                route_points_to_next = WorkflowStateEnginePlugin._refs_match(
+                    target_step.name, next_agent
+                )
                 if not route_points_to_next:
                     route_points_to_next = WorkflowStateEnginePlugin._refs_match(
                         target_step.agent.name,

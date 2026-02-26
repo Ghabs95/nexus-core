@@ -31,10 +31,14 @@ from nexus.adapters.storage.postgres_workflow_state import PostgresWorkflowState
 @pytest.fixture()
 def store() -> PostgresWorkflowStateStore:
     """Create a store backed by in-memory SQLite (same SQLAlchemy ORM)."""
-    return PostgresWorkflowStateStore(
+    instance = PostgresWorkflowStateStore(
         connection_string="sqlite:///:memory:",
         echo=False,
     )
+    try:
+        yield instance
+    finally:
+        instance.close()
 
 
 # ---------------------------------------------------------------------------

@@ -8,12 +8,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from nexus.core.chat_agents_schema import get_project_chat_agent_types
-
 from handlers.agent_definition_utils import extract_agent_identity
 from handlers.agent_resolution_handler import resolve_agents_for_project
 from interactive_context import InteractiveContext
 from utils.log_utils import log_unauthorized_access
+
+from nexus.core.chat_agents_schema import get_project_chat_agent_types
 
 
 @dataclass
@@ -90,7 +90,9 @@ def _resolve_agent_type(
     return None
 
 
-def _build_direct_chat_persona(base_persona: str, project: str, agent_name: str, agent_type: str) -> str:
+def _build_direct_chat_persona(
+    base_persona: str, project: str, agent_name: str, agent_type: str
+) -> str:
     safe_base = base_persona or "You are a helpful AI assistant."
     context_block = (
         "\n\nDirect Conversation Context:\n"
@@ -119,9 +121,7 @@ async def audit_handler(ctx: InteractiveContext, deps: OpsHandlerDeps) -> None:
     if not project_key:
         return
 
-    msg_id = await ctx.reply_text(
-        f"📊 Fetching audit trail for issue #{issue_num}..."
-    )
+    msg_id = await ctx.reply_text(f"📊 Fetching audit trail for issue #{issue_num}...")
 
     try:
         audit_history = deps.get_audit_history(issue_num, limit=100)
@@ -193,9 +193,7 @@ async def stats_handler(ctx: InteractiveContext, deps: OpsHandlerDeps) -> None:
         log_unauthorized_access(getattr(deps, "logger", None), int(ctx.user_id))
         return
 
-    msg_id = await ctx.reply_text(
-        "📊 Generating analytics report..."
-    )
+    msg_id = await ctx.reply_text("📊 Generating analytics report...")
 
     try:
         lookback_days = 30
@@ -389,14 +387,15 @@ async def direct_handler(ctx: InteractiveContext, deps: OpsHandlerDeps) -> None:
     if agent not in agents_map:
         available = ", ".join([f"@{a}" for a in sorted(agents_map.keys())])
         await ctx.reply_text(
-            f"❌ Unknown agent '@{agent}' for {project}\n\n"
-            f"Available: {available}"
+            f"❌ Unknown agent '@{agent}' for {project}\n\n" f"Available: {available}"
         )
         return
 
     source_filename = agents_map.get(agent, "")
     project_cfg = deps.project_config.get(project) if isinstance(deps.project_config, dict) else {}
-    project_chat_agent_types = get_project_chat_agent_types(project_cfg if isinstance(project_cfg, dict) else {})
+    project_chat_agent_types = get_project_chat_agent_types(
+        project_cfg if isinstance(project_cfg, dict) else {}
+    )
     agent_type = _resolve_agent_type(
         agent,
         source_filename,
@@ -426,9 +425,10 @@ async def direct_handler(ctx: InteractiveContext, deps: OpsHandlerDeps) -> None:
 
             chat_result = deps.orchestrator.run_text_to_speech_analysis(
                 text=message,
-                task="advisor_chat",
+                task="chat",
                 history=history,
                 persona=persona,
+                project_name=project,
             )
 
             reply_text = chat_result.get("text", "I couldn't generate a response right now.")

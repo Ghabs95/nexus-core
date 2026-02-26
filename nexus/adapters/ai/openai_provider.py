@@ -6,6 +6,7 @@ Requires the ``openai`` optional extra::
 
 Uses the ``openai`` Python SDK (v1+) with async support.
 """
+
 import logging
 import time
 
@@ -109,9 +110,7 @@ class OpenAIProvider(AIProvider):
         ]
         # Attach issue URL as additional context when provided
         if context.issue_url:
-            messages[1]["content"] = (
-                f"Issue: {context.issue_url}\n\n{context.prompt}"
-            )
+            messages[1]["content"] = f"Issue: {context.issue_url}\n\n{context.prompt}"
 
         try:
             response = await self._client.chat.completions.create(

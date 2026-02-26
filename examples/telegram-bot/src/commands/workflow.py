@@ -1,8 +1,10 @@
 """Workflow control commands: pause, resume, stop, continue, new."""
+
 import logging
 
 from audit_store import AuditStore
 from config import NEXUS_CORE_STORAGE_DIR, PROJECT_CONFIG, TELEGRAM_ALLOWED_USER_IDS
+from integrations.workflow_state_factory import get_workflow_state
 from interactive_context import InteractiveContext
 from orchestration.plugin_runtime import (
     get_profiled_plugin,
@@ -10,7 +12,6 @@ from orchestration.plugin_runtime import (
     get_workflow_state_plugin,
 )
 from project_key_utils import normalize_project_key_str as _normalize_project_key
-from integrations.workflow_state_factory import get_workflow_state
 from state_manager import HostStateManager
 
 logger = logging.getLogger(__name__)
@@ -52,9 +53,7 @@ async def pause_handler(ctx: InteractiveContext):
         return
 
     if not ctx.args or len(ctx.args) < 2:
-        await ctx.reply_text(
-            "⚠️ Usage: /pause <project> <issue#>"
-        )
+        await ctx.reply_text("⚠️ Usage: /pause <project> <issue#>")
         return
 
     project_key = _normalize_project_key(ctx.args[0])
@@ -76,9 +75,7 @@ async def pause_handler(ctx: InteractiveContext):
         reason="User requested via Telegram",
     )
     if not success:
-        await ctx.reply_text(
-            f"⚠️ Unable to pause workflow for issue #{issue_num}."
-        )
+        await ctx.reply_text(f"⚠️ Unable to pause workflow for issue #{issue_num}.")
         return
 
     AuditStore.audit_log(int(issue_num), "WORKFLOW_PAUSED", "via nexus-core")
@@ -86,8 +83,10 @@ async def pause_handler(ctx: InteractiveContext):
     status = await workflow_plugin.get_workflow_status(issue_num)
     status_text = ""
     if status:
-        status_text = (f"\n\n**Workflow:** {status['name']}\n"
-                     f"**Step:** {status['current_step']}/{status['total_steps']} - {status['current_step_name']}")
+        status_text = (
+            f"\n\n**Workflow:** {status['name']}\n"
+            f"**Step:** {status['current_step']}/{status['total_steps']} - {status['current_step_name']}"
+        )
 
     await ctx.reply_text(
         f"⏸️ **Workflow paused for issue #{issue_num}**{status_text}\n\n"
@@ -102,9 +101,7 @@ async def resume_handler(ctx: InteractiveContext):
         return
 
     if not ctx.args or len(ctx.args) < 2:
-        await ctx.reply_text(
-            "⚠️ Usage: /resume <project> <issue#>"
-        )
+        await ctx.reply_text("⚠️ Usage: /resume <project> <issue#>")
         return
 
     project_key = _normalize_project_key(ctx.args[0])
@@ -123,9 +120,7 @@ async def resume_handler(ctx: InteractiveContext):
     )
     success = await workflow_plugin.resume_workflow(issue_num)
     if not success:
-        await ctx.reply_text(
-            f"⚠️ Unable to resume workflow for issue #{issue_num}."
-        )
+        await ctx.reply_text(f"⚠️ Unable to resume workflow for issue #{issue_num}.")
         return
 
     AuditStore.audit_log(int(issue_num), "WORKFLOW_RESUMED", "via nexus-core")
@@ -133,8 +128,10 @@ async def resume_handler(ctx: InteractiveContext):
     status = await workflow_plugin.get_workflow_status(issue_num)
     status_text = ""
     if status:
-        status_text = (f"\n\n**Workflow:** {status['name']}\n"
-                     f"**Step:** {status['current_step']}/{status['total_steps']} - {status['current_step_name']}")
+        status_text = (
+            f"\n\n**Workflow:** {status['name']}\n"
+            f"**Step:** {status['current_step']}/{status['total_steps']} - {status['current_step_name']}"
+        )
 
     await ctx.reply_text(
         f"▶️ **Workflow resumed for issue #{issue_num}**{status_text}\n\n"
@@ -150,9 +147,7 @@ async def stop_handler(ctx: InteractiveContext):
         return
 
     if not ctx.args or len(ctx.args) < 2:
-        await ctx.reply_text(
-            "⚠️ Usage: /stop <project> <issue#>"
-        )
+        await ctx.reply_text("⚠️ Usage: /stop <project> <issue#>")
         return
 
     project_key = _normalize_project_key(ctx.args[0])
@@ -188,11 +183,24 @@ async def stop_handler(ctx: InteractiveContext):
     AuditStore.audit_log(int(issue_num), "WORKFLOW_STOPPED")
 
     # Remove from launched_agents tracker to prevent false dead-agent alerts
-    launched = HostStateManager.load_launched_agents()
-    if str(issue_num) in launched:
-        del launched[str(issue_num)]
+    launched = HostStateManager.load_launched_agents(recent_only=False)
+    issue_key = str(issue_num)
+    keys_to_remove = [
+        key
+        for key, value in launched.items()
+        if key == issue_key
+        or key.startswith(f"{issue_key}_")
+        or (isinstance(value, dict) and str(value.get("issue", "")) == issue_key)
+    ]
+    for key in keys_to_remove:
+        launched.pop(key, None)
+    if keys_to_remove:
         HostStateManager.save_launched_agents(launched)
-        logger.info(f"Removed issue #{issue_num} from launched_agents tracker")
+        logger.info(
+            "Removed issue #%s from launched_agents tracker (keys=%s)",
+            issue_num,
+            ",".join(keys_to_remove),
+        )
 
     # Close the Git issue
     try:

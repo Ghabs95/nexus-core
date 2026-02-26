@@ -5,6 +5,7 @@ Prevents duplicate agent launches through multiple layers of detection:
 2. Timestamp-based recent-launch tracking
 3. Pluggable custom guard functions
 """
+
 import logging
 import time
 from collections.abc import Callable
@@ -137,10 +138,7 @@ class LaunchGuard:
             Number of records cleaned up.
         """
         now = time.time()
-        expired = [
-            k for k, rec in self._launches.items()
-            if (now - rec.timestamp) > self._cooldown
-        ]
+        expired = [k for k, rec in self._launches.items() if (now - rec.timestamp) > self._cooldown]
         for k in expired:
             del self._launches[k]
         return len(expired)
@@ -149,7 +147,4 @@ class LaunchGuard:
     def active_count(self) -> int:
         """Number of non-expired launch records."""
         now = time.time()
-        return sum(
-            1 for rec in self._launches.values()
-            if (now - rec.timestamp) <= self._cooldown
-        )
+        return sum(1 for rec in self._launches.values() if (now - rec.timestamp) <= self._cooldown)

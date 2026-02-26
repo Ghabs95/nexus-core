@@ -13,8 +13,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from nexus.core.audit_query import AuditQueryProvider
-
 logger = logging.getLogger(__name__)
 
 

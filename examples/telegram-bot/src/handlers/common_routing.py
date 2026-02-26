@@ -67,6 +67,7 @@ def run_conversation_turn(
     get_chat_history: Callable[[int], str],
     append_message: Callable[[int, str, str], None],
     persona: str,
+    project_name: str | None = None,
 ) -> str:
     """Execute one shared conversation turn and persist memory."""
     history = get_chat_history(user_id)
@@ -74,9 +75,10 @@ def run_conversation_turn(
 
     chat_result = orchestrator.run_text_to_speech_analysis(
         text=text,
-        task="advisor_chat",
+        task="chat",
         history=history,
         persona=persona,
+        project_name=project_name,
     )
 
     reply_text = "I'm offline right now, how can I help later?"

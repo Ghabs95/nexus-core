@@ -23,7 +23,9 @@ Usage::
 import logging
 from typing import Any
 
+from nexus.adapters.notifications.base import Button, Message
 from nexus.core.events import (
+    AlertAction,
     AgentTimeout,
     EventBus,
     NexusEvent,
@@ -31,9 +33,7 @@ from nexus.core.events import (
     StepFailed,
     SystemAlert,
     WorkflowCancelled,
-    WorkflowCompleted,
     WorkflowFailed,
-    WorkflowStarted,
 )
 from nexus.core.models import Severity
 from nexus.plugins.base import PluginHealthStatus
@@ -75,6 +75,7 @@ class SlackEventHandler:
             default_channel=config.get("default_channel", "#general"),
             webhook_url=config.get("webhook_url"),
         )
+        self._has_bot_token = bool(str(config.get("bot_token", "")).strip())
         self._subscriptions: list[str] = []
         self._last_send_ok: bool = True
 
@@ -89,7 +90,9 @@ class SlackEventHandler:
         self._subscriptions.append(bus.subscribe("step.failed", self._handle))
         self._subscriptions.append(bus.subscribe("agent.timeout", self._handle))
         self._subscriptions.append(bus.subscribe("system.alert", self._handle))
-        logger.info("SlackEventHandler attached to EventBus (%d subscriptions)", len(self._subscriptions))
+        logger.info(
+            "SlackEventHandler attached to EventBus (%d subscriptions)", len(self._subscriptions)
+        )
 
     def detach(self, bus: EventBus) -> None:
         """Unsubscribe all subscriptions from *bus*."""
@@ -101,6 +104,8 @@ class SlackEventHandler:
 
     async def _handle(self, event: NexusEvent) -> None:
         emoji, label = _EVENT_FORMAT.get(event.event_type, ("📌", event.event_type))
+        send_as_message = False
+        buttons: list[Button] = []
 
         if isinstance(event, SystemAlert):
             severity = _SEVERITY_MAP.get(event.severity, Severity.INFO)
@@ -109,6 +114,29 @@ class SlackEventHandler:
                 lines.append(f"*Source:* {event.source}")
             if event.workflow_id:
                 lines.append(f"*Workflow:* `{event.workflow_id}`")
+            if event.project_key:
+                lines.append(f"*Project:* `{event.project_key}`")
+            if event.issue_number:
+                lines.append(f"*Issue:* `#{event.issue_number}`")
+
+            action_hints: list[str] = []
+            for action in list(getattr(event, "actions", []) or []):
+                if not isinstance(action, AlertAction):
+                    continue
+                label_text = str(action.label or "").strip()
+                callback_data = str(action.callback_data or "").strip()
+                url = str(action.url or "").strip()
+                if not label_text:
+                    continue
+                if url:
+                    buttons.append(
+                        Button(label=label_text, callback_data=callback_data or label_text, url=url)
+                    )
+                elif callback_data:
+                    action_hints.append(f"`{label_text}` → `{callback_data}`")
+            if action_hints:
+                lines.append("*Actions:* " + " | ".join(action_hints))
+            send_as_message = bool(buttons) and self._has_bot_token
         else:
             lines: list[str] = []
             if event.workflow_id:
@@ -142,7 +170,17 @@ class SlackEventHandler:
         message_text = f"{emoji} *{label}*\n{description}"
 
         try:
-            await self._slack.send_alert(message_text, severity)
+            if send_as_message:
+                await self._slack.send_message(
+                    getattr(self._slack, "_default_channel", "#general"),
+                    Message(
+                        text=message_text,
+                        severity=severity,
+                        buttons=buttons or None,
+                    ),
+                )
+            else:
+                await self._slack.send_alert(message_text, severity)
             self._last_send_ok = True
         except Exception as exc:
             self._last_send_ok = False
@@ -165,6 +203,7 @@ class SlackEventHandler:
 
 
 # -- Plugin registration ---------------------------------------------------
+
 
 def register_plugins(registry: Any) -> None:
     """Register Slack event handler plugin."""

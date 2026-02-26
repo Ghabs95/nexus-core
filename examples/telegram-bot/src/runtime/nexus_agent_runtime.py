@@ -8,9 +8,8 @@ Bridges ProcessOrchestrator (nexus-core) with the concrete nexus host:
   - Workflow finalisation (close issue + PR)
 """
 
-import glob
 import asyncio
-import json
+import glob
 import logging
 import os
 import re
@@ -198,6 +197,7 @@ class NexusAgentRuntime(AgentRuntime):
             trigger_source=trigger_source,
             exclude_tools=exclude_tools,
         )
+
     def load_launched_agents(self, recent_only: bool = True) -> dict[str, dict]:
         from state_manager import HostStateManager
 
@@ -257,8 +257,10 @@ class NexusAgentRuntime(AgentRuntime):
             if not isinstance(trip_times, list):
                 trip_times = []
             trip_times = [
-                float(ts) for ts in trip_times
-                if isinstance(ts, (int, float)) and (now - float(ts)) <= RETRY_FUSE_HARD_WINDOW_SECONDS
+                float(ts)
+                for ts in trip_times
+                if isinstance(ts, (int, float))
+                and (now - float(ts)) <= RETRY_FUSE_HARD_WINDOW_SECONDS
             ]
 
             # Reset rolling window for different agent or expired time window.
@@ -307,7 +309,11 @@ class NexusAgentRuntime(AgentRuntime):
                 if not alerted:
                     try:
                         from audit_store import AuditStore
-                        from config import NEXUS_CORE_STORAGE_DIR, NEXUS_STORAGE_DSN, NEXUS_WORKFLOW_BACKEND
+                        from config import (
+                            NEXUS_CORE_STORAGE_DIR,
+                            NEXUS_STORAGE_DSN,
+                            NEXUS_WORKFLOW_BACKEND,
+                        )
                         from orchestration.plugin_runtime import (
                             get_workflow_state_plugin,
                         )
@@ -317,15 +323,20 @@ class NexusAgentRuntime(AgentRuntime):
                         workflow_plugin = get_workflow_state_plugin(
                             storage_dir=NEXUS_CORE_STORAGE_DIR,
                             storage_type=(
-                                "postgres" if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} else "file"
+                                "postgres"
+                                if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"}
+                                else "file"
                             ),
                             storage_config=(
                                 {"connection_string": NEXUS_STORAGE_DSN}
-                                if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} and NEXUS_STORAGE_DSN
+                                if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"}
+                                and NEXUS_STORAGE_DSN
                                 else {}
                             ),
                             issue_to_workflow_id=lambda n: get_workflow_state().get_workflow_id(n),
-                            clear_pending_approval=lambda n: get_workflow_state().clear_pending_approval(n),
+                            clear_pending_approval=lambda n: get_workflow_state().clear_pending_approval(
+                                n
+                            ),
                             audit_log=AuditStore.audit_log,
                             cache_key="workflow:state-engine:retry-fuse",
                         )
@@ -584,9 +595,7 @@ class NexusAgentRuntime(AgentRuntime):
 
         workflow_plugin = get_workflow_state_plugin(
             storage_dir=NEXUS_CORE_STORAGE_DIR,
-            storage_type=(
-                "postgres" if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} else "file"
-            ),
+            storage_type=("postgres" if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} else "file"),
             storage_config=(
                 {"connection_string": NEXUS_STORAGE_DSN}
                 if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} and NEXUS_STORAGE_DSN
@@ -681,9 +690,7 @@ class NexusAgentRuntime(AgentRuntime):
 
         workflow_plugin = get_workflow_state_plugin(
             storage_dir=NEXUS_CORE_STORAGE_DIR,
-            storage_type=(
-                "postgres" if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} else "file"
-            ),
+            storage_type=("postgres" if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} else "file"),
             storage_config=(
                 {"connection_string": NEXUS_STORAGE_DSN}
                 if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} and NEXUS_STORAGE_DSN
@@ -770,19 +777,21 @@ class NexusAgentRuntime(AgentRuntime):
         prioritized_steps = []
         if requested:
             prioritized_steps.extend(
-                step for step in steps
+                step
+                for step in steps
                 if isinstance(step, dict)
                 and str(step.get("status", "")).strip().upper() == "RUNNING"
                 and _step_agent_name(step) == requested
             )
         prioritized_steps.extend(
-            step for step in steps
-            if isinstance(step, dict)
-            and str(step.get("status", "")).strip().upper() == "RUNNING"
+            step
+            for step in steps
+            if isinstance(step, dict) and str(step.get("status", "")).strip().upper() == "RUNNING"
         )
         if requested:
             prioritized_steps.extend(
-                step for step in steps
+                step
+                for step in steps
                 if isinstance(step, dict) and _step_agent_name(step) == requested
             )
 
@@ -828,17 +837,13 @@ class NexusAgentRuntime(AgentRuntime):
         # for logging; pass empty string when we don't have it readily.
         return bool(AgentMonitor.kill_agent(pid, ""))
 
-    def notify_timeout(
-        self, issue_number: str, agent_type: str, will_retry: bool
-    ) -> None:
+    def notify_timeout(self, issue_number: str, agent_type: str, will_retry: bool) -> None:
         try:
             from integrations.notifications import notify_agent_timeout
 
             notify_agent_timeout(issue_number, agent_type, will_retry, project="nexus")
         except Exception as exc:
-            logger.warning(
-                f"notify_timeout failed for #{issue_number} / {agent_type}: {exc}"
-            )
+            logger.warning(f"notify_timeout failed for #{issue_number} / {agent_type}: {exc}")
 
     def get_latest_issue_log(self, issue_number: str) -> str | None:
         """Return latest task session log path for an issue, if present."""

@@ -48,7 +48,7 @@ def test_merge_policy_injected_for_deployer():
         nexus_dir=".nexus",
     )
     assert "MUST NOT run `gh pr merge`" in prompt
-    assert "require_human_merge_approval" in prompt
+    assert "merge_queue.review_mode" in prompt
 
 
 def test_merge_policy_injected_for_ops():

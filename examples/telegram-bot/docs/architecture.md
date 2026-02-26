@@ -1,6 +1,7 @@
 # System Architecture
 
-High-level architecture for the Nexus Telegram Bot — a workflow automation system that orchestrates AI agents to complete software development tasks.
+High-level architecture for the Nexus Telegram Bot — a workflow automation system that orchestrates AI agents to
+complete software development tasks.
 
 ## System Overview
 
@@ -106,23 +107,23 @@ Agent Starts → Posts to GitHub
 
 ## Core Components
 
-| Component | File | Purpose |
-|---|---|---|
-| **Telegram Bot** | `telegram_bot.py` | User interface, commands, callbacks |
-| **Webhook Server** | `webhook_server.py` | GitHub events, completion endpoint, agent launch |
-| **State Manager** | `state_manager.py` | Persist launched agents, tracked issues |
-| **Inbox Routing** | `handlers/inbox_routing_handler.py` | Route tasks to projects |
-| **Config** | `config.py` | All env vars, project config, storage backends |
-| **Agent Launcher** | `runtime/agent_launcher.py` | Subprocess management for AI agents |
+| Component          | File                                | Purpose                                          |
+|--------------------|-------------------------------------|--------------------------------------------------|
+| **Telegram Bot**   | `telegram_bot.py`                   | User interface, commands, callbacks              |
+| **Webhook Server** | `webhook_server.py`                 | GitHub events, completion endpoint, agent launch |
+| **State Manager**  | `state_manager.py`                  | Persist launched agents, tracked issues          |
+| **Inbox Routing**  | `handlers/inbox_routing_handler.py` | Route tasks to projects                          |
+| **Config**         | `config.py`                         | All env vars, project config, storage backends   |
+| **Agent Launcher** | `runtime/agent_launcher.py`         | Subprocess management for AI agents              |
 
 ## Services
 
 The system runs as Linux systemd services:
 
-| Service | Description |
-|---|---|
-| `nexus-bot` | Telegram bot (long-polling or webhook mode) |
-| `nexus-webhook` | GitHub webhook receiver + inbox processor |
-| `nexus-health` | Health check / metrics endpoint |
+| Service         | Description                                 |
+|-----------------|---------------------------------------------|
+| `nexus-bot`     | Telegram bot (long-polling or webhook mode) |
+| `nexus-webhook` | GitHub webhook receiver + inbox processor   |
+| `nexus-health`  | Health check / metrics endpoint             |
 
 All services auto-restart on failure via `Restart=always`.

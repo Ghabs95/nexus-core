@@ -70,7 +70,9 @@ def build_mermaid_diagram(steps: list[dict[str, Any]], issue_num: str) -> str:
 
         colour = _STATUS_COLOURS.get(raw_status)
         if colour:
-            text_colour = "#000" if raw_status in {"running", "complete", "completed"} else "#cdd9e5"
+            text_colour = (
+                "#000" if raw_status in {"running", "complete", "completed"} else "#cdd9e5"
+            )
             style_lines.append(f"  style {node_id} fill:{colour},color:{text_colour}")
 
         prev_node = node_id
@@ -99,9 +101,12 @@ async def render_mermaid_to_png(diagram_text: str) -> bytes | None:
 
         proc = await asyncio.create_subprocess_exec(
             "mmdc",
-            "-i", tmp_in,
-            "-o", tmp_out,
-            "-t", "dark",
+            "-i",
+            tmp_in,
+            "-o",
+            tmp_out,
+            "-t",
+            "dark",
             "--quiet",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

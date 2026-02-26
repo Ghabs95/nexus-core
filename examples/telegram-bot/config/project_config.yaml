@@ -17,13 +17,12 @@ projects:
       - nexus core
       - nexus-core
 
-# PR Merge Policy (project-level enforcement)
-# Controls whether @deployer can auto-merge PRs or must wait for human approval
-# Options:
-#   - always: Human approval REQUIRED for all PRs (overrides workflow settings)
-#   - workflow-based: Workflow YAML controls per-workflow/per-step merge behavior
-#   - never: Auto-merge allowed (NOT recommended for production)
-require_human_merge_approval: always  # Enforce human review for all projects
+# Merge queue behavior (project-level enforcement)
+# review_mode:
+#   - manual: PR merge requires human approval
+#   - auto: PR can be merged automatically by the queue worker when ready
+merge_queue:
+  review_mode: manual
 
 # GitHub Issue Triage Configuration
 # Maps incoming GitHub issues to agent types (not specific agents)
@@ -78,6 +77,17 @@ ai_tool_preferences:
   writer: gemini             # Generic close-loop writing
   finalizer: gemini          # Generic rejected/closure handling
 
+# Global operation task -> agent type mapping.
+# Provider is selected through ai_tool_preferences for that agent type.
+operation_agents:
+  default: triage
+  classify: triage
+  route: triage
+  detect_intent: triage
+  generate_name: triage
+  refine_description: triage
+  transcribe_audio: triage
+
 # Project configurations
 nexus:
   agents_dir: ghabs/nexus-core/examples/agents
@@ -85,14 +95,20 @@ nexus:
   git_repo: Ghabs95/nexus-core
   # git_repos:
   #  - Ghabs95/nexus-core
-  chat_agents:
-    designer:
-      context_path: nexus-core/examples/telegram-bot/docs
-      context_files:
-        - AGENTS.md
-    triage: {}
-    compliance: {}
-    writer: {}
+  operation_agents:
+    default: triage
+    refine_description: designer
+    overrides:
+      issue:
+        refine_description: triage
+    chat:
+      designer:
+        context_path: nexus-core/examples/telegram-bot/docs
+        context_files:
+          - AGENTS.md
+      triage: { }
+      compliance: { }
+      writer: { }
   # Uses the enterprise workflow (multi-tier: full/shortened/fast-track)
   workflow_definition_path: nexus/nexus-core/examples/workflows/enterprise_workflow.yaml
   # AI tool preferences for enterprise workflow agent types

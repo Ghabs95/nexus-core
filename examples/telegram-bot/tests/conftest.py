@@ -53,8 +53,7 @@ sample_ops:
     agents_dir: sample/ops-agents
     workspace: sample/ops
     git_repo: sample-org/ops-repo
-""".strip()
-        + "\n",
+""".strip() + "\n",
         encoding="utf-8",
     )
 
@@ -74,7 +73,7 @@ def mock_env_vars(monkeypatch, tmp_path):
     monkeypatch.setenv("BASE_DIR", "/tmp/test_nexus")
     monkeypatch.setenv("DATA_DIR", str(_TEST_DATA_DIR))
     monkeypatch.setenv("LOGS_DIR", str(_TEST_LOGS_DIR))
-    
+
     # Create minimal project config for tests with multiple projects
     project_config_file = tmp_path / "project_config.yaml"
     project_config_file.write_text("""
@@ -103,14 +102,14 @@ def mock_env_vars(monkeypatch, tmp_path):
         workspace: sample/ops
         git_repo: sample-org/ops-repo
     """)
-    
+
     monkeypatch.setenv("PROJECT_CONFIG_PATH", str(project_config_file))
 
 
 @pytest.fixture(autouse=True)
 def mock_audit_log():
     """Auto-use fixture to mock AuditStore.audit_log during tests."""
-    with patch('audit_store.AuditStore.audit_log'):
+    with patch("audit_store.AuditStore.audit_log"):
         yield
 
 
@@ -149,15 +148,10 @@ def sample_workflow_chain():
         "full": [
             ("ProjectLead", "Vision & Scope"),
             ("Architect", "Technical Design"),
-            ("Copilot", "Implementation")
+            ("Copilot", "Implementation"),
         ],
-        "shortened": [
-            ("ProjectLead", "Triage"),
-            ("Copilot", "Fix")
-        ],
-        "fast-track": [
-            ("Copilot", "Quick Fix")
-        ]
+        "shortened": [("ProjectLead", "Triage"), ("Copilot", "Fix")],
+        "fast-track": [("Copilot", "Quick Fix")],
     }
 
 

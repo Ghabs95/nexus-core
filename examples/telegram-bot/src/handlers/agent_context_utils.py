@@ -60,7 +60,9 @@ def extract_referenced_paths_from_markdown(agents_text: str) -> list[str]:
     return referenced
 
 
-def collect_context_candidate_files(context_root: str, seed_files: list[str] | None = None) -> list[str]:
+def collect_context_candidate_files(
+    context_root: str, seed_files: list[str] | None = None
+) -> list[str]:
     candidates: list[str] = []
     seed_markdown_files: list[str] = []
 
@@ -152,7 +154,9 @@ def load_agent_prompt_from_definition(
     if not agents_dir:
         return ""
 
-    agents_root = agents_dir if os.path.isabs(agents_dir) else os.path.join(str(base_dir or ""), agents_dir)
+    agents_root = (
+        agents_dir if os.path.isabs(agents_dir) else os.path.join(str(base_dir or ""), agents_dir)
+    )
     if not os.path.isdir(agents_root):
         return ""
 
@@ -240,10 +244,11 @@ def load_role_context(
     if not chunks:
         return ""
 
-    roots_display = ", ".join(os.path.relpath(path, project_root) for path in resolved_context_roots)
+    roots_display = ", ".join(
+        os.path.relpath(path, project_root) for path in resolved_context_roots
+    )
 
     return (
         "\n\nUse this project context as source material (do not invent facts):\n"
-        f"Context folders: {roots_display}\n"
-        + "\n\n".join(chunks)
+        f"Context folders: {roots_display}\n" + "\n\n".join(chunks)
     )

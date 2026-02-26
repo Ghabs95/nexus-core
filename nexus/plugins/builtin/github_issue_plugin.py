@@ -22,10 +22,15 @@ class GitHubIssueCLIPlugin:
         """Create issue and return URL, or None when all attempts fail."""
         labels = labels or []
         cmd = [
-            "gh", "issue", "create",
-            "--repo", self.repo,
-            "--title", title,
-            "--body", body,
+            "gh",
+            "issue",
+            "create",
+            "--repo",
+            self.repo,
+            "--title",
+            title,
+            "--body",
+            body,
         ]
         for label in labels:
             cmd.extend(["--label", label])
@@ -40,10 +45,15 @@ class GitHubIssueCLIPlugin:
             )
 
         fallback_cmd = [
-            "gh", "issue", "create",
-            "--repo", self.repo,
-            "--title", title,
-            "--body", body,
+            "gh",
+            "issue",
+            "create",
+            "--repo",
+            self.repo,
+            "--title",
+            title,
+            "--body",
+            body,
         ]
         try:
             fallback_result = self._run_with_retry(fallback_cmd, max_attempts=1)
@@ -55,9 +65,14 @@ class GitHubIssueCLIPlugin:
     def add_comment(self, issue_number: str, body: str) -> bool:
         """Add a comment to an issue and return success status."""
         cmd = [
-            "gh", "issue", "comment", str(issue_number),
-            "--repo", self.repo,
-            "--body", body,
+            "gh",
+            "issue",
+            "comment",
+            str(issue_number),
+            "--repo",
+            self.repo,
+            "--body",
+            body,
         ]
         try:
             self._run_with_retry(cmd, max_attempts=self.max_attempts)
@@ -69,10 +84,16 @@ class GitHubIssueCLIPlugin:
     def ensure_label(self, label: str, color: str, description: str) -> bool:
         """Create label if needed; returns True when creation succeeds."""
         cmd = [
-            "gh", "label", "create", label,
-            "--repo", self.repo,
-            "--color", color,
-            "--description", description,
+            "gh",
+            "label",
+            "create",
+            label,
+            "--repo",
+            self.repo,
+            "--color",
+            color,
+            "--description",
+            description,
         ]
         try:
             result = subprocess.run(
@@ -90,9 +111,14 @@ class GitHubIssueCLIPlugin:
     def add_label(self, issue_number: str, label: str) -> bool:
         """Add a label to an issue."""
         cmd = [
-            "gh", "issue", "edit", str(issue_number),
-            "--repo", self.repo,
-            "--add-label", label,
+            "gh",
+            "issue",
+            "edit",
+            str(issue_number),
+            "--repo",
+            self.repo,
+            "--add-label",
+            label,
         ]
         try:
             self._run_with_retry(cmd, max_attempts=self.max_attempts)
@@ -104,9 +130,14 @@ class GitHubIssueCLIPlugin:
     def add_assignee(self, issue_number: str, assignee: str) -> bool:
         """Assign an issue to a user/login."""
         cmd = [
-            "gh", "issue", "edit", str(issue_number),
-            "--repo", self.repo,
-            "--add-assignee", assignee,
+            "gh",
+            "issue",
+            "edit",
+            str(issue_number),
+            "--repo",
+            self.repo,
+            "--add-assignee",
+            assignee,
         ]
         try:
             self._run_with_retry(cmd, max_attempts=self.max_attempts)
@@ -118,9 +149,14 @@ class GitHubIssueCLIPlugin:
     def get_issue(self, issue_number: str, fields: list[str]) -> dict[str, Any] | None:
         """Fetch issue JSON for selected fields."""
         cmd = [
-            "gh", "issue", "view", str(issue_number),
-            "--repo", self.repo,
-            "--json", ",".join(fields),
+            "gh",
+            "issue",
+            "view",
+            str(issue_number),
+            "--repo",
+            self.repo,
+            "--json",
+            ",".join(fields),
         ]
         try:
             result = self._run_with_retry(cmd, max_attempts=self.max_attempts)
@@ -146,9 +182,14 @@ class GitHubIssueCLIPlugin:
     def update_issue_body(self, issue_number: str, body: str) -> bool:
         """Update issue body text."""
         cmd = [
-            "gh", "issue", "edit", str(issue_number),
-            "--repo", self.repo,
-            "--body", body,
+            "gh",
+            "issue",
+            "edit",
+            str(issue_number),
+            "--repo",
+            self.repo,
+            "--body",
+            body,
         ]
         try:
             self._run_with_retry(cmd, max_attempts=self.max_attempts)
@@ -160,8 +201,12 @@ class GitHubIssueCLIPlugin:
     def close_issue(self, issue_number: str) -> bool:
         """Close an issue."""
         cmd = [
-            "gh", "issue", "close", str(issue_number),
-            "--repo", self.repo,
+            "gh",
+            "issue",
+            "close",
+            str(issue_number),
+            "--repo",
+            self.repo,
         ]
         try:
             self._run_with_retry(cmd, max_attempts=self.max_attempts)
@@ -176,23 +221,27 @@ class GitHubIssueCLIPlugin:
         limit: int = 10,
         fields: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """List issues/PRs from the configured repository using a broad search."""
+        """List issues from the configured repository."""
         fields = fields or ["number", "title", "state"]
-        # Use 'search issues' instead of 'issue list' to capture both issues and PRs,
-        # and to handle archived states more gracefully.
         cmd = [
-            "gh", "search", "issues",
-            "--repo", self.repo,
-            "--state", state,
-            "--limit", str(limit),
-            "--json", ",".join(fields),
+            "gh",
+            "issue",
+            "list",
+            "--repo",
+            self.repo,
+            "--state",
+            state,
+            "--limit",
+            str(limit),
+            "--json",
+            ",".join(fields),
         ]
         try:
             result = self._run_with_retry(cmd, max_attempts=self.max_attempts)
             data = json.loads(result.stdout or "[]")
             return data if isinstance(data, list) else []
         except Exception as exc:
-            logger.error("Failed to list issues/PRs via search for %s: %s", self.repo, exc)
+            logger.error("Failed to list issues for %s: %s", self.repo, exc)
             return []
 
     def _run_with_retry(

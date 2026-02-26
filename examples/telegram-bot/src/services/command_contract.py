@@ -114,6 +114,7 @@ def validate_required_command_interface() -> None:
         raise ValueError(
             "Required command interface mismatch: "
             + ", ".join(
-                f"{platform} missing {sorted(commands)}" for platform, commands in sorted(missing.items())
+                f"{platform} missing {sorted(commands)}"
+                for platform, commands in sorted(missing.items())
             )
         )

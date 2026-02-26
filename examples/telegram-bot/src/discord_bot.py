@@ -8,6 +8,7 @@ from typing import Any
 
 import discord
 from discord.ext import commands
+
 from nexus.core.utils.logging_filters import install_secret_redaction
 
 # Setup logging
@@ -216,8 +217,7 @@ async def _handle_pending_feature_ideation(message: discord.Message, text: str) 
             state["step"] = "awaiting_project"
             options = ", ".join(sorted(ROUTING_PROJECTS.keys()))
             await message.channel.send(
-                "📁 Great — now choose a project key to continue:\n"
-                f"{options}"
+                "📁 Great — now choose a project key to continue:\n" f"{options}"
             )
             return True
 
@@ -234,10 +234,14 @@ async def _handle_pending_feature_ideation(message: discord.Message, text: str) 
 
         if not features:
             _pending_feature_ideation.pop(message.author.id, None)
-            await message.channel.send("⚠️ I couldn't generate feature proposals right now. Please try again.")
+            await message.channel.send(
+                "⚠️ I couldn't generate feature proposals right now. Please try again."
+            )
             return True
 
-        await message.channel.send(_feature_list_text(project_key, features, state["feature_count"]))
+        await message.channel.send(
+            _feature_list_text(project_key, features, state["feature_count"])
+        )
         return True
 
     if state.get("step") == "awaiting_project":
@@ -261,11 +265,15 @@ async def _handle_pending_feature_ideation(message: discord.Message, text: str) 
 
         if not features:
             _pending_feature_ideation.pop(message.author.id, None)
-            await message.channel.send("⚠️ I couldn't generate feature proposals right now. Please try again.")
+            await message.channel.send(
+                "⚠️ I couldn't generate feature proposals right now. Please try again."
+            )
             return True
 
         await message.channel.send(
-            _feature_list_text(project_key, features, _clamp_feature_count(state.get("feature_count")))
+            _feature_list_text(
+                project_key, features, _clamp_feature_count(state.get("feature_count"))
+            )
         )
         return True
 
@@ -291,10 +299,14 @@ async def _handle_pending_feature_ideation(message: discord.Message, text: str) 
             state["items"] = features
             if not features:
                 _pending_feature_ideation.pop(message.author.id, None)
-                await message.channel.send("⚠️ I couldn't generate feature proposals right now. Please try again.")
+                await message.channel.send(
+                    "⚠️ I couldn't generate feature proposals right now. Please try again."
+                )
                 return True
             await message.channel.send(
-                _feature_list_text(project_candidate, features, _clamp_feature_count(state.get("feature_count")))
+                _feature_list_text(
+                    project_candidate, features, _clamp_feature_count(state.get("feature_count"))
+                )
             )
             return True
 
@@ -304,7 +316,9 @@ async def _handle_pending_feature_ideation(message: discord.Message, text: str) 
 
         selected_index = int(candidate_text) - 1
         if selected_index < 0 or selected_index >= len(items):
-            await message.channel.send("⚠️ Invalid feature selection. Reply with one of the listed numbers.")
+            await message.channel.send(
+                "⚠️ Invalid feature selection. Reply with one of the listed numbers."
+            )
             return True
 
         selected = items[selected_index]
@@ -321,6 +335,7 @@ async def _handle_pending_feature_ideation(message: discord.Message, text: str) 
 
     _pending_feature_ideation.pop(message.author.id, None)
     return False
+
 
 def check_permission(user_id: int) -> bool:
     """Check if the user is allowed to interact with the bot."""
@@ -352,7 +367,9 @@ def _project_workspace(project_key: str) -> str:
             return workspace.strip()
     return project_key
 
+
 # --- DISCORD UI VIEWS (Similar to Telegram Inline Keyboards) ---
+
 
 class ChatRenameModal(discord.ui.Modal, title="Rename Active Chat"):
     name = discord.ui.TextInput(
@@ -382,22 +399,29 @@ class ChatRenamePromptView(discord.ui.View):
         super().__init__(timeout=None)
         self.user_id = user_id
 
-    @discord.ui.button(label="✏️ Open Rename", style=discord.ButtonStyle.primary, custom_id="chat:rename:open")
+    @discord.ui.button(
+        label="✏️ Open Rename", style=discord.ButtonStyle.primary, custom_id="chat:rename:open"
+    )
     async def open_rename_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not check_permission(interaction.user.id):
             return
 
         active_chat_id = get_active_chat(interaction.user.id)
         if active_chat_id:
-            await interaction.response.send_modal(ChatRenameModal(interaction.user.id, active_chat_id))
+            await interaction.response.send_modal(
+                ChatRenameModal(interaction.user.id, active_chat_id)
+            )
         else:
             await interaction.response.send_message("No active chat to rename.", ephemeral=True)
 
-    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.secondary, custom_id="chat:rename:cancel")
+    @discord.ui.button(
+        label="❌ Cancel", style=discord.ButtonStyle.secondary, custom_id="chat:rename:cancel"
+    )
     async def cancel_rename(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not check_permission(interaction.user.id):
             return
         await send_chat_menu(interaction, interaction.user.id, notice="❎ Rename canceled.")
+
 
 class ChatMenuView(discord.ui.View):
     def __init__(self, user_id: int):
@@ -408,21 +432,27 @@ class ChatMenuView(discord.ui.View):
     async def new_chat(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not check_permission(interaction.user.id):
             return
-        
+
         create_chat(interaction.user.id)
         # Re-render the menu
         await send_chat_menu(interaction, interaction.user.id)
 
-    @discord.ui.button(label="📋 Switch Chat", style=discord.ButtonStyle.secondary, custom_id="chat:list")
+    @discord.ui.button(
+        label="📋 Switch Chat", style=discord.ButtonStyle.secondary, custom_id="chat:list"
+    )
     async def switch_chat_list(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not check_permission(interaction.user.id):
             return
-        
+
         view = ChatListView(interaction.user.id)
         await interaction.response.edit_message(content="**Select a chat:**", view=view)
 
-    @discord.ui.button(label="✏️ Rename", style=discord.ButtonStyle.secondary, custom_id="chat:rename")
-    async def rename_current_chat(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(
+        label="✏️ Rename", style=discord.ButtonStyle.secondary, custom_id="chat:rename"
+    )
+    async def rename_current_chat(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
         if not check_permission(interaction.user.id):
             return
 
@@ -434,44 +464,53 @@ class ChatMenuView(discord.ui.View):
             view=ChatRenamePromptView(interaction.user.id),
         )
 
-    @discord.ui.button(label="🗑️ Delete Current", style=discord.ButtonStyle.danger, custom_id="chat:delete")
+    @discord.ui.button(
+        label="🗑️ Delete Current", style=discord.ButtonStyle.danger, custom_id="chat:delete"
+    )
     async def delete_active_chat(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not check_permission(interaction.user.id):
             return
-            
+
         active_chat_id = get_active_chat(interaction.user.id)
         if active_chat_id:
             delete_chat(interaction.user.id, active_chat_id)
-        
+
         # After deleting, send the main menu which will pick the next active chat or create a default
         await send_chat_menu(interaction, interaction.user.id)
+
 
 class ChatListView(discord.ui.View):
     def __init__(self, user_id: int):
         super().__init__(timeout=None)
         self.user_id = user_id
-        
+
         chats = list_chats(user_id)
         active_chat_id = get_active_chat(user_id)
-        
+
         for c in chats:
             chat_id = c.get("id")
             title = c.get("title", "Chat")
-            
+
             # Truncate title for button label limits (Discord limit is 80)
             if len(title) > 70:
                 title = title[:67] + "..."
-                
+
             label = f"✅ {title}" if chat_id == active_chat_id else title
-            style = discord.ButtonStyle.success if chat_id == active_chat_id else discord.ButtonStyle.secondary
-            
+            style = (
+                discord.ButtonStyle.success
+                if chat_id == active_chat_id
+                else discord.ButtonStyle.secondary
+            )
+
             # Using dynamic callback creation
             button = discord.ui.Button(label=label, style=style, custom_id=f"switch_chat:{chat_id}")
             button.callback = self.create_switch_callback(chat_id)
             self.add_item(button)
-            
+
         # Back button
-        back_btn = discord.ui.Button(label="⬅️ Back", style=discord.ButtonStyle.danger, custom_id="chat:back")
+        back_btn = discord.ui.Button(
+            label="⬅️ Back", style=discord.ButtonStyle.danger, custom_id="chat:back"
+        )
         back_btn.callback = self.back_callback
         self.add_item(back_btn)
 
@@ -479,8 +518,9 @@ class ChatListView(discord.ui.View):
         async def callback(interaction: discord.Interaction):
             switch_chat(interaction.user.id, chat_id)
             await send_chat_menu(interaction, interaction.user.id)
+
         return callback
-        
+
     async def back_callback(self, interaction: discord.Interaction):
         await send_chat_menu(interaction, interaction.user.id)
 
@@ -489,7 +529,7 @@ async def send_chat_menu(interaction: discord.Interaction, user_id: int, notice:
     """Helper to send or edit the current message with the main chat menu."""
     active_chat_id = get_active_chat(user_id)
     chats = list_chats(user_id)
-    
+
     active_chat_title = "Unknown"
     for c in chats:
         if c.get("id") == active_chat_id:
@@ -501,9 +541,9 @@ async def send_chat_menu(interaction: discord.Interaction, user_id: int, notice:
         text += f"{notice}\n"
     text += f"**Active Chat:** {active_chat_title}\n"
     text += "_(All conversational history is saved under this thread)_"
-    
+
     view = ChatMenuView(user_id)
-    
+
     # If this is responding to a button click, edit the message
     if interaction.response.is_done():
         await interaction.message.edit(content=text, view=view)
@@ -513,16 +553,17 @@ async def send_chat_menu(interaction: discord.Interaction, user_id: int, notice:
 
 # --- SLASH COMMANDS ---
 
+
 @bot.tree.command(name="chat", description="Manage conversational chat threads")
 async def chat_command(interaction: discord.Interaction):
     if not check_permission(interaction.user.id):
         await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
         return
-        
+
     user_id = interaction.user.id
     active_chat_id = get_active_chat(user_id)
     chats = list_chats(user_id)
-    
+
     active_chat_title = "Unknown"
     for c in chats:
         if c.get("id") == active_chat_id:
@@ -532,7 +573,7 @@ async def chat_command(interaction: discord.Interaction):
     text = "🗣️ **Nexus Chat Menu**\n\n"
     text += f"**Active Chat:** {active_chat_title}\n"
     text += "_(All conversational history is saved under this thread)_"
-    
+
     view = ChatMenuView(user_id)
     await interaction.response.send_message(content=text, view=view)
 
@@ -674,16 +715,17 @@ async def status_command(interaction: discord.Interaction, project: str | None =
 
 # --- MESSAGE HANDLING ---
 
+
 @bot.event
 async def on_message(message: discord.Message):
     # Ignore bot's own messages
     if message.author == bot.user:
         return
-        
+
     # Ignore messages not from allowed user
     if not check_permission(message.author.id):
         return
-        
+
     # Ignore slash commands or other prefix commands
     if message.content.startswith("!") or message.content.startswith("/"):
         return
@@ -696,30 +738,31 @@ async def on_message(message: discord.Message):
         attachment = message.attachments[0]
         if attachment.content_type and "audio/ogg" in attachment.content_type:
             logger.info("Processing voice message...")
-            
+
             # Download audio to a BytesIO object
             audio_data = io.BytesIO()
             await attachment.save(audio_data)
             audio_data.seek(0)
-            
+
             # Since our transcribe_audio expects a path, write to a temp file
             import tempfile
+
             with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as tmp:
                 tmp.write(audio_data.read())
                 tmp_path = tmp.name
-                
+
             try:
                 # Transcribe
                 text = transcribe_audio(tmp_path)
             finally:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
-                    
+
             if not text:
                 logger.warning("Voice transcription returned empty text")
                 await status_msg.edit(content="⚠️ Transcription failed")
                 return
-                
+
     # If no voice, or in addition to voice, use message text
     if not text:
         text = message.content
@@ -763,18 +806,19 @@ async def on_message(message: discord.Message):
     logger.info(f"Detecting intent for: {text[:50]}...")
     intent_result = parse_intent_result(orchestrator, text, extract_json_dict)
     intent = intent_result.get("intent", "task")
-            
+
     if intent == "conversation":
         user_id = message.author.id
         await status_msg.edit(content="🤖 **Nexus:** Thinking...")
 
         reply_text = run_conversation_turn(
             user_id=user_id,
-            text=text, 
+            text=text,
             orchestrator=orchestrator,
             get_chat_history=get_chat_history,
             append_message=append_message,
             persona=AI_PERSONA,
+            project_name=((get_chat(user_id) or {}).get("metadata", {}) or {}).get("project_key"),
         )
 
         await status_msg.edit(content=f"🤖 **Nexus**: \n\n{reply_text}")
@@ -789,7 +833,7 @@ async def on_message(message: discord.Message):
         get_chat=get_chat,
         process_inbox_task=process_inbox_task,
     )
-    
+
     # Store pending_resolution state if manual project selection is needed
     if not result["success"] and "pending_resolution" in result:
         _pending_project_resolution[message.author.id] = result["pending_resolution"]
@@ -816,7 +860,7 @@ async def on_ready():
     except Exception:
         logger.exception("Command parity strict check failed")
         raise
-    
+
     # Sync slash commands
     if DISCORD_GUILD_ID:
         guild = discord.Object(id=DISCORD_GUILD_ID)
@@ -832,5 +876,5 @@ if __name__ == "__main__":
     if not DISCORD_TOKEN:
         logger.error("DISCORD_TOKEN environment variable not set.")
         sys.exit(1)
-        
+
     bot.run(DISCORD_TOKEN)

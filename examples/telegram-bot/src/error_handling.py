@@ -16,11 +16,13 @@ logger = logging.getLogger(__name__)
 
 class RetryExhaustedError(Exception):
     """Raised when all retry attempts are exhausted."""
+
     pass
 
 
 class ConfigurationError(Exception):
     """Raised when configuration validation fails."""
+
     pass
 
 
@@ -29,22 +31,23 @@ def retry_with_backoff(
     base_delay: float = 1.0,
     max_delay: float = 30.0,
     exponential_base: float = 2.0,
-    exceptions: tuple = (Exception,)
+    exceptions: tuple = (Exception,),
 ):
     """Decorator that retries a function with exponential backoff.
-    
+
     Args:
         max_attempts: Maximum number of retry attempts (default: 3)
         base_delay: Initial delay in seconds (default: 1.0)
         max_delay: Maximum delay between retries (default: 30.0)
         exponential_base: Base for exponential backoff (default: 2.0)
         exceptions: Tuple of exceptions to catch and retry (default: all Exception)
-    
+
     Example:
         @retry_with_backoff(max_attempts=5, base_delay=2.0)
         def call_github_api():
             return subprocess.run(["gh", "issue", "list"], check=True)
     """
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs) -> Any:
@@ -65,27 +68,28 @@ def retry_with_backoff(
                     if attempt == max_attempts:
                         logger.error(
                             f"{func.__name__} failed after {max_attempts} attempts: {e}.{extra_context}",
-                            exc_info=True
+                            exc_info=True,
                         )
                         raise RetryExhaustedError(
                             f"Failed after {max_attempts} attempts: {str(e)}"
                         ) from e
-                    
+
                     # Calculate delay with exponential backoff
                     delay = min(base_delay * (exponential_base ** (attempt - 1)), max_delay)
-                    
+
                     logger.warning(
                         f"{func.__name__} attempt {attempt}/{max_attempts} failed: {e}.{extra_context} "
                         f"Retrying in {delay:.1f}s..."
                     )
-                    
+
                     time.sleep(delay)
                     attempt += 1
-            
+
             # This should never be reached, but just in case
             raise RetryExhaustedError(f"Unexpected retry exhaustion for {func.__name__}")
-        
+
         return wrapper
+
     return decorator
 
 
@@ -94,24 +98,24 @@ def run_command_with_retry(
     max_attempts: int = 3,
     timeout: int = 30,
     check: bool = True,
-    **subprocess_kwargs
+    **subprocess_kwargs,
 ) -> subprocess.CompletedProcess:
     """Run a subprocess command with automatic retry and timeout.
-    
+
     Args:
         cmd: Command to run as list of strings
         max_attempts: Maximum retry attempts
         timeout: Command timeout in seconds
         check: Whether to check return code
         **subprocess_kwargs: Additional arguments for subprocess.run
-    
+
     Returns:
         CompletedProcess result
-    
+
     Raises:
         RetryExhaustedError: If all attempts fail
         subprocess.TimeoutExpired: If command times out
-    
+
     Example:
         result = run_command_with_retry(
             ["gh", "issue", "list", "--repo", "user/repo"],
@@ -119,20 +123,15 @@ def run_command_with_retry(
             timeout=60
         )
     """
+
     @retry_with_backoff(
-        max_attempts=max_attempts,
-        exceptions=(subprocess.CalledProcessError, FileNotFoundError)
+        max_attempts=max_attempts, exceptions=(subprocess.CalledProcessError, FileNotFoundError)
     )
     def _run():
         return subprocess.run(
-            cmd,
-            check=check,
-            timeout=timeout,
-            capture_output=True,
-            text=True,
-            **subprocess_kwargs
+            cmd, check=check, timeout=timeout, capture_output=True, text=True, **subprocess_kwargs
         )
-    
+
     try:
         return _run()
     except subprocess.TimeoutExpired:
@@ -143,19 +142,19 @@ def run_command_with_retry(
         raise ConfigurationError(f"Required command '{cmd[0]}' not found") from e
 
 
-def safe_file_write(filepath: str, content: str, encoding: str = 'utf-8') -> bool:
+def safe_file_write(filepath: str, content: str, encoding: str = "utf-8") -> bool:
     """Safely write to a file with error handling.
-    
+
     Args:
         filepath: Path to file
         content: Content to write
         encoding: File encoding (default: utf-8)
-    
+
     Returns:
         True if successful, False otherwise
     """
     try:
-        with open(filepath, 'w', encoding=encoding) as f:
+        with open(filepath, "w", encoding=encoding) as f:
             f.write(content)
         return True
     except OSError as e:
@@ -166,14 +165,14 @@ def safe_file_write(filepath: str, content: str, encoding: str = 'utf-8') -> boo
         return False
 
 
-def safe_file_read(filepath: str, encoding: str = 'utf-8', default: str = '') -> str:
+def safe_file_read(filepath: str, encoding: str = "utf-8", default: str = "") -> str:
     """Safely read from a file with error handling.
-    
+
     Args:
         filepath: Path to file
         encoding: File encoding (default: utf-8)
         default: Default value if read fails (default: empty string)
-    
+
     Returns:
         File contents or default value
     """
@@ -193,58 +192,58 @@ def safe_file_read(filepath: str, encoding: str = 'utf-8', default: str = '') ->
 
 def validate_required_env_vars(required_vars: list[str]) -> None:
     """Validate that required environment variables are set.
-    
+
     Args:
         required_vars: List of required environment variable names
-    
+
     Raises:
         ConfigurationError: If any required variable is missing
     """
     import os
-    
+
     missing = [var for var in required_vars if not os.getenv(var)]
-    
+
     if missing:
         error_msg = f"Missing required environment variables: {', '.join(missing)}"
         logger.error(error_msg)
         raise ConfigurationError(error_msg)
-    
+
     logger.info(f"✅ All required environment variables present: {', '.join(required_vars)}")
 
 
 def format_error_for_user(error: Exception, context: str = "") -> str:
     """Format error message for end-user display (Telegram).
-    
+
     Args:
         error: Exception object
         context: Additional context about what was being done
-    
+
     Returns:
         User-friendly error message
     """
     error_type = type(error).__name__
     error_msg = str(error)
-    
+
     # Common error patterns with user-friendly messages
     if isinstance(error, subprocess.TimeoutExpired):
         return f"⏱️ Operation timed out after {error.timeout}s. The service might be slow. Try again in a moment."
-    
+
     elif isinstance(error, FileNotFoundError):
         tool = error_msg.split("'")[1] if "'" in error_msg else "unknown"
         return f"🔧 Required tool '{tool}' not found. Please contact administrator."
-    
+
     elif isinstance(error, RetryExhaustedError):
         return f"🔄 Operation failed after multiple retries. {context}. Please try again later."
-    
+
     elif isinstance(error, ConfigurationError):
         return f"⚙️ Configuration error: {error_msg}. Please contact administrator."
-    
+
     elif "rate limit" in error_msg.lower():
         return "⏳ GitHub rate limit reached. Please wait a few minutes and try again."
-    
+
     elif "not found" in error_msg.lower() and "issue" in error_msg.lower():
         return "🔍 Issue not found. Please check the issue number and try again."
-    
+
     else:
         # Generic error with some details but not too technical
         short_msg = error_msg[:100] + "..." if len(error_msg) > 100 else error_msg

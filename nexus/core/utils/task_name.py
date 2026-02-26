@@ -23,7 +23,7 @@ def generate_task_name(
 ) -> str:
     def _extract_candidate_name(payload: Any) -> str:
         if isinstance(payload, str):
-            candidate = str(payload).strip().strip('"`\'')
+            candidate = str(payload).strip().strip("\"`'")
             if candidate:
                 return candidate
             return ""
@@ -34,7 +34,7 @@ def generate_task_name(
         for key in ("task_name", "name", "title", "text"):
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
-                return str(value).strip().strip('"`\'')
+                return str(value).strip().strip("\"`'")
 
         for key in ("response", "output", "message", "content"):
             value = payload.get(key)
@@ -51,7 +51,7 @@ def generate_task_name(
                         return nested
                 except Exception:
                     if nested_str:
-                        return nested_str.strip().strip('"`\'')
+                        return nested_str.strip().strip("\"`'")
 
         return ""
 

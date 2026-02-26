@@ -18,7 +18,7 @@ spec:
     3. Creates or updates documentation
     4. Creates branch and PR
     5. Links to original issue
-    
+
   requires_tools:
     - github:read_issue
     - github:read_file
@@ -35,7 +35,7 @@ spec:
       required: true
     doc_type:
       type: enum
-      values: ["readme", "api", "tutorial", "changelog"]
+      values: [ "readme", "api", "tutorial", "changelog" ]
       description: "Type of documentation to update"
       default: "readme"
   
@@ -70,5 +70,5 @@ spec:
 
   # Success criteria
   validation:
-    required_outputs: ["docs_pr_url"]
+    required_outputs: [ "docs_pr_url" ]
     max_duration_seconds: 600

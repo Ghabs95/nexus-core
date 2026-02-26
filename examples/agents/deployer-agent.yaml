@@ -94,4 +94,4 @@ spec:
     4. Do NOT run any merge command
 
   validation:
-    required_outputs: ["deployment_status"]
+    required_outputs: [ "deployment_status" ]

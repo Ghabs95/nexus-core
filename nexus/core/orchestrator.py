@@ -3,6 +3,7 @@ AI Orchestrator - intelligently routes work to best AI provider with fallback.
 
 Migrated and simplified from original Nexus ai_orchestrator.py
 """
+
 import json
 import logging
 import re
@@ -43,7 +44,7 @@ class AIOrchestrator:
         task_type: str = "code_generation",
         approval_required: bool = False,
         tool_restrictions: list[str] | None = None,
-        **kwargs
+        **kwargs,
     ) -> AgentResult:
         """
         Execute agent with best available provider.
@@ -72,18 +73,14 @@ class AIOrchestrator:
             prompt=final_prompt,
             workspace=Path(workspace),
             tool_restrictions=tool_restrictions,
-            metadata=kwargs
+            metadata=kwargs,
         )
 
         # Select providers by preference score for this task type
         ranked_providers = await self._rank_providers(task_type)
 
         if not ranked_providers:
-            return AgentResult(
-                success=False,
-                output="",
-                error="No AI providers available"
-            )
+            return AgentResult(success=False, output="", error="No AI providers available")
 
         # Try each provider in order
         last_error = None
@@ -111,17 +108,12 @@ class AIOrchestrator:
                 logger.error(f"Provider {provider.name} raised exception: {e}")
                 if not self.fallback_enabled:
                     return AgentResult(
-                        success=False,
-                        output="",
-                        error=str(e),
-                        provider_used=provider.name
+                        success=False, output="", error=str(e), provider_used=provider.name
                     )
 
         # All providers failed
         return AgentResult(
-            success=False,
-            output="",
-            error=f"All providers failed. Last error: {last_error}"
+            success=False, output="", error=f"All providers failed. Last error: {last_error}"
         )
 
     def _inject_approval_constraints(self, prompt: str, tool_restrictions: list[str]) -> str:
@@ -160,8 +152,7 @@ class AIOrchestrator:
     async def _rank_providers(self, task_type: str) -> list[AIProvider]:
         """Rank providers by preference score for task type."""
         scored = [
-            (provider, provider.get_preference_score(task_type))
-            for provider in self.providers
+            (provider, provider.get_preference_score(task_type)) for provider in self.providers
         ]
 
         # Sort by score descending
@@ -228,9 +219,7 @@ class AIOrchestrator:
         """
         if delegation_request is not None and handoff_manager is not None:
             handoff_manager.register(delegation_request)
-            kwargs.setdefault("metadata", {})["delegation_id"] = (
-                delegation_request.delegation_id
-            )
+            kwargs.setdefault("metadata", {})["delegation_id"] = delegation_request.delegation_id
 
         result = await self.execute(agent_name, prompt, workspace, **kwargs)
 

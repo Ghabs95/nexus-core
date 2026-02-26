@@ -10,9 +10,7 @@ from nexus.adapters.registry import AdapterRegistry
 
 # Setup logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-    force=True
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO, force=True
 )
 logger = logging.getLogger(__name__)
 
@@ -82,24 +80,24 @@ async def main() -> None:
     # 1. Initialize core services
     get_orchestrator(ORCHESTRATOR_CONFIG)
     registry = AdapterRegistry.get_instance()
-    
+
     # 2. Extract client configs from PROJECT_CONFIG
     client_configs: dict[str, Any] = PROJECT_CONFIG.get("interactive_clients", {})
     if not client_configs:
         logger.error("No interactive_clients configured in project_config.yaml")
         return
-        
+
     # 3. Load plugins via registry
     plugins: dict[str, InteractiveClientPlugin] = {}
     for client_id, config in client_configs.items():
         if not config.get("enabled", True):
             continue
-            
+
         plugin_type = config.get("plugin")
         if not plugin_type:
             logger.warning(f"Client {client_id} missing 'plugin' type.")
             continue
-            
+
         try:
             logger.info(f"Loading interactive plugin: {plugin_type} for {client_id}")
             # The registry builds and configures the plugin
@@ -110,16 +108,16 @@ async def main() -> None:
                 logger.error(f"Failed to load plugin {plugin_type} for {client_id}")
         except Exception as e:
             logger.exception(f"Error loading client {client_id}: {e}")
-            
+
     if not plugins:
         logger.error("No interactive plugins successfully loaded. Exiting.")
         return
-        
+
     # 4. Bind unified handlers to all loaded plugins
     for client_id, plugin in plugins.items():
         logger.info(f"Binding handlers for client: {client_id}")
         _bind_handlers(plugin)
-        
+
     # 5. Handle shutdown elegantly
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
@@ -130,21 +128,20 @@ async def main() -> None:
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _signal_handler)
-        
+
     # 6. Start all plugins concurrently
     logger.info(f"Starting {len(plugins)} interactive plugins...")
-    
+
     start_tasks = []
     for client_id, plugin in plugins.items():
         # Depending on the plugin, this might block (like telegram long-polling)
         # or it might just setup background tasks.
         start_tasks.append(asyncio.create_task(plugin.start()))
-        
+
     try:
         # Wait until we get a stop signal or one of the bots hard-crashes
         done, pending = await asyncio.wait(
-            [stop_event.wait()] + start_tasks,
-            return_when=asyncio.FIRST_COMPLETED
+            [stop_event.wait()] + start_tasks, return_when=asyncio.FIRST_COMPLETED
         )
         logger.info("Main loop terminated. Stopping plugins...")
     finally:
@@ -155,9 +152,10 @@ async def main() -> None:
             except Exception as e:
                 logger.error(f"Error stopping plugin {client_id}: {e}")
 
+
 def _bind_handlers(plugin: InteractiveClientPlugin) -> None:
     """Bind all platform-agnostic handlers to a specific plugin instance."""
-    
+
     # Resolve dependencies once per plugin
     workflow_deps = get_workflow_handler_deps()
     monitoring_deps = get_monitoring_handler_deps()
@@ -210,26 +208,37 @@ def _bind_handlers(plugin: InteractiveClientPlugin) -> None:
 
     # Catch-all text message handler
     from handlers.inbox_routing_handler import route_hands_free_text
+
     plugin.register_message_handler(lambda ctx: route_hands_free_text(ctx, routing_deps))
 
     # Core callback query dispatcher
-    plugin.register_callback_handler(lambda ctx: dispatch_callback(ctx, callback_deps, chat_callback_handler, feature_deps))
+    plugin.register_callback_handler(
+        lambda ctx: dispatch_callback(ctx, callback_deps, chat_callback_handler, feature_deps)
+    )
+
 
 async def dispatch_callback(ctx, callback_deps, chat_handler, feature_deps) -> None:
     """Route unified callback queries to specific handler modules."""
     data = ctx.query.data
-    
+
     if data.startswith("chat:"):
         await chat_handler(ctx, callback_deps)
     elif data.startswith("feat:"):
         from handlers.feature_ideation_handlers import feature_callback_handler
+
         await feature_callback_handler(ctx, feature_deps)
-    elif data.startswith("pickcmd:") or data.startswith("pickissue:") or data.startswith("flow:close"):
+    elif (
+        data.startswith("pickcmd:")
+        or data.startswith("pickissue:")
+        or data.startswith("flow:close")
+    ):
         from handlers.callback_command_handlers import core_callback_router
+
         await core_callback_router(ctx, callback_deps)
     else:
         # Let's see if it's an action (logs_, respond_, etc)
         from handlers.callback_command_handlers import inline_keyboard_handler
+
         await inline_keyboard_handler(ctx, callback_deps)
 
 

@@ -20,6 +20,7 @@ try:
         MessageHandler,
         filters,
     )
+
     HAS_TELEGRAM = True
 except ImportError:
     HAS_TELEGRAM = False
@@ -70,18 +71,20 @@ class TelegramInteractivePlugin(InteractiveClientPlugin):
                     user_id = str(update.effective_user.id) if update.effective_user else ""
                     text = update.message.text if update.message and update.message.text else ""
                     await cb(user_id=user_id, text=text, context=context.args, raw_event=update)
+
                 return _cmd_handler
 
             self._app.add_handler(CommandHandler(command, create_handler(callback)))
 
         # Register message handler
         if self.message_handler:
+
             async def _msg_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 user_id = str(update.effective_user.id) if update.effective_user else ""
                 text = update.message.text if update.message and update.message.text else ""
                 # Ignore empty texts or commands
                 if text and not text.startswith("/"):
-                    await self.message_handler(user_id=user_id, text=text, raw_event=update) # type: ignore
+                    await self.message_handler(user_id=user_id, text=text, raw_event=update)  # type: ignore
 
             self._app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), _msg_handler))
 
@@ -167,6 +170,7 @@ class TelegramInteractivePlugin(InteractiveClientPlugin):
                 pass
             else:
                 logger.error(f"Failed to edit message {message_id} for user {user_id}: {e}")
+
 
 def register_plugins(registry) -> None:
     """Register built-in Telegram interactive plugin."""

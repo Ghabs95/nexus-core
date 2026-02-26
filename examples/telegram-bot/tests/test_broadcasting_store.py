@@ -44,7 +44,7 @@ def broadcasting(inner: MagicMock, monkeypatch):
     """Create a _BroadcastingStore wrapping the mock inner store."""
     # Avoid import-time side effects from config module
     monkeypatch.setenv("DATA_DIR", "/tmp/test")
-    import importlib
+
     # Ensure we can import without real config
     config_mock = MagicMock()
     config_mock.DATA_DIR = "/tmp/test"
@@ -83,7 +83,11 @@ class TestDelegation:
     def test_set_pending_approval_delegates(self, broadcasting, inner: MagicMock) -> None:
         broadcasting.set_pending_approval("42", 3, "deploy", ["lead"], 3600)
         inner.set_pending_approval.assert_called_once_with(
-            "42", 3, "deploy", ["lead"], 3600,
+            "42",
+            3,
+            "deploy",
+            ["lead"],
+            3600,
         )
 
     def test_clear_pending_approval_delegates(self, broadcasting, inner: MagicMock) -> None:

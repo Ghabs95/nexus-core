@@ -34,20 +34,21 @@ ai_tool_preferences:
 ## Translators
 
 To generate Python implementation template:
+
 ```bash
 python ../translator/to_python.py triage-agent.yaml > triage_agent.py
 ```
 
 To generate markdown documentation:
+
 ```bash
 python ../translator/to_markdown.py triage-agent.yaml > TRIAGE-AGENT.md
 ```
 
-
-
 ## Completion Summary Format
 
-When an agent completes its work, it should write a `completion_summary.json` file in the task logs directory. This file provides structured information about the work completed and recommendations for the next step.
+When an agent completes its work, it should write a `completion_summary.json` file in the task logs directory. This file
+provides structured information about the work completed and recommendations for the next step.
 
 **File location:** `.nexus/tasks/completions/completion_summary_{issue_number}.json`
 
@@ -73,6 +74,7 @@ When an agent completes its work, it should write a `completion_summary.json` fi
 ```
 
 **Field Descriptions:**
+
 - `status`: Agent completion status (complete, in-progress, blocked)
 - `summary`: One-line summary of what was accomplished
 - `key_findings`: List of important discoveries or results (optional)
@@ -110,4 +112,5 @@ with open(os.path.join(completion_dir, f"completion_summary_{issue_id}.json"), "
     json.dump(completion_data, f, indent=2)
 ```
 
-The Nexus processor will automatically detect this file, parse it, and post a formatted GitHub comment with the structured information.
+The Nexus processor will automatically detect this file, parse it, and post a formatted GitHub comment with the
+structured information.

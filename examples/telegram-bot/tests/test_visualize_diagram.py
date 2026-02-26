@@ -1,5 +1,5 @@
-import pytest
 from services.mermaid_render_service import build_mermaid_diagram
+
 
 def test_build_mermaid_diagram_basic():
     steps = [
@@ -17,11 +17,13 @@ def test_build_mermaid_diagram_basic():
     assert "▶️ running" in diagram
     assert "⏳ pending" in diagram
 
+
 def test_build_mermaid_diagram_empty():
     diagram = build_mermaid_diagram([], "73")
     assert "flowchart TD" in diagram
     assert 'I["Issue #73"]' in diagram
     assert "S1" not in diagram
+
 
 def test_build_mermaid_diagram_quote_escaping():
     steps = [

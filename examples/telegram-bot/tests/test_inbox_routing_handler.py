@@ -42,7 +42,9 @@ async def test_process_inbox_task_parses_project_from_response_payload(tmp_path,
     monkeypatch.setattr(
         routing,
         "get_inbox_dir",
-        lambda workspace_root, project: str(tmp_path / workspace_root.split("/")[-1] / project / "inbox"),
+        lambda workspace_root, project: str(
+            tmp_path / workspace_root.split("/")[-1] / project / "inbox"
+        ),
     )
 
     orchestrator = _FakeOrchestrator(
@@ -66,16 +68,22 @@ async def test_process_inbox_task_parses_project_from_response_payload(tmp_path,
 
 
 @pytest.mark.asyncio
-async def test_process_inbox_task_uses_project_hint_when_classifier_project_missing(tmp_path, monkeypatch):
+async def test_process_inbox_task_uses_project_hint_when_classifier_project_missing(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(routing, "BASE_DIR", str(tmp_path))
     monkeypatch.setattr(routing, "PROJECT_CONFIG", {"sampleco": {"workspace": "sampleco"}})
     monkeypatch.setattr(
         routing,
         "get_inbox_dir",
-        lambda workspace_root, project: str(tmp_path / workspace_root.split("/")[-1] / project / "inbox"),
+        lambda workspace_root, project: str(
+            tmp_path / workspace_root.split("/")[-1] / project / "inbox"
+        ),
     )
 
-    orchestrator = _FakeOrchestrator({"response": '{"type": "feature", "task_name": "missing-project"}'})
+    orchestrator = _FakeOrchestrator(
+        {"response": '{"type": "feature", "task_name": "missing-project"}'}
+    )
 
     result = await routing.process_inbox_task(
         text="please route this",
@@ -95,7 +103,9 @@ async def test_process_inbox_task_skips_classification_when_project_hint_set(tmp
     monkeypatch.setattr(
         routing,
         "get_inbox_dir",
-        lambda workspace_root, project: str(tmp_path / workspace_root.split("/")[-1] / project / "inbox"),
+        lambda workspace_root, project: str(
+            tmp_path / workspace_root.split("/")[-1] / project / "inbox"
+        ),
     )
 
     result = await routing.process_inbox_task(
@@ -116,7 +126,9 @@ async def test_process_inbox_task_generates_task_name_when_project_hint_set(tmp_
     monkeypatch.setattr(
         routing,
         "get_inbox_dir",
-        lambda workspace_root, project: str(tmp_path / workspace_root.split("/")[-1] / project / "inbox"),
+        lambda workspace_root, project: str(
+            tmp_path / workspace_root.split("/")[-1] / project / "inbox"
+        ),
     )
 
     result = await routing.process_inbox_task(
@@ -140,7 +152,9 @@ async def test_process_inbox_task_generates_task_name_from_wrapped_response(tmp_
     monkeypatch.setattr(
         routing,
         "get_inbox_dir",
-        lambda workspace_root, project: str(tmp_path / workspace_root.split("/")[-1] / project / "inbox"),
+        lambda workspace_root, project: str(
+            tmp_path / workspace_root.split("/")[-1] / project / "inbox"
+        ),
     )
 
     result = await routing.process_inbox_task(

@@ -7,7 +7,10 @@ Handles bot-host concerns only:
 
 Workflow and approval state is managed by :mod:`integrations.workflow_state_factory`.
 """
+
+import asyncio
 import logging
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -15,6 +18,7 @@ from typing import Any
 from config import (
     AGENT_RECENT_WINDOW,
     LAUNCHED_AGENTS_FILE,
+    NEXUS_STATE_DIR,
     NEXUS_STORAGE_BACKEND,
     TRACKED_ISSUES_FILE,
     ensure_state_dir,
@@ -23,6 +27,7 @@ from config import (
 from orchestration.plugin_runtime import get_profiled_plugin
 
 logger = logging.getLogger(__name__)
+MERGE_QUEUE_FILE = f"{NEXUS_STATE_DIR}/merge_queue.json"
 
 # Optional SocketIO emitter injected at startup by webhook_server.py.
 # Signature: (event_name: str, data: dict) -> None
@@ -48,6 +53,7 @@ def _get_storage_backend():
     if not hasattr(_get_storage_backend, "_instance"):
         try:
             from integrations.workflow_state_factory import get_storage_backend
+
             _get_storage_backend._instance = get_storage_backend()
         except Exception as exc:
             logger.warning("Could not get postgres storage backend for host state: %s", exc)
@@ -61,7 +67,37 @@ def _host_state_key_from_path(path: str) -> str:
     E.g. ``/opt/nexus/.nexus/state/launched_agents.json`` -> ``launched_agents``.
     """
     import os
+
     return os.path.splitext(os.path.basename(path))[0]
+
+
+def _run_coro_sync(coro_factory: Callable[[], Any], *, timeout_seconds: float = 10) -> Any:
+    """Run a coroutine from sync code, even when already inside an event loop."""
+    try:
+        asyncio.get_running_loop()
+        in_running_loop = True
+    except RuntimeError:
+        in_running_loop = False
+
+    if not in_running_loop:
+        return asyncio.run(coro_factory())
+
+    holder: dict[str, Any] = {"value": None, "error": None}
+
+    def _runner() -> None:
+        try:
+            holder["value"] = asyncio.run(coro_factory())
+        except Exception as exc:  # pragma: no cover - defensive bridge
+            holder["error"] = exc
+
+    worker = threading.Thread(target=_runner, daemon=True)
+    worker.start()
+    worker.join(timeout=timeout_seconds)
+    if worker.is_alive():
+        raise TimeoutError("Timed out running async host-state operation in worker thread")
+    if holder["error"] is not None:
+        raise holder["error"]
+    return holder["value"]
 
 
 class HostStateManager:
@@ -86,14 +122,17 @@ class HostStateManager:
         issue: str, workflow_id: str, step_id: str, agent_type: str, status: str
     ) -> None:
         """Broadcast a step status change via SocketIO."""
-        HostStateManager.emit_transition("step_status_changed", {
-            "issue": issue,
-            "workflow_id": workflow_id,
-            "step_id": step_id,
-            "agent_type": agent_type,
-            "status": status,
-            "timestamp": time.time(),
-        })
+        HostStateManager.emit_transition(
+            "step_status_changed",
+            {
+                "issue": issue,
+                "workflow_id": workflow_id,
+                "step_id": step_id,
+                "agent_type": agent_type,
+                "status": status,
+                "timestamp": time.time(),
+            },
+        )
 
     @staticmethod
     def _load_json_state(path: str, default, ensure_logs: bool = False):
@@ -104,19 +143,20 @@ class HostStateManager:
                 raise RuntimeError(
                     "NEXUS_STORAGE_BACKEND=postgres but postgres host-state backend is unavailable"
                 )
-            import asyncio
             key = _host_state_key_from_path(path)
-            result = asyncio.run(backend.load_host_state(key))
+            result = _run_coro_sync(lambda: backend.load_host_state(key))
             return result if result is not None else default
-
-        if ensure_logs:
-            ensure_logs_dir()
-        else:
-            ensure_state_dir()
 
         plugin = _get_state_store_plugin()
         if not plugin:
             return default
+        try:
+            if ensure_logs:
+                ensure_logs_dir()
+            else:
+                ensure_state_dir()
+        except PermissionError as exc:
+            logger.warning("State/log directory setup skipped for read %s: %s", path, exc)
         return plugin.load_json(path, default=default)
 
     @staticmethod
@@ -128,20 +168,21 @@ class HostStateManager:
                 raise RuntimeError(
                     "NEXUS_STORAGE_BACKEND=postgres but postgres host-state backend is unavailable"
                 )
-            import asyncio
             key = _host_state_key_from_path(path)
-            asyncio.run(backend.save_host_state(key, data))
+            _run_coro_sync(lambda: backend.save_host_state(key, data))
             return
-
-        if ensure_logs:
-            ensure_logs_dir()
-        else:
-            ensure_state_dir()
 
         plugin = _get_state_store_plugin()
         if not plugin:
             logger.error(f"State storage plugin unavailable; cannot save {context}")
             return
+        try:
+            if ensure_logs:
+                ensure_logs_dir()
+            else:
+                ensure_state_dir()
+        except PermissionError as exc:
+            logger.warning("State/log directory setup skipped for save %s: %s", path, exc)
         plugin.save_json(path, data)
 
     @staticmethod
@@ -189,20 +230,18 @@ class HostStateManager:
         """Register a newly launched agent."""
         data = HostStateManager.load_launched_agents()
         key = f"{issue_num}_{agent_name}"
-        data[key] = {
-            "issue": issue_num,
-            "agent": agent_name,
-            "pid": pid,
-            "timestamp": time.time()
-        }
+        data[key] = {"issue": issue_num, "agent": agent_name, "pid": pid, "timestamp": time.time()}
         HostStateManager.save_launched_agents(data)
         logger.info(f"Registered launched agent: {agent_name} (PID: {pid}) for issue #{issue_num}")
-        HostStateManager.emit_transition("agent_registered", {
-            "issue": issue_num,
-            "agent": agent_name,
-            "pid": pid,
-            "timestamp": data[key]["timestamp"],
-        })
+        HostStateManager.emit_transition(
+            "agent_registered",
+            {
+                "issue": issue_num,
+                "agent": agent_name,
+                "pid": pid,
+                "timestamp": data[key]["timestamp"],
+            },
+        )
 
     @staticmethod
     def was_recently_launched(issue_num: str, agent_name: str) -> bool:
@@ -226,6 +265,82 @@ class HostStateManager:
         )
 
     @staticmethod
+    def load_merge_queue() -> dict[str, dict]:
+        """Load persisted merge-queue entries."""
+        data = HostStateManager._load_json_state(MERGE_QUEUE_FILE, default={}) or {}
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def save_merge_queue(data: dict[str, dict]) -> None:
+        """Persist merge-queue entries."""
+        HostStateManager._save_json_state(
+            MERGE_QUEUE_FILE,
+            data,
+            context="merge queue",
+        )
+
+    @staticmethod
+    def enqueue_merge_candidate(
+        *,
+        issue_num: str,
+        project: str,
+        repo: str,
+        pr_url: str,
+        review_mode: str,
+        source: str = "workflow_complete",
+    ) -> dict[str, Any]:
+        """Insert or update a merge-queue entry for a PR."""
+        pr_key = str(pr_url or "").strip()
+        if not pr_key:
+            raise ValueError("pr_url is required")
+
+        normalized_mode = str(review_mode or "manual").strip().lower()
+        if normalized_mode not in {"manual", "auto"}:
+            normalized_mode = "manual"
+
+        now = time.time()
+        queue = HostStateManager.load_merge_queue()
+        current = queue.get(pr_key, {}) if isinstance(queue.get(pr_key), dict) else {}
+
+        item = {
+            "pr_url": pr_key,
+            "issue": str(issue_num),
+            "project": str(project),
+            "repo": str(repo or ""),
+            "review_mode": normalized_mode,
+            "status": (
+                "pending_auto_merge" if normalized_mode == "auto" else "pending_manual_review"
+            ),
+            "source": str(source or "workflow_complete"),
+            "created_at": float(current.get("created_at", now)),
+            "updated_at": now,
+        }
+        queue[pr_key] = item
+        HostStateManager.save_merge_queue(queue)
+        HostStateManager.emit_transition("merge_queue_updated", item)
+        return item
+
+    @staticmethod
+    def update_merge_candidate(pr_url: str, **changes: Any) -> dict[str, Any] | None:
+        """Update a merge-queue entry by PR URL and persist it."""
+        pr_key = str(pr_url or "").strip()
+        if not pr_key:
+            return None
+
+        queue = HostStateManager.load_merge_queue()
+        current = queue.get(pr_key)
+        if not isinstance(current, dict):
+            return None
+
+        updated = dict(current)
+        updated.update({k: v for k, v in changes.items() if v is not None})
+        updated["updated_at"] = time.time()
+        queue[pr_key] = updated
+        HostStateManager.save_merge_queue(queue)
+        HostStateManager.emit_transition("merge_queue_updated", updated)
+        return updated
+
+    @staticmethod
     def add_tracked_issue(issue_num: int, project: str, description: str) -> None:
         """Add an issue to tracking."""
         data = HostStateManager.load_tracked_issues()
@@ -233,7 +348,7 @@ class HostStateManager:
             "project": project,
             "description": description,
             "created_at": time.time(),
-            "status": "active"
+            "status": "active",
         }
         HostStateManager.save_tracked_issues(data)
         logger.info(f"Added tracked issue: #{issue_num} ({project})")
@@ -255,4 +370,3 @@ class HostStateManager:
             return get_workflow_state().get_workflow_id(str(issue_num))
         except Exception:
             return None
-

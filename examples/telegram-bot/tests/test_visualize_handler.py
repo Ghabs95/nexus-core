@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from services.mermaid_render_service import build_mermaid_diagram
 
 # ---------------------------------------------------------------------------
@@ -76,6 +75,7 @@ class TestBuildMermaidDiagram:
 # visualize_handler — fallback-to-text vs photo path
 # ---------------------------------------------------------------------------
 
+
 def _make_ctx(user_id: str = "12345", args: list[str] | None = None):
     ctx = MagicMock()
     ctx.user_id = user_id
@@ -85,6 +85,7 @@ def _make_ctx(user_id: str = "12345", args: list[str] | None = None):
     ctx.reply_image = AsyncMock()
     ctx.edit_message_text = AsyncMock()
     return ctx
+
 
 def _make_deps(logger=None):
     from handlers.visualize_command_handlers import VisualizeHandlerDeps
@@ -103,6 +104,7 @@ _SAMPLE_STEPS = [
     {"name": "impl", "status": "running", "agent": {"name": "coder"}},
 ]
 
+
 @pytest.mark.asyncio
 async def test_handler_prompts_project_selection_when_no_args():
     from handlers.visualize_command_handlers import visualize_handler
@@ -111,6 +113,7 @@ async def test_handler_prompts_project_selection_when_no_args():
     deps = _make_deps()
     await visualize_handler(ctx, deps)
     deps.prompt_project_selection.assert_awaited_once_with(ctx, "visualize")
+
 
 @pytest.mark.asyncio
 async def test_handler_sends_mermaid_text_with_steps(tmp_path, monkeypatch):

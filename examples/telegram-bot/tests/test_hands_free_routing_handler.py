@@ -92,9 +92,13 @@ def test_feature_followup_text_routes_as_conversation(monkeypatch):
         raise AssertionError("Task routing should not run for feature follow-up chat text")
 
     monkeypatch.setattr(routing, "route_task_with_context", _unexpected_route_task)
-    monkeypatch.setattr(routing, "run_conversation_turn", lambda **_kwargs: "Let's discuss that adapter option.")
+    monkeypatch.setattr(
+        routing, "run_conversation_turn", lambda **_kwargs: "Let's discuss that adapter option."
+    )
 
-    asyncio.run(routing.route_hands_free_text(update, context, status_msg, update.message.text, _deps()))
+    asyncio.run(
+        routing.route_hands_free_text(update, context, status_msg, update.message.text, _deps())
+    )
 
     assert len(context.bot.edits) == 2
     assert "Nexus (designer)" in context.bot.edits[-1]["text"]
@@ -123,7 +127,9 @@ def test_explicit_task_request_still_routes_task(monkeypatch):
 
     monkeypatch.setattr(routing, "route_task_with_context", _route_task)
 
-    asyncio.run(routing.route_hands_free_text(update, context, status_msg, update.message.text, _deps()))
+    asyncio.run(
+        routing.route_hands_free_text(update, context, status_msg, update.message.text, _deps())
+    )
 
     assert called["task"] is True
     assert context.bot.edits[-1]["text"] == "✅ Routed to `nexus`"

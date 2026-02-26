@@ -1,4 +1,5 @@
 """Centralized configuration for Nexus bot and processor."""
+
 import logging
 import os
 import subprocess
@@ -8,6 +9,7 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
+
 from nexus.core.chat_agents_schema import get_project_chat_agents
 
 # Load secrets from local file if exists
@@ -30,9 +32,11 @@ def _get_int_env(name: str, default: int) -> int:
         return default
     return value if value > 0 else default
 
+
 def _parse_int_list(name: str) -> list[int]:
     raw = os.getenv(name, "")
     return [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
+
 
 # --- TELEGRAM CONFIGURATION ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -64,8 +68,8 @@ TELEGRAM_BOT_LOG_FILE = os.path.join(LOGS_DIR, "telegram_bot.log")
 
 # --- AI CONFIGURATION ---
 AI_PERSONA = os.getenv(
-    "AI_PERSONA", 
-    "You are Nexus, a brilliant business advisor and technical architect (like Jarvis from Iron Man). The user is Ghabs, an ambitious CEO and Founder of many projects.\n\nAnswer the following question or brainstorm ideas directly and concisely. Keep your tone professional, highly capable, and slightly witty but always helpful."
+    "AI_PERSONA",
+    "You are Nexus, a brilliant business advisor and technical architect (like Jarvis from Iron Man). The user is Ghabs, an ambitious CEO and Founder of many projects.\n\nAnswer the following question or brainstorm ideas directly and concisely. Keep your tone professional, highly capable, and slightly witty but always helpful.",
 )
 
 # --- REDIS CONFIGURATION ---
@@ -81,13 +85,13 @@ _cached_config_path = None  # Track which path was cached
 
 def _load_project_config(path: str) -> dict:
     """Load PROJECT_CONFIG from YAML file (required).
-    
+
     Args:
         path: Path to project config YAML file
-        
+
     Returns:
         Loaded project configuration dict
-        
+
     Raises:
         FileNotFoundError: If file doesn't exist
         ValueError: If YAML is invalid or not a mapping
@@ -104,40 +108,39 @@ def _validate_config_with_project_config(config: dict) -> None:
     if not config or len(config) == 0:
         # Empty config is okay for tests
         return
-    
+
     # Global config keys that aren't projects
     global_keys = {
-        'nexus_dir',  # VCS-agnostic inbox/tasks directory name
-        'workflow_definition_path',
-        'projects',
-        'task_types',
-        'ai_tool_preferences',
-        'workflow_chains',
-        'final_agents',
-        'require_human_merge_approval',  # PR merge approval policy (deprecated - use nexus-core approval gates)
-        'issue_triage',  # Git issue → triage agent routing configuration
-        'shared_agents_dir',  # Shared org-level agent YAML definitions directory
+        "nexus_dir",  # VCS-agnostic inbox/tasks directory name
+        "workflow_definition_path",
+        "projects",
+        "task_types",
+        "ai_tool_preferences",
+        "operation_agents",
+        "merge_queue",
+        "workflow_chains",
+        "final_agents",
+        "issue_triage",  # Git issue → triage agent routing configuration
+        "shared_agents_dir",  # Shared org-level agent YAML definitions directory
     }
-    
+
     for project, proj_config in config.items():
         # Skip global settings
         if project in global_keys:
             continue
-        
+
         # All other keys should be project dicts
         if not isinstance(proj_config, dict):
             raise ValueError(f"PROJECT_CONFIG['{project}'] must be a dict")
-        
-        if 'workspace' not in proj_config:
+
+        if "workspace" not in proj_config:
             raise ValueError(f"PROJECT_CONFIG['{project}'] missing 'workspace' key")
 
         repos_list = proj_config.get("git_repos")
 
         if repos_list is not None:
             if not isinstance(repos_list, list):
-                raise ValueError(
-                    f"PROJECT_CONFIG['{project}']['git_repos'] must be a list"
-                )
+                raise ValueError(f"PROJECT_CONFIG['{project}']['git_repos'] must be a list")
             for repo_name in repos_list:
                 if not isinstance(repo_name, str) or not repo_name.strip():
                     raise ValueError(
@@ -188,14 +191,14 @@ def _validate_config_with_project_config(config: dict) -> None:
 
 def _load_and_validate_project_config() -> dict:
     """Load and validate PROJECT_CONFIG from file.
-    
+
     Raises:
         ValueError: If PROJECT_CONFIG_PATH is not set
         FileNotFoundError: If config file not found
         ValueError: If config is invalid
     """
     global _project_config_cache, _cached_config_path
-    
+
     # Read PROJECT_CONFIG_PATH from environment (not cached to support monkeypatch in tests)
     project_config_path = os.getenv("PROJECT_CONFIG_PATH")
     if not project_config_path:
@@ -203,33 +206,28 @@ def _load_and_validate_project_config() -> dict:
             "PROJECT_CONFIG_PATH environment variable is required. "
             "It must point to a YAML file with project configuration."
         )
-    
+
     # Clear cache if PROJECT_CONFIG_PATH changed (e.g., in tests with monkeypatch)
     if _cached_config_path != project_config_path:
         _project_config_cache = None
         _cached_config_path = project_config_path
-    
+
     if _project_config_cache is not None:
         return _project_config_cache
-    
+
     resolved_config_path = (
         project_config_path
         if os.path.isabs(project_config_path)
         else os.path.join(BASE_DIR, project_config_path)
     )
-    
+
     try:
         _project_config_cache = _load_project_config(resolved_config_path)
     except FileNotFoundError:
-        raise FileNotFoundError(
-            f"PROJECT_CONFIG file not found: {resolved_config_path}"
-        )
+        raise FileNotFoundError(f"PROJECT_CONFIG file not found: {resolved_config_path}")
     except Exception as e:
-        raise ValueError(
-            f"Failed to load PROJECT_CONFIG from {resolved_config_path}: {e}"
-        )
-    
-    
+        raise ValueError(f"Failed to load PROJECT_CONFIG from {resolved_config_path}: {e}")
+
     # Validate the loaded config
     _validate_config_with_project_config(_project_config_cache)
     return _project_config_cache
@@ -241,56 +239,85 @@ def _get_project_config() -> dict:
     return _load_and_validate_project_config()
 
 
-# Initialize PROJECT_CONFIG on module load 
+# Initialize PROJECT_CONFIG on module load
 # Note: This loads the config immediately when the module is imported
 # If you need truly lazy loading, wrap in a property descriptor instead
 PROJECT_CONFIG = _get_project_config()
-
 
 
 # --- WEBHOOK CONFIGURATION ---
 WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8081"))
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")  # Git webhook secret for signature verification
 
+
 # --- AI ORCHESTRATOR CONFIGURATION ---
 # These are now loaded from project_config.yaml
 # Get defaults from config, with per-project overrides supported
 def get_ai_tool_preferences(project: str = "nexus") -> dict:
     """Get AI tool preferences for a project.
-    
+
     Priority:
     1. Project-specific ai_tool_preferences in PROJECT_CONFIG
     2. Global ai_tool_preferences in PROJECT_CONFIG
     3. Empty dict (no preferences defined)
-    
+
     Args:
         project: Project name (default: "nexus")
-        
+
     Returns:
         Dictionary mapping agent names to AI tools (copilot, gemini)
     """
     config = _get_project_config()
-    
+
     # Check project-specific override
     if project in config:
         proj_config = config[project]
         if isinstance(proj_config, dict) and "ai_tool_preferences" in proj_config:
             return proj_config["ai_tool_preferences"]
-    
+
     # Fall back to global
     if "ai_tool_preferences" in config:
         return config["ai_tool_preferences"]
-    
+
     return {}
+
+
+def get_operation_agents(project: str = "nexus") -> dict:
+    """Get operation-task -> agent-type mapping for a project.
+
+    Priority:
+    1. Project-specific ``operation_agents`` in PROJECT_CONFIG
+    2. Global ``operation_agents`` in PROJECT_CONFIG
+    3. ``{"default": "triage"}``
+
+    The orchestrator then resolves provider preference for the selected
+    agent type via ``ai_tool_preferences``.
+    """
+    config = _get_project_config()
+
+    if project in config:
+        proj_config = config[project]
+        if isinstance(proj_config, dict) and "operation_agents" in proj_config:
+            value = proj_config["operation_agents"]
+            if isinstance(value, dict):
+                return value
+
+    if "operation_agents" in config:
+        value = config["operation_agents"]
+        if isinstance(value, dict):
+            return value
+
+    return {"default": "triage"}
 
 
 def get_chat_agent_types(project: str = "nexus") -> list[str]:
     """Get ordered chat agent types for a project.
 
     Priority:
-    1. Project-specific ``chat_agents`` in PROJECT_CONFIG (ordered)
-    2. Keys of ``get_ai_tool_preferences(project)`` (ordered)
-    3. ["triage"] fallback
+    1. Project-specific ``operation_agents.chat`` in PROJECT_CONFIG (ordered)
+    2. Global ``operation_agents.chat`` in PROJECT_CONFIG (ordered)
+    3. Keys of ``get_ai_tool_preferences(project)`` (ordered)
+    4. ["triage"] fallback
 
     The first item is treated as the default primary chat agent.
     """
@@ -303,11 +330,11 @@ def get_chat_agent_types(project: str = "nexus") -> list[str]:
 def get_chat_agents(project: str = "nexus") -> list[dict[str, Any]]:
     """Return ordered chat agent metadata for a project.
 
-    Supported config shapes for ``chat_agents``:
+    Supported config shapes for ``operation_agents.chat``:
     - Mapping form:
-        ``chat_agents: {business: {label: "Business"}, marketing: {...}}``
+        ``operation_agents: {chat: {business: {label: "Business"}, marketing: {...}}}``
     - List form:
-        ``chat_agents: [{business: {..}}, {agent_type: "marketing", ...}]``
+        ``operation_agents: {chat: [{business: {..}}, {agent_type: "marketing", ...}]}``
 
     Fallbacks:
     1. keys of ``ai_tool_preferences``
@@ -320,6 +347,14 @@ def get_chat_agents(project: str = "nexus") -> list[dict[str, Any]]:
         entries = get_project_chat_agents(project_cfg)
         if entries:
             return entries
+
+    global_operation_agents = config.get("operation_agents")
+    if isinstance(global_operation_agents, dict):
+        raw_chat = global_operation_agents.get("chat")
+        if isinstance(raw_chat, (dict, list)):
+            entries = get_project_chat_agents({"operation_agents": {"chat": raw_chat}})
+            if entries:
+                return entries
 
     preferences = get_ai_tool_preferences(project)
     if isinstance(preferences, dict) and preferences:
@@ -496,53 +531,57 @@ def get_workflow_profile(project: str = "nexus") -> str:
 
 # Caching wrappers for lazy-loading on first access (support monkeypatch in tests)
 _ai_tool_preferences_cache = {}
+_operation_agents_cache = {}
 
 
 class _LazyConfigWrapper:
     """Wrapper that lazily loads config values to support monkeypatch."""
-    
+
     def __init__(self, get_func, cache_dict, project="nexus"):
         self.get_func = get_func
         self.cache_dict = cache_dict
         self.project = project
-    
+
     def _ensure_loaded(self):
         """Load value from config if not cached."""
         if "value" not in self.cache_dict:
             self.cache_dict["value"] = self.get_func(self.project)
         return self.cache_dict["value"]
-    
+
     def keys(self):
         return self._ensure_loaded().keys()
-    
+
     def items(self):
         return self._ensure_loaded().items()
-    
+
     def values(self):
         return self._ensure_loaded().values()
-    
+
     def get(self, *args):
         return self._ensure_loaded().get(*args)
-    
+
     def __getitem__(self, key):
         return self._ensure_loaded()[key]
-    
+
     def __contains__(self, key):
         return key in self._ensure_loaded()
-    
+
     def __iter__(self):
         return iter(self._ensure_loaded())
-    
+
     def __len__(self):
         return len(self._ensure_loaded())
-    
+
     def __repr__(self):
         return repr(self._ensure_loaded())
 
 
 # Create lazy-loading wrappers (for backward compatibility with code that accesses these directly)
 # Note: These will get the global defaults from project_config.yaml when first accessed
-AI_TOOL_PREFERENCES = _LazyConfigWrapper(get_ai_tool_preferences, _ai_tool_preferences_cache, "nexus")
+AI_TOOL_PREFERENCES = _LazyConfigWrapper(
+    get_ai_tool_preferences, _ai_tool_preferences_cache, "nexus"
+)
+OPERATION_AGENTS = _LazyConfigWrapper(get_operation_agents, _operation_agents_cache, "nexus")
 
 # Orchestrator configuration (lazy-loaded)
 _orchestrator_config_cache = {}
@@ -558,6 +597,10 @@ def _get_orchestrator_config():
             "codex_cli_path": os.getenv("CODEX_CLI_PATH", "codex"),
             "codex_model": os.getenv("CODEX_MODEL", "").strip(),
             "tool_preferences": AI_TOOL_PREFERENCES._ensure_loaded(),
+            "tool_preferences_resolver": get_ai_tool_preferences,
+            "operation_agents": OPERATION_AGENTS._ensure_loaded(),
+            "operation_agents_resolver": get_operation_agents,
+            "chat_agent_types_resolver": get_chat_agent_types,
             "fallback_enabled": os.getenv("AI_FALLBACK_ENABLED", "true").lower() == "true",
             "rate_limit_ttl": int(os.getenv("AI_RATE_LIMIT_TTL", "3600")),
             "max_retries": int(os.getenv("AI_MAX_RETRIES", "2")),
@@ -574,16 +617,16 @@ def _get_orchestrator_config():
 
 class _LazyOrchestrator:
     """Lazy-loading wrapper for ORCHESTRATOR_CONFIG."""
-    
+
     def __getitem__(self, key):
         return _get_orchestrator_config()[key]
-    
+
     def __contains__(self, key):
         return key in _get_orchestrator_config()
-    
+
     def __repr__(self):
         return repr(_get_orchestrator_config())
-    
+
     def get(self, *args):
         return _get_orchestrator_config().get(*args)
 
@@ -647,6 +690,7 @@ def get_inbox_storage_backend() -> str:
     - ``postgres``: queue table in PostgreSQL
     """
     return NEXUS_INBOX_BACKEND
+
 
 # --- PROJECT CONFIGURATION ---
 def get_default_project() -> str:
@@ -810,13 +854,13 @@ def get_gitlab_base_url(project: str) -> str:
 
 def get_repo(project: str) -> str:
     """Get git repo for a project from PROJECT_CONFIG.
-    
+
     Args:
         project: Project name (e.g., "nexus")
-        
+
     Returns:
         Repo string (e.g., "namespace/repository")
-        
+
     Raises:
         KeyError: If project not found in PROJECT_CONFIG
     """
@@ -825,7 +869,7 @@ def get_repo(project: str) -> str:
 
 def get_nexus_dir_name() -> str:
     """Get the nexus directory name for globbing patterns.
-    
+
     Returns:
         Directory name (e.g., ".nexus") from config
     """
@@ -835,22 +879,22 @@ def get_nexus_dir_name() -> str:
 
 def get_nexus_dir(workspace: str = None) -> str:
     """Get Nexus directory path (VCS-agnostic inbox/tasks storage).
-    
+
     Default: workspace_root/.nexus (can be configured via config)
-    
+
     Args:
         workspace: Workspace directory (uses current if not specified)
-        
+
     Returns:
         Path to nexus directory (e.g., /path/to/workspace/.nexus)
     """
     if workspace is None:
         workspace = os.getcwd()
-    
+
     # Get nexus_dir from config (defaults to .nexus)
     config = _get_project_config()
     nexus_dir_name = config.get("nexus_dir", ".nexus")
-    
+
     return os.path.join(workspace, nexus_dir_name)
 
 
@@ -860,7 +904,7 @@ def get_inbox_dir(workspace: str = None, project: str = None) -> str:
     Args:
         workspace: Workspace directory
         project: Optional project key subdirectory under inbox
-    
+
     Returns:
         Path to {nexus_dir}/inbox or {nexus_dir}/inbox/{project}
     """
@@ -916,11 +960,11 @@ def get_tasks_logs_dir(workspace: str, project: str) -> str:
 # --- TIMING CONFIGURATION ---
 INBOX_CHECK_INTERVAL = 10  # seconds - how often to check for new completions
 SLEEP_INTERVAL = INBOX_CHECK_INTERVAL  # Alias for backward compatibility
-AGENT_RECENT_WINDOW = 120   # seconds - consider agent "recently launched" within this window
-AUTO_CHAIN_CYCLE = 60       # seconds - frequency of auto-chain polling
+AGENT_RECENT_WINDOW = 120  # seconds - consider agent "recently launched" within this window
+AUTO_CHAIN_CYCLE = 60  # seconds - frequency of auto-chain polling
 
 # --- LOGGING CONFIGURATION ---
-LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_LEVEL = logging.INFO
 
 # --- VALIDATION ---
@@ -932,51 +976,62 @@ logger.info(f"Using BASE_DIR: {BASE_DIR}")
 
 def validate_configuration():
     """Validate all configuration on startup with detailed error messages.
-    
+
     Note: This must be called AFTER PROJECT_CONFIG is loaded (via _get_project_config()).
     """
     errors = []
     warnings = []
-    
+
     # Check required environment variables
     if not TELEGRAM_TOKEN:
         errors.append("TELEGRAM_TOKEN is missing! Set it in .env or environment.")
-    
+
     if not TELEGRAM_ALLOWED_USER_IDS:
         warnings.append("TELEGRAM_ALLOWED_USER_IDS are missing! Bot will not respond to anyone.")
-    
+
     # Validate PROJECT_CONFIG (when loaded)
     try:
         config = _get_project_config()
         if config:
+            global_keys = {
+                "nexus_dir",
+                "workflow_definition_path",
+                "projects",
+                "task_types",
+                "ai_tool_preferences",
+                "operation_agents",
+                "merge_queue",
+                "workflow_chains",
+                "final_agents",
+                "issue_triage",
+                "shared_agents_dir",
+            }
             for project, proj_config in config.items():
+                if project in global_keys:
+                    continue
                 # Skip non-dict values (e.g., global settings like workflow_definition_path)
                 if not isinstance(proj_config, dict):
-                    if project in ('workflow_definition_path',):
-                        continue
                     errors.append(f"PROJECT_CONFIG['{project}'] must be a dict")
                 else:
-                    if 'workspace' not in proj_config:
+                    if "workspace" not in proj_config:
                         errors.append(f"PROJECT_CONFIG['{project}'] missing 'workspace' key")
                     # git_repo/git_repos are optional when workspace auto-discovery is used.
                     repo_list = proj_config.get("git_repos")
                     if repo_list is not None and not isinstance(repo_list, list):
-                        errors.append(
-                            f"PROJECT_CONFIG['{project}']['git_repos'] must be a list"
-                        )
+                        errors.append(f"PROJECT_CONFIG['{project}']['git_repos'] must be a list")
     except Exception:
         # If PROJECT_CONFIG can't be loaded, that's okay during import (tests handle this)
         pass
-    
+
     # Check if BASE_DIR is writable
     try:
-        test_file = os.path.join(BASE_DIR, '.config_test')
-        with open(test_file, 'w') as f:
-            f.write('test')
+        test_file = os.path.join(BASE_DIR, ".config_test")
+        with open(test_file, "w") as f:
+            f.write("test")
         os.remove(test_file)
     except Exception as e:
         errors.append(f"BASE_DIR ({BASE_DIR}) is not writable: {e}")
-    
+
     # Log results
     if errors:
         logger.error("❌ CONFIGURATION VALIDATION FAILED:")
@@ -984,12 +1039,12 @@ def validate_configuration():
             logger.error(f"  - {error}")
         logger.error("Please fix configuration errors before running.")
         sys.exit(1)
-    
+
     if warnings:
         logger.warning("⚠️  Configuration warnings:")
         for warning in warnings:
             logger.warning(f"  - {warning}")
-    
+
     logger.info("✅ Configuration validation passed")
 
 

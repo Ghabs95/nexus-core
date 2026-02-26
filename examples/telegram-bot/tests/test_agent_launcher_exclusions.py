@@ -20,8 +20,12 @@ def test_invoke_persists_gemini_exclusion_when_rate_limited(monkeypatch):
     monkeypatch.setattr(agent_launcher, "get_orchestrator", lambda _cfg: _FakeOrchestrator())
     monkeypatch.setattr(agent_launcher, "record_agent_launch", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(agent_launcher.AuditStore, "audit_log", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(agent_launcher.HostStateManager, "load_launched_agents", lambda **_kwargs: dict(state))
-    monkeypatch.setattr(agent_launcher.HostStateManager, "save_launched_agents", lambda data: state.update(data))
+    monkeypatch.setattr(
+        agent_launcher.HostStateManager, "load_launched_agents", lambda **_kwargs: dict(state)
+    )
+    monkeypatch.setattr(
+        agent_launcher.HostStateManager, "save_launched_agents", lambda data: state.update(data)
+    )
 
     pid, tool = agent_launcher.invoke_copilot_agent(
         agents_dir="/tmp/agents",
@@ -56,8 +60,12 @@ def test_tool_unavailable_persists_gemini_exclusion(monkeypatch):
     monkeypatch.setattr(agent_launcher, "_ensure_agent_definition", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(agent_launcher, "get_orchestrator", lambda _cfg: _FakeOrchestrator())
     monkeypatch.setattr(agent_launcher.AuditStore, "audit_log", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(agent_launcher.HostStateManager, "load_launched_agents", lambda **_kwargs: dict(state))
-    monkeypatch.setattr(agent_launcher.HostStateManager, "save_launched_agents", lambda data: state.update(data))
+    monkeypatch.setattr(
+        agent_launcher.HostStateManager, "load_launched_agents", lambda **_kwargs: dict(state)
+    )
+    monkeypatch.setattr(
+        agent_launcher.HostStateManager, "save_launched_agents", lambda data: state.update(data)
+    )
 
     pid, tool = agent_launcher.invoke_copilot_agent(
         agents_dir="/tmp/agents",

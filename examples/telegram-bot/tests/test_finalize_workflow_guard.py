@@ -14,9 +14,13 @@ def test_finalize_workflow_skips_non_terminal_state(monkeypatch):
 
     alerts = []
 
-    monkeypatch.setattr("inbox_processor.get_workflow_state_plugin", lambda **_kwargs: _WorkflowPlugin())
+    monkeypatch.setattr(
+        "inbox_processor.get_workflow_state_plugin", lambda **_kwargs: _WorkflowPlugin()
+    )
     monkeypatch.setattr("inbox_processor.get_workflow_policy_plugin", lambda **_kwargs: _Policy())
-    monkeypatch.setattr("inbox_processor.emit_alert", lambda message, **kwargs: alerts.append(message) or True)
+    monkeypatch.setattr(
+        "inbox_processor.emit_alert", lambda message, **kwargs: alerts.append(message) or True
+    )
 
     _finalize_workflow("55", "sample-org/nexus-core", "writer", "nexus")
 

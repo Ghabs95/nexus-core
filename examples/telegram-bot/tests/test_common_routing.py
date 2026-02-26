@@ -18,12 +18,12 @@ class _IntentOrchestrator:
 
 class _ConversationOrchestrator:
     def run_text_to_speech_analysis(self, **kwargs):
-        assert kwargs.get("task") == "advisor_chat"
+        assert kwargs.get("task") == "chat"
         return {"text": "ok"}
 
 
 def test_extract_json_dict_handles_markdown_wrapped_json():
-    payload = "```json\n{\"intent\": \"conversation\"}\n```"
+    payload = '```json\n{"intent": "conversation"}\n```'
 
     parsed = extract_json_dict(payload)
 
@@ -31,7 +31,7 @@ def test_extract_json_dict_handles_markdown_wrapped_json():
 
 
 def test_parse_intent_result_reparses_embedded_json():
-    orchestrator = _IntentOrchestrator({"text": "```json\n{\"intent\":\"conversation\"}\n```"})
+    orchestrator = _IntentOrchestrator({"text": '```json\n{"intent":"conversation"}\n```'})
 
     result = parse_intent_result(orchestrator, "hello", extract_json_dict)
 

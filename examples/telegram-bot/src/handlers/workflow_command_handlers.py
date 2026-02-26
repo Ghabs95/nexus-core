@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from config import NEXUS_CORE_STORAGE_DIR
+from integrations.workflow_state_factory import get_workflow_state
 from interactive_context import InteractiveContext
 from runtime.agent_launcher import clear_launch_guard
-from integrations.workflow_state_factory import get_workflow_state
 from state_manager import HostStateManager
 from utils.log_utils import log_unauthorized_access
 
@@ -284,9 +284,7 @@ async def continue_handler(
         return
 
     if continue_ctx["status"] != "ready":
-        await ctx.reply_text(
-            f"⚠️ Unexpected continue state: {continue_ctx['status']}"
-        )
+        await ctx.reply_text(f"⚠️ Unexpected continue state: {continue_ctx['status']}")
         return
 
     if continue_ctx.get("forced_agent_override"):
@@ -351,6 +349,7 @@ async def continue_handler(
             text=f"❌ Failed to continue agent for issue #{issue_num}.",
         )
 
+
 async def kill_handler(
     ctx: InteractiveContext,
     deps: WorkflowHandlerDeps,
@@ -368,7 +367,9 @@ async def kill_handler(
     if not project_key:
         return
 
-    kill_result = deps.kill_issue_agent(issue_num=issue_num, get_runtime_ops_plugin=deps.get_runtime_ops_plugin)
+    kill_result = deps.kill_issue_agent(
+        issue_num=issue_num, get_runtime_ops_plugin=deps.get_runtime_ops_plugin
+    )
     if kill_result["status"] == "not_running":
         await ctx.reply_text(kill_result["message"])
         return
@@ -388,6 +389,7 @@ async def kill_handler(
         message_id=msg_id,
         text=text,
     )
+
 
 async def reconcile_handler(
     ctx: InteractiveContext,
@@ -461,9 +463,7 @@ async def wfstate_handler(
 
     repo = deps.project_repo(project_key)
 
-    msg_id = await ctx.reply_text(
-        f"📊 Fetching workflow state for issue #{issue_num}..."
-    )
+    msg_id = await ctx.reply_text(f"📊 Fetching workflow state for issue #{issue_num}...")
 
     state = await deps.fetch_workflow_state_snapshot(
         issue_num=issue_num,
@@ -516,16 +516,22 @@ async def wfstate_handler(
         "Local Completion (file)": (snapshot.get("local", {})).get("path", "N/A"),
         "Latest Structured Comment (from)": snapshot.get("comment_from", "N/A"),
         "Latest Structured Comment (next)": snapshot.get("comment_next", "N/A"),
-        "Latest Structured Comment (comment_id)": (snapshot.get("latest_signal", {})).get("comment_id", "N/A"),
-        "Latest Structured Comment (created)": (snapshot.get("latest_signal", {})).get("created", "N/A"),
+        "Latest Structured Comment (comment_id)": (snapshot.get("latest_signal", {})).get(
+            "comment_id", "N/A"
+        ),
+        "Latest Structured Comment (created)": (snapshot.get("latest_signal", {})).get(
+            "created", "N/A"
+        ),
         "Latest Processor Signal (type)": processor_type,
         "Latest Processor Signal (severity)": processor_severity,
         "Latest Processor Signal (at)": processor_at,
         "Latest Processor Signal (detail)": processor_line,
         "Recovery Hint": recovery_hint,
-        "Drift Flags": ', '.join(snapshot['drift_flags']) if snapshot.get('drift_flags') else 'none',
+        "Drift Flags": (
+            ", ".join(snapshot["drift_flags"]) if snapshot.get("drift_flags") else "none"
+        ),
     }
-        
+
     for k, v in summary.items():
         text += f"- **{k}**: {v}\n"
 
@@ -646,7 +652,17 @@ async def forget_handler(
         killed = bool(runtime_ops.kill_process(pid, force=True))
 
     launched = HostStateManager.load_launched_agents(recent_only=False)
-    launched_removed = launched.pop(str(issue_num), None) is not None
+    issue_key = str(issue_num)
+    launched_keys_removed = [
+        key
+        for key, value in launched.items()
+        if key == issue_key
+        or key.startswith(f"{issue_key}_")
+        or (isinstance(value, dict) and str(value.get("issue", "")) == issue_key)
+    ]
+    for key in launched_keys_removed:
+        launched.pop(key, None)
+    launched_removed = bool(launched_keys_removed)
     HostStateManager.save_launched_agents(launched)
 
     tracked = HostStateManager.load_tracked_issues()
@@ -659,7 +675,9 @@ async def forget_handler(
     cleared_guards = clear_launch_guard(str(issue_num))
 
     try:
-        completion_path = os.path.join(os.path.dirname(NEXUS_CORE_STORAGE_DIR), "completion_comments.json")
+        completion_path = os.path.join(
+            os.path.dirname(NEXUS_CORE_STORAGE_DIR), "completion_comments.json"
+        )
         with open(completion_path, encoding="utf-8") as handle:
             completion_data = json.load(handle) or {}
         if isinstance(completion_data, dict):

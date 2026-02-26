@@ -1,4 +1,5 @@
 """File-based storage backend (JSON files)."""
+
 import json
 import logging
 from datetime import UTC, datetime, timedelta
@@ -77,7 +78,9 @@ class FileStorage(StorageBackend):
         """List workflows, optionally filtered by state."""
         workflows = []
 
-        for workflow_file in sorted(self.workflows_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        for workflow_file in sorted(
+            self.workflows_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+        ):
             if len(workflows) >= limit:
                 break
 
@@ -160,7 +163,6 @@ class FileStorage(StorageBackend):
             logger.error(f"Failed to read audit log for {workflow_id}: {e}")
             return []
 
-
     async def save_agent_metadata(
         self, workflow_id: str, agent_name: str, metadata: dict[str, Any]
     ) -> None:
@@ -175,9 +177,7 @@ class FileStorage(StorageBackend):
             logger.error(f"Failed to save agent metadata: {e}")
             raise
 
-    async def get_agent_metadata(
-        self, workflow_id: str, agent_name: str
-    ) -> dict[str, Any] | None:
+    async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> dict[str, Any] | None:
         """Get agent execution metadata."""
         agent_file = self.agent_dir / f"{workflow_id}_{agent_name}.json"
 
@@ -229,9 +229,7 @@ class FileStorage(StorageBackend):
 
         return dedup_key
 
-    async def list_completions(
-        self, issue_number: str | None = None
-    ) -> list[dict[str, Any]]:
+    async def list_completions(self, issue_number: str | None = None) -> list[dict[str, Any]]:
         """List latest completion payloads, newest first."""
         completion_files: list[Path]
 
@@ -284,6 +282,7 @@ class FileStorage(StorageBackend):
     def _step_to_dict(self, step) -> dict[str, Any]:
         """Delegate to shared serde module."""
         from nexus.adapters.storage._workflow_serde import step_to_dict
+
         return step_to_dict(step)
 
     def _dict_to_workflow(self, data: dict[str, Any]) -> Workflow:

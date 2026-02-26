@@ -15,7 +15,6 @@ import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 # ---------------------------------------------------------------------------
 # NexusAgentRuntime hook tests
 # ---------------------------------------------------------------------------
@@ -27,9 +26,11 @@ class TestNexusAgentRuntimeShouldRetry:
 
         runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
 
-        with patch("state_manager.HostStateManager.load_launched_agents", return_value={}), \
-             patch("state_manager.HostStateManager.save_launched_agents"), \
-             patch("runtime.agent_monitor.AgentMonitor") as MockMonitor:
+        with (
+            patch("state_manager.HostStateManager.load_launched_agents", return_value={}),
+            patch("state_manager.HostStateManager.save_launched_agents"),
+            patch("runtime.agent_monitor.AgentMonitor") as MockMonitor,
+        ):
             MockMonitor.should_retry.return_value = True
             result = runtime.should_retry("42", "developer")
 
@@ -41,9 +42,11 @@ class TestNexusAgentRuntimeShouldRetry:
 
         runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
 
-        with patch("state_manager.HostStateManager.load_launched_agents", return_value={}), \
-             patch("state_manager.HostStateManager.save_launched_agents"), \
-             patch("runtime.agent_monitor.AgentMonitor") as MockMonitor:
+        with (
+            patch("state_manager.HostStateManager.load_launched_agents", return_value={}),
+            patch("state_manager.HostStateManager.save_launched_agents"),
+            patch("runtime.agent_monitor.AgentMonitor") as MockMonitor,
+        ):
             MockMonitor.should_retry.return_value = False
             result = runtime.should_retry("42", "developer")
 
@@ -57,10 +60,12 @@ class TestNexusAgentRuntimeShouldRetry:
 
         runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
 
-        with patch("state_manager.HostStateManager.load_launched_agents", return_value={"42": {}}), \
-             patch("state_manager.HostStateManager.save_launched_agents") as save_mock, \
-             patch("runtime.agent_monitor.AgentMonitor") as MockMonitor, \
-             patch.object(runtime, "send_alert", return_value=True) as alert_mock:
+        with (
+            patch("state_manager.HostStateManager.load_launched_agents", return_value={"42": {}}),
+            patch("state_manager.HostStateManager.save_launched_agents") as save_mock,
+            patch("runtime.agent_monitor.AgentMonitor") as MockMonitor,
+            patch.object(runtime, "send_alert", return_value=True) as alert_mock,
+        ):
             MockMonitor.should_retry.return_value = True
 
             # First calls are allowed by fuse and delegated to AgentMonitor
@@ -107,7 +112,9 @@ class TestRetryFuseStatus:
             ],
         }
 
-        with patch("state_manager.HostStateManager.load_launched_agents", return_value={"44": entry}):
+        with patch(
+            "state_manager.HostStateManager.load_launched_agents", return_value={"44": entry}
+        ):
             status = get_retry_fuse_status("44", now_ts=now)
 
         assert status["exists"] is True
@@ -138,10 +145,15 @@ class TestRetryFuseStatus:
             "retry_fuse_trip_times": [prior_trip],
         }
 
-        with patch("state_manager.HostStateManager.load_launched_agents", return_value={"44": seeded_entry}), \
-             patch("state_manager.HostStateManager.save_launched_agents") as save_mock, \
-             patch("runtime.agent_monitor.AgentMonitor") as MockMonitor, \
-             patch.object(runtime, "send_alert", return_value=True) as alert_mock:
+        with (
+            patch(
+                "state_manager.HostStateManager.load_launched_agents",
+                return_value={"44": seeded_entry},
+            ),
+            patch("state_manager.HostStateManager.save_launched_agents") as save_mock,
+            patch("runtime.agent_monitor.AgentMonitor") as MockMonitor,
+            patch.object(runtime, "send_alert", return_value=True) as alert_mock,
+        ):
             MockMonitor.should_retry.return_value = True
 
             assert runtime.should_retry("44", "debug") is False
@@ -454,7 +466,9 @@ class TestNexusAgentRuntimePostCompletionComment:
 
         runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
 
-        with patch("orchestration.nexus_core_helpers.get_git_platform", side_effect=RuntimeError("boom")):
+        with patch(
+            "orchestration.nexus_core_helpers.get_git_platform", side_effect=RuntimeError("boom")
+        ):
             result = runtime.post_completion_comment("44", "owner/repo", "body")
 
         assert result is False
@@ -489,5 +503,3 @@ class TestCheckStuckAgentsDelegates:
             check_stuck_agents()
 
         assert polling_failure_counts.get("stuck-agents:loop", 0) >= 1
-
-

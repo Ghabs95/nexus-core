@@ -100,9 +100,7 @@ class HandoffManager:
             request.status = DelegationStatus.FAILED
             logger.debug("Delegation failed: %s — %s", delegation_id, error)
         else:
-            logger.warning(
-                "fail() called for unknown delegation_id: %s", delegation_id
-            )
+            logger.warning("fail() called for unknown delegation_id: %s", delegation_id)
 
     def expire_stale(self) -> list[DelegationRequest]:  # noqa: F821
         """Expire delegations whose ``expires_at`` timestamp has passed.

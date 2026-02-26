@@ -12,6 +12,7 @@ import time
 
 from audit_store import AuditStore
 from orchestration.plugin_runtime import get_runtime_ops_plugin
+
 from nexus.core.monitor import MonitorEngine
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ class AgentMonitor:
         except Exception:
             timed_out = MonitorEngine.check_log_timeout(log_file, timeout_seconds=threshold)
         pid = None
-        
+
         if timed_out:
             # Check if process is still running
             runtime_ops = get_runtime_ops_plugin(cache_key="runtime-ops:monitor")
@@ -43,7 +44,7 @@ class AgentMonitor:
             if pid:
                 logger.warning("Issue #%s: Agent timeout detected (PID: %s)", issue_num, pid)
                 return (True, pid)
-        
+
         return (False, None)
 
     @staticmethod
@@ -60,12 +61,12 @@ class AgentMonitor:
             if not runtime_ops or not runtime_ops.kill_process(pid, force=True):
                 logger.error("Failed to kill agent PID %s", pid)
                 return False
-            
+
             logger.warning("Killed stuck agent PID %s for issue #%s", pid, issue_num)
             AuditStore.audit_log(
                 int(issue_num) if issue_num else 0,
                 "AGENT_TIMEOUT_KILL",
-                f"Killed agent process PID {pid} after timeout"
+                f"Killed agent process PID {pid} after timeout",
             )
             return True
         except Exception as e:
@@ -76,4 +77,3 @@ class AgentMonitor:
     def mark_failed(issue_num: str, agent_name: str, reason: str) -> None:
         """Mark an agent as permanently failed."""
         AuditStore.audit_log(int(issue_num), "AGENT_FAILED", reason)
-

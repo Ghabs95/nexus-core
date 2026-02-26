@@ -34,7 +34,7 @@ async def handle_report_bug(
             return
 
         title = issue.get("title", f"Issue #{issue_num}")
-        
+
         # 3. Create bug report issue
         bug_title = f"[BUG REPORT] Issue #{issue_num}: {title}"
         bug_body = (
@@ -44,26 +44,24 @@ async def handle_report_bug(
             "**Context:**\n"
             "Automated bug report triggered via Nexus Bot 'Report Bug' button."
         )
-        
+
         bug_issue_num = plugin.create_issue(
             title=bug_title,
             body=bug_body,
             labels=["bug", "nexus-bot"],
         )
-        
+
         if not bug_issue_num:
-             await ctx.edit_message_text(f"❌ Failed to create bug report on the issue tracker.")
-             return
+            await ctx.edit_message_text(f"❌ Failed to create bug report on the issue tracker.")
+            return
 
         # 4. Comment on the original issue
         plugin.add_comment(
-            issue_num,
-            f"🐞 User reported a bug for this issue. See bug report: {bug_issue_num}"
+            issue_num, f"🐞 User reported a bug for this issue. See bug report: {bug_issue_num}"
         )
 
         await ctx.edit_message_text(
-            f"✅ Bug report created: {bug_issue_num}\n\n"
-            f"Thank you for your feedback!"
+            f"✅ Bug report created: {bug_issue_num}\n\n" f"Thank you for your feedback!"
         )
 
     except Exception as exc:

@@ -1,4 +1,5 @@
 """Core data models for Nexus workflows."""
+
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -113,7 +114,9 @@ class WorkflowStep:
     error: str | None = None
     retry_count: int = 0  # Number of retries attempted so far
     approval_gates: list[ApprovalGate] = field(default_factory=list)  # Approval gates for this step
-    routes: list[dict[str, Any]] = field(default_factory=list)  # Router branch definitions (router steps only)
+    routes: list[dict[str, Any]] = field(
+        default_factory=list
+    )  # Router branch definitions (router steps only)
     on_success: str | None = None  # Named step (id) to activate after success
     final_step: bool = False  # Mark step as terminal for workflow completion
     iteration: int = 0  # Times this step has been re-activated via a workflow goto
@@ -128,7 +131,11 @@ class WorkflowStep:
 
     def get_approval_constraints(self) -> str:
         """Get combined approval constraint messages for all gates."""
-        messages = [gate.approval_message for gate in self.approval_gates if gate.required and gate.approval_message]
+        messages = [
+            gate.approval_message
+            for gate in self.approval_gates
+            if gate.required and gate.approval_message
+        ]
         return "\n\n".join(messages) if messages else ""
 
     def get_tool_restrictions(self) -> list[str]:
@@ -170,7 +177,11 @@ class Workflow:
 
     def is_complete(self) -> bool:
         """Check if workflow is complete."""
-        return self.state in (WorkflowState.COMPLETED, WorkflowState.FAILED, WorkflowState.CANCELLED)
+        return self.state in (
+            WorkflowState.COMPLETED,
+            WorkflowState.FAILED,
+            WorkflowState.CANCELLED,
+        )
 
     @property
     def active_agent_type(self) -> str | None:
@@ -290,9 +301,7 @@ class DelegationRequest:
     task_context: dict[str, Any] = field(default_factory=dict)
     delegation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     status: DelegationStatus = DelegationStatus.PENDING
-    created_at: str = field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     expires_at: str | None = None
 
     def __post_init__(self) -> None:
@@ -313,9 +322,7 @@ class DelegationCallback:
     result: dict[str, Any]
     success: bool
     error: str | None = None
-    completed_at: str | None = field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    completed_at: str | None = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 @dataclass

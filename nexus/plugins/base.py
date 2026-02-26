@@ -97,6 +97,7 @@ class InteractiveClientPluginProtocol(Protocol):
 @dataclass
 class PluginHealthStatus:
     """Health status of a plugin."""
+
     healthy: bool
     name: str
     details: str = ""

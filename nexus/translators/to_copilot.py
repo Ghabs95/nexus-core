@@ -8,7 +8,6 @@ Usage:
     python -m nexus.cli translate to-copilot triage-agent.yaml > triage-agent.copilot
 """
 
-
 import yaml
 
 
@@ -102,4 +101,3 @@ You will receive:
 """
 
     return instructions
-

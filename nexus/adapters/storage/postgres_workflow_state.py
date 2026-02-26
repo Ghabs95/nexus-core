@@ -18,7 +18,6 @@ import json
 import logging
 import time
 from datetime import UTC, datetime
-from typing import Any
 
 try:
     import sqlalchemy as sa
@@ -52,7 +51,8 @@ if _SA_AVAILABLE:
         __tablename__ = "nexus_workflow_mappings"
 
         issue_num: sa.orm.Mapped[str] = sa.orm.mapped_column(
-            sa.String(64), primary_key=True,
+            sa.String(64),
+            primary_key=True,
         )
         workflow_id: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(128))
         updated_at: sa.orm.Mapped[datetime] = sa.orm.mapped_column(
@@ -65,7 +65,8 @@ if _SA_AVAILABLE:
         __tablename__ = "nexus_approval_state"
 
         issue_num: sa.orm.Mapped[str] = sa.orm.mapped_column(
-            sa.String(64), primary_key=True,
+            sa.String(64),
+            primary_key=True,
         )
         step_num: sa.orm.Mapped[int] = sa.orm.mapped_column(sa.Integer)
         step_name: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(256))
@@ -97,11 +98,13 @@ class PostgresWorkflowStateStore:
 
         self._engine = sa.create_engine(dsn, pool_size=pool_size, echo=echo)
         self._session_factory: sessionmaker = sessionmaker(
-            bind=self._engine, expire_on_commit=False,
+            bind=self._engine,
+            expire_on_commit=False,
         )
         _WfBase.metadata.create_all(self._engine)
         logger.info(
-            "PostgresWorkflowStateStore connected (%s)", dsn.split("@")[-1],
+            "PostgresWorkflowStateStore connected (%s)",
+            dsn.split("@")[-1],
         )
 
     # ── Workflow mapping ────────────────────────────────────────────
@@ -114,11 +117,13 @@ class PostgresWorkflowStateStore:
                 row.workflow_id = workflow_id
                 row.updated_at = now
             else:
-                session.add(_WorkflowMappingRow(
-                    issue_num=str(issue_num),
-                    workflow_id=workflow_id,
-                    updated_at=now,
-                ))
+                session.add(
+                    _WorkflowMappingRow(
+                        issue_num=str(issue_num),
+                        workflow_id=workflow_id,
+                        updated_at=now,
+                    )
+                )
             session.commit()
         logger.info("Mapped issue #%s -> workflow %s", issue_num, workflow_id)
 
@@ -159,18 +164,22 @@ class PostgresWorkflowStateStore:
                 row.approval_timeout = approval_timeout
                 row.requested_at = time.time()
             else:
-                session.add(_ApprovalStateRow(
-                    issue_num=str(issue_num),
-                    step_num=step_num,
-                    step_name=step_name,
-                    approvers=json.dumps(approvers),
-                    approval_timeout=approval_timeout,
-                    requested_at=time.time(),
-                ))
+                session.add(
+                    _ApprovalStateRow(
+                        issue_num=str(issue_num),
+                        step_num=step_num,
+                        step_name=step_name,
+                        approvers=json.dumps(approvers),
+                        approval_timeout=approval_timeout,
+                        requested_at=time.time(),
+                    )
+                )
             session.commit()
         logger.info(
             "Set pending approval for issue #%s step %d (%s)",
-            issue_num, step_num, step_name,
+            issue_num,
+            step_num,
+            step_name,
         )
 
     def clear_pending_approval(self, issue_num: str) -> None:
@@ -207,3 +216,16 @@ class PostgresWorkflowStateStore:
                 }
                 for r in rows
             }
+
+    def close(self) -> None:
+        """Dispose underlying SQLAlchemy engine resources."""
+        try:
+            self._engine.dispose()
+        except Exception as exc:
+            logger.debug("Failed to dispose PostgresWorkflowStateStore engine: %s", exc)
+
+    def __del__(self) -> None:  # pragma: no cover - defensive finalizer
+        try:
+            self.close()
+        except Exception:
+            pass

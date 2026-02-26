@@ -85,7 +85,9 @@ class FileWorkflowStateStore:
         self._write(self._approval_file, data)
         logger.info(
             "Set pending approval for issue #%s step %d (%s)",
-            issue_num, step_num, step_name,
+            issue_num,
+            step_num,
+            step_name,
         )
 
     def clear_pending_approval(self, issue_num: str) -> None:

@@ -22,7 +22,9 @@ class GithubWebhookPolicyPlugin:
         repository = payload.get("repository", {}) or {}
 
         labels = issue.get("labels", []) or []
-        label_names = [label.get("name") for label in labels if isinstance(label, dict) and label.get("name")]
+        label_names = [
+            label.get("name") for label in labels if isinstance(label, dict) and label.get("name")
+        ]
 
         return {
             "action": payload.get("action"),
@@ -95,9 +97,16 @@ class GithubWebhookPolicyPlugin:
             return {"route": "ping", "event": {}}
         return {"route": "unhandled", "event": {"event_type": event_type}}
 
-    def should_notify_pr_merged(self, merge_policy: str) -> bool:
+    @staticmethod
+    def _normalize_review_mode(value: Any, default: str = "manual") -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"manual", "auto"}:
+            return normalized
+        return default
+
+    def should_notify_pr_merged(self, review_mode: str) -> bool:
         """Return True when PR merge notifications should be emitted."""
-        return str(merge_policy or "always") != "always"
+        return self._normalize_review_mode(review_mode) == "auto"
 
     def verify_signature(
         self,
@@ -144,18 +153,29 @@ class GithubWebhookPolicyPlugin:
                 return project_key
         return default_project
 
-    def resolve_merge_policy(
+    def resolve_review_mode(
         self,
         repo_name: str,
         project_config: dict[str, Any],
-        default_policy: str = "always",
+        default_mode: str = "manual",
     ) -> str:
-        """Resolve effective merge policy for a repository."""
+        """Resolve effective merge review mode for a repository."""
         project_key = self.resolve_project_key(repo_name, project_config)
         project_cfg = (project_config or {}).get(project_key, {})
-        if isinstance(project_cfg, dict) and project_cfg.get("require_human_merge_approval"):
-            return str(project_cfg.get("require_human_merge_approval"))
-        return str((project_config or {}).get("require_human_merge_approval", default_policy))
+        global_merge_queue = (project_config or {}).get("merge_queue", {})
+        project_merge_queue = (
+            project_cfg.get("merge_queue", {}) if isinstance(project_cfg, dict) else {}
+        )
+
+        if isinstance(project_merge_queue, dict) and "review_mode" in project_merge_queue:
+            return self._normalize_review_mode(
+                project_merge_queue.get("review_mode"), default=default_mode
+            )
+        if isinstance(global_merge_queue, dict) and "review_mode" in global_merge_queue:
+            return self._normalize_review_mode(
+                global_merge_queue.get("review_mode"), default=default_mode
+            )
+        return self._normalize_review_mode(default_mode, default="manual")
 
     def build_issue_closed_message(self, event: dict[str, Any]) -> str:
         """Build issue-closed lifecycle notification message."""
@@ -191,7 +211,7 @@ class GithubWebhookPolicyPlugin:
             f"🔗 {event.get('url', '')}"
         )
 
-    def build_pr_merged_message(self, event: dict[str, Any], merge_policy: str) -> str:
+    def build_pr_merged_message(self, event: dict[str, Any], review_mode: str) -> str:
         """Build PR-merged lifecycle notification message."""
         return (
             "✅ **PR Merged**\n\n"
@@ -199,7 +219,7 @@ class GithubWebhookPolicyPlugin:
             f"Title: {event.get('title', '')}\n"
             f"Repository: {event.get('repo', 'unknown')}\n"
             f"Merged by: @{event.get('merged_by', 'unknown')}\n"
-            f"Policy: `{merge_policy}`\n\n"
+            f"Review mode: `{self._normalize_review_mode(review_mode)}`\n\n"
             f"🔗 {event.get('url', '')}"
         )
 
@@ -213,7 +233,9 @@ class GithubWebhookPolicyPlugin:
             elif isinstance(label, str):
                 label_name = label.lower()
 
-            project_match = re.search(r"(?:^|[:/\s_-])project[:/\s_-]?([a-z0-9][a-z0-9_-]*)", label_name)
+            project_match = re.search(
+                r"(?:^|[:/\s_-])project[:/\s_-]?([a-z0-9][a-z0-9_-]*)", label_name
+            )
             if project_match:
                 return project_match.group(1).replace("-", "_")
 

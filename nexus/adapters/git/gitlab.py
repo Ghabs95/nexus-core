@@ -13,6 +13,7 @@ Example::
         repo="mygroup/myproject",
     )
 """
+
 import asyncio
 import json
 import logging
@@ -63,9 +64,7 @@ class GitLabPlatform(GitPlatform):
         issues = [self._to_issue(item) for item in items]
         return issues[:limit]
 
-    async def create_issue(
-        self, title: str, body: str, labels: list[str] | None = None
-    ) -> Issue:
+    async def create_issue(self, title: str, body: str, labels: list[str] | None = None) -> Issue:
         payload: dict[str, Any] = {"title": title, "description": body}
         if labels:
             payload["labels"] = ",".join(labels)
@@ -109,9 +108,7 @@ class GitLabPlatform(GitPlatform):
         )
         return self._to_comment(data, issue_id)
 
-    async def get_comments(
-        self, issue_id: str, since: datetime | None = None
-    ) -> list[Comment]:
+    async def get_comments(self, issue_id: str, since: datetime | None = None) -> list[Comment]:
         url = f"projects/{self._encoded_repo}/issues/{issue_id}/notes?per_page=100&sort=asc"
         items = await self._get(url)
         comments = [self._to_comment(c, issue_id) for c in items]
@@ -139,6 +136,56 @@ class GitLabPlatform(GitPlatform):
         )
         return data.get("web_url", branch_name)
 
+    async def merge_pull_request(
+        self,
+        pr_id: str,
+        *,
+        squash: bool = True,
+        delete_branch: bool = True,
+        auto: bool = True,
+    ) -> str:
+        """Merge a GitLab merge request by IID."""
+        payload: dict[str, Any] = {
+            "should_remove_source_branch": bool(delete_branch),
+            "squash": bool(squash),
+        }
+        if auto:
+            payload["merge_when_pipeline_succeeds"] = True
+        data = await self._put(
+            f"projects/{self._encoded_repo}/merge_requests/{pr_id}/merge",
+            payload,
+        )
+        state = str(data.get("state") or "unknown")
+        web_url = str(data.get("web_url") or "")
+        return f"state={state} {web_url}".strip()
+
+    async def ensure_label(
+        self,
+        name: str,
+        *,
+        color: str,
+        description: str = "",
+    ) -> bool:
+        """Ensure a GitLab project label exists."""
+        try:
+            await self._post(
+                f"projects/{self._encoded_repo}/labels",
+                {
+                    "name": str(name),
+                    "color": str(color),
+                    "description": str(description or ""),
+                },
+            )
+            return True
+        except urllib.error.HTTPError as exc:
+            if exc.code == 409:
+                return True
+            logger.warning("Failed to ensure GitLab label %s: HTTP %s", name, exc.code)
+            return False
+        except Exception as exc:
+            logger.warning("Failed to ensure GitLab label %s: %s", name, exc)
+            return False
+
     async def create_pr_from_changes(
         self,
         repo_dir: str,
@@ -158,7 +205,9 @@ class GitLabPlatform(GitPlatform):
 
         import re as _re
 
-        issue_url = rf"https?://[^\s]+/{_re.escape(issue_repo_ref)}/-/issues/{_re.escape(issue_number)}"
+        issue_url = (
+            rf"https?://[^\s]+/{_re.escape(issue_repo_ref)}/-/issues/{_re.escape(issue_number)}"
+        )
         closing_pattern = _re.compile(
             rf"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+"
             rf"(?:{_re.escape(issue_ref)}|{issue_url})\b",
@@ -199,9 +248,7 @@ class GitLabPlatform(GitPlatform):
                 logger.info("No local changes detected — skipping MR creation")
                 return None
 
-            subprocess.run(
-                ["git", "checkout", "-B", branch_name], cwd=repo_dir, check=True
-            )
+            subprocess.run(["git", "checkout", "-B", branch_name], cwd=repo_dir, check=True)
             subprocess.run(
                 ["git", "commit", "-m", f"nexus: {title} (closes #{issue_number})"],
                 cwd=repo_dir,

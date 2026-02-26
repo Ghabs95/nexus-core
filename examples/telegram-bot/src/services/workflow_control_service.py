@@ -33,6 +33,7 @@ def prepare_continue_context(
     get_sop_tier: Callable[[str], tuple[str, Any, Any]],
 ) -> dict[str, Any]:
     """Build context for /continue and return either a terminal state or launch payload."""
+
     def _extract_repo_from_text(text: str) -> str | None:
         if not text:
             return None
@@ -70,7 +71,9 @@ def prepare_continue_context(
         _add_repo(default_repo)
         return candidates
 
-    def _load_issue(preferred_config: dict[str, Any] | None = None) -> tuple[dict[str, Any] | None, str | None]:
+    def _load_issue(
+        preferred_config: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any] | None, str | None]:
         for candidate_repo in _repo_candidates(preferred_config):
             issue_details = get_issue_details(issue_num, candidate_repo)
             if issue_details:
@@ -85,7 +88,7 @@ def prepare_continue_context(
 
     forced_agent = None
     filtered_rest: list[str] = []
-    for token in (rest_tokens or []):
+    for token in rest_tokens or []:
         if token.lower().startswith("from:"):
             forced_agent = token[5:].strip()
         else:
@@ -95,7 +98,9 @@ def prepare_continue_context(
         forced_agent = filtered_rest[0]
         filtered_rest = filtered_rest[1:]
 
-    continuation_prompt = " ".join(filtered_rest) if filtered_rest else "Please continue with the next step."
+    continuation_prompt = (
+        " ".join(filtered_rest) if filtered_rest else "Please continue with the next step."
+    )
 
     runtime_ops = get_runtime_ops_plugin(cache_key="runtime-ops:telegram")
     pid = runtime_ops.find_agent_pid_for_issue(issue_num) if runtime_ops else None
@@ -118,10 +123,7 @@ def prepare_continue_context(
             checked = ", ".join(_repo_candidates())
             return {
                 "status": "error",
-                "message": (
-                    f"❌ Could not load issue #{issue_num}.\n"
-                    f"Checked repos: {checked}"
-                ),
+                "message": (f"❌ Could not load issue #{issue_num}.\n" f"Checked repos: {checked}"),
             }
         body = details.get("body", "")
         match = re.search(r"Task File:\s*`([^`]+)`", body)
@@ -172,10 +174,7 @@ def prepare_continue_context(
             checked = ", ".join(_repo_candidates(config))
             return {
                 "status": "error",
-                "message": (
-                    f"❌ Could not load issue #{issue_num}.\n"
-                    f"Checked repos: {checked}"
-                ),
+                "message": (f"❌ Could not load issue #{issue_num}.\n" f"Checked repos: {checked}"),
             }
 
         title = str(details.get("title") or "").strip()
@@ -221,8 +220,7 @@ def prepare_continue_context(
                 return {
                     "status": "error",
                     "message": (
-                        f"❌ Could not load issue #{issue_num}.\n"
-                        f"Checked repos: {checked}"
+                        f"❌ Could not load issue #{issue_num}.\n" f"Checked repos: {checked}"
                     ),
                 }
 
@@ -297,7 +295,9 @@ def prepare_continue_context(
         )
 
     expected_running_agent = get_expected_running_agent_from_workflow(str(issue_num))
-    normalized_expected = normalize_agent_reference(expected_running_agent) if expected_running_agent else None
+    normalized_expected = (
+        normalize_agent_reference(expected_running_agent) if expected_running_agent else None
+    )
     normalized_requested = normalize_agent_reference(agent_type) if agent_type else None
     if (
         not forced_agent
@@ -346,7 +346,9 @@ def prepare_continue_context(
     }
 
 
-def kill_issue_agent(*, issue_num: str, get_runtime_ops_plugin: Callable[..., Any]) -> dict[str, Any]:
+def kill_issue_agent(
+    *, issue_num: str, get_runtime_ops_plugin: Callable[..., Any]
+) -> dict[str, Any]:
     """Kill a running issue agent and report outcome."""
     runtime_ops = get_runtime_ops_plugin(cache_key="runtime-ops:telegram")
     pid = runtime_ops.find_agent_pid_for_issue(issue_num) if runtime_ops else None

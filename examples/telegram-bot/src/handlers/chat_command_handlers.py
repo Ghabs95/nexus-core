@@ -1,7 +1,5 @@
 import logging
 
-from nexus.adapters.notifications.base import Button
-
 from config import get_chat_agent_types, get_chat_agents
 from handlers.inbox_routing_handler import PROJECTS
 from interactive_context import InteractiveContext
@@ -14,6 +12,8 @@ from services.memory_service import (
     set_active_chat,
     update_chat_metadata,
 )
+
+from nexus.adapters.notifications.base import Button
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,11 @@ def _available_chat_agents(chat_data: dict) -> list[dict]:
 
     allowed = metadata.get("allowed_agent_types")
     if isinstance(allowed, list):
-        cleaned = [str(item).strip().lower() for item in allowed if isinstance(item, str) and str(item).strip()]
+        cleaned = [
+            str(item).strip().lower()
+            for item in allowed
+            if isinstance(item, str) and str(item).strip()
+        ]
         if cleaned:
             return [{"agent_type": value} for value in cleaned]
 
@@ -130,7 +134,9 @@ def _chat_context_summary(chat_data: dict) -> str:
     if not primary_agent_type or primary_agent_type not in available_agent_types:
         primary_agent_type = available_agent_types[0]
     agent_by_type = {item["agent_type"]: item for item in available_agents}
-    primary_agent_label = _agent_display_label(agent_by_type.get(primary_agent_type, {"agent_type": primary_agent_type}))
+    primary_agent_label = _agent_display_label(
+        agent_by_type.get(primary_agent_type, {"agent_type": primary_agent_type})
+    )
 
     return (
         f"*Project:* {project_label}\n"
@@ -229,13 +235,14 @@ def _agent_picker_keyboard(chat_data: dict) -> list[list[Button]]:
     keyboard.append([Button("🔙 Back", callback_data="chat:context")])
     return keyboard
 
+
 async def chat_menu_handler(ctx: InteractiveContext):
     """Handler for the /chat command to show the active chat and options."""
     user_id = int(ctx.user_id)
-    
+
     active_chat_id = get_active_chat(user_id)
     chats = list_chats(user_id)
-    
+
     active_chat_title = _resolve_active_chat_title(chats, active_chat_id)
     active_chat = get_chat(user_id, active_chat_id)
 
@@ -243,35 +250,33 @@ async def chat_menu_handler(ctx: InteractiveContext):
     text += f"*Active Chat:* {active_chat_title}\n"
     text += f"{_chat_context_summary(active_chat)}\n"
     text += "_(All conversational history is saved under this thread)_"
-    
-    await ctx.reply_text(
-        text=text,
-        buttons=_build_main_menu_keyboard(active_chat_id)
-    )
+
+    await ctx.reply_text(text=text, buttons=_build_main_menu_keyboard(active_chat_id))
+
 
 async def chat_callback_handler(ctx: InteractiveContext):
     """Handles inline keyboard callbacks for the chat menu."""
     if not ctx.query:
         return
-        
+
     await ctx.answer_callback_query()
-    
+
     user_id = int(ctx.user_id)
     data = ctx.query.action_data
     message_id = ctx.query.message_id
-    
+
     if data == "chat:new":
         chat_id = create_chat(user_id)
         await _render_menu(ctx, user_id, notice="✅ *New Chat Created & Activated!*")
-        
+
     elif data == "chat:list":
         chats = list_chats(user_id)
         active_chat_id = get_active_chat(user_id)
-        
+
         if not chats:
             await ctx.edit_message_text(message_id=message_id, text="You have no saved chats.")
             return
-            
+
         text = "📋 *Select a Chat Thread:*"
         keyboard = []
         for c in chats:
@@ -279,15 +284,15 @@ async def chat_callback_handler(ctx: InteractiveContext):
             title = c.get("title")
             prefix = "✅ " if chat_id == active_chat_id else ""
             keyboard.append([Button(f"{prefix}{title}", callback_data=f"chat:select:{chat_id}")])
-            
+
         keyboard.append([Button("🔙 Back to Menu", callback_data="chat:menu")])
         await ctx.edit_message_text(message_id=message_id, text=text, buttons=keyboard)
-        
+
     elif data.startswith("chat:delete:"):
         chat_id = data.split(":")[2]
         delete_chat(user_id, chat_id)
         await _render_menu(ctx, user_id, notice="🗑️ *Chat Deleted!*")
-        
+
     elif data.startswith("chat:select:"):
         chat_id = data.split(":")[2]
         set_active_chat(user_id, chat_id)
@@ -305,7 +310,7 @@ async def chat_callback_handler(ctx: InteractiveContext):
             buttons=[
                 [Button("❌ Cancel", callback_data="chat:rename:cancel")],
                 [Button("🔙 Back to Menu", callback_data="chat:menu")],
-            ]
+            ],
         )
 
     elif data == "chat:rename:cancel":
@@ -386,7 +391,7 @@ async def chat_callback_handler(ctx: InteractiveContext):
             user_id,
             notice=f"✅ Primary agent set to *{_agent_type_label(agent_type)}* (`{agent_type}`).",
         )
-        
+
     elif data == "chat:menu":
         ctx.user_state.pop("pending_chat_rename", None)
         await _render_menu(ctx, user_id)
@@ -413,16 +418,12 @@ async def chat_agents_handler(ctx: InteractiveContext):
 
     if project_key not in PROJECTS and project_key != "nexus":
         available = ", ".join(sorted(PROJECTS.keys()))
-        await ctx.reply_text(
-            f"⚠️ Unknown project `{project_key}`.\n\nAvailable: {available}"
-        )
+        await ctx.reply_text(f"⚠️ Unknown project `{project_key}`.\n\nAvailable: {available}")
         return
 
     effective_types = get_chat_agent_types(project_key)
     if not effective_types:
-        await ctx.reply_text(
-            f"⚠️ No chat agent types configured for `{project_key}`."
-        )
+        await ctx.reply_text(f"⚠️ No chat agent types configured for `{project_key}`.")
         return
 
     lines = [f"🤖 *Chat Agents for {PROJECTS.get(project_key, project_key)}*", ""]

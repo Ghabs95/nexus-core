@@ -10,11 +10,11 @@ from collections.abc import Callable
 from typing import Any
 
 from config import INBOX_PROCESSOR_LOG_FILE, NEXUS_CORE_STORAGE_DIR
+from integrations.workflow_state_factory import get_workflow_state as _get_wf_state
 from orchestration.plugin_runtime import (
     get_runtime_ops_plugin,
     get_workflow_state_plugin,
 )
-from integrations.workflow_state_factory import get_workflow_state as _get_wf_state
 
 logger = logging.getLogger(__name__)
 
@@ -142,13 +142,17 @@ async def reconcile_issue_from_signals(
     completion_path: str | None = None
     if applied:
         selected_signal = applied[-1]
-        completion_path = write_local_completion_from_signal(project_key, issue_num, selected_signal)
+        completion_path = write_local_completion_from_signal(
+            project_key, issue_num, selected_signal
+        )
 
     status_after = await workflow_plugin.get_workflow_status(issue_num)
     if status_after:
         state_text = str(status_after.get("state", "unknown"))
         agent_text = str(status_after.get("current_agent", "unknown"))
-        step_text = f"{status_after.get('current_step', '?')}/{status_after.get('total_steps', '?')}"
+        step_text = (
+            f"{status_after.get('current_step', '?')}/{status_after.get('total_steps', '?')}"
+        )
     else:
         state_text = "unknown"
         agent_text = "unknown"
@@ -191,10 +195,11 @@ async def fetch_workflow_state_snapshot(
 
     # 2. Get expected running agent reference
     from runtime.nexus_agent_runtime import get_expected_running_agent_from_workflow
+
     expected_running = get_expected_running_agent_from_workflow(issue_num)
 
     # 3. Build snapshot
-    # Note: build_workflow_snapshot needs find_task_file_by_issue, 
+    # Note: build_workflow_snapshot needs find_task_file_by_issue,
     # but it's often passed via deps. We'll use a local import or proxy if needed.
     from utils.task_utils import find_task_file_by_issue
 
@@ -272,7 +277,9 @@ def build_workflow_snapshot(
                 indexed_step_name = str(step.get("name", "unknown"))
                 agent = step.get("agent") if isinstance(step, dict) else None
                 if isinstance(agent, dict):
-                    indexed_agent = str(agent.get("name") or agent.get("display_name") or "").strip()
+                    indexed_agent = str(
+                        agent.get("name") or agent.get("display_name") or ""
+                    ).strip()
 
             for idx, step in enumerate(steps):
                 if not isinstance(step, dict):
@@ -283,7 +290,9 @@ def build_workflow_snapshot(
                 running_step_name = str(step.get("name", "unknown"))
                 agent = step.get("agent") if isinstance(step, dict) else None
                 if isinstance(agent, dict):
-                    running_agent = str(agent.get("name") or agent.get("display_name") or "").strip()
+                    running_agent = str(
+                        agent.get("name") or agent.get("display_name") or ""
+                    ).strip()
                 break
 
             if running_agent:
@@ -320,9 +329,17 @@ def build_workflow_snapshot(
         or str(current_agent or "").strip().lower()
     )
 
-    if effective_expected_running and local_next and effective_expected_running != local_next.lower():
+    if (
+        effective_expected_running
+        and local_next
+        and effective_expected_running != local_next.lower()
+    ):
         drift_flags.append("workflow_vs_local")
-    if effective_expected_running and comment_next and effective_expected_running != comment_next.lower():
+    if (
+        effective_expected_running
+        and comment_next
+        and effective_expected_running != comment_next.lower()
+    ):
         drift_flags.append("workflow_vs_comment")
     if local_next and comment_next and local_next.lower() != comment_next.lower():
         drift_flags.append("local_vs_comment")

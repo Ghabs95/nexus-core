@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from enum import Enum
 from typing import Any
 
@@ -53,6 +53,20 @@ class AIOrchestrator:
         self.codex_cli_path = self.config.get("codex_cli_path", "codex")
         self.codex_model = str(self.config.get("codex_model", "")).strip()
         self.tool_preferences = self.config.get("tool_preferences", {})
+        self.tool_preferences_resolver: Callable[[str], dict[str, Any] | None] | None = (
+            self.config.get(
+                "tool_preferences_resolver",
+            )
+        )
+        self.operation_agents = self.config.get("operation_agents", {})
+        self.operation_agents_resolver: Callable[[str], dict[str, Any] | None] | None = (
+            self.config.get(
+                "operation_agents_resolver",
+            )
+        )
+        self.chat_agent_types_resolver: Callable[[str], list[str] | None] | None = self.config.get(
+            "chat_agent_types_resolver",
+        )
         self.fallback_enabled = self.config.get("fallback_enabled", True)
         self.rate_limit_ttl = self.config.get("rate_limit_ttl", 3600)
         self.max_retries = self.config.get("max_retries", 2)
@@ -61,8 +75,12 @@ class AIOrchestrator:
         self.gemini_transcription_timeout = self.config.get("gemini_transcription_timeout", 60)
         self.copilot_transcription_timeout = self.config.get("copilot_transcription_timeout", 120)
         primary = str(self.config.get("transcription_primary", "gemini")).strip().lower()
-        self.transcription_primary = primary if primary in {"gemini", "copilot", "whisper"} else "gemini"
-        self.whisper_model = str(self.config.get("whisper_model", "whisper-1")).strip() or "whisper-1"
+        self.transcription_primary = (
+            primary if primary in {"gemini", "copilot", "whisper"} else "gemini"
+        )
+        self.whisper_model = (
+            str(self.config.get("whisper_model", "whisper-1")).strip() or "whisper-1"
+        )
         self.whisper_language = str(self.config.get("whisper_language", "")).strip().lower() or None
         raw_whisper_languages = str(self.config.get("whisper_languages", "")).strip().lower()
         self.whisper_languages = [
@@ -74,6 +92,139 @@ class AIOrchestrator:
             "tasks_logs_dir_resolver",
             _default_tasks_logs_dir,
         )
+
+    @staticmethod
+    def _parse_provider(candidate: Any) -> AIProvider | None:
+        value = str(candidate or "").strip().lower()
+        if not value:
+            return None
+        for provider in AIProvider:
+            if provider.value == value:
+                return provider
+        return None
+
+    @staticmethod
+    def _supports_analysis(tool: AIProvider) -> bool:
+        return tool in {AIProvider.GEMINI, AIProvider.COPILOT}
+
+    @staticmethod
+    def _looks_like_bug_issue(text: str) -> bool:
+        candidate = str(text or "").strip().lower()
+        if not candidate:
+            return False
+        bug_markers = (
+            "bug",
+            "issue",
+            "error",
+            "exception",
+            "traceback",
+            "stack trace",
+            "fails",
+            "failing",
+            "failed",
+            "crash",
+            "broken",
+            "regression",
+            "hotfix",
+            "not working",
+            "doesn't work",
+            "doesnt work",
+        )
+        return any(marker in candidate for marker in bug_markers)
+
+    @staticmethod
+    def _unique_tools(order: list[AIProvider]) -> list[AIProvider]:
+        unique: list[AIProvider] = []
+        seen: set[AIProvider] = set()
+        for tool in order:
+            if tool in seen:
+                continue
+            unique.append(tool)
+            seen.add(tool)
+        return unique
+
+    def _resolved_tool_preferences(self, project_name: str | None = None) -> dict[str, Any]:
+        if project_name and callable(self.tool_preferences_resolver):
+            try:
+                resolved = self.tool_preferences_resolver(str(project_name))
+                if isinstance(resolved, dict):
+                    return resolved
+            except Exception as exc:
+                logger.warning(
+                    "Could not resolve tool preferences for project %s: %s",
+                    project_name,
+                    exc,
+                )
+        return self.tool_preferences if isinstance(self.tool_preferences, dict) else {}
+
+    def _resolved_operation_agents(self, project_name: str | None = None) -> dict[str, Any]:
+        if project_name and callable(self.operation_agents_resolver):
+            try:
+                resolved = self.operation_agents_resolver(str(project_name))
+                if isinstance(resolved, dict):
+                    return resolved
+            except Exception as exc:
+                logger.warning(
+                    "Could not resolve operation agents for project %s: %s",
+                    project_name,
+                    exc,
+                )
+        return self.operation_agents if isinstance(self.operation_agents, dict) else {}
+
+    def _fallback_order_from_preferences(self, project_name: str | None = None) -> list[AIProvider]:
+        tool_preferences = self._resolved_tool_preferences(project_name)
+        ordered: list[AIProvider] = []
+        seen: set[AIProvider] = set()
+        for provider_name in tool_preferences.values():
+            provider = self._parse_provider(provider_name)
+            if provider and provider not in seen:
+                ordered.append(provider)
+                seen.add(provider)
+        return ordered
+
+    def _default_chat_agent_type(self, project_name: str | None = None) -> str:
+        if not project_name or not callable(self.chat_agent_types_resolver):
+            return ""
+        try:
+            values = self.chat_agent_types_resolver(str(project_name))
+        except Exception as exc:
+            logger.warning(
+                "Could not resolve chat agent types for project %s: %s", project_name, exc
+            )
+            return ""
+        if not isinstance(values, list):
+            return ""
+        for item in values:
+            normalized = str(item or "").strip().lower()
+            if normalized:
+                return normalized
+        return ""
+
+    def _resolve_issue_override_agent(
+        self,
+        *,
+        task_key: str,
+        mapped_agent: str,
+        text: str,
+        operation_agents: Mapping[str, Any] | None,
+    ) -> str:
+        if not self._looks_like_bug_issue(text):
+            return mapped_agent
+        if not isinstance(operation_agents, Mapping):
+            return mapped_agent
+
+        overrides = operation_agents.get("overrides")
+        if not isinstance(overrides, Mapping):
+            return mapped_agent
+
+        issue_overrides = overrides.get("issue")
+        if not isinstance(issue_overrides, Mapping):
+            return mapped_agent
+
+        override_agent = str(
+            issue_overrides.get(task_key) or issue_overrides.get("default") or ""
+        ).strip()
+        return override_agent or mapped_agent
 
     def check_tool_available(self, tool: AIProvider) -> bool:
         if tool.value in self._tool_available:
@@ -124,14 +275,14 @@ class AIOrchestrator:
         self._tool_available[f"{tool.value}_cached_at"] = time.time()
         return available
 
-    def get_primary_tool(self, agent_name: str | None = None) -> AIProvider:
-        if agent_name and agent_name in self.tool_preferences:
-            pref = str(self.tool_preferences[agent_name]).strip().lower()
-            if pref == AIProvider.GEMINI.value:
-                return AIProvider.GEMINI
-            if pref == AIProvider.CODEX.value:
-                return AIProvider.CODEX
-            return AIProvider.COPILOT
+    def get_primary_tool(
+        self, agent_name: str | None = None, project_name: str | None = None
+    ) -> AIProvider:
+        tool_preferences = self._resolved_tool_preferences(project_name)
+        if agent_name and agent_name in tool_preferences:
+            pref = self._parse_provider(tool_preferences.get(agent_name))
+            if pref:
+                return pref
 
         return AIProvider.COPILOT
 
@@ -151,6 +302,96 @@ class AIOrchestrator:
 
         logger.error("❌ No fallback providers available for %s", primary.value)
         return None
+
+    def _resolve_analysis_tool_order(
+        self,
+        task: str,
+        project_name: str | None = None,
+        text: str = "",
+    ) -> list[AIProvider]:
+        task_key = str(task or "").strip().lower()
+        operation_agents = self._resolved_operation_agents(project_name)
+        mapped_agent = ""
+        if isinstance(operation_agents, Mapping):
+            if task_key == "chat":
+                mapped_agent = str(operation_agents.get(task_key) or "").strip()
+                if not mapped_agent:
+                    mapped_agent = self._default_chat_agent_type(project_name)
+                if not mapped_agent:
+                    mapped_agent = str(operation_agents.get("default") or "").strip()
+            else:
+                mapped_agent = str(
+                    operation_agents.get(task_key) or operation_agents.get("default") or ""
+                ).strip()
+
+        if isinstance(operation_agents, Mapping):
+            mapped_agent = self._resolve_issue_override_agent(
+                task_key=task_key,
+                mapped_agent=mapped_agent,
+                text=text,
+                operation_agents=operation_agents,
+            )
+
+        preferred = self.get_primary_tool(mapped_agent or None, project_name=project_name)
+
+        base_order = self._fallback_order_from_preferences(project_name)
+        if not base_order:
+            base_order = [AIProvider.GEMINI, AIProvider.COPILOT]
+
+        ordered = [preferred] + [tool for tool in base_order if tool != preferred]
+        filtered = [tool for tool in self._unique_tools(ordered) if self._supports_analysis(tool)]
+        if not filtered:
+            filtered = [AIProvider.GEMINI, AIProvider.COPILOT]
+
+        if not self.fallback_enabled:
+            return filtered[:1]
+
+        return filtered
+
+    def _resolve_transcription_attempts(self, project_name: str | None = None) -> list[str]:
+        operation_agents = self._resolved_operation_agents(project_name)
+        mapped_agent = ""
+        if isinstance(operation_agents, Mapping):
+            mapped_agent = str(operation_agents.get("transcribe_audio") or "").strip()
+
+        if mapped_agent:
+            mapped_primary = self.get_primary_tool(mapped_agent, project_name=project_name)
+            if mapped_primary in {AIProvider.GEMINI, AIProvider.COPILOT}:
+                base_order = [
+                    tool
+                    for tool in self._fallback_order_from_preferences(project_name)
+                    if tool in {AIProvider.GEMINI, AIProvider.COPILOT}
+                ]
+                if not base_order:
+                    base_order = [AIProvider.GEMINI, AIProvider.COPILOT]
+                ordered = [mapped_primary] + [tool for tool in base_order if tool != mapped_primary]
+                normalized = [tool.value for tool in self._unique_tools(ordered)]
+                if not self.fallback_enabled:
+                    return normalized[:1]
+                return normalized
+
+            logger.warning(
+                "Ignoring unsupported transcription provider '%s' for mapped agent '%s'; "
+                "falling back to transcription_primary",
+                mapped_primary.value,
+                mapped_agent,
+            )
+
+        primary = self.transcription_primary
+        if primary == "whisper":
+            return ["whisper", "gemini", "copilot"] if self.fallback_enabled else ["whisper"]
+        if primary == "copilot":
+            return ["copilot", "gemini"] if self.fallback_enabled else ["copilot"]
+        return ["gemini", "copilot"] if self.fallback_enabled else ["gemini"]
+
+    def _run_analysis_with_provider(
+        self, tool: AIProvider, text: str, task: str, **kwargs
+    ) -> dict[str, Any]:
+        if tool == AIProvider.GEMINI:
+            return self._run_gemini_cli_analysis(text, task, **kwargs)
+        if tool == AIProvider.COPILOT:
+            return self._run_copilot_analysis(text, task, **kwargs)
+        raise ToolUnavailableError(f"{tool.value} does not support analysis tasks")
 
     def _get_tool_order(self, agent_name: str | None = None, use_gemini: bool = False) -> list:
         """Return all known tools in priority order for this agent.
@@ -177,18 +418,33 @@ class AIOrchestrator:
         """Dispatch to the correct CLI for *tool*. Extend here when adding new providers."""
         if tool == AIProvider.COPILOT:
             return self._invoke_copilot(
-                agent_prompt, workspace_dir, agents_dir, base_dir,
-                issue_num=issue_num, log_subdir=log_subdir, env=env,
+                agent_prompt,
+                workspace_dir,
+                agents_dir,
+                base_dir,
+                issue_num=issue_num,
+                log_subdir=log_subdir,
+                env=env,
             )
         if tool == AIProvider.GEMINI:
             return self._invoke_gemini_agent(
-                agent_prompt, workspace_dir, agents_dir, base_dir,
-                issue_num=issue_num, log_subdir=log_subdir, env=env,
+                agent_prompt,
+                workspace_dir,
+                agents_dir,
+                base_dir,
+                issue_num=issue_num,
+                log_subdir=log_subdir,
+                env=env,
             )
         if tool == AIProvider.CODEX:
             return self._invoke_codex(
-                agent_prompt, workspace_dir, agents_dir, base_dir,
-                issue_num=issue_num, log_subdir=log_subdir, env=env,
+                agent_prompt,
+                workspace_dir,
+                agents_dir,
+                base_dir,
+                issue_num=issue_num,
+                log_subdir=log_subdir,
+                env=env,
             )
         raise ToolUnavailableError(f"No invoker implemented for tool: {tool.value}")
 
@@ -275,8 +531,14 @@ class AIOrchestrator:
                 if tried:
                     logger.info("🔄 Trying next tool %s (previously tried: %s)", tool.value, tried)
                 pid = self._invoke_tool(
-                    tool, agent_prompt, workspace_dir, agents_dir, base_dir,
-                    issue_num=issue_num, log_subdir=log_subdir, env=env,
+                    tool,
+                    agent_prompt,
+                    workspace_dir,
+                    agents_dir,
+                    base_dir,
+                    issue_num=issue_num,
+                    log_subdir=log_subdir,
+                    env=env,
                 )
                 if pid:
                     if tried:
@@ -435,9 +697,7 @@ class AIOrchestrator:
                     raise RateLimitedError(
                         f"Gemini exited immediately with rate limit (exit={exit_code})"
                     )
-                raise ToolUnavailableError(
-                    f"Gemini exited immediately (exit={exit_code})"
-                )
+                raise ToolUnavailableError(f"Gemini exited immediately (exit={exit_code})")
 
             return process.pid
         except Exception as exc:
@@ -508,14 +768,8 @@ class AIOrchestrator:
             logger.error("❌ Codex launch failed: %s", exc)
             raise
 
-    def transcribe_audio_cli(self, audio_file_path: str) -> str | None:
-        primary = self.transcription_primary
-        if primary == "whisper":
-            attempts = ["whisper", "gemini", "copilot"] if self.fallback_enabled else ["whisper"]
-        elif primary == "copilot":
-            attempts = ["copilot", "gemini"] if self.fallback_enabled else ["copilot"]
-        else:
-            attempts = ["gemini", "copilot"] if self.fallback_enabled else ["gemini"]
+    def transcribe_audio(self, audio_file_path: str, project_name: str | None = None) -> str | None:
+        attempts = self._resolve_transcription_attempts(project_name=project_name)
 
         for tool_name in attempts:
             try:
@@ -573,7 +827,11 @@ class AIOrchestrator:
         detected_language = ""
         if isinstance(response, dict):
             detected_language = str(response.get("language") or "").strip().lower()
-        if self.whisper_languages and detected_language and detected_language not in self.whisper_languages:
+        if (
+            self.whisper_languages
+            and detected_language
+            and detected_language not in self.whisper_languages
+        ):
             raise Exception(
                 f"Detected language {detected_language!r} is outside allowed set: {self.whisper_languages}"
             )
@@ -697,7 +955,9 @@ class AIOrchestrator:
             raise Exception("Gemini returned empty transcription")
 
         except subprocess.TimeoutExpired as exc:
-            raise Exception(f"Gemini transcription timed out (>{self.gemini_transcription_timeout}s)") from exc
+            raise Exception(
+                f"Gemini transcription timed out (>{self.gemini_transcription_timeout}s)"
+            ) from exc
 
     def _transcribe_with_copilot_cli(self, audio_file_path: str) -> str | None:
         if not self.check_tool_available(AIProvider.COPILOT):
@@ -749,31 +1009,33 @@ class AIOrchestrator:
             raise Exception("Copilot returned empty transcription")
 
         except subprocess.TimeoutExpired as exc:
-            raise Exception(f"Copilot transcription timed out (>{self.copilot_transcription_timeout}s)") from exc
+            raise Exception(
+                f"Copilot transcription timed out (>{self.copilot_transcription_timeout}s)"
+            ) from exc
 
-    def run_text_to_speech_analysis(self, text: str, task: str = "classify", **kwargs) -> dict[str, Any]:
-        primary = AIProvider.GEMINI
-        fallback = self.get_fallback_tool(primary)
+    def run_text_to_speech_analysis(
+        self, text: str, task: str = "classify", **kwargs
+    ) -> dict[str, Any]:
+        project_name = kwargs.get("project_name")
+        tool_order = self._resolve_analysis_tool_order(task, project_name=project_name, text=text)
 
-        result = None
-
-        try:
-            result = self._run_gemini_cli_analysis(text, task, **kwargs)
-            if result:
-                return result
-        except RateLimitedError as exc:
-            self._record_rate_limit_with_context(primary, exc, context=f"analysis:{task}")
-        except Exception as exc:
-            logger.warning("⚠️  %s analysis failed: %s", primary.value, exc)
-
-        if fallback:
+        last_error: Exception | None = None
+        for index, tool in enumerate(tool_order):
             try:
-                result = self._run_copilot_analysis(text, task, **kwargs)
+                result = self._run_analysis_with_provider(tool, text, task, **kwargs)
                 if result:
-                    logger.info("✅ Fallback analysis succeeded with %s", fallback.value)
+                    if index > 0:
+                        logger.info("✅ Fallback analysis succeeded with %s", tool.value)
                     return result
+            except RateLimitedError as exc:
+                last_error = exc
+                self._record_rate_limit_with_context(tool, exc, context=f"analysis:{task}")
             except Exception as exc:
-                logger.error("❌ Fallback analysis also failed: %s", exc)
+                last_error = exc
+                logger.warning("⚠️  %s analysis failed: %s", tool.value, exc)
+
+        if last_error:
+            logger.error("❌ All analysis providers failed for %s: %s", task, last_error)
 
         logger.warning("⚠️  All tools failed for %s, returning default", task)
         return self._get_default_analysis_result(task, text=text, **kwargs)
@@ -807,7 +1069,11 @@ class AIOrchestrator:
             raise ToolUnavailableError("Copilot CLI not available")
 
         prompt = self._build_analysis_prompt(text, task, **kwargs)
-        timeout = self.refine_description_timeout if task == "refine_description" else self.analysis_timeout
+        timeout = (
+            self.refine_description_timeout
+            if task == "refine_description"
+            else self.analysis_timeout
+        )
 
         try:
             result = subprocess.run(
@@ -877,7 +1143,7 @@ Return JSON: {{"intent": "conversation"}} or {{"intent": "task"}}
 
 Return ONLY valid JSON."""
 
-        if task == "advisor_chat":
+        if task == "chat":
             history = kwargs.get("history", "")
             persona = kwargs.get("persona", "You are a helpful AI assistant.")
             return f"""{persona}
@@ -937,13 +1203,15 @@ User Input:
         def _parse_json_candidates(text: str) -> dict[str, Any] | None:
             candidates: list[str] = [text.strip()]
 
-            fenced_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE)
+            fenced_blocks = re.findall(
+                r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE
+            )
             candidates.extend(block.strip() for block in fenced_blocks if block.strip())
 
             first_brace = text.find("{")
             last_brace = text.rfind("}")
             if first_brace != -1 and last_brace > first_brace:
-                candidates.append(text[first_brace:last_brace + 1].strip())
+                candidates.append(text[first_brace : last_brace + 1].strip())
 
             seen: set[str] = set()
             for candidate in candidates:
@@ -988,7 +1256,7 @@ User Input:
             return {"text": kwargs.get("text", "")}
         if task == "detect_intent":
             return {"intent": "task"}
-        if task == "advisor_chat":
+        if task == "chat":
             return {"text": "I'm offline right now, how can I help you later?"}
         return {}
 

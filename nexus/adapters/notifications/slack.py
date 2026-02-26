@@ -4,6 +4,7 @@ Requires the ``slack`` optional extra::
 
     pip install nexus-core[slack]
 """
+
 import logging
 
 from nexus.adapters.notifications.base import Message, NotificationChannel

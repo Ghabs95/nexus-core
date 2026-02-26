@@ -15,6 +15,18 @@ from nexus.plugins.builtin.ai_runtime_plugin import (
 from nexus.plugins.builtin.ai_runtime_plugin import (
     register_plugins as register_ai_runtime_plugins,
 )
+from nexus.plugins.builtin.discord_event_handler_plugin import (
+    DiscordEventHandler,
+)
+from nexus.plugins.builtin.discord_event_handler_plugin import (
+    register_plugins as register_discord_event_handler_plugins,
+)
+from nexus.plugins.builtin.discord_interactive_plugin import (
+    DiscordInteractivePlugin,
+)
+from nexus.plugins.builtin.discord_interactive_plugin import (
+    register_plugins as register_discord_interactive_plugins,
+)
 from nexus.plugins.builtin.github_issue_plugin import (
     GitHubIssueCLIPlugin,
 )
@@ -45,6 +57,12 @@ from nexus.plugins.builtin.runtime_ops_plugin import (
 from nexus.plugins.builtin.runtime_ops_plugin import (
     register_plugins as register_runtime_ops_plugins,
 )
+from nexus.plugins.builtin.telegram_event_handler_plugin import (
+    TelegramEventHandler,
+)
+from nexus.plugins.builtin.telegram_event_handler_plugin import (
+    register_plugins as register_telegram_event_handler_plugins,
+)
 from nexus.plugins.builtin.telegram_interactive_plugin import (
     TelegramInteractivePlugin,
 )
@@ -56,12 +74,6 @@ from nexus.plugins.builtin.telegram_notification_plugin import (
 )
 from nexus.plugins.builtin.telegram_notification_plugin import (
     register_plugins as register_telegram_notification_plugins,
-)
-from nexus.plugins.builtin.discord_interactive_plugin import (
-    DiscordInteractivePlugin,
-)
-from nexus.plugins.builtin.discord_interactive_plugin import (
-    register_plugins as register_discord_interactive_plugins,
 )
 from nexus.plugins.builtin.workflow_monitor_policy_plugin import (
     WorkflowMonitorPolicyPlugin,
@@ -80,18 +92,6 @@ from nexus.plugins.builtin.workflow_state_engine_plugin import (
 )
 from nexus.plugins.builtin.workflow_state_engine_plugin import (
     register_plugins as register_workflow_state_engine_plugins,
-)
-from nexus.plugins.builtin.telegram_event_handler_plugin import (
-    TelegramEventHandler,
-)
-from nexus.plugins.builtin.telegram_event_handler_plugin import (
-    register_plugins as register_telegram_event_handler_plugins,
-)
-from nexus.plugins.builtin.discord_event_handler_plugin import (
-    DiscordEventHandler,
-)
-from nexus.plugins.builtin.discord_event_handler_plugin import (
-    register_plugins as register_discord_event_handler_plugins,
 )
 
 __all__ = [

@@ -60,10 +60,10 @@ class _ArrayTextOrchestrator:
             "text": (
                 "```json\n"
                 "["
-                "{\"title\":\"Improve retention loops\","
-                "\"summary\":\"Add habit reminders tied to active goals.\","
-                "\"why\":\"Improves weekly active usage.\","
-                "\"steps\":[\"Define trigger points\",\"Implement reminder jobs\",\"Track WAU uplift\"]}"
+                '{"title":"Improve retention loops",'
+                '"summary":"Add habit reminders tied to active goals.",'
+                '"why":"Improves weekly active usage.",'
+                '"steps":["Define trigger points","Implement reminder jobs","Track WAU uplift"]}'
                 "]\n"
                 "```"
             )
@@ -109,12 +109,12 @@ class _WrappedResponseOrchestrator:
             "stats": {"tokens": 42},
             "response": (
                 "{\n"
-                "  \"items\": [\n"
+                '  "items": [\n'
                 "    {\n"
-                "      \"title\": \"Multi-Asset Performance Benchmarking\",\n"
-                "      \"summary\": \"Overlay diversified portfolio performance against market indices.\",\n"
-                "      \"why\": \"Improves long-term performance visibility and retention.\",\n"
-                "      \"steps\": [\"Map asset weights\", \"Add benchmark layer\", \"Ship comparison dashboard\"]\n"
+                '      "title": "Multi-Asset Performance Benchmarking",\n'
+                '      "summary": "Overlay diversified portfolio performance against market indices.",\n'
+                '      "why": "Improves long-term performance visibility and retention.",\n'
+                '      "steps": ["Map asset weights", "Add benchmark layer", "Ship comparison dashboard"]\n'
                 "    }\n"
                 "  ]\n"
                 "}"
@@ -442,7 +442,7 @@ spec:
                     "marketing": {
                         "context_path": "marketing-os",
                     }
-                }
+                },
             }
         },
     )
@@ -602,7 +602,9 @@ def test_build_feature_suggestions_logs_primary_non_json_response(tmp_path):
     )
 
     assert items == []
-    assert any("Primary feature ideation raw response (truncated):" in msg for msg in logger.messages)
+    assert any(
+        "Primary feature ideation raw response (truncated):" in msg for msg in logger.messages
+    )
     assert any("not valid JSON" in msg for msg in logger.messages)
 
 

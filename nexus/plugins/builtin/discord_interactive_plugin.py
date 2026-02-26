@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 try:
     import discord
     from discord.ext import commands
+
     HAS_DISCORD = True
 except ImportError:
     HAS_DISCORD = False
@@ -123,14 +124,12 @@ class DiscordInteractivePlugin(InteractiveClientPlugin):
             if self.message_handler:
                 try:
                     await self.message_handler(
-                        user_id=str(message.author.id),
-                        text=text,
-                        raw_event=message
+                        user_id=str(message.author.id), text=text, raw_event=message
                     )
                 except Exception as e:
                     logger.error(f"Error in Discord message handler: {e}", exc_info=True)
 
-        self._bot.add_listener(on_message, 'on_message')
+        self._bot.add_listener(on_message, "on_message")
 
     async def stop(self) -> None:
         """Gracefully shutdown the Discord client."""
@@ -187,9 +186,7 @@ class DiscordInteractivePlugin(InteractiveClientPlugin):
                     style = discord.ButtonStyle.success
 
                 button = discord.ui.Button(
-                    label=action.label,
-                    style=style,
-                    custom_id=action.action_id
+                    label=action.label, style=style, custom_id=action.action_id
                 )
                 view.add_item(button)
 
@@ -232,9 +229,7 @@ class DiscordInteractivePlugin(InteractiveClientPlugin):
                     style = discord.ButtonStyle.success
 
                 button = discord.ui.Button(
-                    label=action.label,
-                    style=style,
-                    custom_id=action.action_id
+                    label=action.label, style=style, custom_id=action.action_id
                 )
                 view.add_item(button)
 
@@ -247,7 +242,9 @@ class DiscordInteractivePlugin(InteractiveClientPlugin):
             msg = await channel.fetch_message(mid)
             await msg.edit(content=message.text, view=view)
         except Exception as e:
-            logger.error(f"Failed to edit message {message_id} for user {user_id}: {e}", exc_info=True)
+            logger.error(
+                f"Failed to edit message {message_id} for user {user_id}: {e}", exc_info=True
+            )
 
 
 def register_plugins(registry: PluginRegistry) -> None:

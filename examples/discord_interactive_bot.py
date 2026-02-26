@@ -9,6 +9,7 @@ from nexus.adapters.registry import AdapterRegistry
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 async def main():
     bot_token = os.environ.get("DISCORD_BOT_TOKEN", "fake.discord.token.here")
 
@@ -17,10 +18,7 @@ async def main():
         "interactive_clients": [
             {
                 "type": "discord-interactive-http",
-                "config": {
-                    "bot_token": bot_token,
-                    "command_prefix": "!"
-                }
+                "config": {"bot_token": bot_token, "command_prefix": "!"},
             }
         ]
     }
@@ -43,6 +41,7 @@ async def main():
 
     except Exception as e:
         logger.error(f"Error: {e}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

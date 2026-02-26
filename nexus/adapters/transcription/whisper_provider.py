@@ -141,8 +141,7 @@ class WhisperTranscriptionProvider(TranscriptionProvider):
             ext = source.suffix.lstrip(".")
             if ext and ext.lower() not in SUPPORTED_FORMATS:
                 raise ValueError(
-                    f"Unsupported audio format {ext!r}. "
-                    f"Supported: {sorted(SUPPORTED_FORMATS)}"
+                    f"Unsupported audio format {ext!r}. " f"Supported: {sorted(SUPPORTED_FORMATS)}"
                 )
             return source.read_bytes(), source.name
 
@@ -151,8 +150,7 @@ class WhisperTranscriptionProvider(TranscriptionProvider):
             fmt = "mp3" if fmt_hint == "auto" else fmt_hint.lower()
             if fmt not in SUPPORTED_FORMATS:
                 raise ValueError(
-                    f"Unsupported audio format {fmt!r}. "
-                    f"Supported: {sorted(SUPPORTED_FORMATS)}"
+                    f"Unsupported audio format {fmt!r}. " f"Supported: {sorted(SUPPORTED_FORMATS)}"
                 )
             return source, f"audio.{fmt}"
 

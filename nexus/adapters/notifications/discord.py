@@ -4,6 +4,7 @@ Requires the ``discord`` optional extra::
 
     pip install nexus-core[discord]
 """
+
 import logging
 
 from nexus.adapters.notifications.base import Message, NotificationChannel
@@ -159,9 +160,7 @@ class DiscordNotificationChannel(NotificationChannel):
             return
 
         if not self._alert_channel_id:
-            raise ValueError(
-                "alert_channel_id is required to send alerts without a webhook_url."
-            )
+            raise ValueError("alert_channel_id is required to send alerts without a webhook_url.")
         await self._post_channel(self._alert_channel_id, payload)
 
     async def request_input(
@@ -286,9 +285,7 @@ class DiscordNotificationChannel(NotificationChannel):
             logger.error("Discord _patch_webhook_message failed for message %s", message_id)
             raise
 
-    async def _patch_channel_message(
-        self, channel_id: str, message_id: str, payload: dict
-    ) -> None:
+    async def _patch_channel_message(self, channel_id: str, message_id: str, payload: dict) -> None:
         session = self._get_session()
         try:
             async with session.patch(

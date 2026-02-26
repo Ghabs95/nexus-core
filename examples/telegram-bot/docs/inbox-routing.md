@@ -1,6 +1,7 @@
 # Inbox Routing
 
-Inbox routing is how tasks submitted by users (via Telegram, voice notes, or text) get dispatched to the correct project workspace for processing.
+Inbox routing is how tasks submitted by users (via Telegram, voice notes, or text) get dispatched to the correct project
+workspace for processing.
 
 ## Flow
 
@@ -18,10 +19,10 @@ User Input → AI Classification → Project Routing → Save Task → Process
 
 Controlled by `NEXUS_INBOX_BACKEND`:
 
-| Backend | Behavior |
-|---|---|
+| Backend      | Behavior                                           |
+|--------------|----------------------------------------------------|
 | `filesystem` | Writes `task_{id}.md` to `.nexus/inbox/{project}/` |
-| `postgres` | Enqueues into `nexus_inbox_queue` table |
+| `postgres`   | Enqueues into `nexus_inbox_queue` table            |
 
 ## Task Markdown Format
 
@@ -52,13 +53,13 @@ Each task is saved as a markdown file with consistent structure:
 
 ## Key Functions
 
-| Function | File | Purpose |
-|---|---|---|
-| `process_inbox_task()` | `inbox_routing_handler.py` | Route a new task to its project |
-| `save_resolved_task()` | `inbox_routing_handler.py` | Save a task after user clarifies the project |
-| `normalize_project_key()` | `common_routing.py` | Map aliases → canonical project keys |
-| `get_inbox_dir()` | `config.py` | Compute filesystem path for a project's inbox |
-| `enqueue_task()` | `integrations/inbox_queue.py` | Insert into postgres queue |
+| Function                  | File                          | Purpose                                       |
+|---------------------------|-------------------------------|-----------------------------------------------|
+| `process_inbox_task()`    | `inbox_routing_handler.py`    | Route a new task to its project               |
+| `save_resolved_task()`    | `inbox_routing_handler.py`    | Save a task after user clarifies the project  |
+| `normalize_project_key()` | `common_routing.py`           | Map aliases → canonical project keys          |
+| `get_inbox_dir()`         | `config.py`                   | Compute filesystem path for a project's inbox |
+| `enqueue_task()`          | `integrations/inbox_queue.py` | Insert into postgres queue                    |
 
 ## Project Configuration
 
@@ -74,4 +75,5 @@ my_project:
     - "org/my-shared-lib"
 ```
 
-The routing handler uses `PROJECT_CONFIG` from `config.py` to look up workspace paths and determine where to save inbox files.
+The routing handler uses `PROJECT_CONFIG` from `config.py` to look up workspace paths and determine where to save inbox
+files.

@@ -18,23 +18,19 @@ Usage::
 """
 
 import logging
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 from nexus.core.events import (
+    AlertAction,
     AgentTimeout,
     EventBus,
     NexusEvent,
     StepCompleted,
     StepFailed,
     SystemAlert,
-    WorkflowCancelled,
-    WorkflowCompleted,
     WorkflowFailed,
-    WorkflowStarted,
 )
-from nexus.plugins.base import PluginHealthStatus, PluginLifecycle
+from nexus.plugins.base import PluginHealthStatus
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +52,40 @@ _SEVERITY_ICON: dict[str, str] = {
     "error": "❌",
     "critical": "🚨",
 }
+
+
+def _build_alert_keyboard(
+    actions: list[AlertAction],
+) -> dict[str, list[list[dict[str, str]]]] | None:
+    """Build Telegram inline keyboard markup from alert actions."""
+    if not actions:
+        return None
+
+    rows: list[list[dict[str, str]]] = []
+    current_row: list[dict[str, str]] = []
+    for action in actions:
+        label = str(getattr(action, "label", "")).strip()
+        callback_data = str(getattr(action, "callback_data", "")).strip()
+        url = str(getattr(action, "url", "")).strip()
+        if not label:
+            continue
+        if not callback_data and not url:
+            continue
+        button: dict[str, str] = {"text": label}
+        if url:
+            button["url"] = url
+        else:
+            button["callback_data"] = callback_data
+        current_row.append(button)
+        if len(current_row) == 2:
+            rows.append(current_row)
+            current_row = []
+
+    if current_row:
+        rows.append(current_row)
+    if not rows:
+        return None
+    return {"inline_keyboard": rows}
 
 
 class TelegramEventHandler:
@@ -86,7 +116,9 @@ class TelegramEventHandler:
         self._subscriptions.append(bus.subscribe("step.failed", self._handle))
         self._subscriptions.append(bus.subscribe("agent.timeout", self._handle))
         self._subscriptions.append(bus.subscribe("system.alert", self._handle))
-        logger.info("TelegramEventHandler attached to EventBus (%d subscriptions)", len(self._subscriptions))
+        logger.info(
+            "TelegramEventHandler attached to EventBus (%d subscriptions)", len(self._subscriptions)
+        )
 
     def detach(self, bus: EventBus) -> None:
         """Unsubscribe all subscriptions from *bus*."""
@@ -98,6 +130,7 @@ class TelegramEventHandler:
 
     async def _handle(self, event: NexusEvent) -> None:
         # SystemAlert uses its own format
+        reply_markup = None
         if isinstance(event, SystemAlert):
             icon = _SEVERITY_ICON.get(event.severity, "ℹ️")
             lines = [f"{icon} {event.message}"]
@@ -105,6 +138,11 @@ class TelegramEventHandler:
                 lines.append(f"Source: `{event.source}`")
             if event.workflow_id:
                 lines.append(f"Workflow: `{event.workflow_id}`")
+            if event.project_key:
+                lines.append(f"Project: `{event.project_key}`")
+            if event.issue_number:
+                lines.append(f"Issue: `#{event.issue_number}`")
+            reply_markup = _build_alert_keyboard(getattr(event, "actions", []))
         else:
             emoji, label = _EVENT_FORMAT.get(event.event_type, ("📌", event.event_type))
             lines = [f"{emoji} *{label}*"]
@@ -131,7 +169,11 @@ class TelegramEventHandler:
         text = "\n".join(lines)
 
         try:
-            ok = self._telegram.send_message_sync(text, parse_mode="Markdown")
+            ok = self._telegram.send_message_sync(
+                text,
+                parse_mode="Markdown",
+                reply_markup=reply_markup,
+            )
             self._last_send_ok = bool(ok)
         except Exception as exc:
             self._last_send_ok = False
@@ -154,6 +196,7 @@ class TelegramEventHandler:
 
 
 # -- Plugin registration ---------------------------------------------------
+
 
 def register_plugins(registry: Any) -> None:
     """Register Telegram event handler plugin."""

@@ -18,7 +18,7 @@ spec:
     3. Lists outcomes and next steps
     4. Posts summary comment
     5. Optionally closes the issue
-    
+
   requires_tools:
     - github:read_issue
     - github:add_comment
@@ -69,5 +69,5 @@ spec:
 
   # Success criteria
   validation:
-    required_outputs: ["summary"]
+    required_outputs: [ "summary" ]
     max_duration_seconds: 180

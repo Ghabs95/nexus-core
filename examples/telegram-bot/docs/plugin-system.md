@@ -1,16 +1,17 @@
 # Plugin System
 
-Nexus Core is built on a plugin architecture that keeps the core workflow engine provider-agnostic. The telegram-bot example uses these plugins to wire up Telegram, GitHub, and AI integrations without modifying the framework.
+Nexus Core is built on a plugin architecture that keeps the core workflow engine provider-agnostic. The telegram-bot
+example uses these plugins to wire up Telegram, GitHub, and AI integrations without modifying the framework.
 
 ## Plugin Kinds
 
-| Kind | Purpose | Example |
-|---|---|---|
-| `ai_provider` | AI execution backends | Copilot CLI, Gemini CLI, OpenAI API |
-| `git_platform` | Git hosting integration | GitHub, GitLab, Bitbucket |
-| `notification_channel` | User notifications | Telegram, Slack, Discord |
-| `storage_backend` | State persistence | File, PostgreSQL, Redis |
-| `input_adapter` | Task input sources | Telegram, Webhook, CLI |
+| Kind                   | Purpose                 | Example                             |
+|------------------------|-------------------------|-------------------------------------|
+| `ai_provider`          | AI execution backends   | Copilot CLI, Gemini CLI, OpenAI API |
+| `git_platform`         | Git hosting integration | GitHub, GitLab, Bitbucket           |
+| `notification_channel` | User notifications      | Telegram, Slack, Discord            |
+| `storage_backend`      | State persistence       | File, PostgreSQL, Redis             |
+| `input_adapter`        | Task input sources      | Telegram, Webhook, CLI              |
 
 ## How Plugins Work
 
@@ -42,19 +43,19 @@ provider = registry.create(
 
 ## Built-in Plugins
 
-| Plugin | Module | Purpose |
-|---|---|---|
-| **AI Runtime** | `ai_runtime_plugin` | Orchestrates AI provider selection with fallback |
-| **Agent Launch Policy** | `agent_launch_policy_plugin` | Builds prompts and launch arguments per agent |
-| **GitHub Issue** | `github_issue_plugin` | Creates and manages GitHub issues via `gh` CLI |
-| **GitHub Workflow Policy** | `github_workflow_policy_plugin` | Enforces merge approval policies |
-| **Telegram Notification** | `telegram_notification_plugin` | Sends updates via Telegram bot API |
-| **Telegram Interactive** | `telegram_interactive_plugin` | Handles inline keyboards and callbacks |
-| **Discord Interactive** | `discord_interactive_plugin` | Discord bot alternative |
-| **JSON State Store** | `json_state_plugin` | Read/write JSON state files |
-| **Runtime Ops** | `runtime_ops_plugin` | Process management, PID tracking |
-| **Workflow Policy** | `workflow_policy_plugin` | Workflow type selection and enforcement |
-| **Workflow State Engine** | `workflow_state_engine_plugin` | State machine persistence and transitions |
+| Plugin                     | Module                          | Purpose                                          |
+|----------------------------|---------------------------------|--------------------------------------------------|
+| **AI Runtime**             | `ai_runtime_plugin`             | Orchestrates AI provider selection with fallback |
+| **Agent Launch Policy**    | `agent_launch_policy_plugin`    | Builds prompts and launch arguments per agent    |
+| **GitHub Issue**           | `github_issue_plugin`           | Creates and manages GitHub issues via `gh` CLI   |
+| **GitHub Workflow Policy** | `github_workflow_policy_plugin` | Enforces merge approval policies                 |
+| **Telegram Notification**  | `telegram_notification_plugin`  | Sends updates via Telegram bot API               |
+| **Telegram Interactive**   | `telegram_interactive_plugin`   | Handles inline keyboards and callbacks           |
+| **Discord Interactive**    | `discord_interactive_plugin`    | Discord bot alternative                          |
+| **JSON State Store**       | `json_state_plugin`             | Read/write JSON state files                      |
+| **Runtime Ops**            | `runtime_ops_plugin`            | Process management, PID tracking                 |
+| **Workflow Policy**        | `workflow_policy_plugin`        | Workflow type selection and enforcement          |
+| **Workflow State Engine**  | `workflow_state_engine_plugin`  | State machine persistence and transitions        |
 
 ## Entry Point Discovery
 

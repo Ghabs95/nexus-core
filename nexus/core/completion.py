@@ -6,6 +6,7 @@ Defines the contract between agents and the orchestration framework:
 3. Completion parser/validator (detects and reads agent output)
 4. Comment builder (formats structured output for Git platform comments)
 """
+
 import glob
 import json
 import logging
@@ -17,9 +18,19 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Values that indicate "no next agent" / workflow is done
-_TERMINAL_VALUES = frozenset({
-    "none", "n/a", "null", "no", "end", "done", "finish", "complete", "",
-})
+_TERMINAL_VALUES = frozenset(
+    {
+        "none",
+        "n/a",
+        "null",
+        "no",
+        "end",
+        "done",
+        "finish",
+        "complete",
+        "",
+    }
+)
 
 
 @dataclass
@@ -181,8 +192,8 @@ def generate_completion_instructions(
     else:
         completions_script = (
             f"```bash\n"
-            f'WORKSPACE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n'
-            f'COMPLETIONS_DIR=$(find "$WORKSPACE_ROOT" -maxdepth 4 -path \'*/{nexus_dir}/tasks/{project_name}/completions\' -type d 2>/dev/null | head -1)\n'
+            f"WORKSPACE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n"
+            f"COMPLETIONS_DIR=$(find \"$WORKSPACE_ROOT\" -maxdepth 4 -path '*/{nexus_dir}/tasks/{project_name}/completions' -type d 2>/dev/null | head -1)\n"
             f'if [ -z "$COMPLETIONS_DIR" ]; then COMPLETIONS_DIR="$WORKSPACE_ROOT/{nexus_dir}/tasks/{project_name}/completions"; mkdir -p "$COMPLETIONS_DIR"; fi\n'
         )
         deliverable_2 = (
@@ -191,8 +202,8 @@ def generate_completion_instructions(
             f"**IMPORTANT:** The `{nexus_dir}/` directory lives at the **workspace root** "
             f"(the top-level directory you were launched in). "
             f"Do NOT create a new `{nexus_dir}/` folder inside sub-repos or subdirectories.\n\n"
-            + completions_script +
-            f"python3 -c 'import json,os; p=os.path.join(os.environ[\"COMPLETIONS_DIR\"], \"completion_summary_{issue_number}.json\"); d={{\"status\":\"complete\",\"agent_type\":\"{agent_type}\",\"summary\":\"<one-line summary of what you did>\",\"key_findings\":[\"<finding 1>\",\"<finding 2>\"],\"next_agent\":\"<agent_type from workflow steps — NOT the step id or display name>\"}}; open(p, \"w\", encoding=\"utf-8\").write(json.dumps(d, indent=2))'\n"
+            + completions_script
+            + f'python3 -c \'import json,os; p=os.path.join(os.environ["COMPLETIONS_DIR"], "completion_summary_{issue_number}.json"); d={{"status":"complete","agent_type":"{agent_type}","summary":"<one-line summary of what you did>","key_findings":["<finding 1>","<finding 2>"],"next_agent":"<agent_type from workflow steps — NOT the step id or display name>"}}; open(p, "w", encoding="utf-8").write(json.dumps(d, indent=2))\'\n'
             f"```\n\n"
             f"Replace the `<placeholder>` values with real data from your analysis."
         )
@@ -277,7 +288,12 @@ def scan_for_completions(
     seen_paths: set[str] = set()
     patterns = [
         os.path.join(
-            base_dir, "**", nexus_dir, "tasks", "*", "completions",
+            base_dir,
+            "**",
+            nexus_dir,
+            "tasks",
+            "*",
+            "completions",
             "completion_summary_*.json",
         ),
     ]
@@ -305,11 +321,13 @@ def scan_for_completions(
                 with open(path, encoding="utf-8") as f:
                     data = json.load(f)
                 summary = CompletionSummary.from_dict(data)
-                results.append(DetectedCompletion(
-                    file_path=path,
-                    issue_number=issue_number,
-                    summary=summary,
-                ))
+                results.append(
+                    DetectedCompletion(
+                        file_path=path,
+                        issue_number=issue_number,
+                        summary=summary,
+                    )
+                )
                 parsed = True
                 break
             except json.JSONDecodeError as exc:

@@ -37,10 +37,10 @@ class HandsFreeRoutingDeps:
     append_message: Callable[[int, str, str], None]
     get_chat: Callable[[int], dict[str, Any]]
     process_inbox_task: Callable[[str, Any, str, str | None], Awaitable[dict[str, Any]]]
-    feature_ideation_deps: Any
     normalize_project_key: Callable[[str], str | None]
     save_resolved_task: Callable[[dict, str, str], Awaitable[dict[str, Any]]]
     task_confirmation_mode: str
+    feature_ideation_deps: Any = None
 
 
 def _legacy_reply_markup(buttons: list[list[Button]] | None) -> Any | None:
@@ -234,8 +234,16 @@ def _select_conversation_agent_type(metadata: dict[str, Any], text: str) -> tupl
         if preferred in allowed_agent_types:
             return preferred, intent, f"intent={intent}, mode={chat_mode}, allowed_match"
         if primary_agent_type in allowed_agent_types:
-            return primary_agent_type, intent, f"intent={intent}, mode={chat_mode}, primary_fallback"
-        return allowed_agent_types[0], intent, f"intent={intent}, mode={chat_mode}, first_allowed_fallback"
+            return (
+                primary_agent_type,
+                intent,
+                f"intent={intent}, mode={chat_mode}, primary_fallback",
+            )
+        return (
+            allowed_agent_types[0],
+            intent,
+            f"intent={intent}, mode={chat_mode}, first_allowed_fallback",
+        )
 
     if preferred:
         return preferred, intent, f"intent={intent}, mode={chat_mode}, unrestricted"
@@ -311,16 +319,21 @@ async def resolve_pending_project_selection(
     if not pending_project:
         return False
 
-    selected = deps.normalize_project_key((ctx.text or "").strip())
+    if len(deps.projects) == 1:
+        selected = next(iter(deps.projects.keys()))
+    else:
+        selected = deps.normalize_project_key((ctx.text or "").strip())
     if not selected or selected not in deps.projects:
         options = ", ".join(sorted(deps.projects.keys()))
         await ctx.reply_text(f"Please reply with a valid project key: {options}")
         return True
 
     ctx.user_state.pop("pending_task_project_resolution", None)
-    
+
     # We don't have update.message.message_id easily without raw_event casting, but we can pass an empty string or dummy if necessary
-    trigger_message_id = getattr(ctx.raw_event, "message_id", "") if hasattr(ctx.raw_event, "message_id") else ""
+    trigger_message_id = (
+        getattr(ctx.raw_event, "message_id", "") if hasattr(ctx.raw_event, "message_id") else ""
+    )
     if hasattr(ctx.raw_event, "message") and hasattr(ctx.raw_event.message, "message_id"):
         trigger_message_id = str(ctx.raw_event.message.message_id)
 
@@ -341,7 +354,7 @@ async def route_hands_free_text(
         deps = legacy_deps
 
     text = ctx.text
-    
+
     # First check if we're resolving a project selection
     if await resolve_pending_project_selection(ctx, deps):
         return
@@ -358,7 +371,9 @@ async def route_hands_free_text(
         )
         return
 
-    force_conversation = _has_active_feature_ideation(ctx) and not _looks_like_explicit_task_request(text)
+    force_conversation = _has_active_feature_ideation(
+        ctx
+    ) and not _looks_like_explicit_task_request(text)
     if force_conversation:
         deps.logger.info(
             "Active feature ideation detected; routing follow-up as conversation: %s",
@@ -370,7 +385,10 @@ async def route_hands_free_text(
         intent_result = parse_intent_result(deps.orchestrator, text, deps.extract_json_dict)
 
     intent = intent_result.get("intent", "task")
-    is_voice = str(getattr(ctx.raw_event, "voice", False)) == "True" or getattr(getattr(ctx.raw_event, "message", None), "voice", None) is not None
+    is_voice = (
+        str(getattr(ctx.raw_event, "voice", False)) == "True"
+        or getattr(getattr(ctx.raw_event, "message", None), "voice", None) is not None
+    )
 
     status_msg_id = await ctx.reply_text("🤖 *Nexus:* Thinking...")
 
@@ -379,7 +397,9 @@ async def route_hands_free_text(
         chat_data = deps.get_chat(user_id) or {}
         metadata = chat_data.get("metadata") if isinstance(chat_data, dict) else {}
         metadata = metadata if isinstance(metadata, dict) else {}
-        routed_agent_type, detected_intent, routing_reason = _select_conversation_agent_type(metadata, text)
+        routed_agent_type, detected_intent, routing_reason = _select_conversation_agent_type(
+            metadata, text
+        )
 
         deps.logger.info(
             "Conversation routing selected agent_type=%s (%s)",
@@ -401,6 +421,7 @@ async def route_hands_free_text(
             get_chat_history=deps.get_chat_history,
             append_message=deps.append_message,
             persona=persona,
+            project_name=metadata.get("project_key"),
         )
 
         await ctx.edit_message_text(
@@ -435,7 +456,9 @@ async def route_hands_free_text(
             or (confidence_value is not None and confidence_value < 0.8)
         )
 
-    trigger_message_id = getattr(ctx.raw_event, "message_id", "") if hasattr(ctx.raw_event, "message_id") else ""
+    trigger_message_id = (
+        getattr(ctx.raw_event, "message_id", "") if hasattr(ctx.raw_event, "message_id") else ""
+    )
     if hasattr(ctx.raw_event, "message") and hasattr(ctx.raw_event.message, "message_id"):
         trigger_message_id = str(ctx.raw_event.message.message_id)
 
@@ -478,7 +501,16 @@ async def route_hands_free_text(
     )
 
     if not result["success"] and "pending_resolution" in result:
-        ctx.user_state["pending_task_project_resolution"] = result["pending_resolution"]
+        if len(deps.projects) == 1:
+            selected_project = next(iter(deps.projects.keys()))
+            resolved = await deps.save_resolved_task(
+                result["pending_resolution"],
+                selected_project,
+                str(trigger_message_id),
+            )
+            result = resolved
+        else:
+            ctx.user_state["pending_task_project_resolution"] = result["pending_resolution"]
 
     await ctx.edit_message_text(
         message_id=status_msg_id,

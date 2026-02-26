@@ -16,6 +16,7 @@ Simple **single-tier** workflow for managing development issues:
 8. **Summarizer** — Final summary and close loop
 
 This demonstrates:
+
 - Multi-step orchestration
 - Conditional routing via `agent_type: "router"`
 - Agent hand-offs via `on_success`
@@ -27,13 +28,14 @@ This demonstrates:
 **Multi-tier** workflow demonstrating full lifecycle orchestration with three
 selectable tiers:
 
-| Tier | Key | Use Case | Steps |
-|------|-----|----------|-------|
-| **Full** | `full` | New features | 10 steps: triage → design → develop → review → compliance → deploy → document |
-| **Shortened** | `shortened` | Bug fixes | 7 steps: triage → debug → develop → review → deploy → document |
-| **Fast-track** | `fast-track` | Hotfixes | 4 steps: triage → develop → review → deploy |
+| Tier           | Key          | Use Case     | Steps                                                                         |
+|----------------|--------------|--------------|-------------------------------------------------------------------------------|
+| **Full**       | `full`       | New features | 10 steps: triage → design → develop → review → compliance → deploy → document |
+| **Shortened**  | `shortened`  | Bug fixes    | 7 steps: triage → debug → develop → review → deploy → document                |
+| **Fast-track** | `fast-track` | Hotfixes     | 4 steps: triage → develop → review → deploy                                   |
 
 Additional patterns demonstrated:
+
 - **Multi-tier workflows** — select a tier at runtime via `workflow_type`
 - **Feedback loops** — reviewer rejects → back to develop
 - **Compliance gate** — security/privacy review before deploy

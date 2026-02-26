@@ -14,9 +14,11 @@ from nexus.adapters.registry import AdapterRegistry
 
 logging.basicConfig(level=logging.INFO)
 
+
 # Dummy handler
 async def handle_hello(user_id: str, text: str, context: Any, raw_event: Any) -> None:
     logging.info(f"Received /hello from {user_id} with text: {text}")
+
 
 async def main():
     registry = AdapterRegistry()
@@ -28,7 +30,7 @@ async def main():
                 "type": "telegram-interactive-http",
                 "config": {
                     "bot_token": bot_token,
-                }
+                },
             }
         ]
     }

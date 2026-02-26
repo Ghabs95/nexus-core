@@ -1,14 +1,15 @@
 # Workflow Lifecycle
 
-Nexus runs AI agents in a chain defined by workflow YAML files. Each workflow has a sequence of steps, and each step is assigned to an agent type.
+Nexus runs AI agents in a chain defined by workflow YAML files. Each workflow has a sequence of steps, and each step is
+assigned to an agent type.
 
 ## Workflow Tiers
 
-| Tier | Steps | Use Case |
-|---|---|---|
-| **Full SOP** | 8-9 agents | Feature requests (design + all quality gates) |
-| **Shortened** | 5-6 agents | Bug fixes (skip vision/UX, keep quality gates) |
-| **Fast-Track** | 3-4 agents | Hotfixes, chores (minimal overhead) |
+| Tier           | Steps      | Use Case                                       |
+|----------------|------------|------------------------------------------------|
+| **Full SOP**   | 8-9 agents | Feature requests (design + all quality gates)  |
+| **Shortened**  | 5-6 agents | Bug fixes (skip vision/UX, keep quality gates) |
+| **Fast-Track** | 3-4 agents | Hotfixes, chores (minimal overhead)            |
 
 ### Typical Full SOP Chain
 
@@ -76,7 +77,7 @@ workflow_types:
         agent_type: architect
         description: "Create technical design"
         timeout: 1200
-        
+
       - id: implement
         agent_type: developer
         description: "Write the code"
@@ -96,12 +97,12 @@ monitoring:
 
 The system enforces human review at critical points:
 
-| Project Config | Workflow Config | Result |
-|---|---|---|
-| `always` | [ignored] | Human approval REQUIRED |
-| `workflow-based` | `true` | Human approval required |
-| `workflow-based` | `false` | Auto-merge allowed |
-| `never` | [ignored] | Auto-merge always |
+| Project Config   | Workflow Config | Result                  |
+|------------------|-----------------|-------------------------|
+| `always`         | [ignored]       | Human approval REQUIRED |
+| `workflow-based` | `true`          | Human approval required |
+| `workflow-based` | `false`         | Auto-merge allowed      |
+| `never`          | [ignored]       | Auto-merge always       |
 
 When approval is required, `@OpsCommander` posts "🚀 Deployment ready. PR requires human review" and waits.
 
@@ -113,6 +114,7 @@ Workflow state is persisted by the `WorkflowStateEnginePlugin`:
 - **Postgres**: `nexus_workflows` table
 
 The `HostStateManager` separately tracks:
+
 - `launched_agents.json` — PIDs with 2-minute TTL
 - `tracked_issues.json` — User subscriptions for notifications
 

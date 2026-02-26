@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: nexus-telegram-bot:local
-    command: ["python", "src/telegram_bot.py"]
+    command: [ "python", "src/telegram_bot.py" ]
     working_dir: /app
     restart: unless-stopped
     env_file:
@@ -23,7 +23,7 @@ services:
     image: nexus-telegram-bot:local
     depends_on:
       - bot
-    command: ["python", "src/inbox_processor.py"]
+    command: [ "python", "src/inbox_processor.py" ]
     working_dir: /app
     restart: unless-stopped
     env_file:
@@ -38,7 +38,7 @@ services:
 
   webhook:
     image: nexus-telegram-bot:local
-    command: ["python", "src/webhook_server.py"]
+    command: [ "python", "src/webhook_server.py" ]
     working_dir: /app
     restart: unless-stopped
     env_file:
@@ -59,7 +59,7 @@ services:
     depends_on:
       - bot
       - processor
-    command: ["python", "src/health_check.py"]
+    command: [ "python", "src/health_check.py" ]
     working_dir: /app
     restart: unless-stopped
     env_file:

@@ -17,9 +17,7 @@ def test_extract_repo_from_issue_url_parses_owner_repo():
 def test_extract_repo_from_gitlab_issue_url_parses_namespace_repo():
     from inbox_processor import _extract_repo_from_issue_url
 
-    repo = _extract_repo_from_issue_url(
-        "https://gitlab.com/sample-org/mobile-app/-/issues/77"
-    )
+    repo = _extract_repo_from_issue_url("https://gitlab.com/sample-org/mobile-app/-/issues/77")
 
     assert repo == "sample-org/mobile-app"
 
@@ -37,7 +35,11 @@ def test_resolve_repo_strict_raises_on_mismatch(monkeypatch):
             }
         },
     )
-    monkeypatch.setattr(inbox_processor, "_resolve_repo_for_issue", lambda issue, default_project=None: "sample-org/nexus")
+    monkeypatch.setattr(
+        inbox_processor,
+        "_resolve_repo_for_issue",
+        lambda issue, default_project=None: "sample-org/nexus",
+    )
 
     with patch("inbox_processor.emit_alert") as mock_alert:
         with pytest.raises(ValueError):
@@ -159,7 +161,11 @@ def test_launch_next_agent_uses_issue_body_for_shared_active_task_file(monkeypat
     monkeypatch.setattr(
         agent_launcher,
         "_load_issue_body_from_project_repo",
-        lambda issue_number: (issue_body, "org/repo-b", "/tmp/base/.nexus/tasks/nexus/active/task_feature-pick.md"),
+        lambda issue_number: (
+            issue_body,
+            "org/repo-b",
+            "/tmp/base/.nexus/tasks/nexus/active/task_feature-pick.md",
+        ),
     )
     monkeypatch.setattr(
         agent_launcher,
@@ -176,7 +182,9 @@ def test_launch_next_agent_uses_issue_body_for_shared_active_task_file(monkeypat
     monkeypatch.setattr(agent_launcher, "_project_repos", lambda *args, **kwargs: ["org/repo-b"])
     monkeypatch.setattr(agent_launcher, "get_repos", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(agent_launcher, "get_repo", lambda _project_root: "org/repo-b")
-    monkeypatch.setattr(agent_launcher.HostStateManager, "get_last_tier_for_issue", lambda _issue: "full")
+    monkeypatch.setattr(
+        agent_launcher.HostStateManager, "get_last_tier_for_issue", lambda _issue: "full"
+    )
     monkeypatch.setattr(agent_launcher, "get_sop_tier_from_issue", lambda *args, **kwargs: "full")
     monkeypatch.setattr(agent_launcher, "is_recent_launch", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(agent_launcher, "notify_agent_completed", lambda **_kwargs: None)
@@ -236,7 +244,9 @@ def test_resolve_project_for_repo_matches_gitlab_secondary_repo(monkeypatch):
 
 @patch("webhook_server._notify_lifecycle", return_value=True)
 @patch("webhook_server.emit_alert", return_value=True)
-def test_webhook_maps_secondary_repo_to_same_project(_mock_alert, _mock_notify, tmp_path, monkeypatch):
+def test_webhook_maps_secondary_repo_to_same_project(
+    _mock_alert, _mock_notify, tmp_path, monkeypatch
+):
     import webhook_server
 
     base_dir = tmp_path / "workspace-root"

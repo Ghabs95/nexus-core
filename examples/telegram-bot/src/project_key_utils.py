@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 from config import normalize_project_key
 
 

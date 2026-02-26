@@ -23,7 +23,7 @@ def _mock_subprocess_run_ok(*args, **kwargs):
 
 
 class TestProvisionWorktreeDefaultBranch:
-    """Without explicit branch_name, falls back to ``feature/issue-{N}``."""
+    """Without explicit branch_name, falls back to ``nexus/issue-{N}``."""
 
     @mock.patch("nexus.core.workspace.subprocess.run", side_effect=_mock_subprocess_run_ok)
     @mock.patch("os.makedirs")
@@ -38,7 +38,7 @@ class TestProvisionWorktreeDefaultBranch:
         # Second subprocess call should create worktree with default branch
         worktree_call = mock_run.call_args_list[-1]
         cmd = worktree_call[0][0]
-        assert cmd == ["git", "worktree", "add", "-b", "feature/issue-42", expected_dir]
+        assert cmd == ["git", "worktree", "add", "-b", "nexus/issue-42", expected_dir]
 
 
 class TestProvisionWorktreeCustomBranch:
@@ -69,7 +69,7 @@ class TestProvisionWorktreeCustomBranch:
         worktree_call = mock_run.call_args_list[-1]
         cmd = worktree_call[0][0]
         # Empty string is falsy, should fallback to default
-        assert cmd == ["git", "worktree", "add", "-b", "feature/issue-42", os.path.join(base, ".nexus", "worktrees", "issue-42")]
+        assert cmd == ["git", "worktree", "add", "-b", "nexus/issue-42", os.path.join(base, ".nexus", "worktrees", "issue-42")]
 
     @mock.patch("nexus.core.workspace.subprocess.run", side_effect=_mock_subprocess_run_ok)
     @mock.patch("os.makedirs")
@@ -80,4 +80,4 @@ class TestProvisionWorktreeCustomBranch:
 
         worktree_call = mock_run.call_args_list[-1]
         cmd = worktree_call[0][0]
-        assert cmd == ["git", "worktree", "add", "-b", "feature/issue-42", os.path.join(base, ".nexus", "worktrees", "issue-42")]
+        assert cmd == ["git", "worktree", "add", "-b", "nexus/issue-42", os.path.join(base, ".nexus", "worktrees", "issue-42")]

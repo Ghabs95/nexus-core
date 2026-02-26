@@ -1,6 +1,5 @@
 """Tests for agent resolution handler."""
 
-
 from handlers.agent_resolution_handler import resolve_agents_for_project
 
 

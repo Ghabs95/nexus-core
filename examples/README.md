@@ -30,6 +30,7 @@ examples/
 **What:** Workflow agents that execute specific tasks in orchestrated sequences.
 
 **Examples:**
+
 - Triage Agent: Classify GitHub issues
 - Design Agent: Create design proposals
 - Code Review Agent: Review pull requests
@@ -46,8 +47,9 @@ examples/
 **What:** Persistent personas that guide humans in VS Code Chat (not automation).
 
 **Examples:**
+
 - @CEO: Strategic oversight
-- @CTO: Architecture decisions  
+- @CTO: Architecture decisions
 - @BackendLead: Backend expertise
 - @QAGuard: Quality gates
 
@@ -99,11 +101,13 @@ python examples/translator/to_copilot.py examples/agents/triage-agent.yaml
 
 ## Agent Framework
 
-Agents are autonomous tools that handle specific tasks in your workflow. Nexus Core provides a standard way to define and orchestrate them.
+Agents are autonomous tools that handle specific tasks in your workflow. Nexus Core provides a standard way to define
+and orchestrate them.
 
 ### Agent Anatomy
 
 Every agent is defined in YAML with:
+
 - **Input schema** — what the agent needs
 - **Output schema** — what the agent produces
 - **Tools** — services the agent calls (GitHub, LLM, etc.)
@@ -125,20 +129,20 @@ spec:
     issue_url:
       type: string
       description: "GitHub issue URL"
-  
+
   outputs:
     classification:
       type: enum
-      values: ["bug", "feature", "doc", "support"]
+      values: [ "bug", "feature", "doc", "support" ]
     priority:
       type: enum
-      values: ["p0-critical", "p1-high", "p2-medium", "p3-low"]
-  
+      values: [ "p0-critical", "p1-high", "p2-medium", "p3-low" ]
+
   requires_tools:
     - github:read_issue
     - github:add_comment
     - ai:completion
-  
+
   ai_instructions: |
     Analyze this issue and classify it...
 ```
@@ -196,9 +200,9 @@ name: "Nexus Core Development Workflow"
 steps:
   - id: "triage"
     agent_type: "triage"
-    tools: [github:read_issue, github:add_comment, ...]
+    tools: [ github:read_issue, github:add_comment, ... ]
     on_success: "route_by_type"
-  
+
   - id: "route_by_type"
     agent_type: "router"
     routes:
@@ -206,17 +210,18 @@ steps:
         then: "design"
       - when: "classification == 'bug'"
         then: "debug_analysis"
-  
+
   - id: "design"
     agent_type: "design"
     on_success: "close_loop"
-  
+
   - id: "close_loop"
     agent_type: "summarizer"
     final_step: true
 ```
 
 This workflow:
+
 1. **Triage** incoming issue
 2. **Route** to appropriate specialist (design for features, debug for bugs)
 3. **Execute** specialist agent
@@ -242,15 +247,15 @@ spec:
     param1:
       type: string
       required: true
-  
+
   outputs:
     result:
       type: string
-  
+
   requires_tools:
     - tool1
     - tool2
-  
+
   ai_instructions: |
     Instructions for the LLM...
 ```
@@ -291,6 +296,7 @@ result = await engine.run(workflow=..., inputs={...})
 This repo uses agents for its own development!
 
 The workflow in `development_workflow.yaml`:
+
 1. **Triage**: New issues automatically analyzed
 2. **Design**: Feature requests get design docs
 3. **Code Review**: PRs reviewed automatically

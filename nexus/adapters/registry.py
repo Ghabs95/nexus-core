@@ -24,6 +24,7 @@ Or load the whole adapter stack from a YAML/dict config section::
         ],
     })
 """
+
 import logging
 from typing import Any
 
@@ -45,9 +46,11 @@ logger = logging.getLogger(__name__)
 def _load_builtin_storage(type_name: str) -> type[StorageBackend] | None:
     if type_name == "file":
         from nexus.adapters.storage.file import FileStorage
+
         return FileStorage
     if type_name in ("postgres", "postgresql"):
         from nexus.adapters.storage.postgres import PostgreSQLStorageBackend
+
         return PostgreSQLStorageBackend
     return None
 
@@ -55,9 +58,11 @@ def _load_builtin_storage(type_name: str) -> type[StorageBackend] | None:
 def _load_builtin_git(type_name: str) -> type[GitPlatform] | None:
     if type_name == "github":
         from nexus.adapters.git.github import GitHubPlatform
+
         return GitHubPlatform
     if type_name == "gitlab":
         from nexus.adapters.git.gitlab import GitLabPlatform
+
         return GitLabPlatform
     return None
 
@@ -65,6 +70,7 @@ def _load_builtin_git(type_name: str) -> type[GitPlatform] | None:
 def _load_builtin_notifications(type_name: str) -> type[NotificationChannel] | None:
     if type_name == "slack":
         from nexus.adapters.notifications.slack import SlackNotificationChannel
+
         return SlackNotificationChannel
     return None
 
@@ -72,9 +78,11 @@ def _load_builtin_notifications(type_name: str) -> type[NotificationChannel] | N
 def _load_builtin_interactive(type_name: str) -> type[InteractiveClientPlugin] | None:
     if type_name == "telegram-interactive-http":
         from nexus.plugins.builtin.telegram_interactive_plugin import TelegramInteractivePlugin
+
         return TelegramInteractivePlugin
     elif type_name == "discord-interactive-http":
         from nexus.plugins.builtin.discord_interactive_plugin import DiscordInteractivePlugin
+
         return DiscordInteractivePlugin
     return None
 
@@ -82,15 +90,19 @@ def _load_builtin_interactive(type_name: str) -> type[InteractiveClientPlugin] |
 def _load_builtin_ai(type_name: str) -> type[AIProvider] | None:
     if type_name == "codex":
         from nexus.adapters.ai.codex_provider import CodexCLIProvider
+
         return CodexCLIProvider
     if type_name == "copilot":
         from nexus.adapters.ai.copilot_provider import CopilotCLIProvider
+
         return CopilotCLIProvider
     if type_name == "gemini":
         from nexus.adapters.ai.gemini_provider import GeminiCLIProvider
+
         return GeminiCLIProvider
     if type_name == "openai":
         from nexus.adapters.ai.openai_provider import OpenAIProvider
+
         return OpenAIProvider
     return None
 
@@ -98,6 +110,7 @@ def _load_builtin_ai(type_name: str) -> type[AIProvider] | None:
 def _load_builtin_transcription(type_name: str) -> type[TranscriptionProvider] | None:
     if type_name == "whisper":
         from nexus.adapters.transcription.whisper_provider import WhisperTranscriptionProvider
+
         return WhisperTranscriptionProvider
     return None
 
@@ -122,11 +135,11 @@ class AdapterRegistry:
         self._auto_builtins = auto_register_builtins
 
         # Custom overrides: type_name -> class
-        self._storage_registry:  dict[str, type[StorageBackend]]     = {}
-        self._git_registry:       dict[str, type[GitPlatform]]        = {}
-        self._notif_registry:     dict[str, type[NotificationChannel]] = {}
+        self._storage_registry: dict[str, type[StorageBackend]] = {}
+        self._git_registry: dict[str, type[GitPlatform]] = {}
+        self._notif_registry: dict[str, type[NotificationChannel]] = {}
         self._interactive_registry: dict[str, type[InteractiveClientPlugin]] = {}
-        self._ai_registry:        dict[str, type[AIProvider]]          = {}
+        self._ai_registry: dict[str, type[AIProvider]] = {}
         self._transcription_registry: dict[str, type[TranscriptionProvider]] = {}
 
     # ------------------------------------------------------------------

@@ -163,7 +163,7 @@ class LokiAnalyticsAdapter:
         """Fetch top performing agents ranked by launch count."""
         lookback = f"{lookback_days * 24}h"
         query = (
-            f'sum by (agent_name) '
+            f"sum by (agent_name) "
             f'(count_over_time({{app="nexus"}} '
             f'| json | event_type="AGENT_LAUNCHED" [{lookback}]))'
         )
@@ -204,4 +204,3 @@ class LokiAnalyticsAdapter:
                 lines.append(f"  {i}. {a.agent_name}: {a.launches} launches")
 
         return "\n".join(lines)
-

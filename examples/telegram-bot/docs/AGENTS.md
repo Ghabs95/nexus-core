@@ -4,14 +4,17 @@ You are operating inside the Nexus Telegram Bot codebase.
 This file optimizes agent behavior for designing, implementing, and reviewing the bot's features.
 
 ## Mission
+
 - Build a reliable, extensible workflow automation system.
 - Orchestrate AI agents through well-defined lifecycle steps.
 - Support both filesystem and PostgreSQL storage backends seamlessly.
 
 ## Scope
+
 - Applies to all work in the `examples/telegram-bot/` directory and its integration with `nexus-core`.
 
 ## Authority Model
+
 1. `docs/architecture.md` — System-level design decisions
 2. `docs/workflow-lifecycle.md` — Workflow tiers, states, approval gates
 3. `docs/storage-backends.md` — Storage architecture
@@ -21,41 +24,45 @@ This file optimizes agent behavior for designing, implementing, and reviewing th
 If conflicts exist between docs, resolve explicitly or surface them.
 
 ## Mandatory Session Protocol
+
 1. Read `AGENTS.md` (this file).
 2. Read the relevant docs for your task:
-   - Architecture overview → `docs/architecture.md`
-   - Storage layer → `docs/storage-backends.md`
-   - How agents report → `docs/completion-protocol.md`
-   - Task routing → `docs/inbox-routing.md`
-   - Workflow chain → `docs/workflow-lifecycle.md`
-   - Plugin system → `docs/plugin-system.md`
-   - Env vars and endpoints → `docs/config-reference.md`
-   - Framework vs integration → `docs/framework-integration.md`
+    - Architecture overview → `docs/architecture.md`
+    - Storage layer → `docs/storage-backends.md`
+    - How agents report → `docs/completion-protocol.md`
+    - Task routing → `docs/inbox-routing.md`
+    - Workflow chain → `docs/workflow-lifecycle.md`
+    - Plugin system → `docs/plugin-system.md`
+    - Env vars and endpoints → `docs/config-reference.md`
+    - Framework vs integration → `docs/framework-integration.md`
 3. Understand the framework boundary (nexus-core ≠ telegram-bot integration).
 4. Make atomic, scoped changes.
 5. Summarize exactly what changed and why.
 
 ## Operating Rules
+
 - **Backend-aware**: All state persistence must respect `NEXUS_STORAGE_BACKEND`. Never hardcode filesystem-only paths.
-- **Framework boundary**: Do not put integration-specific logic into `nexus-core`. Keep project-specific code in the telegram-bot layer.
+- **Framework boundary**: Do not put integration-specific logic into `nexus-core`. Keep project-specific code in the
+  telegram-bot layer.
 - **Plugin pattern**: Use the plugin registry for new integrations. Don't import concrete implementations directly.
 - **Completion contract**: Agents must produce structured completion summaries (not raw log dumps).
 - **Approval gates**: Never bypass `require_human_merge_approval` policy checks.
 
 ## Key Code Locations
 
-| Concern | File |
-|---|---|
-| Bot commands | `src/telegram_bot.py` |
-| Webhook + inbox processor | `src/webhook_server.py` |
-| Host state (agents, issues) | `src/state_manager.py` |
-| Task routing | `src/handlers/inbox_routing_handler.py` |
-| Agent subprocess launch | `src/runtime/agent_launcher.py` |
-| Plugin wiring | `src/orchestration/plugin_runtime.py` |
-| Workflow helpers | `src/orchestration/nexus_core_helpers.py` |
-| Project config | `config/project_config.yaml` |
+| Concern                     | File                                      |
+|-----------------------------|-------------------------------------------|
+| Bot commands                | `src/telegram_bot.py`                     |
+| Webhook + inbox processor   | `src/webhook_server.py`                   |
+| Host state (agents, issues) | `src/state_manager.py`                    |
+| Task routing                | `src/handlers/inbox_routing_handler.py`   |
+| Agent subprocess launch     | `src/runtime/agent_launcher.py`           |
+| Plugin wiring               | `src/orchestration/plugin_runtime.py`     |
+| Workflow helpers            | `src/orchestration/nexus_core_helpers.py` |
+| Project config              | `config/project_config.yaml`              |
 
 ## Definition of Done
+
 - Change works with both `filesystem` and `postgres` backends.
 - No real project names or credentials in example code.
 - Completion protocol respected (structured JSON, not raw text).

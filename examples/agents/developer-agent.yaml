@@ -97,5 +97,5 @@ spec:
     Keep changes minimal and focused on the identified issue.
 
   validation:
-    required_outputs: ["branch_name", "implementation_summary"]
+    required_outputs: [ "branch_name", "implementation_summary" ]
     max_duration_seconds: 1200

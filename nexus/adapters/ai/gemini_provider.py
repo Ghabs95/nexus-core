@@ -1,4 +1,5 @@
 """GeminiCLI AI provider implementation."""
+
 import asyncio
 import logging
 import shutil

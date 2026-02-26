@@ -1,4 +1,5 @@
 """Base interface for Git platforms (GitHub, GitLab, etc.)."""
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -58,9 +59,7 @@ class GitPlatform(ABC):
         pass
 
     @abstractmethod
-    async def create_issue(
-        self, title: str, body: str, labels: list[str] | None = None
-    ) -> Issue:
+    async def create_issue(self, title: str, body: str, labels: list[str] | None = None) -> Issue:
         """Create a new issue."""
         pass
 
@@ -136,3 +135,34 @@ class GitPlatform(ABC):
             PullRequest object if created, ``None`` if no changes detected.
         """
         pass
+
+    async def merge_pull_request(
+        self,
+        pr_id: str,
+        *,
+        squash: bool = True,
+        delete_branch: bool = True,
+        auto: bool = True,
+    ) -> str:
+        """Merge a pull/merge request by provider-native identifier.
+
+        Implementations should accept the provider's visible PR/MR number/IID.
+        Returns a short provider response string on success.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement merge_pull_request()"
+        )
+
+    async def ensure_label(
+        self,
+        name: str,
+        *,
+        color: str,
+        description: str = "",
+    ) -> bool:
+        """Ensure a repository label exists.
+
+        Returns True when the label exists after the call, False on best-effort
+        failure. Implementations may treat "already exists" as success.
+        """
+        raise NotImplementedError(f"{self.__class__.__name__} does not implement ensure_label()")

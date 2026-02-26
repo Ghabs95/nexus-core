@@ -1,7 +1,6 @@
 """Tests for automatic task archival on workflow finalization."""
 
 
-
 def test_archive_closed_task_by_issue_url(tmp_path, monkeypatch):
     from inbox_processor import _archive_closed_task_files
 
@@ -11,11 +10,9 @@ def test_archive_closed_task_by_issue_url(tmp_path, monkeypatch):
     active_dir.mkdir(parents=True)
 
     task = active_dir / "feature-simple_123.md"
-    task.write_text(
-        """# Task\n
+    task.write_text("""# Task\n
 **Issue:** https://github.com/acme/repo/issues/41
-"""
-    )
+""")
 
     monkeypatch.setattr("inbox_processor.BASE_DIR", str(tmp_path))
     monkeypatch.setattr(
@@ -73,11 +70,9 @@ def test_archive_closed_task_ignores_other_issues(tmp_path, monkeypatch):
     active_dir.mkdir(parents=True)
 
     other_task = active_dir / "feature-simple_999.md"
-    other_task.write_text(
-        """# Task\n
+    other_task.write_text("""# Task\n
 **Issue:** https://github.com/acme/repo/issues/999
-"""
-    )
+""")
 
     monkeypatch.setattr("inbox_processor.BASE_DIR", str(tmp_path))
     monkeypatch.setattr(

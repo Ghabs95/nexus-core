@@ -124,7 +124,7 @@ Keep this application compose file separate from the infra template in
 `vsc-server-infra/cloud-init.yaml.tpl`.
 
 - `cloud-init.yaml.tpl` should bootstrap host infrastructure only
-	(Docker engine, databases, logging stack, base packages).
+  (Docker engine, databases, logging stack, base packages).
 - Nexus app lifecycle should stay in this repository's compose file.
 
 Reference the Nexus compose stack from cloud-init only if you explicitly want
@@ -132,4 +132,5 @@ automatic deployment at VM bootstrap time.
 
 ## Migration note
 
-The old `ghabs/nexus` repository should now be treated as a thin profile/wrapper layer (config + dependency declaration), while implementation/runtime logic lives here.
+The old `ghabs/nexus` repository should now be treated as a thin profile/wrapper layer (config + dependency
+declaration), while implementation/runtime logic lives here.

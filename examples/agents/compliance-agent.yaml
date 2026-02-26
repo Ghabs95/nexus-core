@@ -34,7 +34,7 @@ spec:
   outputs:
     compliance_status:
       type: enum
-      values: ["approved", "blocked"]
+      values: [ "approved", "blocked" ]
       description: "Whether the PR passes compliance review"
     compliance_issues:
       type: array
@@ -58,4 +58,4 @@ spec:
     Approve if compliant, or block with specific issues listed.
 
   validation:
-    required_outputs: ["compliance_status"]
+    required_outputs: [ "compliance_status" ]

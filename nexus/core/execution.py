@@ -1,15 +1,12 @@
 """Agent execution and orchestration logic.
 
-Handles resolving agent definitions, generating instructions, and 
+Handles resolving agent definitions, generating instructions, and
 preparing execution parameters.
 """
 
 import logging
 import os
 import re
-from typing import Any
-
-import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +23,17 @@ def find_agent_definition(agent_name: str, search_dirs: list[str]) -> str | None
         f"{normalized_name}-agent",
     ]
     extensions = [".yaml", ".yml"]
-    
+
     for directory in search_dirs:
         if not os.path.exists(directory):
             continue
-            
+
         for candidate in candidates:
             for ext in extensions:
                 path = os.path.join(directory, f"{candidate}{ext}")
                 if os.path.exists(path):
                     return path
-                
+
     return None
 
 
@@ -45,11 +42,7 @@ class ExecutionEngine:
 
     @staticmethod
     def build_default_prompt(
-        agent_type: str,
-        issue_url: str,
-        tier_name: str,
-        workflow_name: str,
-        task_content: str
+        agent_type: str, issue_url: str, tier_name: str, workflow_name: str, task_content: str
     ) -> str:
         """Build a standard execution prompt for an agent."""
         return (
@@ -62,34 +55,31 @@ class ExecutionEngine:
 
     @staticmethod
     def sync_workspace_skill(
-        workspace_dir: str,
-        agent_name: str,
-        instructions: str,
-        force: bool = False
+        workspace_dir: str, agent_name: str, instructions: str, force: bool = False
     ) -> str | None:
         """
         Sync agent instructions to the workspace skill directory.
-        
+
         This enables Gemini-style workspace skills to be automatically
         updated from the agent definition.
         """
         if not workspace_dir or not instructions:
             return None
-            
+
         # Standard skill path: .agent/skills/<agent_name>/SKILL.md
         normalized_name = re.sub(r"[^a-z0-9]+", "_", agent_name.lower()).strip("_")
         skill_dir = os.path.join(workspace_dir, ".agent", "skills", normalized_name)
         skill_path = os.path.join(skill_dir, "SKILL.md")
-        
+
         try:
             if not force and os.path.exists(skill_path):
                 # Optimization: check if content changed (optional)
                 pass
-                
+
             os.makedirs(skill_dir, exist_ok=True)
             with open(skill_path, "w", encoding="utf-8") as f:
                 f.write(instructions)
-            
+
             return skill_path
         except Exception as e:
             logger.error(f"Failed to sync workspace skill for {agent_name}: {e}")

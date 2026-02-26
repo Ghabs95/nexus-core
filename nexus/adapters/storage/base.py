@@ -1,4 +1,5 @@
 """Base interface for storage backends."""
+
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
@@ -44,7 +45,9 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
-    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: dict[str, Any]) -> None:
+    async def save_agent_metadata(
+        self, workflow_id: str, agent_name: str, metadata: dict[str, Any]
+    ) -> None:
         """Save agent execution metadata (PID, timestamp, etc.)."""
         pass
 
@@ -60,7 +63,6 @@ class StorageBackend(ABC):
 
     # --- Completion storage ---
 
-    @abstractmethod
     async def save_completion(
         self, issue_number: str, agent_type: str, data: dict[str, Any]
     ) -> str:
@@ -74,26 +76,21 @@ class StorageBackend(ABC):
         Returns:
             Dedup key for idempotent processing.
         """
-        pass
+        raise NotImplementedError("save_completion is not implemented by this storage backend")
 
-    @abstractmethod
-    async def list_completions(
-        self, issue_number: str | None = None
-    ) -> list[dict[str, Any]]:
+    async def list_completions(self, issue_number: str | None = None) -> list[dict[str, Any]]:
         """List completion summaries, optionally filtered by issue.
 
         Returns newest-first for each issue (only latest per issue).
         """
-        pass
+        raise NotImplementedError("list_completions is not implemented by this storage backend")
 
     # --- Host state storage ---
 
-    @abstractmethod
     async def save_host_state(self, key: str, data: dict[str, Any]) -> None:
         """Persist a host state blob (e.g. launched_agents, tracked_issues)."""
-        pass
+        raise NotImplementedError("save_host_state is not implemented by this storage backend")
 
-    @abstractmethod
     async def load_host_state(self, key: str) -> dict[str, Any] | None:
         """Load a host state blob by key. Returns None if not found."""
-        pass
+        raise NotImplementedError("load_host_state is not implemented by this storage backend")

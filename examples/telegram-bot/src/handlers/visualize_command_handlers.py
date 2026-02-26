@@ -24,9 +24,7 @@ class VisualizeHandlerDeps:
     logger: logging.Logger
     allowed_user_ids: list[int]
     prompt_project_selection: Callable[..., Awaitable[None]]
-    ensure_project_issue: Callable[
-        ..., Awaitable[tuple[str | None, str | None, list[str]]]
-    ]
+    ensure_project_issue: Callable[..., Awaitable[tuple[str | None, str | None, list[str]]]]
 
 
 async def visualize_handler(
@@ -47,9 +45,7 @@ async def visualize_handler(
     if not project_key:
         return
 
-    msg_id = await ctx.reply_text(
-        f"🎨 Generating workflow diagram for issue #{issue_num}..."
-    )
+    msg_id = await ctx.reply_text(f"🎨 Generating workflow diagram for issue #{issue_num}...")
 
     # Load workflow steps from the workflow JSON file
     workflow_id = HostStateManager.get_workflow_id_for_issue(issue_num)
@@ -67,7 +63,9 @@ async def visualize_handler(
                 steps = payload.get("steps", [])
                 workflow_state = str(payload.get("state", "unknown"))
             except Exception as exc:
-                deps.logger.warning("visualize: failed to read workflow file for #%s: %s", issue_num, exc)
+                deps.logger.warning(
+                    "visualize: failed to read workflow file for #%s: %s", issue_num, exc
+                )
 
     if not steps:
         await ctx.edit_message_text(

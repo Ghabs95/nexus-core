@@ -1,9 +1,9 @@
 """Tests for workflow approval gate feature."""
+
 import asyncio
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock
-
 
 # Ensure src is on the path (conftest.py handles this, but be explicit)
 src_path = Path(__file__).parent.parent / "src"
@@ -30,11 +30,14 @@ from nexus.core.workflow import WorkflowDefinition, WorkflowEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_agent(name: str = "TestAgent") -> Agent:
     return Agent(name=name, display_name=name, description="test agent", timeout=60)
 
 
-def _make_gate(gate_type: ApprovalGateType = ApprovalGateType.CUSTOM, required: bool = True) -> ApprovalGate:
+def _make_gate(
+    gate_type: ApprovalGateType = ApprovalGateType.CUSTOM, required: bool = True
+) -> ApprovalGate:
     return ApprovalGate(gate_type=gate_type, required=required)
 
 
@@ -73,6 +76,7 @@ def _make_storage(workflow: Workflow):
 # ---------------------------------------------------------------------------
 # Model tests
 # ---------------------------------------------------------------------------
+
 
 class TestWorkflowStepApprovalFields:
     def test_default_approval_gates_empty(self):
@@ -120,6 +124,7 @@ class TestWorkflowStateEnum:
 # ---------------------------------------------------------------------------
 # WorkflowDefinition YAML / dict parsing tests
 # ---------------------------------------------------------------------------
+
 
 class TestWorkflowDefinitionApprovalParsing:
     def test_from_dict_parses_approval_gates(self):
@@ -172,6 +177,7 @@ steps:
 # WorkflowEngine approval gate tests
 # ---------------------------------------------------------------------------
 
+
 class TestWorkflowEngineWithApprovalGates:
     def test_complete_step_advances_current_step(self):
         """complete_step advances to the next step."""
@@ -191,9 +197,7 @@ class TestWorkflowEngineWithApprovalGates:
         storage = _make_storage(wf)
         engine = WorkflowEngine(storage=storage)
 
-        result = asyncio.run(
-            engine.complete_step("wf-approval", step_num=1, outputs={})
-        )
+        result = asyncio.run(engine.complete_step("wf-approval", step_num=1, outputs={}))
 
         assert result.current_step == 2
 
@@ -215,9 +219,7 @@ class TestWorkflowEngineWithApprovalGates:
         storage = _make_storage(wf)
         engine = WorkflowEngine(storage=storage)
 
-        result = asyncio.run(
-            engine.complete_step("wf-no-gates", step_num=1, outputs={})
-        )
+        result = asyncio.run(engine.complete_step("wf-no-gates", step_num=1, outputs={}))
 
         assert result.state == WorkflowState.RUNNING
 
@@ -238,9 +240,7 @@ class TestWorkflowEngineWithApprovalGates:
         storage = _make_storage(wf)
         engine = WorkflowEngine(storage=storage)
 
-        asyncio.run(
-            engine.complete_step("wf-audit", step_num=1, outputs={})
-        )
+        asyncio.run(engine.complete_step("wf-audit", step_num=1, outputs={}))
 
         # Check that audit events were recorded
         assert storage.append_audit_event.called
@@ -250,13 +250,16 @@ class TestWorkflowEngineWithApprovalGates:
 # HostStateManager approval state persistence tests
 # ---------------------------------------------------------------------------
 
+
 class TestWorkflowStateApproval:
     def test_set_and_get_pending_approval(self, tmp_path, monkeypatch):
         import config
+
         monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
 
         # Reset singleton so factory re-creates with tmp_path
         import integrations.workflow_state_factory as wsf
+
         monkeypatch.setattr(wsf, "_instance", None)
 
         from integrations.workflow_state_factory import get_workflow_state
@@ -279,9 +282,11 @@ class TestWorkflowStateApproval:
 
     def test_get_pending_approval_returns_none_when_absent(self, tmp_path, monkeypatch):
         import config
+
         monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
 
         import integrations.workflow_state_factory as wsf
+
         monkeypatch.setattr(wsf, "_instance", None)
 
         from integrations.workflow_state_factory import get_workflow_state
@@ -290,9 +295,11 @@ class TestWorkflowStateApproval:
 
     def test_clear_pending_approval(self, tmp_path, monkeypatch):
         import config
+
         monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
 
         import integrations.workflow_state_factory as wsf
+
         monkeypatch.setattr(wsf, "_instance", None)
 
         from integrations.workflow_state_factory import get_workflow_state
@@ -307,4 +314,3 @@ class TestWorkflowStateApproval:
         )
         store.clear_pending_approval("55")
         assert store.get_pending_approval("55") is None
-

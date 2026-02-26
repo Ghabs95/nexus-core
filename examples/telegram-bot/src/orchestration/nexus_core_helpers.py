@@ -4,16 +4,10 @@ Nexus-Core Framework Integration Helpers.
 This module provides integration between the original Nexus bot
 and the nexus-core workflow framework.
 """
+
 import logging
 import os
-import time
 from typing import Any
-
-from nexus.adapters.git.github import GitHubPlatform
-from nexus.adapters.git.gitlab import GitLabPlatform
-from nexus.adapters.storage.file import FileStorage
-from nexus.core.events import EventBus, NexusEvent
-from nexus.core.workflow import WorkflowEngine
 
 from audit_store import AuditStore
 from config import (
@@ -28,6 +22,11 @@ from config import (
 from orchestration.plugin_runtime import get_workflow_state_plugin
 from services.mermaid_render_service import build_mermaid_diagram
 
+from nexus.adapters.git.github import GitHubPlatform
+from nexus.adapters.git.gitlab import GitLabPlatform
+from nexus.adapters.storage.file import FileStorage
+from nexus.core.events import EventBus, NexusEvent
+from nexus.core.workflow import WorkflowEngine
 
 logger = logging.getLogger(__name__)
 
@@ -88,29 +87,37 @@ async def _setup_socketio_event_bridge(bus: EventBus) -> None:
                 if workflow:
                     steps_data = []
                     for s in workflow.steps:
-                        steps_data.append({
-                            "name": s.name,
-                            "status": s.status.value,
-                            "agent": {"name": s.agent.name}
-                        })
+                        steps_data.append(
+                            {
+                                "name": s.name,
+                                "status": s.status.value,
+                                "agent": {"name": s.agent.name},
+                            }
+                        )
                     diagram = build_mermaid_diagram(steps_data, issue)
-                    HostStateManager.emit_transition("mermaid_diagram", {
-                        "issue": issue,
-                        "workflow_id": workflow_id,
-                        "diagram": diagram,
-                        "timestamp": event.timestamp.timestamp(),
-                    })
+                    HostStateManager.emit_transition(
+                        "mermaid_diagram",
+                        {
+                            "issue": issue,
+                            "workflow_id": workflow_id,
+                            "diagram": diagram,
+                            "timestamp": event.timestamp.timestamp(),
+                        },
+                    )
 
         # 4. Handle workflow completion
         elif event.event_type in ("workflow.completed", "workflow.failed"):
             status = "success" if event.event_type == "workflow.completed" else "failed"
-            HostStateManager.emit_transition("workflow_completed", {
-                "issue": issue,
-                "workflow_id": workflow_id,
-                "status": status,
-                "summary": f"Workflow {status}",
-                "timestamp": event.timestamp.timestamp(),
-            })
+            HostStateManager.emit_transition(
+                "workflow_completed",
+                {
+                    "issue": issue,
+                    "workflow_id": workflow_id,
+                    "status": status,
+                    "summary": f"Workflow {status}",
+                    "timestamp": event.timestamp.timestamp(),
+                },
+            )
 
     # Register handlers for step and workflow transitions
     bus.subscribe_pattern("step.*", handle_event)
@@ -123,7 +130,8 @@ def setup_event_handlers() -> None:
 
     Reads config from environment variables:
         - TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID → Telegram handler
-        - DISCORD_WEBHOOK_URL → Discord handler
+        - DISCORD_WEBHOOK_URL / DISCORD_BOT_TOKEN → Discord handler
+        - SLACK_WEBHOOK_URL / SLACK_BOT_TOKEN → Slack handler
 
     Safe to call multiple times; handlers are only attached once.
     """
@@ -136,6 +144,7 @@ def setup_event_handlers() -> None:
 
     # Initialize SocketIO bridge
     import asyncio
+
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
@@ -153,6 +162,7 @@ def setup_event_handlers() -> None:
     if tg_token and tg_chat:
         try:
             from nexus.plugins.builtin.telegram_event_handler_plugin import TelegramEventHandler
+
             handler = TelegramEventHandler({"bot_token": tg_token, "chat_id": tg_chat})
             handler.attach(bus)
             logger.info("Telegram event handler attached to EventBus")
@@ -161,18 +171,43 @@ def setup_event_handlers() -> None:
 
     # Discord
     dc_webhook = os.getenv("DISCORD_WEBHOOK_URL", "")
+    dc_bot_token = os.getenv("DISCORD_BOT_TOKEN", "")
     dc_channel = os.getenv("DISCORD_ALERT_CHANNEL_ID", "")
-    if dc_webhook or dc_channel:
+    if dc_webhook or dc_channel or dc_bot_token:
         try:
             from nexus.plugins.builtin.discord_event_handler_plugin import DiscordEventHandler
-            handler = DiscordEventHandler({
-                "webhook_url": dc_webhook or None,
-                "alert_channel_id": dc_channel or None,
-            })
+
+            handler = DiscordEventHandler(
+                {
+                    "webhook_url": dc_webhook or None,
+                    "bot_token": dc_bot_token or None,
+                    "alert_channel_id": dc_channel or None,
+                }
+            )
             handler.attach(bus)
             logger.info("Discord event handler attached to EventBus")
         except Exception as exc:
             logger.warning("Failed to setup Discord event handler: %s", exc)
+
+    # Slack
+    slack_webhook = os.getenv("SLACK_WEBHOOK_URL", "")
+    slack_bot_token = os.getenv("SLACK_BOT_TOKEN", "")
+    slack_channel = os.getenv("SLACK_DEFAULT_CHANNEL", "#ops")
+    if slack_webhook or slack_bot_token:
+        try:
+            from nexus.plugins.builtin.slack_event_handler_plugin import SlackEventHandler
+
+            handler = SlackEventHandler(
+                {
+                    "webhook_url": slack_webhook or None,
+                    "bot_token": slack_bot_token or "",
+                    "default_channel": slack_channel,
+                }
+            )
+            handler.attach(bus)
+            logger.info("Slack event handler attached to EventBus")
+        except Exception as exc:
+            logger.warning("Failed to setup Slack event handler: %s", exc)
 
 
 def get_git_platform(repo: str = None, project_name: str = None):
@@ -202,26 +237,28 @@ def get_git_platform(repo: str = None, project_name: str = None):
         )
 
     if not token:
-        logger.warning(f"{token_var} is missing for project '{project_key}'. Git operations may fail.")
+        logger.warning(
+            f"{token_var} is missing for project '{project_key}'. Git operations may fail."
+        )
     return GitHubPlatform(repo=repo_name, token=token)
 
 
 def get_workflow_definition_path(project_name: str) -> str | None:
     """Get workflow definition path for a project with fallback logic.
-    
+
     Priority:
     1. Project-specific override in PROJECT_CONFIG
     2. Global workflow_definition_path in PROJECT_CONFIG
     3. None (caller must abort)
-    
+
     Args:
         project_name: Project name (e.g., 'nexus')
-        
+
     Returns:
         Absolute path to workflow YAML file, or None if not configured
     """
     config = _get_project_config()
-    
+
     # Check project-specific override
     if project_name in config:
         project_config = config[project_name]
@@ -231,15 +268,15 @@ def get_workflow_definition_path(project_name: str) -> str | None:
             if path and not os.path.isabs(path):
                 path = os.path.join(BASE_DIR, path)
             return path
-    
+
     # Check global workflow_definition_path
     if "workflow_definition_path" in config:
         path = config["workflow_definition_path"]
-        # Resolve relative paths to absolute  
+        # Resolve relative paths to absolute
         if path and not os.path.isabs(path):
             path = os.path.join(BASE_DIR, path)
         return path
-    
+
     # No workflow definition found
     return None
 
@@ -264,11 +301,11 @@ async def create_workflow_for_issue(
     project_name: str,
     tier_name: str,
     task_type: str,
-    description: str = ""
+    description: str = "",
 ) -> str | None:
     """
     Create a nexus-core workflow for a Git issue.
-    
+
     Args:
         issue_number: Git issue number
         issue_title: Issue title (slug)
@@ -276,7 +313,7 @@ async def create_workflow_for_issue(
         tier_name: Workflow tier (tier-1-simple, tier-2-standard, etc.)
         task_type: Task type (feature, bug, hotfix, etc.)
         description: Task description
-    
+
     Returns:
         workflow_id if successful, None otherwise
     """
@@ -306,6 +343,7 @@ async def create_workflow_for_issue(
         )
         logger.error(msg)
         from integrations.notifications import emit_alert
+
         emit_alert(f"❌ {msg}", severity="error", source="nexus_core_helpers")
     elif not os.path.exists(workflow_definition_path):
         msg = (
@@ -314,6 +352,7 @@ async def create_workflow_for_issue(
         )
         logger.error(msg)
         from integrations.notifications import emit_alert
+
         emit_alert(f"❌ {msg}", severity="error", source="nexus_core_helpers")
     return None
 
@@ -321,11 +360,11 @@ async def create_workflow_for_issue(
 async def start_workflow(workflow_id: str, issue_number: str = None) -> bool:
     """
     Start a workflow.
-    
+
     Args:
         workflow_id: Workflow ID
         issue_number: Optional issue number for Git comment
-    
+
     Returns:
         True if successful
     """
@@ -343,11 +382,11 @@ async def start_workflow(workflow_id: str, issue_number: str = None) -> bool:
 async def pause_workflow(issue_number: str, reason: str = "User requested") -> bool:
     """
     Pause a workflow by issue number.
-    
+
     Args:
         issue_number: Git issue number
         reason: Reason for pausing
-    
+
     Returns:
         True if successful
     """
@@ -361,10 +400,10 @@ async def pause_workflow(issue_number: str, reason: str = "User requested") -> b
 async def resume_workflow(issue_number: str) -> bool:
     """
     Resume a paused workflow by issue number.
-    
+
     Args:
         issue_number: Git issue number
-    
+
     Returns:
         True if successful
     """
@@ -378,10 +417,10 @@ async def resume_workflow(issue_number: str) -> bool:
 async def get_workflow_status(issue_number: str) -> dict | None:
     """
     Get workflow status for an issue.
-    
+
     Args:
         issue_number: Git issue number
-    
+
     Returns:
         Dict with workflow status or None
     """
@@ -405,7 +444,7 @@ async def handle_approval_gate(
     """
     Called after complete_step when the next step has approval_required=True.
     Persists the pending approval and sends a Telegram notification.
-    
+
     Args:
         workflow_id: The workflow ID (for reference)
         issue_number: Git issue number
@@ -416,6 +455,7 @@ async def handle_approval_gate(
         approval_timeout: Timeout in seconds
         project: Project name
     """
+
     def _notify_approval_required(**kwargs):
         from integrations.notifications import notify_approval_required
 
@@ -439,8 +479,7 @@ async def handle_approval_gate(
     )
 
     logger.info(
-        f"Approval gate triggered for issue #{issue_number} "
-        f"step {step_num} ({step_name})."
+        f"Approval gate triggered for issue #{issue_number} " f"step {step_num} ({step_name})."
     )
 
 

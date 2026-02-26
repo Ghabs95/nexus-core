@@ -6,21 +6,11 @@ import logging
 import os
 import re
 import shutil
-import subprocess
 import time
-from urllib.parse import urlparse
 import uuid
+from urllib.parse import urlparse
 
 import yaml
-from nexus.adapters.git.utils import build_issue_url
-from nexus.core.completion_store import CompletionStore
-from nexus.core.process_orchestrator import ProcessOrchestrator
-from nexus.core.project.repo_utils import (
-    iter_project_configs as _iter_project_configs,
-)
-from nexus.core.project.repo_utils import (
-    project_repos_from_config as _project_repos_from_config,
-)
 
 # Nexus Core framework imports — orchestration handled by ProcessOrchestrator
 # Import centralized configuration
@@ -48,6 +38,16 @@ from integrations.notifications import (
     notify_agent_needs_input,
     notify_workflow_completed,
 )
+from nexus.adapters.git.utils import build_issue_url
+from nexus.core.completion_store import CompletionStore
+from nexus.core.process_orchestrator import ProcessOrchestrator
+from nexus.core.project.repo_utils import (
+    iter_project_configs as _iter_project_configs,
+)
+from nexus.core.project.repo_utils import (
+    project_repos_from_config as _project_repos_from_config,
+)
+from nexus.core.router import WorkflowRouter
 from orchestration.ai_orchestrator import get_orchestrator
 from orchestration.nexus_core_helpers import (
     complete_step_for_issue,
@@ -56,18 +56,63 @@ from orchestration.nexus_core_helpers import (
     start_workflow,
 )
 from orchestration.plugin_runtime import (
-    get_profiled_plugin,
     get_workflow_monitor_policy_plugin,
     get_workflow_policy_plugin,
     get_workflow_state_plugin,
 )
 from runtime.agent_launcher import (
-    get_sop_tier_from_issue,
     invoke_copilot_agent,
     is_recent_launch,
 )
-from nexus.core.router import WorkflowRouter
 from runtime.nexus_agent_runtime import NexusAgentRuntime
+from services.issue_finalize_service import (
+    cleanup_worktree as _finalize_cleanup_worktree,
+)
+from services.issue_finalize_service import (
+    close_issue as _finalize_close_issue,
+)
+from services.issue_finalize_service import (
+    create_pr_from_changes as _finalize_create_pr_from_changes,
+)
+from services.issue_finalize_service import (
+    find_existing_pr as _finalize_find_existing_pr,
+)
+from services.issue_finalize_service import (
+    verify_workflow_terminal_before_finalize as _verify_workflow_terminal_before_finalize,
+)
+from services.issue_lifecycle_service import (
+    create_issue as _create_issue,
+)
+from services.issue_lifecycle_service import (
+    rename_task_file_and_sync_issue_body as _rename_task_file_and_sync_issue_body,
+)
+from services.merge_queue_service import (
+    enqueue_merge_queue_prs as _enqueue_merge_queue_prs,
+)
+from services.merge_queue_service import (
+    merge_queue_auto_merge_once as _merge_queue_auto_merge_once,
+)
+from services.processor_loops_service import (
+    run_processor_loop as _run_processor_loop,
+)
+from services.task_archive_service import (
+    archive_closed_task_files as _archive_closed_task_files,
+)
+from services.task_context_service import (
+    load_task_context as _load_task_context,
+)
+from services.task_dispatch_service import (
+    handle_new_task as _handle_new_task,
+)
+from services.task_dispatch_service import (
+    handle_webhook_task as _handle_webhook_task,
+)
+from services.tier_resolution_service import (
+    resolve_tier_for_issue as _resolve_tier_for_issue,
+)
+from services.workflow_recovery_service import (
+    run_stuck_agents_cycle as _run_stuck_agents_cycle,
+)
 from services.workflow_signal_sync import (
     normalize_agent_reference as _normalize_agent_reference,
 )
@@ -82,16 +127,17 @@ _READY_FOR_COMMENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+
 # Helper to get issue repo (currently defaults to nexus, should be extended for multi-project)
 def get_issue_repo(project: str = "nexus") -> str:
     """Get the Git repo for issue operations.
-    
+
     Args:
         project: Project name (currently unused, defaults to nexus)
-        
+
     Returns:
         Git repo string
-        
+
     Note: This should be extended to support per-project repos when multi-project
           issue tracking is implemented.
     """
@@ -99,6 +145,7 @@ def get_issue_repo(project: str = "nexus") -> str:
         return get_repo(project)
     except Exception:
         return get_repo(get_default_project())
+
 
 # Initialize orchestrator (CLI-only)
 orchestrator = get_orchestrator(ORCHESTRATOR_CONFIG)
@@ -126,96 +173,6 @@ _WORKFLOW_STATE_PLUGIN_KWARGS = {
 }
 
 
-def _get_issue_plugin(repo: str, max_attempts: int = 3, timeout: int = 30):
-    """Create a configured Git issue plugin instance for a repo."""
-    return get_profiled_plugin(
-        "git_inbox",
-        overrides={
-            "repo": repo,
-            "max_attempts": max_attempts,
-            "timeout": timeout,
-        },
-        cache_key=f"github:inbox:{repo}:{max_attempts}:{timeout}",
-    )
-
-
-def _resolve_tier_for_issue(
-    issue_num: str,
-    project_name: str,
-    repo: str,
-    *,
-    context: str = "auto-chain",
-) -> str | None:
-    """Resolve workflow tier for an issue, halt with alert when unknown.
-
-    Resolution order:
-      1. ``launched_agents`` tracker (persisted from the most recent launch)
-      2. Issue ``workflow:`` labels on GitHub
-      3. ``None`` — caller must halt the flow
-
-    When the tier is found from the tracker but the issue has no
-    ``workflow:`` label, the label is added automatically so that
-    future reads succeed.
-
-    Returns:
-        Tier name (``"full"``, ``"shortened"``, ``"fast-track"``) or
-        ``None`` when the tier cannot be determined.  When ``None`` is
-        returned, a Telegram alert has already been sent.
-    """
-    tracker_tier = HostStateManager.get_last_tier_for_issue(issue_num)
-    label_tier = get_sop_tier_from_issue(issue_num, project_name, repo_override=repo)
-
-    if tracker_tier and label_tier:
-        # Both sources available — prefer label (canonical), but warn on mismatch
-        if tracker_tier != label_tier:
-            logger.warning(
-                f"Tier mismatch for issue #{issue_num}: "
-                f"tracker={tracker_tier}, label={label_tier}. Using label."
-            )
-        return label_tier
-
-    if label_tier:
-        return label_tier
-
-    if tracker_tier:
-        # Label missing — backfill it so future reads work
-        _ensure_workflow_label(issue_num, tracker_tier, repo)
-        return tracker_tier
-
-    # Neither source available — halt
-    logger.error(
-        f"Cannot determine workflow tier for issue #{issue_num} "
-        f"({context}): no tracker entry and no workflow: label."
-    )
-    emit_alert(
-        f"⚠️ {context.title()} halted for issue #{issue_num}: "
-        f"missing `workflow:` label and no prior launch data.\n"
-        f"Add a label (e.g. `workflow:full`) to the issue and retry.",
-        severity="warning", source="inbox_processor",
-    )
-    return None
-
-
-def _ensure_workflow_label(issue_num: str, tier_name: str, repo: str) -> None:
-    """Add `workflow:<tier>` label to an issue if missing."""
-    label = f"workflow:{tier_name}"
-    try:
-        plugin = _get_issue_plugin(repo, max_attempts=2, timeout=10)
-        plugin.add_label(str(issue_num), label)
-        logger.info(f"Added missing label '{label}' to issue #{issue_num}")
-    except Exception as e:
-        logger.warning(f"Failed to add label '{label}' to issue #{issue_num}: {e}")
-
-
-# Wrapper functions for backward compatibility - these now delegate to HostStateManager
-def load_launched_agents():
-    """Load recently launched agents from persistent storage."""
-    return HostStateManager.load_launched_agents()
-
-def save_launched_agents(data):
-    """Save launched agents to persistent storage."""
-    HostStateManager.save_launched_agents(data)
-
 # Load persisted state
 launched_agents_tracker = HostStateManager.load_launched_agents()
 # PROJECT_CONFIG is now imported from config.py
@@ -223,6 +180,7 @@ launched_agents_tracker = HostStateManager.load_launched_agents()
 # Failed task file lookup tracking (stop checking after 3 failures)
 FAILED_LOOKUPS_FILE = os.path.join(NEXUS_STATE_DIR, "failed_task_lookups.json")
 COMPLETION_COMMENTS_FILE = os.path.join(NEXUS_STATE_DIR, "completion_comments.json")
+
 
 def load_failed_lookups():
     """Load failed task file lookup counters."""
@@ -234,10 +192,11 @@ def load_failed_lookups():
         logger.error(f"Error loading failed lookups: {e}")
     return {}
 
+
 def save_failed_lookups(lookups):
     """Save failed task file lookup counters."""
     try:
-        with open(FAILED_LOOKUPS_FILE, 'w') as f:
+        with open(FAILED_LOOKUPS_FILE, "w") as f:
             json.dump(lookups, f, indent=2)
     except Exception as e:
         logger.error(f"Error saving failed lookups: {e}")
@@ -276,18 +235,16 @@ def get_completion_replay_window_seconds() -> int:
     except Exception:
         return 1800
 
+
 failed_task_lookups = load_failed_lookups()
 completion_comments = load_completion_comments()
 
 # Logging — force=True overrides the root handler set by config.py at import time
 logging.basicConfig(
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
     force=True,
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(INBOX_PROCESSOR_LOG_FILE)
-    ]
+    handlers=[logging.StreamHandler(), logging.FileHandler(INBOX_PROCESSOR_LOG_FILE)],
 )
 logger = logging.getLogger("InboxProcessor")
 
@@ -305,7 +262,8 @@ def _record_polling_failure(scope: str, error: Exception) -> None:
             f"Scope: `{scope}`\n"
             f"Consecutive failures: {count}\n"
             f"Last error: `{error}`",
-            severity="error", source="inbox_processor",
+            severity="error",
+            source="inbox_processor",
         )
     except Exception as notify_err:
         logger.error(f"Failed to send polling escalation alert for {scope}: {notify_err}")
@@ -320,8 +278,8 @@ def _clear_polling_failures(scope: str) -> None:
 def slugify(text):
     """Converts text to a branch-friendly slug."""
     text = text.lower()
-    text = re.sub(r'[^a-z0-9\s-]', '', text)
-    text = re.sub(r'\s+', '-', text)
+    text = re.sub(r"[^a-z0-9\s-]", "", text)
+    text = re.sub(r"\s+", "-", text)
     return text[:50]
 
 
@@ -399,11 +357,7 @@ def _reroute_webhook_task_to_project(filepath: str, target_project: str) -> str 
 
 def _resolve_repo_for_issue(issue_num: str, default_project: str | None = None) -> str:
     """Resolve the repository that owns an issue across all configured project repos."""
-    default_repo = (
-        get_repo(default_project)
-        if default_project
-        else get_repo(get_default_project())
-    )
+    default_repo = get_repo(default_project) if default_project else get_repo(get_default_project())
 
     repo_candidates: list[str] = []
     if default_project and default_project in PROJECT_CONFIG:
@@ -594,9 +548,7 @@ def reconcile_completion_signals_on_startup() -> None:
 
         local_signal = _read_latest_local_completion(str(issue_num))
         comment_signal = (
-            _read_latest_structured_comment(str(issue_num), repo, project_name)
-            if repo
-            else None
+            _read_latest_structured_comment(str(issue_num), repo, project_name) if repo else None
         )
 
         drifts = []
@@ -693,14 +645,23 @@ def reconcile_completion_signals_on_startup() -> None:
             f"Local completion next: `{local_next or 'n/a'}`\n"
             f"Latest structured comment next: `{comment_next or 'n/a'}`\n\n"
             "No automatic state changes were made. Reconcile manually before /continue.",
-            severity="warning", source="inbox_processor",
+            severity="warning",
+            source="inbox_processor",
         )
 
 
 def _is_terminal_agent_reference(agent_ref: str) -> bool:
     """Return True when a next-agent reference means workflow completion."""
     return _normalize_agent_reference(agent_ref).lower() in {
-        "none", "n/a", "null", "no", "end", "done", "finish", "complete", ""
+        "none",
+        "n/a",
+        "null",
+        "no",
+        "end",
+        "done",
+        "finish",
+        "complete",
+        "",
     }
 
 
@@ -782,21 +743,13 @@ def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name:
             **_WORKFLOW_STATE_PLUGIN_KWARGS,
             cache_key="workflow:state-engine",
         )
-        if workflow_plugin and hasattr(workflow_plugin, "get_workflow_status"):
-            status = asyncio.run(workflow_plugin.get_workflow_status(str(issue_num)))
-            state = str((status or {}).get("state", "")).strip().lower()
-            if state and state not in {"completed", "failed", "cancelled"}:
-                logger.warning(
-                    "Skipping finalize for issue #%s: workflow state is non-terminal (%s)",
-                    issue_num,
-                    state,
-                )
-                emit_alert(
-                    "⚠️ Finalization blocked for "
-                    f"issue #{issue_num}: workflow state is `{state}` (expected terminal).",
-                    severity="warning", source="inbox_processor",
-                )
-                return
+        if not _verify_workflow_terminal_before_finalize(
+            workflow_plugin=workflow_plugin,
+            issue_num=str(issue_num),
+            project_name=project_name,
+            alert_source="inbox_processor",
+        ):
+            return
     except Exception as exc:
         logger.warning(
             "Could not verify workflow state before finalize for issue #%s: %s",
@@ -804,40 +757,33 @@ def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name:
             exc,
         )
 
-    def _create_pr_from_changes(**kwargs):
-        platform = get_git_platform(kwargs["repo"], project_name=project_name)
-        pr_result = asyncio.run(
-            platform.create_pr_from_changes(
-                repo_dir=kwargs["repo_dir"],
-                issue_number=kwargs["issue_number"],
-                title=kwargs["title"],
-                body=kwargs["body"],
-                issue_repo=kwargs.get("issue_repo"),
-            )
-        )
-        return pr_result.url if pr_result else None
-
-    def _close_issue(**kwargs):
-        platform = get_git_platform(kwargs["repo"], project_name=project_name)
-        return bool(asyncio.run(platform.close_issue(kwargs["issue_number"], comment=kwargs["comment"])))
-
-    def _find_existing_pr(**kwargs):
-        platform = get_git_platform(kwargs["repo"], project_name=project_name)
-        issue_number = str(kwargs["issue_number"])
-        linked = asyncio.run(platform.search_linked_prs(issue_number))
-        if not linked:
-            return None
-
-        open_pr = next((pr for pr in linked if str(pr.state).lower() == "open"), None)
-        selected = open_pr or linked[0]
-        return selected.url
-
     workflow_policy = get_workflow_policy_plugin(
         resolve_git_dir=_resolve_git_dir,
         resolve_git_dirs=_resolve_git_dirs,
-        create_pr_from_changes=_create_pr_from_changes,
-        find_existing_pr=_find_existing_pr,
-        close_issue=_close_issue,
+        create_pr_from_changes=lambda **kwargs: _finalize_create_pr_from_changes(
+            project_name=project_name,
+            repo=kwargs["repo"],
+            repo_dir=kwargs["repo_dir"],
+            issue_number=str(kwargs["issue_number"]),
+            title=kwargs["title"],
+            body=kwargs["body"],
+            issue_repo=kwargs.get("issue_repo"),
+        ),
+        find_existing_pr=lambda **kwargs: _finalize_find_existing_pr(
+            project_name=project_name,
+            repo=kwargs["repo"],
+            issue_number=str(kwargs["issue_number"]),
+        ),
+        cleanup_worktree=lambda **kwargs: _finalize_cleanup_worktree(
+            repo_dir=kwargs["repo_dir"],
+            issue_number=str(kwargs["issue_number"]),
+        ),
+        close_issue=lambda **kwargs: _finalize_close_issue(
+            project_name=project_name,
+            repo=kwargs["repo"],
+            issue_number=str(kwargs["issue_number"]),
+            comment=kwargs.get("comment"),
+        ),
         send_notification=lambda msg: emit_alert(msg, severity="info", source="workflow_policy"),
         cache_key="workflow-policy:finalize",
     )
@@ -853,84 +799,25 @@ def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name:
     if isinstance(pr_urls, list) and pr_urls:
         for pr_link in pr_urls:
             logger.info(f"🔀 Created/linked PR for issue #{issue_num}: {pr_link}")
+        _enqueue_merge_queue_prs(
+            issue_num=str(issue_num),
+            issue_repo=repo,
+            project_name=project_name,
+            pr_urls=[str(url) for url in pr_urls if str(url).strip()],
+        )
     if result.get("issue_closed"):
         logger.info(f"🔒 Closed issue #{issue_num}")
-        archived = _archive_closed_task_files(issue_num, project_name)
+        archived = _archive_closed_task_files(
+            issue_num=str(issue_num),
+            project_name=project_name,
+            project_config=PROJECT_CONFIG,
+            base_dir=BASE_DIR,
+            get_tasks_active_dir=get_tasks_active_dir,
+            get_tasks_closed_dir=get_tasks_closed_dir,
+            logger=logger,
+        )
         if archived:
             logger.info(f"📦 Archived {archived} task file(s) for closed issue #{issue_num}")
-
-
-def _archive_closed_task_files(issue_num: str, project_name: str = "") -> int:
-    """Archive active task files for a closed issue into tasks/closed.
-
-    Matches files by either:
-    1) filename pattern ``issue_<issue_num>.md``
-    2) issue URL metadata inside the file body
-    """
-    projects_to_scan = []
-    if project_name and project_name in PROJECT_CONFIG:
-        projects_to_scan.append(project_name)
-
-    projects_to_scan.extend(
-        key for key in PROJECT_CONFIG
-        if key not in {"workflow_definition_path", "shared_agents_dir", "nexus_dir", "require_human_merge_approval", "issue_triage", "ai_tool_preferences"}
-        and key not in projects_to_scan
-    )
-
-    archived_count = 0
-    issue_pattern = re.compile(r"\*\*Issue:\*\*\s*https?://github\.com/[^/]+/[^/]+/issues/(\d+)")
-
-    for project_key in projects_to_scan:
-        project_cfg = PROJECT_CONFIG.get(project_key, {})
-        if not isinstance(project_cfg, dict):
-            continue
-
-        workspace_rel = project_cfg.get("workspace")
-        if not workspace_rel:
-            continue
-
-        project_root = os.path.join(BASE_DIR, workspace_rel)
-        active_dir = get_tasks_active_dir(project_root, project_key)
-        if not os.path.isdir(active_dir):
-            continue
-
-        closed_dir = get_tasks_closed_dir(project_root, project_key)
-
-        for filename in os.listdir(active_dir):
-            if not filename.endswith(".md"):
-                continue
-
-            source_path = os.path.join(active_dir, filename)
-            matched = False
-
-            if filename == f"issue_{issue_num}.md":
-                matched = True
-            else:
-                try:
-                    with open(source_path) as f:
-                        content = f.read()
-                    match = issue_pattern.search(content)
-                    matched = bool(match and match.group(1) == str(issue_num))
-                except Exception as exc:
-                    logger.warning(f"Could not inspect active task file {source_path}: {exc}")
-                    continue
-
-            if not matched:
-                continue
-
-            target_path = os.path.join(closed_dir, filename)
-            if os.path.exists(target_path):
-                stem, ext = os.path.splitext(filename)
-                target_path = os.path.join(closed_dir, f"{stem}_{int(time.time())}{ext}")
-
-            try:
-                os.makedirs(closed_dir, exist_ok=True)
-                os.replace(source_path, target_path)
-                archived_count += 1
-            except Exception as exc:
-                logger.warning(f"Failed to archive task file {source_path}: {exc}")
-
-    return archived_count
 
 
 # ---------------------------------------------------------------------------
@@ -1000,9 +887,7 @@ def _post_completion_comments_from_logs() -> None:
         resolve_repo=lambda proj, issue: _resolve_repo_strict(proj, issue),
         build_transition_message=lambda **kw: wfp.build_transition_message(**kw),
         build_autochain_failed_message=lambda **kw: wfp.build_autochain_failed_message(**kw),
-        stale_completion_seconds=(
-            replay_window_seconds if replay_window_seconds > 0 else None
-        ),
+        stale_completion_seconds=(replay_window_seconds if replay_window_seconds > 0 else None),
         stale_reference_ts=replay_ref_ts,
     )
 
@@ -1033,28 +918,42 @@ def _get_initial_agent_from_workflow(project_name: str, workflow_type: str = "")
         logger.error(f"Missing workflow_definition_path for project '{project_name}'")
         emit_alert(
             f"Missing workflow_definition_path for project '{project_name}'.",
-            severity="error", source="inbox_processor",
+            severity="error",
+            source="inbox_processor",
+            project_key=project_name,
         )
         return ""
     if not os.path.exists(path):
         logger.error(f"Workflow definition not found: {path}")
-        emit_alert(f"Workflow definition not found: {path}", severity="error", source="inbox_processor")
+        emit_alert(
+            f"Workflow definition not found: {path}",
+            severity="error",
+            source="inbox_processor",
+            project_key=project_name,
+        )
         return ""
     try:
         workflow = WorkflowDefinition.from_yaml(path, workflow_type=workflow_type)
         if not workflow.steps:
             logger.error(f"Workflow definition has no steps: {path}")
-            emit_alert(f"Workflow definition has no steps: {path}", severity="error", source="inbox_processor")
+            emit_alert(
+                f"Workflow definition has no steps: {path}",
+                severity="error",
+                source="inbox_processor",
+                project_key=project_name,
+            )
             return ""
         first_step = workflow.steps[0]
         return first_step.agent.name or first_step.agent.display_name or ""
     except Exception as e:
         logger.error(f"Failed to read workflow definition {path}: {e}")
-        emit_alert(f"Failed to read workflow definition {path}: {e}", severity="error", source="inbox_processor")
+        emit_alert(
+            f"Failed to read workflow definition {path}: {e}",
+            severity="error",
+            source="inbox_processor",
+            project_key=project_name,
+        )
         return ""
-
-
-
 
 
 def check_stuck_agents():
@@ -1063,22 +962,18 @@ def check_stuck_agents():
     Delegates to :class:`ProcessOrchestrator` which implements both
     strategy-1 (stale-log timeout kill) and strategy-2 (dead-process detection).
     """
-    scope = "stuck-agents:loop"
-    try:
-        _get_process_orchestrator().check_stuck_agents(BASE_DIR)
-        recovered = _recover_orphaned_running_agents()
-        if recovered:
-            logger.info("Recovered %s orphaned workflow issue(s)", recovered)
-        recovered_from_signals = _recover_unmapped_issues_from_completions()
-        if recovered_from_signals:
-            logger.info(
-                "Recovered %s issue(s) from completion signals",
-                recovered_from_signals,
-            )
-        _clear_polling_failures(scope)
-    except Exception as e:
-        logger.error(f"Error in check_stuck_agents: {e}")
-        _record_polling_failure(scope, e)
+    _run_stuck_agents_cycle(
+        logger=logger,
+        base_dir=BASE_DIR,
+        scope="stuck-agents:loop",
+        orchestrator_check_stuck_agents=lambda base_dir: _get_process_orchestrator().check_stuck_agents(
+            base_dir
+        ),
+        recover_orphaned_running_agents=_recover_orphaned_running_agents,
+        recover_unmapped_issues_from_completions=_recover_unmapped_issues_from_completions,
+        clear_polling_failures=_clear_polling_failures,
+        record_polling_failure=_record_polling_failure,
+    )
 
 
 def _recover_orphaned_running_agents(max_relaunches: int = 3) -> int:
@@ -1301,6 +1196,7 @@ def _recover_unmapped_issues_from_completions(max_relaunches: int = 20) -> int:
         launched = {}
 
     now = time.time()
+
     def _completion_mtime(issue_key: str) -> float:
         detection = latest_by_issue.get(issue_key)
         if detection is None:
@@ -1474,7 +1370,9 @@ def check_agent_comments():
             try:
                 monitor_policy = get_workflow_monitor_policy_plugin(
                     list_open_issues=lambda **kwargs: asyncio.run(
-                        get_git_platform(kwargs["repo"], project_name=project_name).list_open_issues(
+                        get_git_platform(
+                            kwargs["repo"], project_name=project_name
+                        ).list_open_issues(
                             limit=kwargs["limit"],
                             labels=sorted(kwargs["workflow_labels"]),
                         )
@@ -1498,20 +1396,22 @@ def check_agent_comments():
                 logger.warning(f"Issue list failed for project {project_name}: {e}")
                 _record_polling_failure(list_scope, e)
                 continue
-        
+
         if not all_issue_nums:
             return
-        
+
         for issue_num, project_name, repo in all_issue_nums:
             if not issue_num:
                 continue
-                
+
             # Get issue comments via framework
             comments_scope = f"agent-comments:get-comments:{project_name}"
             try:
                 monitor_policy = get_workflow_monitor_policy_plugin(
                     get_comments=lambda **kwargs: asyncio.run(
-                        get_git_platform(kwargs["repo"], project_name=project_name).get_comments(str(kwargs["issue_number"]))
+                        get_git_platform(kwargs["repo"], project_name=project_name).get_comments(
+                            str(kwargs["issue_number"])
+                        )
                     ),
                     cache_key=None,
                 )
@@ -1528,45 +1428,50 @@ def check_agent_comments():
 
             if not bot_comments:
                 continue
-            
+
             for comment in bot_comments:
                 try:
                     comment_id = comment.id
                     body = comment.body or ""
-                    
+
                     # Skip if we've already notified about this comment
                     if comment_id in notified_comments:
                         continue
-                    
+
                     # Check if comment contains questions or blockers
-                    needs_input = any(pattern in body.lower() for pattern in [
-                        "questions for @ghabs",
-                        "questions for `@ghabs",  # Escaped mention
-                        "waiting for @ghabs",
-                        "waiting for `@ghabs",  # Escaped mention
-                        "need your input",
-                        "please provide",
-                        "owner:** @ghabs",
-                        "owner:** `@ghabs",  # Escaped mention
-                        "blocker:",
-                        "your input to proceed"
-                    ])
-                    
+                    needs_input = any(
+                        pattern in body.lower()
+                        for pattern in [
+                            "questions for @ghabs",
+                            "questions for `@ghabs",  # Escaped mention
+                            "waiting for @ghabs",
+                            "waiting for `@ghabs",  # Escaped mention
+                            "need your input",
+                            "please provide",
+                            "owner:** @ghabs",
+                            "owner:** `@ghabs",  # Escaped mention
+                            "blocker:",
+                            "your input to proceed",
+                        ]
+                    )
+
                     if needs_input:
                         # Extract preview (first 200 chars)
                         preview = body[:200] + "..." if len(body) > 200 else body
-                        
-                        if notify_agent_needs_input(issue_num, "agent", preview, project=project_name):
+
+                        if notify_agent_needs_input(
+                            issue_num, "agent", preview, project=project_name
+                        ):
                             logger.info(f"📨 Sent input request alert for issue #{issue_num}")
                             notified_comments.add(comment_id)
                         else:
                             logger.warning(f"Failed to send input alert for issue #{issue_num}")
-                
+
                 except Exception as e:
                     logger.error(f"Error processing comment for issue #{issue_num}: {e}")
 
         _clear_polling_failures(loop_scope)
-                    
+
     except Exception as e:
         logger.error(f"Error in check_agent_comments: {e}")
         _record_polling_failure(loop_scope, e)
@@ -1586,7 +1491,9 @@ def check_and_notify_pr(issue_num, project):
         repo = get_repo(project)
         monitor_policy = get_workflow_monitor_policy_plugin(
             search_linked_prs=lambda **kwargs: asyncio.run(
-                get_git_platform(kwargs["repo"], project_name=project).search_linked_prs(str(kwargs["issue_number"]))
+                get_git_platform(kwargs["repo"], project_name=project).search_linked_prs(
+                    str(kwargs["issue_number"])
+                )
             ),
             cache_key=None,
         )
@@ -1594,13 +1501,15 @@ def check_and_notify_pr(issue_num, project):
         if pr:
             logger.info(f"✅ Found PR #{pr.number} for issue #{issue_num}")
             notify_workflow_completed(
-                issue_num, project, pr_urls=[pr.url],
+                issue_num,
+                project,
+                pr_urls=[pr.url],
             )
             return
 
         logger.info(f"ℹ️ No open PR found for issue #{issue_num}")
         notify_workflow_completed(issue_num, project)
-    
+
     except Exception as e:
         logger.error(f"Error checking for PR: {e}")
         # Still notify even if PR check fails
@@ -1686,9 +1595,9 @@ def _render_fallback_checklist(tier_name: str) -> str:
 
 def get_sop_tier(task_type, title=None, body=None):
     """Returns (tier_name, sop_template, workflow_label) based on task type AND content.
-    
+
     Now integrates WorkflowRouter for intelligent routing based on issue content.
-    
+
     Workflow mapping:
     - hotfix, chore, feature-simple, improvement-simple → fast-track:
         Triage → Develop → Review → Deploy
@@ -1711,7 +1620,7 @@ def get_sop_tier(task_type, title=None, body=None):
                     return "full", "", "workflow:full"
         except Exception as e:
             logger.warning(f"WorkflowRouter suggestion failed: {e}, falling back to task_type")
-    
+
     # Fallback: Original task_type-based routing
     if any(t in task_type for t in ["hotfix", "chore", "simple"]):
         return "fast-track", "", "workflow:fast-track"
@@ -1721,73 +1630,54 @@ def get_sop_tier(task_type, title=None, body=None):
         return "full", "", "workflow:full"
 
 
-def create_issue(title, body, project, workflow_label, task_type, tier_name, repo_key):
-    """Creates a Git Issue in the specified repo with SOP checklist."""
-    type_label = f"type:{task_type}"
-    project_label = f"project:{project}"
-    labels = [project_label, type_label, workflow_label]
-
-    creator = _get_issue_plugin(repo_key, max_attempts=3, timeout=30)
-
-    try:
-        issue_url = creator.create_issue(
-            title=title,
-            body=body,
-            labels=labels,
-        )
-        if issue_url:
-            issue_num = issue_url.rstrip("/").split("/")[-1]
-            for label in labels:
-                if label.startswith("workflow:"):
-                    color = "0E8A16"
-                    description = "Workflow tier"
-                elif label.startswith("type:"):
-                    color = "1D76DB"
-                    description = "Task type"
-                else:
-                    color = "5319E7"
-                    description = "Project key"
-
-                with contextlib.suppress(Exception):
-                    creator.ensure_label(label, color, description)
-                creator.add_label(issue_num, label)
-
-            logger.info("📋 Issue created via plugin")
-            return issue_url
-
-        raise RuntimeError("Git issue plugin returned no issue URL")
-    except Exception as e:
-        raise RuntimeError(f"Git issue plugin create failed: {e}") from e
-
-
 def generate_issue_name(content, project_name):
     """Generate a concise task name using orchestrator (CLI only).
-    
+
     Returns a slugified name in format: "this-is-the-task-name"
     Falls back to slugified content if AI tools are unavailable.
     """
     try:
         logger.info("Generating concise task name with orchestrator...")
         result = orchestrator.run_text_to_speech_analysis(
-            text=content[:500],
-            task="generate_name",
-            project_name=project_name
+            text=content[:500], task="generate_name", project_name=project_name
         )
 
-        suggested_name = result.get("text", "").strip().strip('"`\'').strip()
+        suggested_name = result.get("text", "").strip().strip("\"`'").strip()
         slug = slugify(suggested_name)
 
         if slug:
             logger.info(f"✨ Orchestrator suggested: {slug}")
             return slug
-        
+
         raise ValueError("Empty slug from orchestrator")
 
     except Exception as e:
         logger.warning(f"Name generation failed: {e}, using fallback")
-        body = re.sub(r'^#.*\n', '', content)
-        body = re.sub(r'\*\*.*\*\*.*\n', '', body)
+        body = re.sub(r"^#.*\n", "", content)
+        body = re.sub(r"\*\*.*\*\*.*\n", "", body)
         return slugify(body.strip()) or "generic-task"
+
+
+def _refine_issue_content(content: str, project_name: str) -> str:
+    """Refine task text before issue creation, preserving original on failure."""
+    source = str(content or "").strip()
+    if not source:
+        return source
+
+    try:
+        logger.info("Refining issue content with orchestrator (len=%s)", len(source))
+        result = orchestrator.run_text_to_speech_analysis(
+            text=source,
+            task="refine_description",
+            project_name=project_name,
+        )
+        candidate = str((result or {}).get("text", "")).strip()
+        if candidate:
+            return candidate
+    except Exception as exc:
+        logger.warning("Issue content refinement failed: %s", exc)
+
+    return source
 
 
 def _extract_inline_task_name(content: str) -> str:
@@ -1802,381 +1692,103 @@ def _extract_inline_task_name(content: str) -> str:
     return ""
 
 
-
 def process_file(filepath):
     """Processes a single task file."""
     logger.info(f"Processing: {filepath}")
 
     try:
-        with open(filepath) as f:
-            content = f.read()
-
-        # Parse Metadata
-        type_match = re.search(r'\*\*Type:\*\*\s*(.+)', content)
-        task_type = type_match.group(1).strip().lower() if type_match else "feature"
-
-        # Determine project from filepath
-        # filepath is .../workspace/.nexus/inbox/<project>/file.md
-        nexus_dir_name = get_nexus_dir_name()
-        marker = f"{os.sep}{nexus_dir_name}{os.sep}inbox{os.sep}"
-        project_name = None
-        config = None
         project_root = None
-
-        if marker in filepath:
-            prefix, suffix = filepath.split(marker, 1)
-            project_name = suffix.split(os.sep, 1)[0] if suffix else None
-            project_root = prefix
-
-        if project_name and project_name in PROJECT_CONFIG:
-            cfg = PROJECT_CONFIG.get(project_name)
-            if isinstance(cfg, dict):
-                config = cfg
-
-        # Fallback: look up project by matching workspace path
-        if not config:
-            for key, cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
-                workspace = cfg.get("workspace")
-                if not workspace:
-                    continue
-                workspace_abs = os.path.join(BASE_DIR, workspace)
-                if filepath.startswith(workspace_abs + os.sep):
-                    project_name = key
-                    config = cfg
-                    project_root = workspace_abs
-                    break
-        
-        if not config:
+        task_ctx = _load_task_context(
+            filepath=filepath,
+            project_config=PROJECT_CONFIG,
+            base_dir=BASE_DIR,
+            get_nexus_dir_name=get_nexus_dir_name,
+            iter_project_configs=_iter_project_configs,
+            get_repos=get_repos,
+        )
+        if not task_ctx:
             logger.warning(f"⚠️ No project config for workspace '{project_root}', skipping.")
             return
+        content = task_ctx["content"]
+        task_type = str(task_ctx["task_type"])
+        project_name = task_ctx["project_name"]
+        project_root = task_ctx["project_root"]
+        config = task_ctx["config"]
 
         logger.info(f"Project: {project_name}")
 
-        # Check if this task came from webhook (already has Git issue)
-        source_match = re.search(r'\*\*Source:\*\*\s*(.+)', content)
-        source = source_match.group(1).strip().lower() if source_match else None
-        
-        # Extract issue number and URL if from webhook
-        issue_num_match = re.search(r'\*\*Issue Number:\*\*\s*(.+)', content)
-        issue_url_match = re.search(r'\*\*URL:\*\*\s*(.+)', content)
-        agent_type_match = re.search(r'\*\*Agent Type:\*\*\s*(.+)', content)
-        
-        if source == "webhook":
-            # This task is from a webhook - issue already exists, skip creation
-            issue_number = issue_num_match.group(1).strip() if issue_num_match else None
-            issue_url = issue_url_match.group(1).strip() if issue_url_match else None
-            agent_type = agent_type_match.group(1).strip() if agent_type_match else "triage"
-            
-            if not issue_url or not issue_number:
-                logger.error(f"⚠️ Webhook task missing issue URL or number, skipping: {filepath}")
-                return
+        if _handle_webhook_task(
+            filepath=filepath,
+            content=content,
+            project_name=str(project_name),
+            project_root=str(project_root),
+            config=config,
+            base_dir=BASE_DIR,
+            logger=logger,
+            emit_alert=emit_alert,
+            get_repos_for_project=get_repos,
+            extract_repo_from_issue_url=_extract_repo_from_issue_url,
+            resolve_project_for_repo=_resolve_project_for_repo,
+            reroute_webhook_task_to_project=_reroute_webhook_task_to_project,
+            get_tasks_active_dir=get_tasks_active_dir,
+            is_recent_launch=is_recent_launch,
+            get_initial_agent_from_workflow=_get_initial_agent_from_workflow,
+            get_repo_for_project=get_repo,
+            resolve_tier_for_issue=_resolve_tier_for_issue,
+            invoke_copilot_agent=invoke_copilot_agent,
+        ):
+            return
 
-            issue_repo = _extract_repo_from_issue_url(issue_url)
-            if not issue_repo:
-                message = (
-                    f"🚫 Unable to parse issue repository for webhook task issue #{issue_number}. "
-                    "Blocking processing to avoid cross-project execution."
-                )
-                logger.error(message)
-                emit_alert(message, severity="error", source="inbox_processor")
-                return
-
-            configured_repos = []
-            try:
-                configured_repos = get_repos(project_name)
-            except Exception:
-                configured_repos = []
-
-            if configured_repos and issue_repo not in configured_repos:
-                reroute_project = _resolve_project_for_repo(issue_repo)
-                if reroute_project and reroute_project != project_name:
-                    rerouted_path = _reroute_webhook_task_to_project(filepath, reroute_project)
-                    message = (
-                        f"⚠️ Re-routed webhook task for issue #{issue_number}: "
-                        f"repo {issue_repo} does not match project {project_name} ({configured_repos}); "
-                        f"moved to project '{reroute_project}'."
-                    )
-                    logger.warning(message)
-                    emit_alert(message, severity="warning", source="inbox_processor")
-                    if rerouted_path:
-                        logger.info(f"Moved webhook task to: {rerouted_path}")
-                    return
-
-                message = (
-                    f"🚫 Project boundary violation for issue #{issue_number}: "
-                    f"task under project '{project_name}' ({configured_repos}) "
-                    f"but issue URL points to '{issue_repo}'. Processing blocked."
-                )
-                logger.error(message)
-                emit_alert(message, severity="error", source="inbox_processor")
-                return
-            
-            logger.info(f"📌 Webhook task for existing issue #{issue_number}, launching agent directly")
-            
-            # Guard: skip if an agent was recently launched for this issue
-            # (prevents double-launch when processor creates a GH issue and the
-            # resulting webhook fires back into this path)
-            if is_recent_launch(issue_number):
-                logger.info(f"⏭️ Skipping webhook launch for issue #{issue_number} — agent recently launched")
-                # Still move file to active so it's not re-processed
-                active_dir = get_tasks_active_dir(project_root, project_name)
-                os.makedirs(active_dir, exist_ok=True)
-                new_filepath = os.path.join(active_dir, os.path.basename(filepath))
-                shutil.move(filepath, new_filepath)
-                return
-            
-            # Move file to project workspace active folder
-            active_dir = get_tasks_active_dir(project_root, project_name)
-            os.makedirs(active_dir, exist_ok=True)
-            new_filepath = os.path.join(active_dir, os.path.basename(filepath))
-            logger.info(f"Moving task to active: {new_filepath}")
-            shutil.move(filepath, new_filepath)
-            
-            # Launch agent directly for existing Git issue
-            agents_dir_val = config.get("agents_dir")
-            if agents_dir_val and issue_url:
-                agents_abs = os.path.join(BASE_DIR, agents_dir_val)
-                workspace_abs = os.path.join(BASE_DIR, config["workspace"])
-                
-                # Use specified agent type or get from workflow
-                if not agent_type or agent_type == "triage":
-                    agent_type = _get_initial_agent_from_workflow(project_name)
-                    if not agent_type:
-                        logger.error(f"Stopping launch: missing workflow definition for {project_name}")
-                        emit_alert(f"Stopping launch: missing workflow for {project_name}", severity="error", source="inbox_processor")
-                        return
-                
-                # Resolve tier (halt if unknown — prevents wrong workflow execution)
-                try:
-                    repo_for_tier = get_repo(project_name)
-                except Exception:
-                    repo_for_tier = ""
-
-                if not repo_for_tier:
-                    logger.error(
-                        f"Missing git_repo for project '{project_name}', cannot resolve tier "
-                        f"for issue #{issue_number}."
-                    )
-                    emit_alert(
-                        f"Missing git_repo for project '{project_name}' "
-                        f"(issue #{issue_number}).",
-                        severity="error", source="inbox_processor",
-                    )
-                    return
-                tier_name = _resolve_tier_for_issue(
-                    issue_number, project_name, repo_for_tier, context="webhook launch"
-                )
-                if not tier_name:
-                    return
-
-                pid, tool_used = invoke_copilot_agent(
-                    agents_dir=agents_abs,
-                    workspace_dir=workspace_abs,
-                    issue_url=issue_url,
-                    tier_name=tier_name,
-                    task_content=content,
-                    log_subdir=project_name,
-                    agent_type=agent_type,
-                    project_name=project_name
-                )
-                
-                if pid:
-                    try:
-                        with open(new_filepath, 'a') as f:
-                            f.write(f"\n**Agent PID:** {pid}\n")
-                            f.write(f"**Agent Tool:** {tool_used}\n")
-                    except Exception as e:
-                        logger.error(f"Failed to append PID: {e}")
-                
-                logger.info(f"✅ Launched {agent_type} agent for webhook issue #{issue_number}")
-            else:
-                logger.info(f"ℹ️ No agents directory for {project_name}, skipping agent launch.")
-            
-            return  # Done processing webhook task
-        
-        # Standard task processing (create new Git issue)
-        # Check if task name was already generated (in telegram_bot)
-        precomputed_task_name = _extract_inline_task_name(content)
-        if precomputed_task_name:
-            slug = slugify(precomputed_task_name)
-            if slug:
-                logger.info(f"✅ Using pre-generated task name: {slug}")
-            else:
-                slug = generate_issue_name(content, project_name)
-        else:
-            # Fallback: Generate concise task name using Gemini AI
-            slug = generate_issue_name(content, project_name)
-
-        # Determine SOP tier using intelligent routing (pass content for WorkflowRouter analysis)
-        tier_name, sop_template, workflow_label = get_sop_tier(
+        _handle_new_task(
+            filepath=filepath,
+            content=content,
             task_type=task_type,
-            title=slug,  # Use slug as preliminary title
-            body=content  # Pass full content for intelligent routing
+            project_name=str(project_name),
+            project_root=str(project_root),
+            config=config,
+            base_dir=BASE_DIR,
+            logger=logger,
+            emit_alert=emit_alert,
+            get_repo_for_project=get_repo,
+            get_tasks_active_dir=get_tasks_active_dir,
+            refine_issue_content=_refine_issue_content,
+            extract_inline_task_name=_extract_inline_task_name,
+            slugify=slugify,
+            generate_issue_name=generate_issue_name,
+            get_sop_tier=get_sop_tier,
+            render_checklist_from_workflow=_render_checklist_from_workflow,
+            render_fallback_checklist=_render_fallback_checklist,
+            create_issue=_create_issue,
+            rename_task_file_and_sync_issue_body=_rename_task_file_and_sync_issue_body,
+            get_workflow_state_plugin=get_workflow_state_plugin,
+            workflow_state_plugin_kwargs=_WORKFLOW_STATE_PLUGIN_KWARGS,
+            start_workflow=start_workflow,
+            get_initial_agent_from_workflow=_get_initial_agent_from_workflow,
+            invoke_copilot_agent=invoke_copilot_agent,
         )
-        workflow_checklist = _render_checklist_from_workflow(project_name, tier_name)
-        sop_checklist = workflow_checklist or sop_template or _render_fallback_checklist(tier_name)
-
-        # Move file to project workspace active folder
-        active_dir = get_tasks_active_dir(project_root, project_name)
-        os.makedirs(active_dir, exist_ok=True)
-        new_filepath = os.path.join(active_dir, os.path.basename(filepath))
-        logger.info(f"Moving task to active: {new_filepath}")
-        shutil.move(filepath, new_filepath)
-
-        # Create Git Issue with SOP checklist
-        # Build type prefix for issue title
-        type_prefixes = {
-            "feature": "feat",
-            "feature-simple": "feat",
-            "bug": "fix",
-            "hotfix": "hotfix",
-            "chore": "chore",
-            "refactor": "refactor",
-            "improvement": "feat",
-            "improvement-simple": "feat",
-        }
-        prefix = type_prefixes.get(task_type, task_type.split("-")[0] if "-" in task_type else task_type)
-        issue_title = f"[{project_name}] {prefix}/{slug}"
-        
-        # Determine target branch name
-        branch_name = f"{prefix}/{slug}"
-        
-        issue_body = f"""## Task
-{content}
-
----
-
-{sop_checklist}
-
----
-
-**Project:** {project_name}
-**Tier:** {tier_name}
-**Target Branch:** `{branch_name}`
-**Task File:** `{new_filepath}`"""
-
-        issue_url = create_issue(
-            title=issue_title,
-            body=issue_body,
-            project=project_name,
-            workflow_label=workflow_label,
-            task_type=task_type,
-            tier_name=tier_name,
-            repo_key=get_repo(project_name)
-        )
-
-        if issue_url:
-            # Rename task file from {task_type}_{telegram_msg_id}.md to
-            # {task_type}_{issue_num}.md so the Git issue number is visible
-            # in the filename instead of a random Telegram message ID.
-            issue_num = issue_url.split('/')[-1]
-            old_basename = os.path.basename(new_filepath)
-            new_basename = re.sub(r'_(\d+)\.md$', f'_{issue_num}.md', old_basename)
-            if new_basename != old_basename:
-                renamed_path = os.path.join(os.path.dirname(new_filepath), new_basename)
-                try:
-                    os.rename(new_filepath, renamed_path)
-                    logger.info(f"Renamed task file: {old_basename} → {new_basename}")
-                    # Keep the issue body consistent — update the Task File path
-                    corrected_body = issue_body.replace(new_filepath, renamed_path)
-                    subprocess.run(
-                        ["gh", "issue", "edit", issue_num,
-                         "--body", corrected_body,
-                         "--repo", get_repo(project_name)],
-                        capture_output=True, timeout=15
-                    )
-                    new_filepath = renamed_path
-                except Exception as e:
-                    logger.error(f"Failed to rename task file to issue-number name: {e}")
-
-            # Append issue URL to the task file
-            try:
-                with open(new_filepath, 'a') as f:
-                    f.write(f"\n\n**Issue:** {issue_url}\n")
-            except Exception as e:
-                logger.error(f"Failed to append issue URL: {e}")
-            
-            # Create nexus-core workflow
-            workflow_plugin = get_workflow_state_plugin(
-                **_WORKFLOW_STATE_PLUGIN_KWARGS,
-                repo_key=get_repo(project_name),
-                cache_key="workflow:state-engine",
-            )
-            workflow_id = asyncio.run(
-                workflow_plugin.create_workflow_for_issue(
-                    issue_number=issue_num,
-                    issue_title=slug,
-                    project_name=project_name,
-                    tier_name=tier_name,
-                    task_type=task_type,
-                    description=content,
-                )
-            )
-            if workflow_id:
-                logger.info(f"✅ Created nexus-core workflow: {workflow_id}")
-                started = asyncio.run(start_workflow(workflow_id, issue_num))
-                if not started:
-                    logger.warning(
-                        f"Created workflow {workflow_id} for issue #{issue_num} "
-                        "but failed to start it"
-                    )
-                try:
-                    with open(new_filepath, 'a') as f:
-                        f.write(f"**Workflow ID:** {workflow_id}\n")
-                except Exception as e:
-                    logger.error(f"Failed to append workflow ID: {e}")
-
-        # Invoke Copilot CLI agent (if agents_dir is configured)
-        agents_dir_val = config["agents_dir"]
-        if agents_dir_val is not None and issue_url:
-            agents_abs = os.path.join(BASE_DIR, agents_dir_val)
-            workspace_abs = os.path.join(BASE_DIR, config["workspace"])
-            initial_agent = _get_initial_agent_from_workflow(project_name)
-            if not initial_agent:
-                logger.error(
-                    f"Stopping launch: missing workflow definition for {project_name}"
-                )
-                emit_alert(
-                    f"Stopping launch: missing workflow definition for {project_name}",
-                    severity="error", source="inbox_processor",
-                )
-                return
-
-            pid, tool_used = invoke_copilot_agent(
-                agents_dir=agents_abs,
-                workspace_dir=workspace_abs,
-                issue_url=issue_url,
-                tier_name=tier_name,
-                task_content=content,
-                log_subdir=project_name,
-                agent_type=initial_agent,
-                project_name=project_name
-            )
-
-            if pid:
-                # Log PID for tracking
-                try:
-                    with open(new_filepath, 'a') as f:
-                        f.write(f"**Agent PID:** {pid}\n")
-                        f.write(f"**Agent Tool:** {tool_used}\n")
-                except Exception as e:
-                    logger.error(f"Failed to append PID: {e}")
-        else:
-            logger.info(f"ℹ️ No agents directory for {project_name}, skipping Copilot CLI invocation.")
-
-        logger.info(f"✅ Dispatch complete for [{project_name}] {slug} (Tier: {tier_name})")
 
     except Exception as e:
         logger.error(f"Failed to process {filepath}: {e}")
 
 
+def _process_filesystem_inbox_once(base_dir: str) -> None:
+    """Scan and process filesystem inbox tasks once."""
+    nexus_dir_name = get_nexus_dir_name()
+    pattern = os.path.join(base_dir, "**", nexus_dir_name, "inbox", "*", "*.md")
+    files = glob.glob(pattern, recursive=True)
+
+    for filepath in files:
+        process_file(filepath)
+
+
 def main():
     logger.info(f"Inbox Processor started on {BASE_DIR}")
-    
+
     # Initialize event handlers (including SocketIO bridge)
     from orchestration.nexus_core_helpers import setup_event_handlers
+
     setup_event_handlers()
-    
+
     logger.info("Inbox storage backend (effective): %s", get_inbox_storage_backend())
     logger.info("Stuck agent monitoring enabled (using workflow agent timeout)")
     logger.info("Agent comment monitoring enabled")
@@ -2187,32 +1799,21 @@ def main():
     # Run one immediate recovery pass on startup so restarts do not leave
     # RUNNING workflow steps orphaned until the first periodic check.
     check_stuck_agents()
-    last_check = time.time()
-    check_interval = 60  # Check for stuck agents and comments every 60 seconds
-    
-    while True:
-        inbox_backend = get_inbox_storage_backend()
+    _run_processor_loop(
+        logger=logger,
+        base_dir=BASE_DIR,
+        sleep_interval=SLEEP_INTERVAL,
+        check_interval=60,
+        get_inbox_storage_backend=get_inbox_storage_backend,
+        drain_postgres_inbox_queue=_drain_postgres_inbox_queue,
+        process_filesystem_inbox_once=_process_filesystem_inbox_once,
+        check_stuck_agents=check_stuck_agents,
+        check_agent_comments=check_agent_comments,
+        check_completed_agents=check_completed_agents,
+        merge_queue_auto_merge_once=_merge_queue_auto_merge_once,
+        time_module=time,
+    )
 
-        if inbox_backend == "postgres":
-            _drain_postgres_inbox_queue()
-        else:
-            # filesystem and both modes process file inbox directly
-            nexus_dir_name = get_nexus_dir_name()
-            pattern = os.path.join(BASE_DIR, "**", nexus_dir_name, "inbox", "*", "*.md")
-            files = glob.glob(pattern, recursive=True)
-
-            for filepath in files:
-                process_file(filepath)
-        
-        # Periodically check for stuck agents and agent comments
-        current_time = time.time()
-        if current_time - last_check >= check_interval:
-            check_stuck_agents()
-            check_agent_comments()
-            check_completed_agents()
-            last_check = current_time
-
-        time.sleep(SLEEP_INTERVAL)
 
 def _drain_postgres_inbox_queue(batch_size: int = 25) -> None:
     """Claim pending Postgres inbox tasks and hand them to existing file processor.
@@ -2253,7 +1854,9 @@ def _drain_postgres_inbox_queue(batch_size: int = 25) -> None:
 
             mark_task_done(task.id)
         except Exception as exc:
-            logger.error("Failed processing Postgres inbox task id=%s: %s", task.id, exc, exc_info=True)
+            logger.error(
+                "Failed processing Postgres inbox task id=%s: %s", task.id, exc, exc_info=True
+            )
             with contextlib.suppress(Exception):
                 mark_task_failed(task.id, str(exc))
 

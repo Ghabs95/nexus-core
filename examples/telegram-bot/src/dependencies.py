@@ -1,9 +1,5 @@
 import logging
 
-from nexus.adapters.git.utils import build_issue_url, resolve_repo
-from nexus.core.completion import scan_for_completions
-from nexus.core.utils.logging_filters import install_secret_redaction
-
 from analytics import get_stats_report
 from audit_store import AuditStore
 from commands.workflow import (
@@ -28,7 +24,6 @@ from config import (
     TELEGRAM_TOKEN,
     get_default_repo,
     get_repo,
-    get_repos,
     get_inbox_dir,
     get_nexus_dir_name,
     get_tasks_active_dir,
@@ -52,6 +47,10 @@ from handlers.workflow_command_handlers import (
     WorkflowHandlerDeps,
 )
 from inbox_processor import _normalize_agent_reference, get_sop_tier
+from integrations.workflow_state_factory import get_workflow_state
+from nexus.adapters.git.utils import build_issue_url, resolve_repo
+from nexus.core.completion import scan_for_completions
+from nexus.core.utils.logging_filters import install_secret_redaction
 from orchestration.ai_orchestrator import get_orchestrator
 from orchestration.plugin_runtime import (
     get_runtime_ops_plugin,
@@ -73,20 +72,16 @@ from services.workflow_ops_service import (
     build_workflow_snapshot,
     reconcile_issue_from_signals,
 )
-from integrations.workflow_state_factory import get_workflow_state
 from state_manager import HostStateManager
 from user_manager import get_user_manager
 
 # --- LOGGING ---
 logger = logging.getLogger(__name__)
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
     force=True,
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(TELEGRAM_BOT_LOG_FILE)
-    ]
+    handlers=[logging.StreamHandler(), logging.FileHandler(TELEGRAM_BOT_LOG_FILE)],
 )
 
 

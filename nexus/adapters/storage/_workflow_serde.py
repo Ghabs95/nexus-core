@@ -4,6 +4,7 @@ Both :class:`FileStorage` and :class:`PostgreSQLStorageBackend` (and any
 future backends) import from here so the serialization logic lives in one
 place.
 """
+
 from datetime import datetime
 from typing import Any
 
@@ -88,11 +89,13 @@ def dict_to_workflow(data: dict[str, Any]) -> Workflow:
             status=StepStatus(step_data.get("status", "pending")),
             started_at=(
                 datetime.fromisoformat(step_data["started_at"])
-                if step_data.get("started_at") else None
+                if step_data.get("started_at")
+                else None
             ),
             completed_at=(
                 datetime.fromisoformat(step_data["completed_at"])
-                if step_data.get("completed_at") else None
+                if step_data.get("completed_at")
+                else None
             ),
             error=step_data.get("error"),
             routes=step_data.get("routes", []),
@@ -113,8 +116,7 @@ def dict_to_workflow(data: dict[str, Any]) -> Workflow:
         created_at=datetime.fromisoformat(data["created_at"]),
         updated_at=datetime.fromisoformat(data["updated_at"]),
         completed_at=(
-            datetime.fromisoformat(data["completed_at"])
-            if data.get("completed_at") else None
+            datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None
         ),
         metadata=data.get("metadata", {}),
     )

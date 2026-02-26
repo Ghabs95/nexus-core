@@ -12,7 +12,11 @@ def test_tracked_issues_status_normalizes_legacy_entries(monkeypatch):
         scheduler.state_manager,
         "load_tracked_issues",
         lambda: {
-            "1": {"added_at": "2026-02-18T02:15:53.142355", "last_seen_state": None, "last_seen_labels": []},
+            "1": {
+                "added_at": "2026-02-18T02:15:53.142355",
+                "last_seen_state": None,
+                "last_seen_labels": [],
+            },
             "2": {"status": "closed", "project": "sampleco"},
         },
     )

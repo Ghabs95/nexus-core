@@ -3,11 +3,11 @@
 from collections.abc import Mapping
 from typing import Any
 
+from orchestration.plugin_runtime import clear_cached_plugin, get_profiled_plugin
+
 from nexus.plugins.builtin.ai_runtime_plugin import (
     AIOrchestrator,
 )
-
-from orchestration.plugin_runtime import clear_cached_plugin, get_profiled_plugin
 
 _orchestrator: AIOrchestrator | None = None
 
@@ -37,6 +37,10 @@ def get_orchestrator(config: Any | None = None) -> AIOrchestrator:
                 "codex_cli_path",
                 "codex_model",
                 "tool_preferences",
+                "tool_preferences_resolver",
+                "operation_agents",
+                "operation_agents_resolver",
+                "chat_agent_types_resolver",
                 "fallback_enabled",
                 "rate_limit_ttl",
                 "max_retries",
@@ -49,11 +53,7 @@ def get_orchestrator(config: Any | None = None) -> AIOrchestrator:
                 "whisper_language",
                 "whisper_languages",
             )
-            overrides = {
-                key: config.get(key)
-                for key in keys
-                if config.get(key) is not None
-            }
+            overrides = {key: config.get(key) for key in keys if config.get(key) is not None}
         else:
             overrides = dict(config)
         overrides["tasks_logs_dir_resolver"] = _resolve_tasks_logs_dir

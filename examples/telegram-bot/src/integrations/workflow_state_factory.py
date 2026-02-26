@@ -12,7 +12,6 @@ Includes post-hook broadcasting via SocketIO when configured.
 from __future__ import annotations
 
 import logging
-import os
 import time
 from pathlib import Path
 
@@ -22,6 +21,7 @@ from config import (
     NEXUS_STORAGE_DSN,
     NEXUS_WORKFLOW_BACKEND,
 )
+
 from nexus.adapters.storage.base import StorageBackend
 from nexus.core.workflow_state import WorkflowStateStore
 
@@ -41,11 +41,14 @@ class _BroadcastingStore:
 
     def map_issue(self, issue_num: str, workflow_id: str) -> None:
         self._inner.map_issue(issue_num, workflow_id)
-        self._emit("workflow_mapped", {
-            "issue": issue_num,
-            "workflow_id": workflow_id,
-            "timestamp": time.time(),
-        })
+        self._emit(
+            "workflow_mapped",
+            {
+                "issue": issue_num,
+                "workflow_id": workflow_id,
+                "timestamp": time.time(),
+            },
+        )
 
     def get_workflow_id(self, issue_num: str) -> str | None:
         return self._inner.get_workflow_id(issue_num)
@@ -67,7 +70,11 @@ class _BroadcastingStore:
         approval_timeout: int,
     ) -> None:
         self._inner.set_pending_approval(
-            issue_num, step_num, step_name, approvers, approval_timeout,
+            issue_num,
+            step_num,
+            step_name,
+            approvers,
+            approval_timeout,
         )
 
     def clear_pending_approval(self, issue_num: str) -> None:
@@ -84,6 +91,7 @@ class _BroadcastingStore:
     @staticmethod
     def _emit(event_type: str, data: dict) -> None:
         from state_manager import _socketio_emitter
+
         if _socketio_emitter is not None:
             try:
                 _socketio_emitter(event_type, data)
@@ -106,11 +114,13 @@ def _build_inner_store() -> WorkflowStateStore:
             from nexus.adapters.storage.postgres_workflow_state import (
                 PostgresWorkflowStateStore,
             )
+
             logger.info("Using PostgresWorkflowStateStore")
             return PostgresWorkflowStateStore(connection_string=dsn)  # type: ignore[return-value]
 
     # Default: file-based
     from nexus.adapters.storage.file_workflow_state import FileWorkflowStateStore
+
     logger.info("Using FileWorkflowStateStore (base_path=%s)", NEXUS_CORE_STORAGE_DIR)
     return FileWorkflowStateStore(base_path=Path(NEXUS_CORE_STORAGE_DIR))  # type: ignore[return-value]
 
@@ -138,9 +148,7 @@ def get_storage_backend() -> StorageBackend:
 
     if storage_type == "postgres":
         if not NEXUS_STORAGE_DSN:
-            raise ValueError(
-                "NEXUS_STORAGE_BACKEND=postgres but NEXUS_STORAGE_DSN is empty"
-            )
+            raise ValueError("NEXUS_STORAGE_BACKEND=postgres but NEXUS_STORAGE_DSN is empty")
         from nexus.adapters.storage.postgres import PostgreSQLStorageBackend
 
         logger.info("Using PostgreSQLStorageBackend for host state")
@@ -154,4 +162,3 @@ def get_storage_backend() -> StorageBackend:
     logger.info("Using FileStorage for host state (base_path=%s)", NEXUS_CORE_STORAGE_DIR)
     _storage_backend_instance = FileStorage(base_path=Path(NEXUS_CORE_STORAGE_DIR))
     return _storage_backend_instance
-

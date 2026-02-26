@@ -222,6 +222,47 @@ class TestSlackNotificationChannel:
 
 
 # ---------------------------------------------------------------------------
+# GitHubPlatform
+# ---------------------------------------------------------------------------
+
+
+class TestGitHubPlatform:
+    def _make_platform(self):
+        from nexus.adapters.git.github import GitHubPlatform
+
+        with patch.object(GitHubPlatform, "_check_gh_cli", return_value=None):
+            return GitHubPlatform(repo="owner/repo", token="ghp-test")
+
+    def test_ensure_label_returns_true_on_success(self):
+        platform = self._make_platform()
+        with patch.object(platform, "_run_gh_command", return_value="") as mock_run:
+            ok = asyncio.run(platform.ensure_label("bug", color="FF0000", description="Bug label"))
+        assert ok is True
+        mock_run.assert_called_once()
+        args = mock_run.call_args.args[0]
+        assert args[:3] == ["label", "create", "bug"]
+        assert "--color" in args
+        assert "--description" in args
+
+    def test_ensure_label_returns_true_when_already_exists(self):
+        platform = self._make_platform()
+        with patch.object(platform, "_run_gh_command", side_effect=RuntimeError("label already exists")):
+            ok = asyncio.run(platform.ensure_label("bug", color="FF0000"))
+        assert ok is True
+
+    def test_merge_pull_request_builds_expected_flags(self):
+        platform = self._make_platform()
+        with patch.object(platform, "_run_gh_command", return_value="queued") as mock_run:
+            result = asyncio.run(
+                platform.merge_pull_request("12", squash=True, delete_branch=True, auto=True)
+            )
+        assert result == "queued"
+        mock_run.assert_called_once()
+        args = mock_run.call_args.args[0]
+        assert args == ["pr", "merge", "12", "--squash", "--delete-branch", "--auto"]
+
+
+# ---------------------------------------------------------------------------
 # GitLabPlatform
 # ---------------------------------------------------------------------------
 
@@ -303,6 +344,44 @@ class TestGitLabPlatform:
         with patch.object(platform, "_get", new=AsyncMock(side_effect=exc)):
             result = asyncio.run(platform.get_issue("999"))
         assert result is None
+
+    def test_ensure_label_returns_true_on_success(self):
+        platform = self._make_platform()
+        with patch.object(platform, "_post", new=AsyncMock(return_value={"name": "bug"})) as mock_post:
+            ok = asyncio.run(
+                platform.ensure_label("bug", color="FF0000", description="Bug label")
+            )
+        assert ok is True
+        path, payload = mock_post.await_args.args
+        assert path.endswith("/labels")
+        assert payload["name"] == "bug"
+        assert payload["color"] == "FF0000"
+
+    def test_ensure_label_returns_true_on_conflict(self):
+        import urllib.error
+
+        platform = self._make_platform()
+        exc = urllib.error.HTTPError("url", 409, "Conflict", {}, None)
+        with patch.object(platform, "_post", new=AsyncMock(side_effect=exc)):
+            ok = asyncio.run(platform.ensure_label("bug", color="FF0000"))
+        assert ok is True
+
+    def test_merge_pull_request_uses_merge_when_pipeline_succeeds(self):
+        platform = self._make_platform()
+        mock_response = {
+            "state": "opened",
+            "web_url": "https://gitlab.com/mygroup/myproject/-/merge_requests/12",
+        }
+        with patch.object(platform, "_put", new=AsyncMock(return_value=mock_response)) as mock_put:
+            result = asyncio.run(
+                platform.merge_pull_request("12", squash=True, delete_branch=True, auto=True)
+            )
+        assert "state=opened" in result
+        path, payload = mock_put.await_args.args
+        assert path.endswith("/merge_requests/12/merge")
+        assert payload["squash"] is True
+        assert payload["should_remove_source_branch"] is True
+        assert payload["merge_when_pipeline_succeeds"] is True
 
     def test_list_open_issues_with_labels(self):
         platform = self._make_platform()

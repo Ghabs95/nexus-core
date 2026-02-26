@@ -1,4 +1,5 @@
 """Basic workflow engine - simplified version for MVP."""
+
 import logging
 import os
 import re
@@ -8,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from nexus.adapters.storage.base import StorageBackend
 from nexus.core.events import (
     EventBus,
     StepCompleted,
@@ -19,7 +21,6 @@ from nexus.core.events import (
     WorkflowPaused,
     WorkflowStarted,
 )
-from nexus.adapters.storage.base import StorageBackend
 from nexus.core.models import (
     Agent,
     AuditEvent,
@@ -113,12 +114,14 @@ class WorkflowEngine:
             first_step.status = StepStatus.RUNNING
             first_step.started_at = datetime.now(UTC)
             workflow.current_step = first_step.step_num
-            await self._emit(StepStarted(
-                workflow_id=workflow_id,
-                step_num=first_step.step_num,
-                step_name=first_step.name,
-                agent_type=first_step.agent.name,
-            ))
+            await self._emit(
+                StepStarted(
+                    workflow_id=workflow_id,
+                    step_num=first_step.step_num,
+                    step_name=first_step.name,
+                    agent_type=first_step.agent.name,
+                )
+            )
 
         await self.storage.save_workflow(workflow)
         await self._audit(workflow_id, "WORKFLOW_STARTED", {})
@@ -220,35 +223,43 @@ class WorkflowEngine:
                     backoff = min(base * (2 ** (step.retry_count - 1)), 60)
                 workflow.updated_at = datetime.now(UTC)
                 await self.storage.save_workflow(workflow)
-                await self._audit(workflow_id, "STEP_RETRY", {
-                    "step_num": step_num,
-                    "step_name": step.name,
-                    "retry_count": step.retry_count,
-                    "backoff_seconds": backoff,
-                    "error": error,
-                })
+                await self._audit(
+                    workflow_id,
+                    "STEP_RETRY",
+                    {
+                        "step_num": step_num,
+                        "step_name": step.name,
+                        "retry_count": step.retry_count,
+                        "backoff_seconds": backoff,
+                        "error": error,
+                    },
+                )
                 logger.info(
                     f"Retrying step {step_num} in workflow {workflow_id} "
                     f"(attempt {step.retry_count}/{max_retries}, backoff {backoff}s)"
                 )
                 return workflow
             step.status = StepStatus.FAILED
-            await self._emit(StepFailed(
-                workflow_id=workflow_id,
-                step_num=step_num,
-                step_name=step.name,
-                agent_type=step.agent.name,
-                error=error,
-            ))
+            await self._emit(
+                StepFailed(
+                    workflow_id=workflow_id,
+                    step_num=step_num,
+                    step_name=step.name,
+                    agent_type=step.agent.name,
+                    error=error,
+                )
+            )
         else:
             step.status = StepStatus.COMPLETED
-            await self._emit(StepCompleted(
-                workflow_id=workflow_id,
-                step_num=step_num,
-                step_name=step.name,
-                agent_type=step.agent.name,
-                outputs=outputs,
-            ))
+            await self._emit(
+                StepCompleted(
+                    workflow_id=workflow_id,
+                    step_num=step_num,
+                    step_name=step.name,
+                    agent_type=step.agent.name,
+                    outputs=outputs,
+                )
+            )
 
         activated_step: WorkflowStep | None = None
 
@@ -258,11 +269,15 @@ class WorkflowEngine:
                 workflow.completed_at = datetime.now(UTC)
                 workflow.updated_at = datetime.now(UTC)
                 await self.storage.save_workflow(workflow)
-                await self._audit(workflow_id, "STEP_COMPLETED", {
-                    "step_num": step_num,
-                    "step_name": step.name,
-                    "error": error,
-                })
+                await self._audit(
+                    workflow_id,
+                    "STEP_COMPLETED",
+                    {
+                        "step_num": step_num,
+                        "step_name": step.name,
+                        "error": error,
+                    },
+                )
                 logger.info(f"Completed step {step_num} in workflow {workflow_id}")
                 await self._emit(WorkflowCompleted(workflow_id=workflow_id))
                 if self._on_workflow_complete:
@@ -305,11 +320,15 @@ class WorkflowEngine:
                 if next_step.routes:
                     next_step.status = StepStatus.SKIPPED
                     next_step.completed_at = datetime.now(UTC)
-                    await self._audit(workflow_id, "STEP_SKIPPED", {
-                        "step_num": next_step.step_num,
-                        "step_name": next_step.name,
-                        "reason": "router evaluated",
-                    })
+                    await self._audit(
+                        workflow_id,
+                        "STEP_SKIPPED",
+                        {
+                            "step_num": next_step.step_num,
+                            "step_name": next_step.name,
+                            "reason": "router evaluated",
+                        },
+                    )
                     workflow.current_step = next_step.step_num
                     target = self._resolve_route(workflow, next_step, context)
                     if target is None:
@@ -335,23 +354,29 @@ class WorkflowEngine:
                     next_step.status = StepStatus.RUNNING
                     next_step.started_at = datetime.now(UTC)
                     activated_step = next_step
-                    await self._emit(StepStarted(
-                        workflow_id=workflow_id,
-                        step_num=next_step.step_num,
-                        step_name=next_step.name,
-                        agent_type=next_step.agent.name,
-                    ))
+                    await self._emit(
+                        StepStarted(
+                            workflow_id=workflow_id,
+                            step_num=next_step.step_num,
+                            step_name=next_step.name,
+                            agent_type=next_step.agent.name,
+                        )
+                    )
                     break
                 else:
                     # Condition failed – skip this step
                     next_step.status = StepStatus.SKIPPED
                     next_step.completed_at = datetime.now(UTC)
-                    await self._audit(workflow_id, "STEP_SKIPPED", {
-                        "step_num": next_step.step_num,
-                        "step_name": next_step.name,
-                        "condition": next_step.condition,
-                        "reason": f"Condition evaluated to False: {next_step.condition}",
-                    })
+                    await self._audit(
+                        workflow_id,
+                        "STEP_SKIPPED",
+                        {
+                            "step_num": next_step.step_num,
+                            "step_name": next_step.name,
+                            "condition": next_step.condition,
+                            "reason": f"Condition evaluated to False: {next_step.condition}",
+                        },
+                    )
                     logger.info(
                         f"Skipped step {next_step.step_num} ({next_step.name}) in workflow "
                         f"{workflow_id}: condition '{next_step.condition}' was False"
@@ -367,20 +392,20 @@ class WorkflowEngine:
             # Workflow failed
             workflow.state = WorkflowState.FAILED
             workflow.completed_at = datetime.now(UTC)
-            await self._emit(WorkflowFailed(
-                workflow_id=workflow_id,
-                error=error or "Unknown error",
-            ))
+            await self._emit(
+                WorkflowFailed(
+                    workflow_id=workflow_id,
+                    error=error or "Unknown error",
+                )
+            )
 
         workflow.updated_at = datetime.now(UTC)
         await self.storage.save_workflow(workflow)
 
         event_type = "STEP_FAILED" if error else "STEP_COMPLETED"
-        await self._audit(workflow_id, event_type, {
-            "step_num": step_num,
-            "step_name": step.name,
-            "error": error
-        })
+        await self._audit(
+            workflow_id, event_type, {"step_num": step_num, "step_name": step.name, "error": error}
+        )
 
         logger.info(f"Completed step {step_num} in workflow {workflow_id}")
 
@@ -442,12 +467,18 @@ class WorkflowEngine:
                 # "default" can be a step name directly (``default: "develop"``)
                 # or a boolean flag alongside ``goto:``/``then:`` (``default: true, goto: "develop"``).
                 default_val = route.get("default")
-                default_target = target_name or (default_val if isinstance(default_val, str) else None)
+                default_target = target_name or (
+                    default_val if isinstance(default_val, str) else None
+                )
                 continue
-            if when and target_name and self._evaluate_condition(
-                when,
-                context,
-                default_on_error=False,
+            if (
+                when
+                and target_name
+                and self._evaluate_condition(
+                    when,
+                    context,
+                    default_on_error=False,
+                )
             ):
                 return self._find_step_by_name(workflow, target_name)
         if default_target:
@@ -588,14 +619,23 @@ class WorkflowEngine:
     async def _audit(self, workflow_id: str, event_type: str, data: dict) -> None:
         """Add audit event."""
         event = AuditEvent(
-            workflow_id=workflow_id,
-            timestamp=datetime.now(UTC),
-            event_type=event_type,
-            data=data
+            workflow_id=workflow_id, timestamp=datetime.now(UTC), event_type=event_type, data=data
         )
         await self.storage.append_audit_event(event)
 
-    async def _emit(self, event: WorkflowStarted | WorkflowCompleted | WorkflowFailed | WorkflowPaused | WorkflowCancelled | StepStarted | StepCompleted | StepFailed) -> None:
+    async def _emit(
+        self,
+        event: (
+            WorkflowStarted
+            | WorkflowCompleted
+            | WorkflowFailed
+            | WorkflowPaused
+            | WorkflowCancelled
+            | StepStarted
+            | StepCompleted
+            | StepFailed
+        ),
+    ) -> None:
         """Emit event to EventBus if configured."""
         if self._event_bus:
             try:
@@ -692,11 +732,7 @@ class WorkflowDefinition:
 
         # Fallback: pick the first available *_workflow section
         for key, value in data.items():
-            if (
-                key.endswith("_workflow")
-                and isinstance(value, dict)
-                and value.get("steps")
-            ):
+            if key.endswith("_workflow") and isinstance(value, dict) and value.get("steps"):
                 return value["steps"]
 
         return []
@@ -822,8 +858,7 @@ class WorkflowDefinition:
             parallel_raw = step_data.get("parallel", [])
             if isinstance(parallel_raw, list):
                 parallel_with: list[str] = [
-                    WorkflowDefinition._slugify(step_id) or step_id
-                    for step_id in parallel_raw
+                    WorkflowDefinition._slugify(step_id) or step_id for step_id in parallel_raw
                 ]
             else:
                 parallel_with = []

@@ -18,7 +18,9 @@ def main():
     md_parser.add_argument("file", help="YAML file to translate")
 
     # Translate to Copilot
-    copilot_parser = translate_sub.add_parser("to-copilot", help="Convert YAML to Copilot Instructions")
+    copilot_parser = translate_sub.add_parser(
+        "to-copilot", help="Convert YAML to Copilot Instructions"
+    )
     copilot_parser.add_argument("file", help="YAML file to translate")
 
     # Translate to Python
@@ -36,6 +38,7 @@ def main():
             print(translate_agent_to_python(args.file))
     else:
         parser.print_help()
+
 
 if __name__ == "__main__":
     main()

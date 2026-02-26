@@ -1,34 +1,36 @@
 # Framework vs Integration Layer
 
-This document explains the separation between **nexus-core** (the framework) and the **telegram-bot** (your integration layer).
+This document explains the separation between **nexus-core** (the framework) and the **telegram-bot** (your integration
+layer).
 
 ## The Analogy
 
-| Concept | Framework (nexus-core) | Integration (telegram-bot) |
-|---|---|---|
-| Like… | Django/Flask | Your web application |
-| Owns… | Generic orchestration | Your business logic |
+| Concept      | Framework (nexus-core)  | Integration (telegram-bot)          |
+|--------------|-------------------------|-------------------------------------|
+| Like…        | Django/Flask            | Your web application                |
+| Owns…        | Generic orchestration   | Your business logic                 |
 | Knows about… | Workflows, steps, state | Your projects, tiers, notifications |
 
 ## What Lives Where
 
-| Concern | Framework | Integration |
-|---|---|---|
-| Workflow state machine | ✅ | |
-| Storage adapters (File, Postgres) | ✅ | |
-| Git platform adapters (GitHub, GitLab) | ✅ | |
-| Plugin registry and discovery | ✅ | |
-| Agent execution and retry | ✅ | |
-| Your project structure | | ✅ |
-| Your tier/workflow type mapping | | ✅ |
-| Telegram bot commands | | ✅ |
-| Issue → Workflow mapping | | ✅ |
-| Inbox routing logic | | ✅ |
-| Agent chain config | | ✅ |
+| Concern                                | Framework | Integration |
+|----------------------------------------|-----------|-------------|
+| Workflow state machine                 | ✅         |             |
+| Storage adapters (File, Postgres)      | ✅         |             |
+| Git platform adapters (GitHub, GitLab) | ✅         |             |
+| Plugin registry and discovery          | ✅         |             |
+| Agent execution and retry              | ✅         |             |
+| Your project structure                 |           | ✅           |
+| Your tier/workflow type mapping        |           | ✅           |
+| Telegram bot commands                  |           | ✅           |
+| Issue → Workflow mapping               |           | ✅           |
+| Inbox routing logic                    |           | ✅           |
+| Agent chain config                     |           | ✅           |
 
 ## Why This Matters
 
 The framework doesn't know about:
+
 - Your specific projects or team structure
 - That you use Telegram for input
 - Your tier system (full, shortened, fast-track)
@@ -38,29 +40,29 @@ Someone else using nexus-core could use GitLab + Slack + completely different wo
 
 ## Integration Code Locations
 
-| Integration concern | File |
-|---|---|
-| Project config and env vars | `config.py` |
-| Workflow creation from issues | `orchestration/nexus_core_helpers.py` |
-| Plugin wiring and initialization | `orchestration/plugin_runtime.py` |
-| State persistence bridge | `state_manager.py` |
-| Workflow state factory | `integrations/workflow_state_factory.py` |
-| Inbox queue (postgres) | `integrations/inbox_queue.py` |
-| Agent subprocess management | `runtime/agent_launcher.py` |
+| Integration concern              | File                                     |
+|----------------------------------|------------------------------------------|
+| Project config and env vars      | `config.py`                              |
+| Workflow creation from issues    | `orchestration/nexus_core_helpers.py`    |
+| Plugin wiring and initialization | `orchestration/plugin_runtime.py`        |
+| State persistence bridge         | `state_manager.py`                       |
+| Workflow state factory           | `integrations/workflow_state_factory.py` |
+| Inbox queue (postgres)           | `integrations/inbox_queue.py`            |
+| Agent subprocess management      | `runtime/agent_launcher.py`              |
 
 ## Framework Code (nexus-core)
 
-| Framework concern | Module |
-|---|---|
-| Workflow engine | `nexus.core.workflow` |
-| Workflow models | `nexus.core.models` |
-| Agent definitions | `nexus.core.agents` |
-| YAML loader | `nexus.core.yaml_loader` |
-| Storage interface | `nexus.adapters.storage.base` |
-| PostgreSQL backend | `nexus.adapters.storage.postgres` |
-| File backend | `nexus.adapters.storage.file` |
-| Completion protocol | `nexus.core.completion` |
-| Plugin registry | `nexus.plugins` |
+| Framework concern   | Module                            |
+|---------------------|-----------------------------------|
+| Workflow engine     | `nexus.core.workflow`             |
+| Workflow models     | `nexus.core.models`               |
+| Agent definitions   | `nexus.core.agents`               |
+| YAML loader         | `nexus.core.yaml_loader`          |
+| Storage interface   | `nexus.adapters.storage.base`     |
+| PostgreSQL backend  | `nexus.adapters.storage.postgres` |
+| File backend        | `nexus.adapters.storage.file`     |
+| Completion protocol | `nexus.core.completion`           |
+| Plugin registry     | `nexus.plugins`                   |
 
 ## Adding a New Feature
 

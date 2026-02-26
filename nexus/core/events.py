@@ -7,13 +7,13 @@ without direct dependencies on other modules.
 Usage::
 
     bus = EventBus()
-    
+
     # Subscribe
     sub_id = bus.subscribe("workflow.completed", my_handler)
-    
+
     # Emit
     await bus.emit(WorkflowCompleted(workflow_id="abc-123"))
-    
+
     # Unsubscribe
     bus.unsubscribe(sub_id)
 """
@@ -34,9 +34,11 @@ logger = logging.getLogger(__name__)
 # Event Types
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class NexusEvent:
     """Base event for all Nexus framework events."""
+
     event_type: str
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     workflow_id: str | None = None
@@ -46,18 +48,21 @@ class NexusEvent:
 @dataclass
 class WorkflowStarted(NexusEvent):
     """Emitted when a workflow begins execution."""
+
     event_type: str = "workflow.started"
 
 
 @dataclass
 class WorkflowCompleted(NexusEvent):
     """Emitted when a workflow finishes all steps successfully."""
+
     event_type: str = "workflow.completed"
 
 
 @dataclass
 class WorkflowFailed(NexusEvent):
     """Emitted when a workflow terminates due to an unrecoverable error."""
+
     event_type: str = "workflow.failed"
     error: str = ""
 
@@ -65,18 +70,21 @@ class WorkflowFailed(NexusEvent):
 @dataclass
 class WorkflowPaused(NexusEvent):
     """Emitted when a workflow is paused."""
+
     event_type: str = "workflow.paused"
 
 
 @dataclass
 class WorkflowCancelled(NexusEvent):
     """Emitted when a workflow is cancelled."""
+
     event_type: str = "workflow.cancelled"
 
 
 @dataclass
 class StepStarted(NexusEvent):
     """Emitted when a workflow step begins execution."""
+
     event_type: str = "step.started"
     step_num: int = 0
     step_name: str = ""
@@ -86,6 +94,7 @@ class StepStarted(NexusEvent):
 @dataclass
 class StepCompleted(NexusEvent):
     """Emitted when a workflow step finishes."""
+
     event_type: str = "step.completed"
     step_num: int = 0
     step_name: str = ""
@@ -96,6 +105,7 @@ class StepCompleted(NexusEvent):
 @dataclass
 class StepFailed(NexusEvent):
     """Emitted when a step fails (may be retried)."""
+
     event_type: str = "step.failed"
     step_num: int = 0
     step_name: str = ""
@@ -106,6 +116,7 @@ class StepFailed(NexusEvent):
 @dataclass
 class AgentLaunched(NexusEvent):
     """Emitted when an agent process is started."""
+
     event_type: str = "agent.launched"
     agent_name: str = ""
 
@@ -113,6 +124,7 @@ class AgentLaunched(NexusEvent):
 @dataclass
 class AgentTimeout(NexusEvent):
     """Emitted when an agent exceeds its execution timeout."""
+
     event_type: str = "agent.timeout"
     agent_name: str = ""
     pid: int | None = None
@@ -121,6 +133,7 @@ class AgentTimeout(NexusEvent):
 @dataclass
 class AgentRetry(NexusEvent):
     """Emitted when an agent is scheduled for retry."""
+
     event_type: str = "agent.retry"
     agent_name: str = ""
     attempt: int = 0
@@ -129,8 +142,18 @@ class AgentRetry(NexusEvent):
 @dataclass
 class AuditLogged(NexusEvent):
     """Emitted when an audit event is recorded."""
+
     event_type: str = "audit.logged"
     audit_event_type: str = ""
+
+
+@dataclass
+class AlertAction:
+    """Interactive action attached to a :class:`SystemAlert`."""
+
+    label: str = ""
+    callback_data: str = ""
+    url: str = ""
 
 
 @dataclass
@@ -140,15 +163,20 @@ class SystemAlert(NexusEvent):
     Replaces direct ``send_telegram_alert()`` calls — any attached
     notification handler (Telegram, Discord, Loki …) will pick it up.
     """
+
     event_type: str = "system.alert"
     message: str = ""
-    severity: str = "info"          # info, warning, error, critical
-    source: str = ""                # originating module name
+    severity: str = "info"  # info, warning, error, critical
+    source: str = ""  # originating module name
+    project_key: str = ""
+    issue_number: str = ""
+    actions: list[AlertAction] = field(default_factory=list)
 
 
 @dataclass
 class ApprovalRequired(NexusEvent):
     """Emitted when a workflow step is blocked waiting for approval."""
+
     event_type: str = "workflow.approval_required"
     step_num: int = 0
     step_name: str = ""
@@ -156,10 +184,10 @@ class ApprovalRequired(NexusEvent):
     approvers: list[str] = field(default_factory=list)
 
 
-
 # ---------------------------------------------------------------------------
 # Handler Protocol
 # ---------------------------------------------------------------------------
+
 
 @runtime_checkable
 class EventHandler(Protocol):
@@ -172,9 +200,11 @@ class EventHandler(Protocol):
 # Subscription
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class _Subscription:
     """Internal subscription record."""
+
     id: str
     event_type: str
     handler: Any  # Callable[[NexusEvent], Awaitable[None]]
@@ -184,6 +214,7 @@ class _Subscription:
 # ---------------------------------------------------------------------------
 # Event Bus
 # ---------------------------------------------------------------------------
+
 
 class EventBus:
     """Async-first publish/subscribe event dispatcher.
@@ -303,10 +334,7 @@ class EventBus:
         with self._lock:
             if event_type is None:
                 return len(self._subscriptions)
-            return sum(
-                1 for sub in self._subscriptions.values()
-                if sub.event_type == event_type
-            )
+            return sum(1 for sub in self._subscriptions.values() if sub.event_type == event_type)
 
     def clear(self) -> None:
         """Remove all subscriptions."""

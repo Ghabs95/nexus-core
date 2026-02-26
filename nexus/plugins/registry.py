@@ -139,11 +139,13 @@ class PluginRegistry:
                     status = await instance.health_check()
                     results.append(status)
                 except Exception as exc:
-                    results.append(PluginHealthStatus(
-                        healthy=False,
-                        name=name,
-                        details=f"Health check failed: {exc}",
-                    ))
+                    results.append(
+                        PluginHealthStatus(
+                            healthy=False,
+                            name=name,
+                            details=f"Health check failed: {exc}",
+                        )
+                    )
         return results
 
     def load_entrypoint_plugins(self, group: str = "nexus_core.plugins") -> int:

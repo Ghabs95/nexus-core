@@ -2,12 +2,13 @@
 
 import subprocess
 
-from nexus.plugins.builtin.ai_runtime_plugin import AIProvider, RateLimitedError
 from orchestration.ai_orchestrator import AIOrchestrator
+
+from nexus.plugins.builtin.ai_runtime_plugin import AIProvider, RateLimitedError
 
 
 class _FakeCompletedProcess:
-    def __init__(self, stdout: str = "{\"text\": \"ok\"}", returncode: int = 0):
+    def __init__(self, stdout: str = '{"text": "ok"}', returncode: int = 0):
         self.returncode = 0
         self.stdout = stdout
         self.stderr = ""

@@ -58,7 +58,7 @@ def test_pr_opened_sends_notification(mock_notify):
     mock_notify.assert_called_once()
 
 
-@patch("webhook_server._effective_merge_policy", return_value="always")
+@patch("webhook_server._effective_review_mode", return_value="manual")
 @patch("webhook_server._notify_lifecycle", return_value=True)
 def test_pr_merged_skips_when_manual_review_policy(mock_notify, mock_policy):
     from webhook_server import _get_webhook_policy, handle_pull_request
@@ -72,7 +72,7 @@ def test_pr_merged_skips_when_manual_review_policy(mock_notify, mock_policy):
     mock_notify.assert_not_called()
 
 
-@patch("webhook_server._effective_merge_policy", return_value="never")
+@patch("webhook_server._effective_review_mode", return_value="auto")
 @patch("webhook_server._notify_lifecycle", return_value=True)
 def test_pr_merged_notifies_when_policy_allows(mock_notify, mock_policy):
     from webhook_server import _get_webhook_policy, handle_pull_request

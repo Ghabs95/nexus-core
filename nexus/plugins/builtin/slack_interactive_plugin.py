@@ -25,12 +25,14 @@ logger = logging.getLogger(__name__)
 try:
     from slack_bolt.async_app import AsyncApp
     from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
+
     HAS_SLACK_BOLT = True
 except ImportError:
     HAS_SLACK_BOLT = False
 
 try:
     from slack_sdk.web.async_client import AsyncWebClient
+
     HAS_SLACK_SDK = True
 except ImportError:
     HAS_SLACK_SDK = False

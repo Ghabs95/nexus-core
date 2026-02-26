@@ -6,8 +6,7 @@ Delegates to nexus-core for standardized storage.
 
 import asyncio
 import logging
-from datetime import datetime
-from pathlib import Path
+import threading
 
 from config import NEXUS_CORE_STORAGE_DIR
 from nexus.adapters.storage.file import FileStorage
@@ -15,6 +14,35 @@ from nexus.adapters.storage.structured_log import StructuredLogAuditBackend
 from nexus.core.storage.audit import AuditStore as CoreAuditStore
 
 logger = logging.getLogger(__name__)
+
+
+def _run_coro_sync(coro_factory, *, timeout_seconds: float = 10):
+    """Run an async call from sync code, even if a loop is already running."""
+    try:
+        asyncio.get_running_loop()
+        in_running_loop = True
+    except RuntimeError:
+        in_running_loop = False
+
+    if not in_running_loop:
+        return asyncio.run(coro_factory())
+
+    holder = {"value": None, "error": None}
+
+    def _runner() -> None:
+        try:
+            holder["value"] = asyncio.run(coro_factory())
+        except Exception as exc:  # pragma: no cover - defensive bridge
+            holder["error"] = exc
+
+    worker = threading.Thread(target=_runner, daemon=True)
+    worker.start()
+    worker.join(timeout=timeout_seconds)
+    if worker.is_alive():
+        raise TimeoutError("Timed out running async audit operation in worker thread")
+    if holder["error"] is not None:
+        raise holder["error"]
+    return holder["value"]
 
 
 class AuditStore:
@@ -43,8 +71,8 @@ class AuditStore:
 
         store = AuditStore._get_core_store()
         try:
-            asyncio.run(
-                store.log(
+            _run_coro_sync(
+                lambda: store.log(
                     workflow_id=workflow_id,
                     event_type=event,
                     data={"issue_number": issue_num, "details": details},
@@ -65,7 +93,7 @@ class AuditStore:
 
         store = AuditStore._get_core_store()
         try:
-            events = asyncio.run(store.get_workflow_history(workflow_id, limit=limit))
+            events = _run_coro_sync(lambda: store.get_workflow_history(workflow_id, limit=limit))
             return [
                 {
                     "workflow_id": e.workflow_id,

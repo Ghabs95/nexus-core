@@ -14,18 +14,6 @@ import re
 import subprocess
 import time
 
-import yaml
-
-# Nexus Core framework imports
-from nexus.core.agents import find_agent_yaml
-from nexus.core.guards import LaunchGuard
-from nexus.core.project.repo_utils import (
-    iter_project_configs as _iter_project_configs,
-)
-from nexus.core.project.repo_utils import (
-    project_repos_from_config as _project_repos,
-)
-
 from audit_store import AuditStore
 from config import (
     BASE_DIR,
@@ -37,10 +25,19 @@ from config import (
     get_project_platform,
 )
 from integrations.notifications import notify_agent_completed, emit_alert
-from nexus.plugins.builtin.ai_runtime_plugin import ToolUnavailableError
 from orchestration.ai_orchestrator import get_orchestrator
 from orchestration.plugin_runtime import get_profiled_plugin
 from state_manager import HostStateManager
+
+# Nexus Core framework imports
+from nexus.core.guards import LaunchGuard
+from nexus.core.project.repo_utils import (
+    iter_project_configs as _iter_project_configs,
+)
+from nexus.core.project.repo_utils import (
+    project_repos_from_config as _project_repos,
+)
+from nexus.plugins.builtin.ai_runtime_plugin import ToolUnavailableError
 
 logger = logging.getLogger(__name__)
 _issue_plugin_cache = {}
@@ -221,9 +218,10 @@ def _pgrep_and_logfile_guard(issue_id: str, agent_type: str) -> bool:
     # Check 1: Running processes
     try:
         check_result = subprocess.run(
-            ["pgrep", "-af",
-             f"copilot.*issues/{issue_id}[^0-9]|copilot.*issues/{issue_id}$"],
-            text=True, capture_output=True, timeout=5,
+            ["pgrep", "-af", f"copilot.*issues/{issue_id}[^0-9]|copilot.*issues/{issue_id}$"],
+            text=True,
+            capture_output=True,
+            timeout=5,
         )
         if check_result.stdout:
             logger.info(f"⏭️ Agent already running for issue #{issue_id} (PID found)")
@@ -235,7 +233,12 @@ def _pgrep_and_logfile_guard(issue_id: str, agent_type: str) -> bool:
     nexus_dir_name = get_nexus_dir_name()
     recent_logs = glob.glob(
         os.path.join(
-            BASE_DIR, "**", nexus_dir_name, "tasks", "logs", "**",
+            BASE_DIR,
+            "**",
+            nexus_dir_name,
+            "tasks",
+            "logs",
+            "**",
             f"copilot_{issue_id}_*.log",
         ),
         recursive=True,
@@ -244,9 +247,7 @@ def _pgrep_and_logfile_guard(issue_id: str, agent_type: str) -> bool:
         recent_logs.sort(key=lambda p: os.path.getmtime(p), reverse=True)
         latest_log_age = time.time() - os.path.getmtime(recent_logs[0])
         if latest_log_age < 120:
-            logger.info(
-                f"⏭️ Recent log file for issue #{issue_id} ({latest_log_age:.0f}s old)"
-            )
+            logger.info(f"⏭️ Recent log file for issue #{issue_id} ({latest_log_age:.0f}s old)")
             return False
 
     return True  # allow launch
@@ -356,18 +357,20 @@ def _build_agent_search_dirs(agents_dir: str) -> list:
 
 
 from nexus.core.execution import ExecutionEngine, find_agent_definition
-from nexus.core.monitor import MonitorEngine
+
 
 def _resolve_skill_name(agent_type: str) -> str:
     """Normalize agent name for workspace skill directory."""
     return re.sub(r"[^a-z0-9]+", "_", agent_type.lower()).strip("_")
 
 
-def _ensure_agent_definition(agents_dir: str, agent_type: str, workspace_dir: str | None = None) -> bool:
+def _ensure_agent_definition(
+    agents_dir: str, agent_type: str, workspace_dir: str | None = None
+) -> bool:
     """Ensure an agent definition exists and sync workspace skills if needed."""
     search_dirs = _build_agent_search_dirs(agents_dir)
     yaml_path = find_agent_definition(agent_type, search_dirs)
-    
+
     if not yaml_path:
         msg = f"Missing agent YAML for agent_type '{agent_type}' in {search_dirs}"
         logger.error(msg)
@@ -375,12 +378,15 @@ def _ensure_agent_definition(agents_dir: str, agent_type: str, workspace_dir: st
         return False
 
     agent_md_path = os.path.splitext(yaml_path)[0] + ".agent.md"
-    
+
     # Generate instructions if missing or outdated
     needs_sync = False
-    if not os.path.exists(agent_md_path) or os.path.getmtime(agent_md_path) < os.path.getmtime(yaml_path):
+    if not os.path.exists(agent_md_path) or os.path.getmtime(agent_md_path) < os.path.getmtime(
+        yaml_path
+    ):
         try:
             from nexus.translators.to_copilot import translate_agent_to_copilot
+
             md_content = translate_agent_to_copilot(yaml_path)
             if md_content:
                 with open(agent_md_path, "w", encoding="utf-8") as handle:
@@ -430,7 +436,9 @@ def get_sop_tier_from_issue(issue_number, project="nexus", repo_override: str | 
             platform = GitHubPlatform(repo)
             return platform.get_workflow_type_from_issue(int(issue_number))
 
-        issue = asyncio.run(get_git_platform(repo, project_name=project).get_issue(str(issue_number)))
+        issue = asyncio.run(
+            get_git_platform(repo, project_name=project).get_issue(str(issue_number))
+        )
         if not issue:
             return None
         labels = {str(label).lower() for label in (issue.labels or [])}
@@ -456,7 +464,6 @@ def get_workflow_name(tier_name):
     return "new_feature"
 
 
-
 def invoke_copilot_agent(
     agents_dir,
     workspace_dir,
@@ -469,13 +476,13 @@ def invoke_copilot_agent(
     exclude_tools=None,
     log_subdir=None,
     agent_type="triage",
-    project_name=None
+    project_name=None,
 ):
     """Invokes an AI agent on the agents directory to process the task.
 
     Uses orchestrator to determine best tool (Copilot or Gemini CLI) with fallback support.
     Runs asynchronously (Popen) since agent execution can take several minutes.
-    
+
     Args:
         agents_dir: Path to agents directory
         workspace_dir: Path to workspace directory
@@ -487,7 +494,7 @@ def invoke_copilot_agent(
         use_gemini: If True, prefer Gemini CLI; if False, prefer Copilot (default: False)
         agent_type: Agent type to route to (triage, design, analysis, etc.)
         project_name: Project name for resolving workflow definition
-        
+
     Returns:
         Tuple of (PID of launched process or None if failed, tool_used: str)
     """
@@ -527,25 +534,23 @@ def invoke_copilot_agent(
 
     # Use orchestrator to launch agent
     orchestrator = get_orchestrator(ORCHESTRATOR_CONFIG)
-    
+
     # Resolve project-specific API token
     from orchestration.nexus_core_helpers import _get_project_config
+
     project_cfg = _get_project_config().get(project_name, {}) if project_name else {}
     git_platform = project_cfg.get("git_platform", "github")
     default_token_var = "GITLAB_TOKEN" if git_platform == "gitlab" else "GITHUB_TOKEN"
     token_var = project_cfg.get("git_token_var_name", default_token_var)
     token = os.getenv(token_var)
-    
+
     agent_env = None
     if token:
-        agent_env = {
-            "GITHUB_TOKEN": token,
-            "GITLAB_TOKEN": token
-        }
-    
+        agent_env = {"GITHUB_TOKEN": token, "GITLAB_TOKEN": token}
+
     try:
         from nexus.core.workspace import WorkspaceManager
-        
+
         # Extract issue number for tracking
         issue_match = re.search(r"/issues/(\d+)", issue_url or "")
         issue_num = issue_match.group(1) if issue_match else "unknown"
@@ -567,7 +572,9 @@ def invoke_copilot_agent(
                 logger.warning(f"Could not extract target branch: {e}")
 
         if issue_num != "unknown" and _is_git_repo(worktree_base_repo):
-            isolated_workspace = WorkspaceManager.provision_worktree(worktree_base_repo, issue_num, branch_name=target_branch)
+            isolated_workspace = WorkspaceManager.provision_worktree(
+                worktree_base_repo, issue_num, branch_name=target_branch
+            )
         elif issue_num != "unknown":
             logger.warning(
                 "Skipping worktree provisioning for issue %s: not a git repo (%s)",
@@ -585,13 +592,12 @@ def invoke_copilot_agent(
             use_gemini=use_gemini,
             exclude_tools=exclude_tools,
             log_subdir=log_subdir,
-            env=agent_env
+            env=agent_env,
         )
-        
+
         tool_name = tool_used.value
         logger.info(f"🚀 Agent launched with {tool_name} (PID: {pid})")
-        
-        
+
         # Save to launched agents tracker and emit audit, but never fail launch
         # response if bookkeeping has an internal error.
         if issue_num != "unknown":
@@ -606,19 +612,21 @@ def invoke_copilot_agent(
                     previous_entry = {}
 
                 entry = dict(previous_entry)
-                entry.update({
-                    'timestamp': time.time(),
-                    'pid': pid,
-                    'tier': tier_name,
-                    'mode': mode,
-                    'tool': tool_name,
-                    'agent_type': agent_type,
-                    'exclude_tools': _merge_excluded_tools(
-                        previous_entry.get("exclude_tools", []),
-                        list(exclude_tools) if exclude_tools else [],
-                        dynamic_exclusions,
-                    )
-                })
+                entry.update(
+                    {
+                        "timestamp": time.time(),
+                        "pid": pid,
+                        "tier": tier_name,
+                        "mode": mode,
+                        "tool": tool_name,
+                        "agent_type": agent_type,
+                        "exclude_tools": _merge_excluded_tools(
+                            previous_entry.get("exclude_tools", []),
+                            list(exclude_tools) if exclude_tools else [],
+                            dynamic_exclusions,
+                        ),
+                    }
+                )
                 launched_agents[str(issue_num)] = entry
                 HostStateManager.save_launched_agents(launched_agents)
 
@@ -628,7 +636,7 @@ def invoke_copilot_agent(
                     int(issue_num),
                     "AGENT_LAUNCHED",
                     f"Launched {tool_name} agent in {os.path.basename(agents_dir)} "
-                    f"(workflow: {workflow_name}/{tier_name}, mode: {mode}, PID: {pid})"
+                    f"(workflow: {workflow_name}/{tier_name}, mode: {mode}, PID: {pid})",
                 )
             except Exception as bookkeeping_exc:
                 logger.warning(
@@ -638,10 +646,10 @@ def invoke_copilot_agent(
                 )
 
         return pid, tool_name
-        
+
     except ToolUnavailableError as e:
         logger.error(f"❌ All AI tools unavailable: {e}")
-        
+
         issue_match = re.search(r"/issues/(\d+)", issue_url or "")
         issue_num = issue_match.group(1) if issue_match else "unknown"
         message = str(e).lower()
@@ -657,11 +665,9 @@ def invoke_copilot_agent(
             )
         if issue_num != "unknown":
             AuditStore.audit_log(
-                int(issue_num),
-                "AGENT_LAUNCH_FAILED",
-                f"All tools unavailable: {str(e)}"
+                int(issue_num), "AGENT_LAUNCH_FAILED", f"All tools unavailable: {str(e)}"
             )
-        
+
         return None, None
     except Exception as e:
         logger.error(f"❌ Failed to launch agent: {e}")
@@ -673,17 +679,14 @@ def invoke_copilot_agent(
                 tool_name,
             )
             return pid, tool_name
-        
+
         issue_match = re.search(r"/issues/(\d+)", issue_url or "")
         issue_num = issue_match.group(1) if issue_match else "unknown"
         if issue_num != "unknown":
-            AuditStore.audit_log(
-                int(issue_num),
-                "AGENT_LAUNCH_FAILED",
-                f"Exception: {str(e)}"
-            )
-        
+            AuditStore.audit_log(int(issue_num), "AGENT_LAUNCH_FAILED", f"Exception: {str(e)}")
+
         return None, None
+
 
 def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclude_tools=None):
     """
@@ -703,8 +706,10 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
         ``(None, None)`` on failure.
     """
     issue_number = str(issue_number)
-    logger.info(f"🔗 Launching next agent @{next_agent} for issue #{issue_number} (trigger: {trigger_source})")
-    
+    logger.info(
+        f"🔗 Launching next agent @{next_agent} for issue #{issue_number} (trigger: {trigger_source})"
+    )
+
     # Check for duplicate launches
     if is_recent_launch(issue_number, next_agent):
         logger.info(f"⏭️ Skipping duplicate launch for issue #{issue_number} agent @{next_agent}")
@@ -788,9 +793,10 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
                 issue_number,
                 e,
             )
-    
+
     # Get workflow tier: launched_agents tracker → issue labels → halt if unknown
     from state_manager import HostStateManager
+
     repo = resolved_repo or get_repo(project_root)
     tracker_tier = HostStateManager.get_last_tier_for_issue(issue_number)
     label_tier = get_sop_tier_from_issue(issue_number, project_root, repo_override=repo)
@@ -811,11 +817,11 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
             logger.info(
                 f"Restored persisted exclude_tools for issue #{issue_number}: {exclude_tools}"
             )
-    
+
     issue_url = f"https://github.com/{repo}/issues/{issue_number}"
     agents_abs = os.path.join(BASE_DIR, config["agents_dir"])
     workspace_abs = os.path.join(BASE_DIR, config["workspace"])
-    
+
     # Create continuation prompt
     continuation_prompt = (
         f"You are a {next_agent} agent. The previous workflow step is complete.\n\n"
@@ -824,7 +830,7 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
         f"Then perform your assigned work and post a status update.\n"
         f"End with a completion marker like: 'Ready for `@NextAgent`'"
     )
-    
+
     # Launch agent
     pid, tool_used = invoke_copilot_agent(
         agents_dir=agents_abs,
@@ -837,9 +843,9 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
         exclude_tools=exclude_tools,
         log_subdir=project_root,
         agent_type=next_agent,
-        project_name=project_root
+        project_name=project_root,
     )
-    
+
     if pid:
         logger.info(
             f"✅ Successfully launched @{next_agent} for issue #{issue_number} "

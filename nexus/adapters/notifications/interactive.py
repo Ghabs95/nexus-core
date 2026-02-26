@@ -1,4 +1,5 @@
 """Interactive client plugin interface for two-way chat communications."""
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 

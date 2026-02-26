@@ -171,7 +171,11 @@ class AgentRuntime(ABC):
             the log file's modification time; override to use
             ``AgentMonitor.check_timeout()`` or equivalent.
         """
-        timeout = int(timeout_seconds) if isinstance(timeout_seconds, int) and timeout_seconds > 0 else 3600
+        timeout = (
+            int(timeout_seconds)
+            if isinstance(timeout_seconds, int) and timeout_seconds > 0
+            else 3600
+        )
         age = time.time() - os.path.getmtime(log_file)
         # pid cannot be determined without host knowledge from base class
         return age > timeout, None
@@ -356,11 +360,15 @@ class ProcessOrchestrator:
                             expected_agent = self._runtime.get_expected_running_agent(
                                 detection.issue_number
                             )
-                            completion_agent = str(detection.summary.agent_type or "").strip().lower()
-                            if (
-                                isinstance(expected_agent, str)
-                                and expected_agent.strip().lower().lstrip("@")
-                                == completion_agent.lstrip("@")
+                            completion_agent = (
+                                str(detection.summary.agent_type or "").strip().lower()
+                            )
+                            if isinstance(
+                                expected_agent, str
+                            ) and expected_agent.strip().lower().lstrip(
+                                "@"
+                            ) == completion_agent.lstrip(
+                                "@"
                             ):
                                 logger.info(
                                     "Allowing stale completion for issue #%s because workflow still expects %s",
@@ -425,7 +433,10 @@ class ProcessOrchestrator:
                         WorkflowState.FAILED,
                     ):
                         self._handle_workflow_done(
-                            issue_num, repo, completed_agent, project_name or "",
+                            issue_num,
+                            repo,
+                            completed_agent,
+                            project_name or "",
                             reason=engine_workflow.state.value,
                         )
                         continue
@@ -437,15 +448,16 @@ class ProcessOrchestrator:
                             "skipping auto-chain"
                         )
                         continue
-                    logger.info(
-                        f"🔀 Engine routed #{issue_num}: {completed_agent} → {next_agent}"
-                    )
+                    logger.info(f"🔀 Engine routed #{issue_num}: {completed_agent} → {next_agent}")
 
                 else:
                     # Manual fallback (no engine workflow mapped to this issue).
                     if summary.is_workflow_done:
                         self._handle_workflow_done(
-                            issue_num, repo, completed_agent, project_name or "",
+                            issue_num,
+                            repo,
+                            completed_agent,
+                            project_name or "",
                             reason="manual",
                         )
                         continue
@@ -453,7 +465,10 @@ class ProcessOrchestrator:
                     next_agent = summary.next_agent.strip()
                     if _is_terminal(next_agent):
                         self._handle_workflow_done(
-                            issue_num, repo, completed_agent, project_name or "",
+                            issue_num,
+                            repo,
+                            completed_agent,
+                            project_name or "",
                             reason="terminal-agent-ref",
                         )
                         continue
@@ -526,9 +541,7 @@ class ProcessOrchestrator:
                         f"({completed_agent} → {next_agent}, reason: {tool_used})"
                     )
                 else:
-                    logger.error(
-                        f"❌ Failed to auto-chain to {next_agent} for issue #{issue_num}"
-                    )
+                    logger.error(f"❌ Failed to auto-chain to {next_agent} for issue #{issue_num}")
                     if build_autochain_failed_message:
                         fail_msg = build_autochain_failed_message(
                             issue_number=issue_num,
@@ -554,8 +567,7 @@ class ProcessOrchestrator:
                     )
                     continue
                 logger.warning(
-                    f"Error processing completion for issue "
-                    f"#{detection.issue_number}: {exc}",
+                    f"Error processing completion for issue " f"#{detection.issue_number}: {exc}",
                     exc_info=True,
                 )
 
@@ -571,15 +583,11 @@ class ProcessOrchestrator:
         kills the process, and retries if allowed.  Finishes by calling
         :meth:`detect_dead_agents` (Strategy-2).
         """
-        log_pattern = os.path.join(
-            base_dir, "**", self._nexus_dir, "tasks", "*", "logs", "*_*.log"
-        )
+        log_pattern = os.path.join(base_dir, "**", self._nexus_dir, "tasks", "*", "logs", "*_*.log")
         log_files = glob.glob(log_pattern, recursive=True)
 
         for log_file in log_files:
-            match = re.search(
-                r"(?:copilot|gemini|codex)_(\d+)_\d{8}_", os.path.basename(log_file)
-            )
+            match = re.search(r"(?:copilot|gemini|codex)_(\d+)_\d{8}_", os.path.basename(log_file))
             if not match:
                 continue
             issue_num = match.group(1)
@@ -587,7 +595,8 @@ class ProcessOrchestrator:
             # Only inspect the newest log for each issue.
             issue_logs = sorted(
                 [
-                    f for f in log_files
+                    f
+                    for f in log_files
                     if re.search(
                         rf"(?:copilot|gemini|codex)_{issue_num}_\d{{8}}_",
                         os.path.basename(f),
@@ -649,8 +658,7 @@ class ProcessOrchestrator:
 
             timeout_seconds = self._resolve_agent_timeout(issue_num, agent_type)
             required_misses = (
-                1 if (now - launch_ts) >= timeout_seconds
-                else _DEAD_PID_LIVENESS_MISS_THRESHOLD
+                1 if (now - launch_ts) >= timeout_seconds else _DEAD_PID_LIVENESS_MISS_THRESHOLD
             )
 
             if miss_count < required_misses:
@@ -704,8 +712,7 @@ class ProcessOrchestrator:
             self._runtime.audit_log(
                 issue_num,
                 "AGENT_DEAD",
-                f"PID {pid} ({agent_type}) exited without completion "
-                f"after {age_min:.0f}min",
+                f"PID {pid} ({agent_type}) exited without completion " f"after {age_min:.0f}min",
             )
 
             if will_retry:
@@ -734,17 +741,13 @@ class ProcessOrchestrator:
                         exclude_tools=[crashed_tool] if crashed_tool else None,
                     )
                     if pid_new:
-                        logger.info(
-                            f"🔄 Dead-agent retry launched: {agent_type} for #{issue_num}"
-                        )
+                        logger.info(f"🔄 Dead-agent retry launched: {agent_type} for #{issue_num}")
                     else:
                         logger.error(
                             f"Dead-agent retry failed to launch {agent_type} for #{issue_num}"
                         )
                 except Exception as exc:
-                    logger.error(
-                        f"Exception during dead-agent retry for #{issue_num}: {exc}"
-                    )
+                    logger.error(f"Exception during dead-agent retry for #{issue_num}: {exc}")
 
             else:
                 msg = (
@@ -776,9 +779,7 @@ class ProcessOrchestrator:
         project_name: str,
         reason: str,
     ) -> None:
-        logger.info(
-            f"✅ Workflow {reason} for issue #{issue_num} (last agent: {last_agent})"
-        )
+        logger.info(f"✅ Workflow {reason} for issue #{issue_num} (last agent: {last_agent})")
         tracker = self._runtime.load_launched_agents(recent_only=False)
         tracker.pop(str(issue_num), None)
         self._runtime.save_launched_agents(tracker)
@@ -906,9 +907,7 @@ class ProcessOrchestrator:
                         trigger_source="orphan-timeout-retry",
                     )
                 except Exception as exc:
-                    logger.error(
-                        f"Orphaned-step retry exception for issue #{issue_num}: {exc}"
-                    )
+                    logger.error(f"Orphaned-step retry exception for issue #{issue_num}: {exc}")
             return
 
         killed = self._runtime.kill_process(effective_pid)
@@ -938,9 +937,7 @@ class ProcessOrchestrator:
                     exclude_tools=[crashed_tool] if crashed_tool else None,
                 )
             except Exception as exc:
-                logger.error(
-                    f"Timeout retry exception for issue #{issue_num}: {exc}"
-                )
+                logger.error(f"Timeout retry exception for issue #{issue_num}: {exc}")
 
     def _resolve_agent_timeout(
         self,

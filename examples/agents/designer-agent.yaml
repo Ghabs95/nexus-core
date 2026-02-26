@@ -24,7 +24,7 @@ spec:
     4. Commits the design doc
     5. Opens a PR for review
     6. Links back to original issue
-    
+
   requires_tools:
     - github:get_issue
     - github:create_branch
@@ -40,7 +40,7 @@ spec:
       required: true
     scope:
       type: enum
-      values: ["small", "medium", "large"]
+      values: [ "small", "medium", "large" ]
       description: "Estimated feature scope"
       default: "medium"
   

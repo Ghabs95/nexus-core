@@ -108,7 +108,9 @@ async def implement_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> 
     repo = deps.project_repo(project_key)
     issue_url = deps.project_issue_url(project_key, issue_number)
 
-    msg_id = await ctx.reply_text(f"🔔 Requesting Copilot implementation for issue #{issue_number}...")
+    msg_id = await ctx.reply_text(
+        f"🔔 Requesting Copilot implementation for issue #{issue_number}..."
+    )
 
     try:
         plugin = deps.get_direct_issue_plugin(repo)
@@ -214,7 +216,9 @@ async def prepare_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
         if task_file:
             copilot_block += f"\n**Suggested files to modify:** `{task_file}`\n"
 
-        copilot_block += "\n**Acceptance Criteria**\n- Add concise acceptance criteria here (one per line).\n"
+        copilot_block += (
+            "\n**Acceptance Criteria**\n- Add concise acceptance criteria here (one per line).\n"
+        )
 
         new_body = body + "\n\n---\n\n" + copilot_block
 
@@ -394,15 +398,14 @@ async def tracked_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
 
     tracked = deps.tracked_issues_ref or {}
     if not tracked:
-        await ctx.reply_text(
-            "📌 No globally tracked issues.\n\n"
-            "Use /track <issue#> to add one."
-        )
+        await ctx.reply_text("📌 No globally tracked issues.\n\n" "Use /track <issue#> to add one.")
         return
 
     lines = ["📌 <b>Global Tracked Issues</b>", ""]
     active_total = 0
-    for issue_num, issue_data in sorted(tracked.items(), key=lambda item: int(item[0]) if str(item[0]).isdigit() else 10**9):
+    for issue_num, issue_data in sorted(
+        tracked.items(), key=lambda item: int(item[0]) if str(item[0]).isdigit() else 10**9
+    ):
         issue_payload = issue_data if isinstance(issue_data, dict) else {}
         status = str(issue_payload.get("status", "active")).strip().lower() or "active"
         if status in {"done", "closed", "resolved", "completed", "implemented", "rejected"}:
@@ -413,8 +416,7 @@ async def tracked_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
 
     if active_total == 0:
         await ctx.reply_text(
-            "📌 No active globally tracked issues.\n\n"
-            "Use /track <issue#> to add one."
+            "📌 No active globally tracked issues.\n\n" "Use /track <issue#> to add one."
         )
         return
 
@@ -556,16 +558,12 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
                 task_file = match.group(1) if match else None
 
         if not task_file or not os.path.exists(task_file):
-            await ctx.reply_text(
-                "⚠️ Posted comment but couldn't find task file to continue agent."
-            )
+            await ctx.reply_text("⚠️ Posted comment but couldn't find task file to continue agent.")
             return
 
         project_name, config = deps.resolve_project_config_from_task(task_file)
         if not config or not config.get("agents_dir"):
-            await ctx.reply_text(
-                "⚠️ Posted comment but no agents config for project."
-            )
+            await ctx.reply_text("⚠️ Posted comment but no agents config for project.")
             return
 
         repo = deps.resolve_repo(config, deps.default_repo)

@@ -240,8 +240,7 @@ class HandoffDispatcher:
         val = __import__("os").environ.get(self._secret_env, "")
         if not val:
             raise ValueError(
-                f"Handoff secret not set. "
-                f"Set the {self._secret_env!r} environment variable."
+                f"Handoff secret not set. " f"Set the {self._secret_env!r} environment variable."
             )
         return val
 
@@ -341,7 +340,7 @@ class HandoffDispatcher:
 
 
 def normalize_chat_agents(raw_chat_agents: Any) -> list[dict[str, Any]]:
-    """Normalize chat_agents config payload into ordered entries with `agent_type`."""
+    """Normalize ``operation_agents.chat`` payload into ordered entries."""
     entries: list[dict[str, Any]] = []
 
     if isinstance(raw_chat_agents, dict):
@@ -384,14 +383,17 @@ def normalize_chat_agents(raw_chat_agents: Any) -> list[dict[str, Any]]:
 
 
 def get_project_chat_agents(project_cfg: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return normalized ordered chat agent entries from a project config payload."""
+    """Return normalized chat entries from ``operation_agents.chat``."""
     if not isinstance(project_cfg, dict):
         return []
-    return normalize_chat_agents(project_cfg.get("chat_agents"))
+    operation_agents = project_cfg.get("operation_agents")
+    if not isinstance(operation_agents, dict):
+        return []
+    return normalize_chat_agents(operation_agents.get("chat"))
 
 
 def get_project_chat_agent_types(project_cfg: dict[str, Any]) -> list[str]:
-    """Return ordered agent_type values from project chat_agents."""
+    """Return ordered agent_type values from project ``operation_agents.chat``."""
     return [entry["agent_type"] for entry in get_project_chat_agents(project_cfg)]
 
 

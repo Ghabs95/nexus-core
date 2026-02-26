@@ -63,14 +63,10 @@ class CompletionStore:
         """
         if self._backend == "postgres":
             if self._storage is None:
-                raise RuntimeError(
-                    "CompletionStore requires a StorageBackend for postgres mode"
-                )
+                raise RuntimeError("CompletionStore requires a StorageBackend for postgres mode")
             import asyncio
 
-            return asyncio.run(
-                self._storage.save_completion(issue_number, agent_type, data)
-            )
+            return asyncio.run(self._storage.save_completion(issue_number, agent_type, data))
 
         # Filesystem: write JSON file (same as legacy)
         return self._save_to_filesystem(issue_number, agent_type, data)
@@ -79,9 +75,7 @@ class CompletionStore:
     # Read / scan path
     # ------------------------------------------------------------------
 
-    def scan(
-        self, issue_number: str | None = None
-    ) -> list[DetectedCompletion]:
+    def scan(self, issue_number: str | None = None) -> list[DetectedCompletion]:
         """Return detected completions, routing to the configured backend.
 
         When *issue_number* is provided, only completions for that issue are
@@ -91,13 +85,9 @@ class CompletionStore:
             return self._scan_postgres(issue_number)
 
         # Filesystem: delegate to existing scanner
-        all_completions = scan_for_completions(
-            self._base_dir, nexus_dir=self._nexus_dir
-        )
+        all_completions = scan_for_completions(self._base_dir, nexus_dir=self._nexus_dir)
         if issue_number:
-            return [
-                c for c in all_completions if c.issue_number == str(issue_number)
-            ]
+            return [c for c in all_completions if c.issue_number == str(issue_number)]
         return all_completions
 
     # ------------------------------------------------------------------
@@ -134,9 +124,7 @@ class CompletionStore:
         logger.info("Saved filesystem completion: %s", path)
         return dedup_key
 
-    def _scan_postgres(
-        self, issue_number: str | None
-    ) -> list[DetectedCompletion]:
+    def _scan_postgres(self, issue_number: str | None) -> list[DetectedCompletion]:
         """Query the database for completions and return DetectedCompletion objects."""
         if self._storage is None:
             return []

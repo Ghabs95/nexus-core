@@ -12,7 +12,6 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
 
 from nexus.core.models import AuditEvent
 
@@ -22,6 +21,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class WorkflowMetrics:
     """Metrics for a single workflow execution."""
+
     workflow_id: str
     issue_num: int | None = None
     start_time: datetime | None = None
@@ -38,6 +38,7 @@ class WorkflowMetrics:
 @dataclass
 class AgentMetrics:
     """Performance metrics for a specific agent."""
+
     agent_name: str
     launches: int = 0
     timeouts: int = 0
@@ -50,6 +51,7 @@ class AgentMetrics:
 @dataclass
 class SystemMetrics:
     """Overall system performance metrics."""
+
     total_workflows: int = 0
     completed_workflows: int = 0
     active_workflows: int = 0
@@ -93,10 +95,9 @@ class MetricsEngine:
                     match = re.search(r"-(\d+)-", workflow_id)
                     if match:
                         issue_num = int(match.group(1))
-                
+
                 self.workflow_metrics[workflow_id] = WorkflowMetrics(
-                    workflow_id=workflow_id,
-                    issue_num=issue_num
+                    workflow_id=workflow_id, issue_num=issue_num
                 )
 
             wm = self.workflow_metrics[workflow_id]
@@ -105,7 +106,7 @@ class MetricsEngine:
             if event_type in ("WORKFLOW_STARTED", "WORKFLOW_CREATED"):
                 if wm.start_time is None:
                     wm.start_time = timestamp
-                
+
                 tier_match = re.search(r"tier[:\s]+(\w+)", str(details), re.IGNORECASE)
                 if tier_match:
                     wm.workflow_tier = tier_match.group(1)
@@ -150,28 +151,34 @@ class MetricsEngine:
     def get_system_metrics(self) -> SystemMetrics:
         """Calculate overall system metrics from processed data."""
         metrics = SystemMetrics()
-        
+
         metrics.total_workflows = len(self.workflow_metrics)
-        metrics.completed_workflows = sum(1 for wm in self.workflow_metrics.values() if wm.completed)
-        metrics.failed_workflows = sum(1 for wm in self.workflow_metrics.values() if wm.failures > 0 and not wm.completed)
-        metrics.active_workflows = metrics.total_workflows - metrics.completed_workflows - metrics.failed_workflows
-        
+        metrics.completed_workflows = sum(
+            1 for wm in self.workflow_metrics.values() if wm.completed
+        )
+        metrics.failed_workflows = sum(
+            1 for wm in self.workflow_metrics.values() if wm.failures > 0 and not wm.completed
+        )
+        metrics.active_workflows = (
+            metrics.total_workflows - metrics.completed_workflows - metrics.failed_workflows
+        )
+
         if metrics.total_workflows > 0:
             metrics.completion_rate = (metrics.completed_workflows / metrics.total_workflows) * 100
-        
+
         metrics.total_timeouts = sum(wm.timeouts for wm in self.workflow_metrics.values())
         metrics.total_retries = sum(wm.retries for wm in self.workflow_metrics.values())
-        
+
         # Calculate average workflow duration (only for completed workflows)
         completed_durations = [
-            wm.duration_seconds 
-            for wm in self.workflow_metrics.values() 
+            wm.duration_seconds
+            for wm in self.workflow_metrics.values()
             if wm.completed and isinstance(wm.duration_seconds, (int, float))
         ]
         if completed_durations:
             avg_seconds: float = sum(completed_durations) / len(completed_durations)
             metrics.avg_workflow_duration_hours = avg_seconds / 3600
-        
+
         # Count issues per tier
         tier_counter: Counter[str] = Counter()
         for wm in self.workflow_metrics.values():
@@ -179,7 +186,7 @@ class MetricsEngine:
             if tier:
                 tier_counter[tier] += 1
         metrics.issues_per_tier = dict(tier_counter)
-        
+
         return metrics
 
     def get_agent_leaderboard(self, top_n: int = 10) -> list[AgentMetrics]:
@@ -189,36 +196,36 @@ class MetricsEngine:
             if metrics.launches > 0:
                 metrics.successes = max(0, metrics.launches - metrics.timeouts - metrics.failures)
                 agent_list.append(metrics)
-        
+
         agent_list.sort(key=lambda a: a.launches, reverse=True)
-        return list(agent_list[0:int(top_n)])
+        return list(agent_list[0 : int(top_n)])
 
     def format_stats_report(self, lookback_days: int = 30) -> str:
         """Generate a formatted Markdown report."""
         system_metrics = self.get_system_metrics()
         agent_leaderboard = self.get_agent_leaderboard(top_n=5)
-        
+
         report = "📊 **Nexus System Analytics**\n"
         report += "=" * 40 + "\n\n"
-        
+
         report += "**📈 Overall Performance:**\n"
         report += f"• Total Workflows: {system_metrics.total_workflows}\n"
         report += f"• ✅ Completed: {system_metrics.completed_workflows}\n"
         report += f"• 🔄 Active: {system_metrics.active_workflows}\n"
         report += f"• ❌ Failed: {system_metrics.failed_workflows}\n"
         report += f"• Completion Rate: {system_metrics.completion_rate:.1f}%\n"
-        
+
         if system_metrics.avg_workflow_duration_hours:
             report += f"• Avg Workflow Time: {system_metrics.avg_workflow_duration_hours:.1f}h\n"
-        
+
         report += "\n**⚙️ Reliability:**\n"
         report += f"• Total Timeouts: {system_metrics.total_timeouts}\n"
         report += f"• Total Retries: {system_metrics.total_retries}\n"
-        
+
         if system_metrics.total_workflows > 0:
-            timeout_rate = (system_metrics.total_timeouts / system_metrics.total_workflows)
+            timeout_rate = system_metrics.total_timeouts / system_metrics.total_workflows
             report += f"• Avg Timeouts per Workflow: {timeout_rate:.1f}\n"
-        
+
         report += "\n"
         if system_metrics.issues_per_tier:
             report += "**🎯 Workflows by Tier:**\n"
@@ -226,7 +233,7 @@ class MetricsEngine:
                 emoji = {"full": "🟡", "shortened": "🟠", "fast-track": "🟢"}.get(tier, "⚪")
                 report += f"• {emoji} {tier}: {count}\n"
             report += "\n"
-        
+
         if agent_leaderboard:
             report += "**🤖 Top 5 Most Active Agents:**\n"
             for idx, agent in enumerate(agent_leaderboard, 1):
@@ -241,8 +248,8 @@ class MetricsEngine:
                 else:
                     report += "   └ Retries: 0\n"
             report += "\n"
-        
+
         report += "=" * 40 + "\n"
         report += f"_Data from last {lookback_days} days_"
-        
+
         return report

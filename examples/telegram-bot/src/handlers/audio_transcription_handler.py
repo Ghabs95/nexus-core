@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 @dataclass
 class AudioTranscriptionDeps:
     logger: Any
-    transcribe_audio_cli: Callable[[str], str | None]
+    transcribe_audio: Callable[[str], str | None]
 
 
 async def transcribe_telegram_voice(
@@ -33,7 +33,7 @@ async def transcribe_telegram_voice(
         await new_file.download_to_drive(temp_path)
 
         deps.logger.info("🎧 Transcribing audio with orchestrator...")
-        text = deps.transcribe_audio_cli(temp_path)
+        text = deps.transcribe_audio(temp_path)
 
         if text:
             cleaned = str(text).strip()

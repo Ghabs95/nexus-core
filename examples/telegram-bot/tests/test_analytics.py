@@ -5,8 +5,6 @@ Tests the Loki-backed ``get_stats_report()`` function.
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 class TestGetStatsReport:
     """Tests for the public ``get_stats_report()`` function."""

@@ -1,4 +1,5 @@
 """Approval gate enforcement for workflow steps."""
+
 import logging
 
 from nexus.core.models import ApprovalGateType, WorkflowStep

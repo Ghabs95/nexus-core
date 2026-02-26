@@ -2,15 +2,147 @@
 
 Provides rich Telegram notifications with interactive buttons for quick actions.
 """
+
 import logging
 import re
-from typing import Sequence
+from typing import Any, Sequence
 
 from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, get_repo, PROJECT_CONFIG
-from nexus.adapters.git.utils import build_issue_url
 from orchestration.plugin_runtime import get_profiled_plugin
 
+from nexus.adapters.git.utils import build_issue_url
+
 logger = logging.getLogger(__name__)
+
+
+def _extract_issue_number(text: str) -> str:
+    """Best-effort issue number extraction from free-form alert text."""
+    if not text:
+        return ""
+    match = re.search(r"(?:issue\s*#|#)(\d+)\b", text, flags=re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return ""
+
+
+def _normalize_alert_actions(actions: Sequence[dict[str, Any]] | None) -> list[dict[str, str]]:
+    """Normalize alert actions to ``{label, callback_data, url}`` dictionaries."""
+    normalized: list[dict[str, str]] = []
+    for raw in actions or []:
+        if not isinstance(raw, dict):
+            continue
+        label = str(raw.get("label", "")).strip()
+        callback_data = str(raw.get("callback_data", "")).strip()
+        url = str(raw.get("url", "")).strip()
+        if not label:
+            continue
+        if callback_data and "|" not in callback_data:
+            logger.warning(
+                "Dropping callback action without project context: %s",
+                callback_data,
+            )
+            continue
+        if not callback_data and not url:
+            continue
+        normalized.append(
+            {
+                "label": label,
+                "callback_data": callback_data,
+                "url": url,
+            }
+        )
+    return normalized
+
+
+def _default_alert_actions(
+    severity: str,
+    issue_number: str,
+    project: str | None = None,
+) -> list[dict[str, str]]:
+    """Return default issue-scoped actions for high-signal alerts."""
+    if not issue_number or not project:
+        return []
+
+    sev = str(severity or "info").strip().lower()
+    if sev == "critical":
+        return [
+            {
+                "label": "🔧 Start Fix",
+                "callback_data": _issue_callback("reprocess", issue_number, project),
+                "url": "",
+            },
+            {
+                "label": "🛑 Stop",
+                "callback_data": _issue_callback("stop", issue_number, project),
+                "url": "",
+            },
+            {
+                "label": "📝 Logs",
+                "callback_data": _issue_callback("logs", issue_number, project),
+                "url": "",
+            },
+        ]
+    if sev == "error":
+        return [
+            {
+                "label": "🔧 Start Fix",
+                "callback_data": _issue_callback("reprocess", issue_number, project),
+                "url": "",
+            },
+            {
+                "label": "📝 Logs",
+                "callback_data": _issue_callback("logs", issue_number, project),
+                "url": "",
+            },
+        ]
+    if sev == "warning":
+        return [
+            {
+                "label": "📝 Logs",
+                "callback_data": _issue_callback("logs", issue_number, project),
+                "url": "",
+            }
+        ]
+    return []
+
+
+def _build_reply_markup(
+    actions: Sequence[dict[str, str]] | None,
+) -> dict[str, list[list[dict[str, str]]]] | None:
+    """Build Telegram inline keyboard reply markup from action dicts."""
+    rows: list[list[dict[str, str]]] = []
+    current_row: list[dict[str, str]] = []
+    for action in actions or []:
+        label = str(action.get("label", "")).strip()
+        callback_data = str(action.get("callback_data", "")).strip()
+        url = str(action.get("url", "")).strip()
+        if not label:
+            continue
+        if not callback_data and not url:
+            continue
+        btn: dict[str, str] = {"text": label}
+        if url:
+            btn["url"] = url
+        else:
+            btn["callback_data"] = callback_data
+        current_row.append(btn)
+        if len(current_row) == 2:
+            rows.append(current_row)
+            current_row = []
+    if current_row:
+        rows.append(current_row)
+    if not rows:
+        return None
+    return {"inline_keyboard": rows}
+
+
+def _issue_callback(action: str, issue_number: str, project: str | None = None) -> str:
+    """Build callback payload with strict project hint requirement."""
+    issue = str(issue_number or "").strip().lstrip("#")
+    project_key = str(project or "").strip()
+    if not issue or not project_key:
+        raise ValueError(f"Callback '{action}' requires issue and project")
+    return f"{action}_{issue}|{project_key}"
 
 
 def _normalize_telegram_markdown(message: str, parse_mode: str) -> str:
@@ -37,26 +169,26 @@ def _get_notification_plugin():
 
 class InlineKeyboard:
     """Builder for Telegram inline keyboards."""
-    
+
     def __init__(self):
         """Initialize keyboard builder."""
         self.rows: list[list[dict]] = []
-    
+
     def add_button(self, text: str, callback_data: str | None = None, url: str | None = None):
         """
         Add a button to the current row.
-        
+
         Args:
             text: Button label text
             callback_data: Callback data for button press (ignored if url provided)
             url: Optional URL to open (makes button a URL button)
-        
+
         Returns:
             Self for chaining
         """
         if not self.rows:
             self.rows.append([])
-        
+
         button = {"text": text}
         if url:
             button["url"] = url
@@ -64,19 +196,19 @@ class InlineKeyboard:
             button["callback_data"] = callback_data
         else:
             raise ValueError("Either callback_data or url must be provided")
-        
+
         self.rows[-1].append(button)
         return self
-    
+
     def new_row(self):
         """Start a new row of buttons."""
         self.rows.append([])
         return self
-    
+
     def build(self) -> dict:
         """
         Build the keyboard structure.
-        
+
         Returns:
             Inline keyboard markup dict
         """
@@ -84,18 +216,16 @@ class InlineKeyboard:
 
 
 def send_notification(
-    message: str,
-    parse_mode: str = "Markdown",
-    keyboard: InlineKeyboard | None = None
+    message: str, parse_mode: str = "Markdown", keyboard: InlineKeyboard | None = None
 ) -> bool:
     """
     Send a notification to Telegram with optional inline keyboard.
-    
+
     Args:
         message: Message text
         parse_mode: Parse mode (Markdown or HTML)
         keyboard: Optional inline keyboard
-    
+
     Returns:
         True if sent successfully
     """
@@ -127,16 +257,18 @@ def send_notification(
         return False
 
 
-def notify_agent_needs_input(issue_number: str, agent: str, preview: str, project: str = "nexus") -> bool:
+def notify_agent_needs_input(
+    issue_number: str, agent: str, preview: str, project: str = "nexus"
+) -> bool:
     """
     Send notification that an agent needs input.
-    
+
     Args:
         issue_number: Git issue number
         agent: Agent name
         preview: Preview of the agent's question
         project: Project name (default: nexus)
-    
+
     Returns:
         True if sent successfully
     """
@@ -146,37 +278,44 @@ def notify_agent_needs_input(issue_number: str, agent: str, preview: str, projec
         f"Agent: @{agent}\n\n"
         f"Preview:\n{preview}"
     )
-    
+
     keyboard = (
         InlineKeyboard()
-        .add_button("📝 View Full", callback_data=f"logs_{issue_number}")
-        .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
+        .add_button("📝 View Full", callback_data=_issue_callback("logs", issue_number, project))
+        .add_button(
+            "🔗 Issue",
+            url=build_issue_url(
+                get_repo(project),
+                issue_number,
+                (
+                    PROJECT_CONFIG.get(project)
+                    if isinstance(PROJECT_CONFIG.get(project), dict)
+                    else None
+                ),
+            ),
+        )
         .new_row()
-        .add_button("✍️ Respond", callback_data=f"respond_{issue_number}")
+        .add_button("✍️ Respond", callback_data=_issue_callback("respond", issue_number, project))
     )
-    
+
     return send_notification(message, keyboard=keyboard)
 
 
 def notify_workflow_started(issue_number: str, project: str, tier: str, task_type: str) -> bool:
     """
     Send notification that a workflow has started.
-    
+
     Args:
         issue_number: Git issue number
         project: Project name
         tier: Workflow tier (full, shortened, fast-track)
         task_type: Task type (feature, bug, hotfix, etc.)
-    
+
     Returns:
         True if sent successfully
     """
-    tier_emoji = {
-        "full": "🟡",
-        "shortened": "🟠",
-        "fast-track": "🟢"
-    }
-    
+    tier_emoji = {"full": "🟡", "shortened": "🟠", "fast-track": "🟢"}
+
     message = (
         f"🚀 **Workflow Started**\n\n"
         f"Issue: #{issue_number}\n"
@@ -184,16 +323,27 @@ def notify_workflow_started(issue_number: str, project: str, tier: str, task_typ
         f"Type: {task_type}\n"
         f"Tier: {tier_emoji.get(tier, '⚪')} {tier}"
     )
-    
+
     keyboard = (
         InlineKeyboard()
-        .add_button("👀 Logs", callback_data=f"logs_{issue_number}")
-        .add_button("📊 Status", callback_data=f"status_{issue_number}")
+        .add_button("👀 Logs", callback_data=_issue_callback("logs", issue_number, project))
+        .add_button("📊 Status", callback_data=_issue_callback("status", issue_number, project))
         .new_row()
-        .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
-        .add_button("⏸️ Pause", callback_data=f"pause_{issue_number}")
+        .add_button(
+            "🔗 Issue",
+            url=build_issue_url(
+                get_repo(project),
+                issue_number,
+                (
+                    PROJECT_CONFIG.get(project)
+                    if isinstance(PROJECT_CONFIG.get(project), dict)
+                    else None
+                ),
+            ),
+        )
+        .add_button("⏸️ Pause", callback_data=_issue_callback("pause", issue_number, project))
     )
-    
+
     return send_notification(message, keyboard=keyboard)
 
 
@@ -206,14 +356,14 @@ def notify_agent_completed(
 ) -> bool:
     """
     Send notification that an agent completed and next one started.
-    
+
     Args:
         issue_number: Git issue number
         completed_agent: Agent that just completed
         next_agent: Agent that's starting next
         project: Project name (default: nexus)
         agent_name: Legacy alias for completed_agent
-    
+
     Returns:
         True if sent successfully
     """
@@ -226,29 +376,42 @@ def notify_agent_completed(
         f"Completed: @{resolved_completed_agent}\n"
         f"Next: @{resolved_next_agent}"
     )
-    
+
     keyboard = (
         InlineKeyboard()
-        .add_button("📝 View Logs", callback_data=f"logs_{issue_number}")
-        .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
+        .add_button("📝 View Logs", callback_data=_issue_callback("logs", issue_number, project))
+        .add_button(
+            "🔗 Issue",
+            url=build_issue_url(
+                get_repo(project),
+                issue_number,
+                (
+                    PROJECT_CONFIG.get(project)
+                    if isinstance(PROJECT_CONFIG.get(project), dict)
+                    else None
+                ),
+            ),
+        )
         .new_row()
-        .add_button("⏸️ Pause Chain", callback_data=f"pause_{issue_number}")
-        .add_button("🛑 Stop", callback_data=f"stop_{issue_number}")
+        .add_button("⏸️ Pause Chain", callback_data=_issue_callback("pause", issue_number, project))
+        .add_button("🛑 Stop", callback_data=_issue_callback("stop", issue_number, project))
     )
-    
+
     return send_notification(message, keyboard=keyboard)
 
 
-def notify_agent_timeout(issue_number: str, agent: str, will_retry: bool, project: str = "nexus") -> bool:
+def notify_agent_timeout(
+    issue_number: str, agent: str, will_retry: bool, project: str = "nexus"
+) -> bool:
     """
     Send notification about agent timeout.
-    
+
     Args:
         issue_number: Git issue number
         agent: Agent name
         will_retry: Whether the agent will be retried
         project: Project name (default: nexus)
-    
+
     Returns:
         True if sent successfully
     """
@@ -259,14 +422,30 @@ def notify_agent_timeout(issue_number: str, agent: str, will_retry: bool, projec
             f"Agent: @{agent}\n"
             f"Status: Process killed, retry scheduled"
         )
-        
+
         keyboard = (
             InlineKeyboard()
-            .add_button("📝 View Logs", callback_data=f"logs_{issue_number}")
-            .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
+            .add_button(
+                "📝 View Logs", callback_data=_issue_callback("logs", issue_number, project)
+            )
+            .add_button(
+                "🔗 Issue",
+                url=build_issue_url(
+                    get_repo(project),
+                    issue_number,
+                    (
+                        PROJECT_CONFIG.get(project)
+                        if isinstance(PROJECT_CONFIG.get(project), dict)
+                        else None
+                    ),
+                ),
+            )
             .new_row()
-            .add_button("🔄 Reprocess Now", callback_data=f"reprocess_{issue_number}")
-            .add_button("🛑 Stop", callback_data=f"stop_{issue_number}")
+            .add_button(
+                "🔄 Reprocess Now",
+                callback_data=_issue_callback("reprocess", issue_number, project),
+            )
+            .add_button("🛑 Stop", callback_data=_issue_callback("stop", issue_number, project))
         )
     else:
         message = (
@@ -275,16 +454,33 @@ def notify_agent_timeout(issue_number: str, agent: str, will_retry: bool, projec
             f"Agent: @{agent}\n"
             f"Status: Manual intervention required"
         )
-        
+
         keyboard = (
             InlineKeyboard()
-            .add_button("📝 View Logs", callback_data=f"logs_{issue_number}")
-            .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
+            .add_button(
+                "📝 View Logs", callback_data=_issue_callback("logs", issue_number, project)
+            )
+            .add_button(
+                "🔗 Issue",
+                url=build_issue_url(
+                    get_repo(project),
+                    issue_number,
+                    (
+                        PROJECT_CONFIG.get(project)
+                        if isinstance(PROJECT_CONFIG.get(project), dict)
+                        else None
+                    ),
+                ),
+            )
             .new_row()
-            .add_button("🔄 Reprocess", callback_data=f"reprocess_{issue_number}")
-            .add_button("🛑 Stop Workflow", callback_data=f"stop_{issue_number}")
+            .add_button(
+                "🔄 Reprocess", callback_data=_issue_callback("reprocess", issue_number, project)
+            )
+            .add_button(
+                "🛑 Stop Workflow", callback_data=_issue_callback("stop", issue_number, project)
+            )
         )
-    
+
     return send_notification(message, keyboard=keyboard)
 
 
@@ -295,12 +491,12 @@ def notify_workflow_completed(
 ) -> bool:
     """
     Send notification that a workflow completed successfully.
-    
+
     Args:
         issue_number: Git issue number
         project: Project name
         pr_urls: Optional PR URLs if found
-    
+
     Returns:
         True if sent successfully
     """
@@ -317,17 +513,34 @@ def notify_workflow_completed(
             f"🔗 Issue: {build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None)}\n"
             f"{pr_lines}"
         )
-        
+
         keyboard = (
             InlineKeyboard()
             .add_button("🔗 View PR", url=first_pr_url)
-            .add_button("🔗 View Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
+            .add_button(
+                "🔗 View Issue",
+                url=build_issue_url(
+                    get_repo(project),
+                    issue_number,
+                    (
+                        PROJECT_CONFIG.get(project)
+                        if isinstance(PROJECT_CONFIG.get(project), dict)
+                        else None
+                    ),
+                ),
+            )
             .new_row()
-            .add_button("✅ Approve", callback_data=f"approve_{issue_number}")
-            .add_button("📝 Request Changes", callback_data=f"reject_{issue_number}")
+            .add_button(
+                "✅ Approve", callback_data=_issue_callback("approve", issue_number, project)
+            )
+            .add_button(
+                "📝 Request Changes", callback_data=_issue_callback("reject", issue_number, project)
+            )
             .new_row()
-            .add_button("📝 Full Logs", callback_data=f"logsfull_{issue_number}")
-            .add_button("📊 Audit", callback_data=f"audit_{issue_number}")
+            .add_button(
+                "📝 Full Logs", callback_data=_issue_callback("logsfull", issue_number, project)
+            )
+            .add_button("📊 Audit", callback_data=_issue_callback("audit", issue_number, project))
         )
     else:
         message = (
@@ -337,27 +550,45 @@ def notify_workflow_completed(
             f"Status: All agents finished\n\n"
             f"⚠️ No PR found - implementation may be in progress."
         )
-        
+
         keyboard = (
             InlineKeyboard()
-            .add_button("📝 View Full Logs", callback_data=f"logsfull_{issue_number}")
-            .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
+            .add_button(
+                "📝 View Full Logs",
+                callback_data=_issue_callback("logsfull", issue_number, project),
+            )
+            .add_button(
+                "🔗 Issue",
+                url=build_issue_url(
+                    get_repo(project),
+                    issue_number,
+                    (
+                        PROJECT_CONFIG.get(project)
+                        if isinstance(PROJECT_CONFIG.get(project), dict)
+                        else None
+                    ),
+                ),
+            )
             .new_row()
-            .add_button("📊 View Audit Trail", callback_data=f"audit_{issue_number}")
+            .add_button(
+                "📊 View Audit Trail", callback_data=_issue_callback("audit", issue_number, project)
+            )
         )
-    
+
     return send_notification(message, keyboard=keyboard)
 
 
-def notify_implementation_requested(issue_number: str, requester: str, project: str = "nexus") -> bool:
+def notify_implementation_requested(
+    issue_number: str, requester: str, project: str = "nexus"
+) -> bool:
     """
     Send notification that implementation was requested.
-    
+
     Args:
         issue_number: Git issue number
         requester: Who requested the implementation
         project: Project name (default: nexus)
-    
+
     Returns:
         True if sent successfully
     """
@@ -367,16 +598,27 @@ def notify_implementation_requested(issue_number: str, requester: str, project: 
         f"Requester: {requester}\n"
         f"Status: Awaiting approval"
     )
-    
+
     keyboard = (
         InlineKeyboard()
-        .add_button("✅ Approve", callback_data=f"approve_{issue_number}")
-        .add_button("❌ Reject", callback_data=f"reject_{issue_number}")
+        .add_button("✅ Approve", callback_data=_issue_callback("approve", issue_number, project))
+        .add_button("❌ Reject", callback_data=_issue_callback("reject", issue_number, project))
         .new_row()
-        .add_button("📝 View Details", callback_data=f"logs_{issue_number}")
-        .add_button("🔗 Issue", url=build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None))
+        .add_button("📝 View Details", callback_data=_issue_callback("logs", issue_number, project))
+        .add_button(
+            "🔗 Issue",
+            url=build_issue_url(
+                get_repo(project),
+                issue_number,
+                (
+                    PROJECT_CONFIG.get(project)
+                    if isinstance(PROJECT_CONFIG.get(project), dict)
+                    else None
+                ),
+            ),
+        )
     )
-    
+
     return send_notification(message, keyboard=keyboard)
 
 
@@ -390,7 +632,7 @@ def notify_approval_required(
 ) -> bool:
     """
     Send notification that a workflow step is awaiting human approval.
-    
+
     Args:
         issue_number: Git issue number
         step_num: Step number requiring approval
@@ -398,7 +640,7 @@ def notify_approval_required(
         agent: Agent that would execute the step
         approvers: List of required approvers (shown informatively)
         project: Project name (default: nexus)
-    
+
     Returns:
         True if sent successfully
     """
@@ -416,11 +658,11 @@ def notify_approval_required(
         InlineKeyboard()
         .add_button(
             "✅ Approve",
-            callback_data=f"wfapprove_{issue_number}_{step_num}",
+            callback_data=_issue_callback("wfapprove", f"{issue_number}_{step_num}", project),
         )
         .add_button(
             "❌ Deny",
-            callback_data=f"wfdeny_{issue_number}_{step_num}",
+            callback_data=_issue_callback("wfdeny", f"{issue_number}_{step_num}", project),
         )
         .new_row()
         .add_button(
@@ -436,11 +678,15 @@ def notify_approval_required(
 # EventBus-based alerting
 # ---------------------------------------------------------------------------
 
+
 def emit_alert(
     message: str,
     severity: str = "info",
     source: str = "",
     workflow_id: str | None = None,
+    issue_number: str | None = None,
+    project_key: str | None = None,
+    actions: Sequence[dict[str, Any]] | None = None,
 ) -> bool:
     """Emit a :class:`SystemAlert` on the shared EventBus.
 
@@ -454,19 +700,33 @@ def emit_alert(
         severity:    ``info``, ``warning``, ``error``, or ``critical``.
         source:      Originating module name (informational).
         workflow_id: Optional workflow context.
+        issue_number: Optional issue identifier used for action routing.
+        project_key: Optional project key used for command routing.
+        actions: Optional action descriptors (``label``, ``callback_data``, ``url``).
 
     Returns:
         ``True`` if the alert was delivered by at least one channel.
     """
     import asyncio
 
-    from nexus.core.events import SystemAlert
+    from nexus.core.events import AlertAction, SystemAlert
 
     try:
         from orchestration.nexus_core_helpers import get_event_bus
+
         bus = get_event_bus()
     except Exception:
         bus = None
+
+    resolved_issue = str(issue_number or "").strip() or _extract_issue_number(message)
+    resolved_project = str(project_key or "").strip()
+    resolved_actions = _normalize_alert_actions(actions)
+    if not resolved_actions:
+        resolved_actions = _default_alert_actions(
+            severity,
+            resolved_issue,
+            resolved_project or None,
+        )
 
     # Try EventBus path first
     if bus and bus.subscriber_count("system.alert") > 0:
@@ -475,6 +735,16 @@ def emit_alert(
             severity=severity,
             source=source,
             workflow_id=workflow_id,
+            project_key=resolved_project,
+            issue_number=resolved_issue,
+            actions=[
+                AlertAction(
+                    label=action["label"],
+                    callback_data=action["callback_data"],
+                    url=action["url"],
+                )
+                for action in resolved_actions
+            ],
         )
         try:
             loop = asyncio.get_running_loop()
@@ -494,15 +764,27 @@ def emit_alert(
     # Fallback: direct Telegram plugin (guarantees alert delivery)
     plugin = _get_notification_plugin()
     normalized = _normalize_telegram_markdown(message, "Markdown")
+    fallback_markup = _build_reply_markup(resolved_actions)
     if plugin:
         try:
+            if hasattr(plugin, "send_message_sync"):
+                icon = {
+                    "info": "ℹ️",
+                    "warning": "⚠️",
+                    "error": "❌",
+                    "critical": "🚨",
+                }.get(str(severity or "info").lower(), "ℹ️")
+                return bool(
+                    plugin.send_message_sync(
+                        f"{icon} {normalized}",
+                        parse_mode="Markdown",
+                        reply_markup=fallback_markup,
+                    )
+                )
             if hasattr(plugin, "send_alert_sync"):
                 return bool(plugin.send_alert_sync(normalized, severity=severity))
-            if hasattr(plugin, "send_message_sync"):
-                return bool(plugin.send_message_sync(normalized, parse_mode="Markdown"))
         except Exception as exc:
             logger.warning("Direct Telegram alert failed: %s", exc)
 
     logger.warning("No alert channel available: %s", message[:120])
     return False
-

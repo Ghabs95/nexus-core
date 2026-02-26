@@ -13,7 +13,9 @@ class WorkspaceManager:
     """Manages Git worktree creation and cleanup for isolated agent execution."""
 
     @staticmethod
-    def provision_worktree(base_repo_path: str, issue_number: str, branch_name: str | None = None) -> str:
+    def provision_worktree(
+        base_repo_path: str, issue_number: str, branch_name: str | None = None
+    ) -> str:
         """
         Provision an isolated Git worktree for the given issue.
 
@@ -24,15 +26,17 @@ class WorkspaceManager:
             base_repo_path: The absolute path to the main git repository checkout.
             issue_number: The GitHub issue number (used to generate branch/folder names).
             branch_name: Optional branch name to use (e.g. from the issue's
-                Target Branch field). Falls back to ``feature/issue-{N}`` when
+                Target Branch field). Falls back to ``nexus/issue-{N}`` when
                 not provided.
 
         Returns:
             The absolute path to the provisioned worktree directory.
         """
         issue_number_str = str(issue_number).strip()
-        worktree_dir = os.path.join(base_repo_path, ".nexus", "worktrees", f"issue-{issue_number_str}")
-        branch_name = branch_name or f"feature/issue-{issue_number_str}"
+        worktree_dir = os.path.join(
+            base_repo_path, ".nexus", "worktrees", f"issue-{issue_number_str}"
+        )
+        branch_name = (branch_name or "").strip() or f"nexus/issue-{issue_number_str}"
 
         logger.info(f"Provisioning worktree for issue {issue_number_str} at {worktree_dir}")
 
@@ -42,8 +46,11 @@ class WorkspaceManager:
                 logger.info(f"Worktree for issue {issue_number_str} already exists. Reusing.")
                 return worktree_dir
             else:
-                logger.warning(f"Invalid worktree found at {worktree_dir} (missing .git). Cleaning up.")
+                logger.warning(
+                    f"Invalid worktree found at {worktree_dir} (missing .git). Cleaning up."
+                )
                 import shutil
+
                 shutil.rmtree(worktree_dir, ignore_errors=True)
 
         os.makedirs(os.path.dirname(worktree_dir), exist_ok=True)
@@ -58,7 +65,7 @@ class WorkspaceManager:
                 cwd=base_repo_path,
                 env=env,
             )
-            branch_exists_locally = (result.returncode == 0)
+            branch_exists_locally = result.returncode == 0
         except Exception:
             pass
 
@@ -106,7 +113,9 @@ class WorkspaceManager:
             True if cleanup was successful or skipped, False if an error occurred.
         """
         issue_number_str = str(issue_number).strip()
-        worktree_dir = os.path.join(base_repo_path, ".nexus", "worktrees", f"issue-{issue_number_str}")
+        worktree_dir = os.path.join(
+            base_repo_path, ".nexus", "worktrees", f"issue-{issue_number_str}"
+        )
 
         if not os.path.exists(worktree_dir):
             return True

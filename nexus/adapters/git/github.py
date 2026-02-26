@@ -1,4 +1,5 @@
 """GitHub platform adapter using gh CLI."""
+
 import json
 import logging
 import subprocess
@@ -27,16 +28,9 @@ class GitHubPlatform(GitPlatform):
     def _check_gh_cli(self) -> None:
         """Check if gh CLI is installed and authenticated."""
         try:
-            subprocess.run(
-                ["gh", "--version"],
-                capture_output=True,
-                check=True,
-                timeout=5
-            )
+            subprocess.run(["gh", "--version"], capture_output=True, check=True, timeout=5)
         except (subprocess.CalledProcessError, FileNotFoundError):
-            raise RuntimeError(
-                "gh CLI not found. Install from https://cli.github.com/"
-            )
+            raise RuntimeError("gh CLI not found. Install from https://cli.github.com/")
 
     def _run_gh_command(self, args: list[str], timeout: int = 30) -> str:
         """Run gh CLI command and return stdout."""
@@ -46,17 +40,13 @@ class GitHubPlatform(GitPlatform):
         env = None
         if self.token:
             import os
+
             env = os.environ.copy()
             env["GITHUB_TOKEN"] = self.token
 
         try:
             result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=True,
-                env=env
+                cmd, capture_output=True, text=True, timeout=timeout, check=True, env=env
             )
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:
@@ -73,10 +63,14 @@ class GitHubPlatform(GitPlatform):
     ) -> list[Issue]:
         """List open issues with optional label filtering."""
         args = [
-            "issue", "list",
-            "--state", "open",
-            "--limit", str(limit),
-            "--json", "number,title,body,state,labels,createdAt,updatedAt,url",
+            "issue",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            str(limit),
+            "--json",
+            "number,title,body,state,labels,createdAt,updatedAt,url",
         ]
         if labels:
             args.extend(["--label", ",".join(labels)])
@@ -88,9 +82,7 @@ class GitHubPlatform(GitPlatform):
         except RuntimeError:
             return []
 
-    async def create_issue(
-        self, title: str, body: str, labels: list[str] | None = None
-    ) -> Issue:
+    async def create_issue(self, title: str, body: str, labels: list[str] | None = None) -> Issue:
         """Create a new issue."""
         args = ["issue", "create", "--title", title, "--body", body]
 
@@ -109,8 +101,11 @@ class GitHubPlatform(GitPlatform):
         """Get issue by ID or number."""
         try:
             args = [
-                "issue", "view", str(issue_id),
-                "--json", "number,title,body,state,labels,createdAt,updatedAt,url"
+                "issue",
+                "view",
+                str(issue_id),
+                "--json",
+                "number,title,body,state,labels,createdAt,updatedAt,url",
             ]
             output = self._run_gh_command(args)
             data = json.loads(output)
@@ -167,17 +162,16 @@ class GitHubPlatform(GitPlatform):
             author="bot",
             body=body,
             created_at=datetime.now(UTC),
-            url=f"https://github.com/{self.repo}/issues/{issue_id}"
+            url=f"https://github.com/{self.repo}/issues/{issue_id}",
         )
 
-    async def get_comments(
-        self, issue_id: str, since: datetime | None = None
-    ) -> list[Comment]:
+    async def get_comments(self, issue_id: str, since: datetime | None = None) -> list[Comment]:
         """Get comments for an issue."""
         args = [
             "api",
             f"/repos/{self.repo}/issues/{issue_id}/comments",
-            "--jq", ".[]|{id,user:.user.login,body,created_at,html_url}"
+            "--jq",
+            ".[]|{id,user:.user.login,body,created_at,html_url}",
         ]
 
         try:
@@ -201,7 +195,7 @@ class GitHubPlatform(GitPlatform):
                     author=data["user"],
                     body=data["body"],
                     created_at=created_at,
-                    url=data["html_url"]
+                    url=data["html_url"],
                 )
                 comments.append(comment)
 
@@ -221,9 +215,12 @@ class GitHubPlatform(GitPlatform):
         """Find PRs linked to this issue."""
         # Search for PRs mentioning this issue
         args = [
-            "pr", "list",
-            "--search", f"#{issue_id}",
-            "--json", "number,title,state,headRefName,baseRefName,url"
+            "pr",
+            "list",
+            "--search",
+            f"#{issue_id}",
+            "--json",
+            "number,title,state,headRefName,baseRefName,url",
         ]
 
         try:
@@ -240,7 +237,7 @@ class GitHubPlatform(GitPlatform):
                     head_branch=pr_data["headRefName"],
                     base_branch=pr_data["baseRefName"],
                     url=pr_data["url"],
-                    linked_issues=[issue_id]
+                    linked_issues=[issue_id],
                 )
                 prs.append(pr)
 
@@ -252,6 +249,51 @@ class GitHubPlatform(GitPlatform):
         """Create a new branch. Returns branch URL."""
         logger.warning("Branch creation not implemented in GitHub adapter")
         return f"https://github.com/{self.repo}/tree/{branch_name}"
+
+    async def merge_pull_request(
+        self,
+        pr_id: str,
+        *,
+        squash: bool = True,
+        delete_branch: bool = True,
+        auto: bool = True,
+    ) -> str:
+        """Merge a GitHub pull request via gh CLI."""
+        args = ["pr", "merge", str(pr_id)]
+        if squash:
+            args.append("--squash")
+        if delete_branch:
+            args.append("--delete-branch")
+        if auto:
+            args.append("--auto")
+        return self._run_gh_command(args, timeout=60)
+
+    async def ensure_label(
+        self,
+        name: str,
+        *,
+        color: str,
+        description: str = "",
+    ) -> bool:
+        """Ensure a GitHub label exists via gh CLI."""
+        args = [
+            "label",
+            "create",
+            str(name),
+            "--color",
+            str(color),
+            "--description",
+            str(description or ""),
+        ]
+        try:
+            self._run_gh_command(args, timeout=20)
+            return True
+        except RuntimeError as exc:
+            msg = str(exc).lower()
+            if "already exists" in msg:
+                return True
+            logger.warning("Failed to ensure GitHub label %s: %s", name, exc)
+            return False
 
     async def create_pr_from_changes(
         self,
@@ -287,7 +329,9 @@ class GitHubPlatform(GitPlatform):
         else:
             issue_ref = f"{issue_repo_ref}#{issue_number}"
             issue_url = rf"https?://github\.com/{_re.escape(issue_repo_ref)}/issues/{_re.escape(issue_number)}"
-            closing_ref_pattern = rf"(?:{_re.escape(issue_repo_ref)}#{_re.escape(issue_number)}|{issue_url})"
+            closing_ref_pattern = (
+                rf"(?:{_re.escape(issue_repo_ref)}#{_re.escape(issue_number)}|{issue_url})"
+            )
 
         closing_pattern = _re.compile(
             rf"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+{closing_ref_pattern}\b",
@@ -348,12 +392,19 @@ class GitHubPlatform(GitPlatform):
             # Create PR via gh CLI
             pr_result = subprocess.run(
                 [
-                    "gh", "pr", "create",
-                    "--repo", self.repo,
-                    "--base", resolved_base,
-                    "--head", branch_name,
-                    "--title", title,
-                    "--body", body,
+                    "gh",
+                    "pr",
+                    "create",
+                    "--repo",
+                    self.repo,
+                    "--base",
+                    resolved_base,
+                    "--head",
+                    branch_name,
+                    "--title",
+                    title,
+                    "--body",
+                    body,
                 ],
                 cwd=repo_dir,
                 text=True,
@@ -417,8 +468,11 @@ class GitHubPlatform(GitPlatform):
 
         try:
             args = [
-                "issue", "view", str(issue_number),
-                "--json", "labels",
+                "issue",
+                "view",
+                str(issue_number),
+                "--json",
+                "labels",
             ]
             output = self._run_gh_command(args, timeout=10)
             data = json.loads(output)
@@ -426,14 +480,12 @@ class GitHubPlatform(GitPlatform):
 
             for label in labels:
                 if label.startswith(label_prefix):
-                    raw = label[len(label_prefix):]
+                    raw = label[len(label_prefix) :]
                     return WorkflowDefinition.normalize_workflow_type(raw, default=default)
 
             return default
         except Exception as e:
-            logger.error(
-                f"Failed to get workflow_type from issue #{issue_number}: {e}"
-            )
+            logger.error(f"Failed to get workflow_type from issue #{issue_number}: {e}")
             return default
 
     def _parse_issue(self, data: dict) -> Issue:
@@ -449,5 +501,5 @@ class GitHubPlatform(GitPlatform):
             labels=labels,
             created_at=datetime.fromisoformat(data["createdAt"].replace("Z", "+00:00")),
             updated_at=datetime.fromisoformat(data["updatedAt"].replace("Z", "+00:00")),
-            url=data["url"]
+            url=data["url"],
         )

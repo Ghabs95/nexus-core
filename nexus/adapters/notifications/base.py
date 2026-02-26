@@ -1,4 +1,5 @@
 """Base interface for notification channels."""
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -27,9 +28,7 @@ class NotificationChannel(ABC):
     """Abstract notification channel (Telegram, Slack, Email, etc.)."""
 
     @abstractmethod
-    async def send_message(
-        self, user_id: str, message: Message
-    ) -> str:
+    async def send_message(self, user_id: str, message: Message) -> str:
         """
         Send a message to a user.
 
