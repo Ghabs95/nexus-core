@@ -24,7 +24,9 @@ def _resolve_project_only_arg(ctx: Any, deps: Any) -> str | None:
     return None
 
 
-def _read_latest_project_log(project_key: str, deps: Any, *, max_lines: int) -> tuple[str | None, list[str]]:
+def _read_latest_project_log(
+    project_key: str, deps: Any, *, max_lines: int
+) -> tuple[str | None, list[str]]:
     logs_dir = deps.get_project_logs_dir(project_key)
     if not logs_dir or not os.path.isdir(logs_dir):
         return None, []

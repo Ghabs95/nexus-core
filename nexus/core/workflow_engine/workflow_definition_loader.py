@@ -16,6 +16,44 @@ def parse_require_human_merge_approval(data: dict[str, Any]) -> bool:
     return bool(require_human_merge_approval)
 
 
+def resolve_workflow_steps_list(
+    data: dict[str, Any], workflow_type: str = ""
+) -> list[dict[str, Any]]:
+    """Resolve workflow steps from flat or tiered workflow definition layouts."""
+    if workflow_type:
+        workflow_types_mapping = data.get("workflow_types", {})
+        mapped_type = workflow_types_mapping.get(workflow_type, workflow_type)
+
+        key_prefix = mapped_type.replace("-", "_")
+        keys_to_try = [
+            f"{key_prefix}_workflow",
+            key_prefix,
+            f"{mapped_type}_workflow",
+            mapped_type,
+        ]
+        seen: set[str] = set()
+        for key in keys_to_try:
+            if key in seen:
+                continue
+            seen.add(key)
+            tier = data.get(key, {})
+            if isinstance(tier, dict) and tier.get("steps"):
+                steps = tier["steps"]
+                return steps if isinstance(steps, list) else []
+        return []
+
+    flat = data.get("steps", [])
+    if isinstance(flat, list) and flat:
+        return flat
+
+    for key, value in data.items():
+        if key.endswith("_workflow") and isinstance(value, dict) and value.get("steps"):
+            steps = value["steps"]
+            return steps if isinstance(steps, list) else []
+
+    return []
+
+
 def build_workflow_steps(
     *,
     data: dict[str, Any],
@@ -234,8 +272,12 @@ def resolve_next_agent_types_from_steps(
     if not steps:
         return []
 
-    by_id: dict[str, dict[str, Any]] = {s["id"]: s for s in steps if isinstance(s, dict) and "id" in s}
-    current_steps = [s for s in steps if isinstance(s, dict) and s.get("agent_type") == current_agent_type]
+    by_id: dict[str, dict[str, Any]] = {
+        s["id"]: s for s in steps if isinstance(s, dict) and "id" in s
+    }
+    current_steps = [
+        s for s in steps if isinstance(s, dict) and s.get("agent_type") == current_agent_type
+    ]
     if not current_steps:
         return []
 

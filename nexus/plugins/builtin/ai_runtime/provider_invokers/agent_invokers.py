@@ -193,4 +193,3 @@ def invoke_gemini_agent_cli(
     except Exception as exc:
         logger.error("❌ Gemini launch failed: %s", exc)
         raise
-

@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from services.monitoring_logs_service import handle_logs, handle_logsfull, handle_tail
+from services.monitoring.monitoring_logs_service import handle_logs, handle_logsfull, handle_tail
 
 
 class _Ctx:
@@ -50,6 +50,7 @@ def _deps():
         base_dir="/tmp",
         read_log_matches=lambda *a, **k: [],
         get_project_logs_dir=lambda project_key: None,
+        get_inbox_storage_backend=lambda: "filesystem",
         active_tail_sessions={},
         active_tail_tasks={},
     )

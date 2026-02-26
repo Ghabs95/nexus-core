@@ -106,4 +106,3 @@ def transcribe_with_copilot_cli(
         raise Exception("Copilot returned empty transcription")
     except subprocess.TimeoutExpired as exc:
         raise Exception(f"Copilot transcription timed out (>{timeout}s)") from exc
-

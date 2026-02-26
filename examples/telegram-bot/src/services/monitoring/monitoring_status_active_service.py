@@ -89,7 +89,9 @@ async def handle_status(ctx: Any, deps: Any) -> None:
             for filename in files[:3]:
                 task_type = filename.split("_")[0]
                 emoji = deps.types_map.get(task_type, "📝")
-                issue_number = deps.extract_issue_number_from_file(os.path.join(inbox_dir, filename))
+                issue_number = deps.extract_issue_number_from_file(
+                    os.path.join(inbox_dir, filename)
+                )
                 if issue_number:
                     issue_link = deps.build_issue_url(
                         repo,
@@ -201,9 +203,15 @@ async def handle_active(ctx: Any, deps: Any) -> None:
     inbox_backend = str(deps.get_inbox_storage_backend() or "").strip().lower()
     if inbox_backend == "postgres":
         if cleanup_mode:
-            await ctx.reply_text("⚠️ `/active cleanup` is disabled in `postgres` mode because it requires filesystem task files.", parse_mode="Markdown")
+            await ctx.reply_text(
+                "⚠️ `/active cleanup` is disabled in `postgres` mode because it requires filesystem task files.",
+                parse_mode="Markdown",
+            )
             return
-        await ctx.reply_text("⚠️ `/active` is filesystem-based and is disabled in `postgres` mode. Use `/wfstate`, `/status`, and `/audit` for DB-backed visibility.", parse_mode="Markdown")
+        await ctx.reply_text(
+            "⚠️ `/active` is filesystem-based and is disabled in `postgres` mode. Use `/wfstate`, `/status`, and `/audit` for DB-backed visibility.",
+            parse_mode="Markdown",
+        )
         return
 
     selected_projects = [project_filter] if project_filter else deps.iter_project_keys()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable, Protocol, cast
 
 from nexus.adapters.notifications.base import Button
 
@@ -79,7 +79,10 @@ async def handle_feature_ideation_callback(
 
         if not project_key:
             await ctx.edit_message_text(
-                text=("📁 Great — now choose a project to continue.\n\n" f"Selected count: *{feature_count}*"),
+                text=(
+                    "📁 Great — now choose a project to continue.\n\n"
+                    f"Selected count: *{feature_count}*"
+                ),
                 buttons=feature_project_keyboard(deps),
             )
             return
@@ -105,7 +108,9 @@ async def handle_feature_ideation_callback(
             project_locked = is_project_locked(feature_state)
             retry_keyboard_rows = []
             if not project_locked:
-                retry_keyboard_rows.append([Button("📁 Choose project", callback_data="feat:choose_project")])
+                retry_keyboard_rows.append(
+                    [Button("📁 Choose project", callback_data="feat:choose_project")]
+                )
             retry_keyboard_rows.append([Button("❌ Close", callback_data="flow:close")])
             await ctx.edit_message_text(
                 text=feature_generation_retry_text(project_key, deps),
@@ -134,9 +139,13 @@ async def handle_feature_ideation_callback(
 
         project_locked = is_project_locked(feature_state)
         current_project = str(feature_state.get("project") or "")
-        current_items = feature_state.get("items") if isinstance(feature_state.get("items"), list) else []
+        current_items = (
+            feature_state.get("items") if isinstance(feature_state.get("items"), list) else []
+        )
         selected_items = (
-            feature_state.get("selected_items") if isinstance(feature_state.get("selected_items"), list) else []
+            feature_state.get("selected_items")
+            if isinstance(feature_state.get("selected_items"), list)
+            else []
         )
         if project_locked and current_project and project_key != current_project:
             await ctx.edit_message_text(
@@ -151,9 +160,15 @@ async def handle_feature_ideation_callback(
         if project_key == current_project and current_items:
             await ctx.edit_message_text(
                 text=feature_list_text(
-                    project_key, current_items, deps, preferred_agent_type, selected_features=selected_items
+                    project_key,
+                    current_items,
+                    deps,
+                    preferred_agent_type,
+                    selected_features=selected_items,
                 ),
-                buttons=feature_list_keyboard(current_items, allow_project_change=not project_locked),
+                buttons=feature_list_keyboard(
+                    current_items, allow_project_change=not project_locked
+                ),
             )
             return
 
@@ -193,7 +208,9 @@ async def handle_feature_ideation_callback(
         if not features:
             retry_keyboard_rows = []
             if not project_locked:
-                retry_keyboard_rows.append([Button("📁 Choose project", callback_data="feat:choose_project")])
+                retry_keyboard_rows.append(
+                    [Button("📁 Choose project", callback_data="feat:choose_project")]
+                )
             retry_keyboard_rows.append([Button("❌ Close", callback_data="flow:close")])
             await ctx.edit_message_text(
                 text=feature_generation_retry_text(project_key, deps),
@@ -235,7 +252,9 @@ async def handle_feature_ideation_callback(
 
         selected = features[selected_index]
         selected_items = (
-            feature_state.get("selected_items") if isinstance(feature_state.get("selected_items"), list) else []
+            feature_state.get("selected_items")
+            if isinstance(feature_state.get("selected_items"), list)
+            else []
         )
         remaining_features = [item for idx, item in enumerate(features) if idx != selected_index]
         ctx.user_state[feature_state_key] = {
@@ -256,16 +275,23 @@ async def handle_feature_ideation_callback(
             )
             if hasattr(ctx.raw_event, "message") and hasattr(ctx.raw_event.message, "message_id"):
                 trigger_message_id = str(ctx.raw_event.message.message_id)
-            result = await create_feature_task(task_text, trigger_message_id, str(project_key))
+            create_feature_task_fn = cast(_CreateFeatureTaskFn, create_feature_task)
+            result = await create_feature_task_fn(task_text, trigger_message_id, str(project_key))
             message = str(result.get("message") or "⚠️ Task processing completed.")
             project_locked = is_project_locked(feature_state)
             keyboard_rows: list[list[Button]] = []
             if remaining_features:
-                keyboard_rows.append([Button("⬅️ Back to feature list", callback_data=f"feat:project:{project_key}")])
+                keyboard_rows.append(
+                    [Button("⬅️ Back to feature list", callback_data=f"feat:project:{project_key}")]
+                )
             elif message:
-                message = f"{message}\n\n✅ All feature proposals from this list have been selected."
+                message = (
+                    f"{message}\n\n✅ All feature proposals from this list have been selected."
+                )
             if remaining_features and not project_locked:
-                keyboard_rows.append([Button("📁 Choose project", callback_data="feat:choose_project")])
+                keyboard_rows.append(
+                    [Button("📁 Choose project", callback_data="feat:choose_project")]
+                )
             keyboard_rows.append([Button("❌ Close", callback_data="flow:close")])
             await ctx.edit_message_text(text=message, buttons=keyboard_rows)
             return
@@ -286,7 +312,9 @@ async def handle_feature_ideation_callback(
         project_locked = is_project_locked(feature_state)
         keyboard_rows = []
         if remaining_features:
-            keyboard_rows.append([Button("⬅️ Back to feature list", callback_data=f"feat:project:{project_key}")])
+            keyboard_rows.append(
+                [Button("⬅️ Back to feature list", callback_data=f"feat:project:{project_key}")]
+            )
         else:
             detail_lines.extend(["", "✅ All feature proposals from this list have been selected."])
         if remaining_features and not project_locked:
@@ -296,3 +324,5 @@ async def handle_feature_ideation_callback(
         return
 
     await ctx.edit_message_text("⚠️ Unknown feature action.")
+class _CreateFeatureTaskFn(Protocol):
+    def __call__(self, text: str, message_id: str, project_key: str) -> Awaitable[dict[str, Any]]: ...

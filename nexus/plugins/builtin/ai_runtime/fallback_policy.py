@@ -44,7 +44,9 @@ def resolve_analysis_tool_order(
         if not mapped_agent:
             mapped_agent = str(operation_agents.get("default") or "").strip()
     else:
-        mapped_agent = str(operation_agents.get(task_key) or operation_agents.get("default") or "").strip()
+        mapped_agent = str(
+            operation_agents.get(task_key) or operation_agents.get("default") or ""
+        ).strip()
 
     mapped_agent = resolve_issue_override_agent(
         task_key=task_key,

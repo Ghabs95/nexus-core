@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock
 
-from services.workflow_recovery_service import run_stuck_agents_cycle
+from services.workflow.workflow_recovery_service import run_stuck_agents_cycle
 
 
 def test_run_stuck_agents_cycle_success_logs_and_clears():

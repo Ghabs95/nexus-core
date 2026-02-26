@@ -87,7 +87,9 @@ def parse_analysis_result(output: str, task: str, *, logger: Any) -> dict[str, A
     cleaned_output = strip_cli_tool_output(output)
 
     candidates: list[str] = [cleaned_output.strip()]
-    fenced_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned_output, flags=re.IGNORECASE)
+    fenced_blocks = re.findall(
+        r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned_output, flags=re.IGNORECASE
+    )
     candidates.extend(block.strip() for block in fenced_blocks if block.strip())
 
     first_brace = cleaned_output.find("{")

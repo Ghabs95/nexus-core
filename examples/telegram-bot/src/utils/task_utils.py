@@ -3,14 +3,15 @@ import logging
 import os
 import re
 
-from config import get_nexus_dir_name, BASE_DIR, NEXUS_STORAGE_BACKEND
+from config import get_nexus_dir_name, BASE_DIR
+from config_storage_capabilities import get_storage_capabilities
 
 logger = logging.getLogger(__name__)
 
 
 def find_task_file_by_issue(issue_num: str) -> str | None:
     """Search for a task file that references the issue number."""
-    if str(NEXUS_STORAGE_BACKEND or "").strip().lower() == "postgres":
+    if not get_storage_capabilities().local_task_files:
         raise RuntimeError("find_task_file_by_issue is disabled in postgres mode")
     nexus_dir_name = get_nexus_dir_name()
     patterns = [

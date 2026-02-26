@@ -29,4 +29,3 @@ def unique_tools(order: Iterable[Any]) -> list[Any]:
         unique.append(tool)
         seen.add(tool)
     return unique
-

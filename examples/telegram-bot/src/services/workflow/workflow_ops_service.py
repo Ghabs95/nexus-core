@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -10,7 +9,8 @@ from collections import deque
 from collections.abc import Callable
 from typing import Any
 
-from config import INBOX_PROCESSOR_LOG_FILE, NEXUS_CORE_STORAGE_DIR, NEXUS_STORAGE_BACKEND
+from config import INBOX_PROCESSOR_LOG_FILE, NEXUS_CORE_STORAGE_DIR
+from config_storage_capabilities import get_storage_capabilities
 from integrations.workflow_state_factory import get_storage_backend
 from integrations.workflow_state_factory import get_workflow_state as _get_wf_state
 from orchestration.plugin_runtime import (
@@ -19,10 +19,6 @@ from orchestration.plugin_runtime import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _db_only_task_mode() -> bool:
-    return str(NEXUS_STORAGE_BACKEND or "").strip().lower() == "postgres"
 
 
 async def _latest_completion_from_storage(issue_num: str) -> dict[str, Any] | None:
@@ -50,7 +46,9 @@ async def _save_completion_to_storage(issue_num: str, signal: dict[str, str]) ->
             "summary": f"Reconciled from Git comment {signal.get('comment_id', 'n/a')}",
             "source": "telegram-reconcile",
         }
-        return await backend.save_completion(str(issue_num), str(signal.get("completed_agent", "unknown")), payload)
+        return await backend.save_completion(
+            str(issue_num), str(signal.get("completed_agent", "unknown")), payload
+        )
     except Exception as exc:
         logger.debug("Failed to save completion to storage for #%s: %s", issue_num, exc)
         return None
@@ -179,7 +177,7 @@ async def reconcile_issue_from_signals(
     completion_path: str | None = None
     if applied:
         selected_signal = applied[-1]
-        if _db_only_task_mode():
+        if not get_storage_capabilities().local_completions:
             completion_path = await _save_completion_to_storage(issue_num, selected_signal)
         else:
             completion_path = write_local_completion_from_signal(
@@ -239,15 +237,19 @@ async def fetch_workflow_state_snapshot(
     expected_running = get_expected_running_agent_from_workflow(issue_num)
 
     # 3. Build snapshot
-    if _db_only_task_mode():
-        db_completion = await _latest_completion_from_storage(issue_num)
-        find_task_file = lambda _issue_num: None
-        read_local_completion = lambda _issue_num: db_completion
-    else:
+    caps = get_storage_capabilities()
+    if caps.local_task_files:
         from utils.task_utils import find_task_file_by_issue
 
         find_task_file = find_task_file_by_issue
+    else:
+        find_task_file = lambda _issue_num: None
+
+    if caps.local_completions:
         read_local_completion = read_latest_local_completion
+    else:
+        db_completion = await _latest_completion_from_storage(issue_num)
+        read_local_completion = lambda _issue_num: db_completion
 
     snapshot = build_workflow_snapshot(
         issue_num=issue_num,
@@ -257,7 +259,8 @@ async def fetch_workflow_state_snapshot(
         find_task_file_by_issue=find_task_file,
         read_latest_local_completion=read_local_completion,
         extract_structured_completion_signals=extract_structured_completion_signals,
-        db_only_mode=_db_only_task_mode(),
+        local_task_files_enabled=caps.local_task_files,
+        local_workflow_files_enabled=caps.local_workflow_files,
     )
 
     return {"ok": True, "snapshot": snapshot}
@@ -272,13 +275,14 @@ def build_workflow_snapshot(
     find_task_file_by_issue: Callable[[str], str | None],
     read_latest_local_completion: Callable[[str], dict[str, Any] | None],
     extract_structured_completion_signals: Callable[[list[dict]], list[dict[str, str]]],
-    db_only_mode: bool = False,
+    local_task_files_enabled: bool = True,
+    local_workflow_files_enabled: bool = True,
 ) -> dict[str, Any]:
     """Build workflow/process/local/comment snapshot used by /wfstate."""
     workflow_id = _get_wf_state().get_workflow_id(issue_num)
     workflow_file = (
         os.path.join(NEXUS_CORE_STORAGE_DIR, "workflows", f"{workflow_id}.json")
-        if workflow_id and not db_only_mode
+        if workflow_id and local_workflow_files_enabled
         else None
     )
 
@@ -416,7 +420,7 @@ def build_workflow_snapshot(
         ),
         "running": running,
         "pid": pid,
-        "task_file": None if db_only_mode else find_task_file_by_issue(issue_num),
+        "task_file": (find_task_file_by_issue(issue_num) if local_task_files_enabled else None),
         "workflow_file": workflow_file,
         "local": local,
         "local_from": local_from,

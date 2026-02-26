@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from services.inbox_routing_service import (
+from services.inbox.inbox_routing_service import (
     process_inbox_task_request,
     save_resolved_inbox_task_request,
 )

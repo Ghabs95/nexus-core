@@ -11,6 +11,7 @@ from nexus.core.workflow_engine.workflow_definition_loader import (
     build_prompt_context_text,
     canonicalize_next_agent_from_steps,
     resolve_next_agent_types_from_steps,
+    resolve_workflow_steps_list,
 )
 
 
@@ -356,3 +357,21 @@ def test_canonicalize_next_agent_from_steps_maps_step_id_name_or_single_fallback
         candidate="unknown",
         valid_next_agents=["qa"],
     ) == "qa"
+
+
+def test_resolve_workflow_steps_list_prefers_tier_mapping_and_normalizes_hyphens():
+    data = {
+        "workflow_types": {"workflow:fast-track": "fast-track"},
+        "fast_track_workflow": {"steps": [{"id": "a"}]},
+        "steps": [{"id": "flat"}],
+    }
+
+    assert resolve_workflow_steps_list(data, "workflow:fast-track") == [{"id": "a"}]
+
+
+def test_resolve_workflow_steps_list_falls_back_to_flat_then_first_tier():
+    assert resolve_workflow_steps_list({"steps": [{"id": "flat"}]}, "") == [{"id": "flat"}]
+    assert resolve_workflow_steps_list(
+        {"x_workflow": {"steps": [{"id": "tier"}]}},
+        "",
+    ) == [{"id": "tier"}]

@@ -1,7 +1,7 @@
 import logging
 
 import pytest
-from services.monitoring_status_active_service import handle_active, handle_status
+from services.monitoring.monitoring_status_active_service import handle_active, handle_status
 
 
 class _Ctx:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from services.callback_registry_service import dispatch_callback_action
+from services.callbacks.callback_registry_service import dispatch_callback_action
 
 from nexus.adapters.notifications.base import Button
 

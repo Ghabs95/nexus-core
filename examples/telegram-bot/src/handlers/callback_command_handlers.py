@@ -10,11 +10,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from interactive_context import InteractiveContext
 
-from services.callback_inline_service import (
+from services.callbacks.callback_inline_service import (
     handle_merge_queue_inline_action,
     parse_inline_action,
 )
-from services.callback_menu_service import handle_menu_callback as service_menu_callback_handler
+from services.callbacks.callback_menu_service import (
+    handle_menu_callback as service_menu_callback_handler,
+)
 from state_manager import HostStateManager
 
 

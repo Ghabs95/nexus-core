@@ -12,8 +12,8 @@ from collections.abc import Callable
 from typing import Any
 
 from config import NEXUS_STORAGE_BACKEND
-
 from integrations.workflow_state_factory import get_storage_backend
+
 from nexus.adapters.git.utils import build_issue_url, resolve_repo
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,9 @@ def _read_latest_completion_from_storage(issue_num: str) -> dict[str, Any] | Non
         return None
 
     return {
-        "agent_type": str(payload.get("agent_type") or payload.get("_agent_type") or "").strip().lower(),
+        "agent_type": str(payload.get("agent_type") or payload.get("_agent_type") or "")
+        .strip()
+        .lower(),
         "next_agent": str(payload.get("next_agent") or "").strip().lower(),
         "status": str(payload.get("status") or "").strip().lower(),
         "is_workflow_done": bool(payload.get("is_workflow_done", False)),
@@ -323,15 +325,27 @@ def prepare_continue_context(
     else:
         latest_completion = _read_latest_completion_from_storage(str(issue_num))
         if latest_completion:
-            if latest_completion.get("is_workflow_done") or latest_completion.get("status") in {"done", "complete", "completed"}:
+            if latest_completion.get("is_workflow_done") or latest_completion.get("status") in {
+                "done",
+                "complete",
+                "completed",
+            }:
                 workflow_already_done = True
                 resumed_from = latest_completion.get("agent_type") or resumed_from
             else:
                 normalized = normalize_agent_reference(latest_completion.get("next_agent"))
-                if normalized and normalized.lower() not in {"none", "n/a", "null", "done", "end", "finish", "complete", ""}:
+                if normalized and normalized.lower() not in {
+                    "none",
+                    "n/a",
+                    "null",
+                    "done",
+                    "end",
+                    "finish",
+                    "complete",
+                    "",
+                }:
                     agent_type = normalized
                     resumed_from = latest_completion.get("agent_type") or resumed_from
-
 
     if forced_agent:
         agent_type = normalize_agent_reference(forced_agent) or forced_agent

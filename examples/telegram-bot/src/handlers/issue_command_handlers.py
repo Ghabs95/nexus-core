@@ -32,7 +32,7 @@ class IssueHandlerDeps:
     ]
     project_repo: Callable[[str], str]
     project_issue_url: Callable[[str, str], str]
-    get_issue_details: Callable[[str, str | None], dict[str, Any] | None]
+    get_issue_details: Callable[..., dict[str, Any] | None]
     get_direct_issue_plugin: Callable[[str], Any]
     resolve_project_config_from_task: Callable[[str], tuple[str | None, dict[str, Any] | None]]
     invoke_copilot_agent: Callable[..., tuple[int | None, str | None]]
@@ -556,7 +556,7 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
         repo = deps.project_repo(project_key)
         task_file = None if _db_only_task_mode() else deps.find_task_file_by_issue(issue_num)
         if not task_file:
-            details = deps.get_issue_details(issue_num, repo=repo)
+            details = deps.get_issue_details(issue_num, repo)
             if details and not _db_only_task_mode():
                 body = details.get("body", "")
                 match = re.search(r"Task File:\s*`([^`]+)`", body)
@@ -564,15 +564,23 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
 
         if _db_only_task_mode():
             project_name = project_key
-            project_cfg = deps.project_config.get(project_key) if isinstance(deps.project_config, dict) else None
+            project_cfg = (
+                deps.project_config.get(project_key)
+                if isinstance(deps.project_config, dict)
+                else None
+            )
             config = project_cfg if isinstance(project_cfg, dict) else None
             if not config or not config.get("agents_dir") or not config.get("workspace"):
-                await ctx.reply_text("⚠️ Posted comment but no agents/workspace config for project.")
+                await ctx.reply_text(
+                    "⚠️ Posted comment but no agents/workspace config for project."
+                )
                 return
             repo = deps.resolve_repo(config, deps.default_repo)
         else:
             if not task_file or not os.path.exists(task_file):
-                await ctx.reply_text("⚠️ Posted comment but couldn't find task file to continue agent.")
+                await ctx.reply_text(
+                    "⚠️ Posted comment but couldn't find task file to continue agent."
+                )
                 return
 
             project_name, config = deps.resolve_project_config_from_task(task_file)
@@ -596,7 +604,7 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
         )
 
         if not details:
-            details = deps.get_issue_details(issue_num, repo=repo)
+            details = deps.get_issue_details(issue_num, repo)
             if not details:
                 await ctx.reply_text(
                     "⚠️ Posted comment but couldn't fetch issue details to continue agent."
@@ -615,7 +623,11 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
             labels = details.get("labels") if isinstance(details, dict) else None
             if isinstance(labels, list):
                 for label in labels:
-                    name = str(label.get("name") if isinstance(label, dict) else label or "").strip().lower()
+                    name = (
+                        str(label.get("name") if isinstance(label, dict) else label or "")
+                        .strip()
+                        .lower()
+                    )
                     if name.startswith("type:"):
                         candidate = name.split(":", 1)[1].strip()
                         if candidate:

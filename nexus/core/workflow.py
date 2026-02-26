@@ -12,23 +12,28 @@ import yaml
 from nexus.adapters.storage.base import StorageBackend
 from nexus.core.events import (
     EventBus,
-    StepCompleted,
-    StepFailed,
     StepStarted,
     WorkflowCancelled,
     WorkflowCompleted,
     WorkflowFailed,
     WorkflowPaused,
     WorkflowStarted,
+    NexusEvent,
 )
-from nexus.core.workflow_engine.completion_service import (
-    apply_step_completion_result,
+from nexus.core.models import (
+    AuditEvent,
+    DryRunReport,
+    StepStatus,
+    Workflow,
+    WorkflowState,
+    WorkflowStep,
 )
-from nexus.core.workflow_engine.condition_eval import evaluate_condition
 from nexus.core.workflow_engine.audit_event_service import (
     finalize_step_completion_tail,
     finalize_terminal_success,
 )
+from nexus.core.workflow_engine.completion_service import apply_step_completion_result
+from nexus.core.workflow_engine.condition_eval import evaluate_condition
 from nexus.core.workflow_engine.transition_service import advance_after_success
 from nexus.core.workflow_engine.transition_service import (
     reset_step_for_goto as reset_step_for_goto_impl,
@@ -40,23 +45,14 @@ from nexus.core.workflow_engine.workflow_definition_loader import (
     build_prompt_context_text,
     build_workflow_steps,
     parse_require_human_merge_approval,
+    resolve_workflow_steps_list,
     resolve_next_agent_types_from_steps,
-)
-from nexus.core.models import (
-    AuditEvent,
-    DryRunReport,
-    StepStatus,
-    Workflow,
-    WorkflowState,
-    WorkflowStep,
 )
 
 logger = logging.getLogger(__name__)
 
 # Type aliases for transition callbacks.
-# on_step_transition(workflow, next_step, completed_step_outputs) -> None
 OnStepTransition = Callable[[Workflow, WorkflowStep, dict], Awaitable[None]]
-# on_workflow_complete(workflow, last_step_outputs) -> None
 OnWorkflowComplete = Callable[[Workflow, dict], Awaitable[None]]
 
 _MAX_LOOP_ITERATIONS = 5  # Maximum times a step can be re-activated by a goto before aborting
@@ -462,7 +458,7 @@ class WorkflowEngine:
 
     async def _emit(
         self,
-        event: object,
+        event: NexusEvent,
     ) -> None:
         """Emit event to EventBus if configured."""
         if self._event_bus:
@@ -530,41 +526,7 @@ class WorkflowDefinition:
         Returns:
             The resolved list of step dicts (may be empty).
         """
-        if workflow_type:
-            # 1. Consult the optional workflow_types mapping in the YAML
-            workflow_types_mapping = data.get("workflow_types", {})
-            mapped_type = workflow_types_mapping.get(workflow_type, workflow_type)
-
-            # 2. Normalise hyphens → underscores for YAML key lookup
-            key_prefix = mapped_type.replace("-", "_")
-            keys_to_try = [
-                f"{key_prefix}_workflow",
-                key_prefix,
-                f"{mapped_type}_workflow",
-                mapped_type,
-            ]
-            seen: set = set()
-            for key in keys_to_try:
-                if key in seen:
-                    continue
-                seen.add(key)
-                tier = data.get(key, {})
-                if isinstance(tier, dict) and tier.get("steps"):
-                    return tier["steps"]
-
-            return []
-
-        # No workflow_type specified — prefer flat steps
-        flat = data.get("steps", [])
-        if flat:
-            return flat
-
-        # Fallback: pick the first available *_workflow section
-        for key, value in data.items():
-            if key.endswith("_workflow") and isinstance(value, dict) and value.get("steps"):
-                return value["steps"]
-
-        return []
+        return resolve_workflow_steps_list(data, workflow_type)
 
     @staticmethod
     def from_yaml(

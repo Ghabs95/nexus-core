@@ -24,5 +24,7 @@ def resolve_issue_override_agent(
     if not isinstance(issue_overrides, Mapping):
         return mapped_agent
 
-    override_agent = str(issue_overrides.get(task_key) or issue_overrides.get("default") or "").strip()
+    override_agent = str(
+        issue_overrides.get(task_key) or issue_overrides.get("default") or ""
+    ).strip()
     return override_agent or mapped_agent

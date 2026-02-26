@@ -67,4 +67,3 @@ def transcribe_with_local_whisper(
         "model_instance": model_instance,
         "model_name": model_name,
     }
-

@@ -7,6 +7,68 @@ from collections.abc import Callable
 from typing import Any
 
 
+def build_startup_workflow_payload_loader(
+    *,
+    db_only_task_mode,
+    get_storage_backend,
+    logger,
+    nexus_core_storage_dir: str,
+):
+    def _load_startup_workflow_payload(workflow_id: str) -> dict[str, Any] | None:
+        if db_only_task_mode():
+            try:
+                storage = get_storage_backend()
+                workflow = asyncio.run(storage.load_workflow(str(workflow_id)))
+            except Exception as exc:
+                logger.debug(
+                    "Startup reconciliation could not load workflow %s from storage: %s",
+                    workflow_id,
+                    exc,
+                )
+                return None
+            if workflow is None:
+                return None
+            steps_payload = []
+            for step in getattr(workflow, "steps", []) or []:
+                agent = getattr(step, "agent", None)
+                steps_payload.append(
+                    {
+                        "status": str(
+                            getattr(
+                                getattr(step, "status", None),
+                                "value",
+                                getattr(step, "status", ""),
+                            )
+                            or ""
+                        ),
+                        "agent": {
+                            "name": str(getattr(agent, "name", "") or ""),
+                            "display_name": str(getattr(agent, "display_name", "") or ""),
+                        },
+                    }
+                )
+            return {
+                "state": str(
+                    getattr(
+                        getattr(workflow, "state", None), "value", getattr(workflow, "state", "")
+                    )
+                    or ""
+                ),
+                "steps": steps_payload,
+                "metadata": getattr(workflow, "metadata", {}) or {},
+            }
+
+        wf_file = os.path.join(nexus_core_storage_dir, "workflows", f"{workflow_id}.json")
+        try:
+            with open(wf_file, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    return _load_startup_workflow_payload
+
+
 def reconcile_completion_signals_on_startup(
     *,
     logger,

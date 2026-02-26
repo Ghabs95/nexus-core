@@ -2,7 +2,7 @@ import logging
 from types import SimpleNamespace
 
 import pytest
-from services.workflow_reprocess_continue_service import handle_continue, handle_reprocess
+from services.workflow.workflow_reprocess_continue_service import handle_continue, handle_reprocess
 
 
 class _Ctx:

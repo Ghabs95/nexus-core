@@ -8,24 +8,8 @@ from collections.abc import Callable, Mapping
 from enum import Enum
 from typing import Any
 
-from nexus.plugins.builtin.ai_runtime.fallback_policy import (
-    fallback_order_from_preferences as fallback_order_from_preferences_impl,
-    resolve_analysis_tool_order as resolve_analysis_tool_order_impl,
-)
-from nexus.plugins.builtin.ai_runtime.operation_agent_policy import (
-    resolve_issue_override_agent as resolve_issue_override_agent_impl,
-)
-from nexus.plugins.builtin.ai_runtime.transcription_service import (
-    is_non_transcription_artifact as is_non_transcription_artifact_impl,
-    is_transcription_refusal as is_transcription_refusal_impl,
-    normalize_local_whisper_model_name as normalize_local_whisper_model_name_impl,
-    run_transcription_attempts as run_transcription_attempts_impl,
-    resolve_transcription_attempts as resolve_transcription_attempts_impl,
-)
-from nexus.plugins.builtin.ai_runtime.provider_registry import (
-    parse_provider as parse_provider_impl,
-    supports_analysis as supports_analysis_impl,
-    unique_tools as unique_tools_impl,
+from nexus.plugins.builtin.ai_runtime.agent_invoke_service import (
+    invoke_agent_with_fallback as invoke_agent_with_fallback_impl,
 )
 from nexus.plugins.builtin.ai_runtime.analysis_service import (
     build_analysis_prompt as build_analysis_prompt_impl,
@@ -34,16 +18,20 @@ from nexus.plugins.builtin.ai_runtime.analysis_service import (
     run_analysis_with_provider as run_analysis_with_provider_impl,
     strip_cli_tool_output as strip_cli_tool_output_impl,
 )
-from nexus.plugins.builtin.ai_runtime.agent_invoke_service import (
-    invoke_agent_with_fallback as invoke_agent_with_fallback_impl,
+from nexus.plugins.builtin.ai_runtime.fallback_policy import (
+    fallback_order_from_preferences as fallback_order_from_preferences_impl,
+    resolve_analysis_tool_order as resolve_analysis_tool_order_impl,
 )
-from nexus.plugins.builtin.ai_runtime.provider_invokers.analysis_invokers import (
-    run_copilot_analysis_cli as run_copilot_analysis_cli_impl,
-    run_gemini_analysis_cli as run_gemini_analysis_cli_impl,
+from nexus.plugins.builtin.ai_runtime.operation_agent_policy import (
+    resolve_issue_override_agent as resolve_issue_override_agent_impl,
 )
 from nexus.plugins.builtin.ai_runtime.provider_invokers.agent_invokers import (
     invoke_copilot_agent_cli as invoke_copilot_agent_cli_impl,
     invoke_gemini_agent_cli as invoke_gemini_agent_cli_impl,
+)
+from nexus.plugins.builtin.ai_runtime.provider_invokers.analysis_invokers import (
+    run_copilot_analysis_cli as run_copilot_analysis_cli_impl,
+    run_gemini_analysis_cli as run_gemini_analysis_cli_impl,
 )
 from nexus.plugins.builtin.ai_runtime.provider_invokers.codex_invoker import (
     invoke_codex_cli as invoke_codex_cli_impl,
@@ -54,6 +42,18 @@ from nexus.plugins.builtin.ai_runtime.provider_invokers.transcription_invokers i
 )
 from nexus.plugins.builtin.ai_runtime.provider_invokers.whisper_invoker import (
     transcribe_with_local_whisper as transcribe_with_local_whisper_impl,
+)
+from nexus.plugins.builtin.ai_runtime.provider_registry import (
+    parse_provider as parse_provider_impl,
+    supports_analysis as supports_analysis_impl,
+    unique_tools as unique_tools_impl,
+)
+from nexus.plugins.builtin.ai_runtime.transcription_service import (
+    is_non_transcription_artifact as is_non_transcription_artifact_impl,
+    is_transcription_refusal as is_transcription_refusal_impl,
+    normalize_local_whisper_model_name as normalize_local_whisper_model_name_impl,
+    run_transcription_attempts as run_transcription_attempts_impl,
+    resolve_transcription_attempts as resolve_transcription_attempts_impl,
 )
 
 logger = logging.getLogger(__name__)
@@ -90,6 +90,8 @@ class AIOrchestrator:
     _tool_available: dict[str, bool | float] = {}
 
     def __init__(self, config: dict[str, Any] | None = None):
+        self._tool_available: dict[str, bool | float] = {}
+        self._rate_limits: dict[str, dict[str, Any]] = {}
         self.config = config or {}
         self.copilot_cli_path = self.config.get("copilot_cli_path", "copilot")
         self.gemini_cli_path = self.config.get("gemini_cli_path", "gemini")
@@ -362,7 +364,9 @@ class AIOrchestrator:
             operation_agents=operation_agents,
             fallback_enabled=bool(self.fallback_enabled),
             transcription_primary=self.transcription_primary,
-            get_primary_tool=lambda agent, project: self.get_primary_tool(agent, project_name=project),
+            get_primary_tool=lambda agent, project: self.get_primary_tool(
+                agent, project_name=project
+            ),
             fallback_order_from_preferences_fn=self._fallback_order_from_preferences,
             unique_tools=self._unique_tools,
             gemini_provider=AIProvider.GEMINI,

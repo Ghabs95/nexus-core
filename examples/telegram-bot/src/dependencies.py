@@ -64,12 +64,13 @@ from services.memory_service import (
     create_chat,
     get_chat_history,
 )
-from services.workflow_control_service import (
+from services.workflow.workflow_control_service import (
     kill_issue_agent,
     prepare_continue_context,
 )
-from services.workflow_ops_service import (
+from services.workflow.workflow_ops_service import (
     build_workflow_snapshot,
+    fetch_workflow_state_snapshot,
     reconcile_issue_from_signals,
 )
 from state_manager import HostStateManager
@@ -132,6 +133,7 @@ def _workflow_handler_deps() -> WorkflowHandlerDeps:
         kill_issue_agent=kill_issue_agent,
         get_runtime_ops_plugin=get_runtime_ops_plugin,
         get_workflow_state_plugin=get_workflow_state_plugin,
+        fetch_workflow_state_snapshot=fetch_workflow_state_snapshot,
         scan_for_completions=scan_for_completions,
         normalize_agent_reference=_normalize_agent_reference,
         get_expected_running_agent_from_workflow=_get_expected_running_agent_from_workflow,
@@ -150,14 +152,17 @@ def _workflow_handler_deps() -> WorkflowHandlerDeps:
 def _monitoring_handler_deps() -> MonitoringHandlersDeps:
     from runtime.nexus_agent_runtime import get_retry_fuse_status
 
+    async def _ensure_project(ctx, command: str) -> str | None:
+        project_key, _issue_num, _rest = await _ensure_project_issue(ctx, command)
+        return project_key
+
     return MonitoringHandlersDeps(
         logger=logger,
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
         base_dir=BASE_DIR,
         project_config=PROJECT_CONFIG,
         types_map=TYPES,
-        prompt_monitor_project_selection=_prompt_monitor_project_selection,
-        prompt_project_selection=_prompt_project_selection,
+        ensure_project=_ensure_project,
         ensure_project_issue=_ensure_project_issue,
         normalize_project_key=_normalize_project_key,
         iter_project_keys=_iter_project_keys,
@@ -238,7 +243,7 @@ def _ops_handler_deps() -> OpsHandlerDeps:
         get_inbox_storage_backend=get_inbox_storage_backend,
         get_inbox_queue_overview=_get_inbox_queue_overview,
         format_error_for_user=format_error_for_user,
-        get_audit_history=AuditStore.get_audit_history,
+        get_audit_history=lambda issue_num, limit: AuditStore.get_audit_history(int(issue_num), limit),
         get_repo=get_repo,
         get_direct_issue_plugin=_get_direct_issue_plugin,
         orchestrator=orchestrator,

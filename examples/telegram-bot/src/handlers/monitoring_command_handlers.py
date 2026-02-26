@@ -8,12 +8,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from interactive_context import InteractiveContext
-from services.monitoring_logs_service import (
+from services.monitoring.monitoring_logs_service import (
     handle_logs as _service_handle_logs,
     handle_logsfull as _service_handle_logsfull,
     handle_tail as _service_handle_tail,
 )
-from services.monitoring_status_active_service import (
+from services.monitoring.monitoring_status_active_service import (
     handle_active as _service_handle_active,
     handle_status as _service_handle_status,
 )

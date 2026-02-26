@@ -28,4 +28,3 @@ def evaluate_condition(
             default_on_error,
         )
         return default_on_error
-

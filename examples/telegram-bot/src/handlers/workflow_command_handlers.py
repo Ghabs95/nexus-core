@@ -12,7 +12,7 @@ from config import NEXUS_CORE_STORAGE_DIR
 from integrations.workflow_state_factory import get_workflow_state
 from interactive_context import InteractiveContext
 from runtime.agent_launcher import clear_launch_guard
-from services.workflow_reprocess_continue_service import (
+from services.workflow.workflow_reprocess_continue_service import (
     handle_continue as _service_handle_continue,
     handle_reprocess as _service_handle_reprocess,
 )

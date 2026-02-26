@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 _git_platform_cache = {}
 _launch_policy_plugin = None
 
+
 def _db_only_task_mode() -> bool:
     return str(NEXUS_STORAGE_BACKEND or "").strip().lower() == "postgres"
 
@@ -61,7 +62,7 @@ def _run_coro_sync(coro_factory):
         except Exception:
             return None
 
-    holder = {"value": None, "error": None}
+    holder: dict[str, object | Exception | None] = {"value": None, "error": None}
 
     def _runner() -> None:
         try:
@@ -122,7 +123,7 @@ def _get_git_platform_client(repo: str, project_name: str | None = None):
 def _resolve_project_from_task_file(task_file: str) -> str:
     """Resolve project key by matching task file path against project workspaces."""
     for project_key, project_cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
-        workspace_abs = os.path.join(BASE_DIR, project_cfg["workspace"])
+        workspace_abs = os.path.join(BASE_DIR, str(project_cfg["workspace"]))
         if task_file.startswith(workspace_abs):
             return project_key
     return ""
@@ -470,8 +471,9 @@ def get_sop_tier_from_issue(issue_number, project="nexus", repo_override: str | 
 
     from orchestration.nexus_core_helpers import get_git_platform
 
+    repo = str(repo_override or "")
     try:
-        repo = repo_override or get_repo(project)
+        repo = repo or get_repo(project)
         platform_type = get_project_platform(project)
 
         if platform_type == "github":
@@ -783,7 +785,7 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
         )
     normalized_task_file = task_file.replace("\\", "/")
     is_shared_active_task_file = "/active/" in normalized_task_file
-    task_file_exists = (False if _db_only_task_mode() else os.path.exists(task_file))
+    task_file_exists = False if _db_only_task_mode() else os.path.exists(task_file)
     if not _db_only_task_mode() and not task_file_exists and not is_shared_active_task_file:
         logger.warning(f"Task file not found: {task_file}")
         return None, None
@@ -800,7 +802,7 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
                 continue
             workspace = cfg.get("workspace")
             if workspace and task_file:
-                workspace_abs = os.path.join(BASE_DIR, workspace)
+                workspace_abs = os.path.join(BASE_DIR, str(workspace))
                 if task_file.startswith(workspace_abs):
                     project_root = key
                     config = cfg

@@ -38,7 +38,9 @@ def resolve_transcription_attempts(
             return normalized
 
         if warn_unsupported_mapped_provider:
-            warn_unsupported_mapped_provider(getattr(mapped_primary, "value", str(mapped_primary)), mapped_agent)
+            warn_unsupported_mapped_provider(
+                getattr(mapped_primary, "value", str(mapped_primary)), mapped_agent
+            )
 
     primary = str(transcription_primary or "gemini").strip().lower()
     if primary == "whisper":

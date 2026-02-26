@@ -6,11 +6,11 @@ import shutil
 from collections.abc import Callable
 from typing import Any
 
-from config import NEXUS_STORAGE_BACKEND
+from config_storage_capabilities import get_storage_capabilities
 
 
-def _db_only_task_mode() -> bool:
-    return str(NEXUS_STORAGE_BACKEND or "").strip().lower() == "postgres"
+def _local_task_files_enabled() -> bool:
+    return get_storage_capabilities().local_task_files
 
 
 def handle_webhook_task(
@@ -77,7 +77,7 @@ def handle_webhook_task(
         reroute_project = resolve_project_for_repo(issue_repo)
         if reroute_project and reroute_project != project_name:
             rerouted_path = None
-            if not _db_only_task_mode() and filepath and "://" not in str(filepath):
+            if _local_task_files_enabled() and filepath and "://" not in str(filepath):
                 rerouted_path = reroute_webhook_task_to_project(filepath, reroute_project)
             message = (
                 f"⚠️ Re-routed webhook task for issue #{issue_number}: "
@@ -121,7 +121,7 @@ def handle_webhook_task(
         logger.info(
             "⏭️ Skipping webhook launch for issue #%s — agent recently launched", issue_number
         )
-        if not _db_only_task_mode():
+        if _local_task_files_enabled():
             active_dir = get_tasks_active_dir(project_root, project_name)
             os.makedirs(active_dir, exist_ok=True)
             new_filepath = os.path.join(active_dir, os.path.basename(filepath))
@@ -129,7 +129,7 @@ def handle_webhook_task(
         return True
 
     new_filepath = ""
-    if not _db_only_task_mode():
+    if _local_task_files_enabled():
         active_dir = get_tasks_active_dir(project_root, project_name)
         os.makedirs(active_dir, exist_ok=True)
         new_filepath = os.path.join(active_dir, os.path.basename(filepath))
@@ -259,7 +259,7 @@ def handle_new_task(
     sop_checklist = workflow_checklist or sop_template or render_fallback_checklist(tier_name)
 
     new_filepath = ""
-    if not _db_only_task_mode():
+    if _local_task_files_enabled():
         active_dir = get_tasks_active_dir(project_root, project_name)
         os.makedirs(active_dir, exist_ok=True)
         new_filepath = os.path.join(active_dir, os.path.basename(filepath))

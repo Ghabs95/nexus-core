@@ -9,7 +9,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from config import NEXUS_STORAGE_BACKEND
+from config_storage_capabilities import get_storage_capabilities
 
 _STEP_COMPLETE_COMMENT_RE = re.compile(
     r"^\s*##\s+.+?\bcomplete\b\s+—\s+([a-zA-Z0-9_-]+)\s*$",
@@ -21,8 +21,8 @@ _READY_FOR_COMMENT_RE = re.compile(
 )
 
 
-def _db_only_task_mode() -> bool:
-    return str(NEXUS_STORAGE_BACKEND or "").strip().lower() == "postgres"
+def _local_completions_enabled() -> bool:
+    return get_storage_capabilities().local_completions
 
 
 def normalize_agent_reference(agent_ref: str) -> str:
@@ -68,7 +68,7 @@ def read_latest_local_completion(
     issue_num: str,
 ) -> dict[str, Any] | None:
     """Return latest local completion summary metadata for an issue."""
-    if _db_only_task_mode():
+    if not _local_completions_enabled():
         raise RuntimeError("read_latest_local_completion is disabled in postgres mode")
     pattern = os.path.join(
         base_dir,
@@ -109,7 +109,7 @@ def write_local_completion_from_signal(
     key_findings: list[str] | None = None,
 ) -> str:
     """Persist completion summary from a reconciled signal."""
-    if _db_only_task_mode():
+    if not _local_completions_enabled():
         raise RuntimeError("write_local_completion_from_signal is disabled in postgres mode")
     completions_dir = os.path.join(
         base_dir,
