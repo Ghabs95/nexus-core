@@ -272,12 +272,15 @@ async def track_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> None
             await ctx.reply_text("❌ Invalid issue number.")
             return
 
+        uni = deps.user_manager.get_or_create_user_by_platform(
+            "telegram",
+            str(ctx.user_id),
+            username=f"user_{ctx.user_id}",
+        )
         deps.user_manager.track_issue(
-            telegram_id=int(ctx.user_id),
+            nexus_id=uni.nexus_id,
             project=project,
             issue_number=issue_num,
-            username=f"user_{ctx.user_id}",
-            first_name="User",
         )
 
         await ctx.reply_text(
@@ -334,8 +337,9 @@ async def untrack_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
     if not project_key:
         return
 
+    uni = deps.user_manager.get_or_create_user_by_platform("telegram", str(ctx.user_id))
     success = deps.user_manager.untrack_issue(
-        telegram_id=int(ctx.user_id),
+        nexus_id=uni.nexus_id,
         project=project_key,
         issue_number=issue_num,
     )
@@ -356,7 +360,9 @@ async def myissues_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> N
         log_unauthorized_access(getattr(deps, "logger", None), int(ctx.user_id))
         return
 
-    tracked = deps.user_manager.get_user_tracked_issues(int(ctx.user_id))
+    tracked = deps.user_manager.get_user_tracked_issues(
+        deps.user_manager.get_or_create_user_by_platform("telegram", str(ctx.user_id)).nexus_id
+    )
 
     if not tracked:
         await ctx.reply_text(

@@ -559,12 +559,16 @@ async def track_command(interaction: discord.Interaction, issue: str, project: s
             )
             return
 
-        user_manager.track_issue(
-            telegram_id=interaction.user.id,
-            project=normalized_project,
-            issue_number=issue_num,
+        uni = user_manager.get_or_create_user_by_platform(
+            "discord",
+            str(interaction.user.id),
             username=interaction.user.name,
             first_name=getattr(interaction.user, "display_name", None),
+        )
+        user_manager.track_issue(
+            nexus_id=uni.nexus_id,
+            project=normalized_project,
+            issue_number=issue_num,
         )
         await interaction.response.send_message(
             f"👁️ Now tracking {normalized_project} issue #{issue_num} for you."
@@ -620,7 +624,8 @@ async def myissues_command(interaction: discord.Interaction):
         await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
         return
 
-    tracked = user_manager.get_user_tracked_issues(interaction.user.id)
+    uni = user_manager.get_or_create_user_by_platform("discord", str(interaction.user.id))
+    tracked = user_manager.get_user_tracked_issues(uni.nexus_id)
     if not tracked:
         await interaction.response.send_message("📋 You're not tracking any project issues yet.")
         return
