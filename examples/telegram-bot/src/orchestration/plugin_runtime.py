@@ -47,6 +47,11 @@ _PLUGIN_PROFILES: dict[str, dict[str, Any]] = {
         "name": "agent-launch-policy",
         "config": {},
     },
+    "git_agent_launcher": {
+        "kind": "GIT_PLATFORM",
+        "name": "github-issue-cli",
+        "config": {},
+    },
     "workflow_state_engine": {
         "kind": "INPUT_ADAPTER",
         "name": "workflow-state-engine",

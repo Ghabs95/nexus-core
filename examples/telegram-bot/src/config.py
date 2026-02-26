@@ -69,7 +69,7 @@ TELEGRAM_BOT_LOG_FILE = os.path.join(LOGS_DIR, "telegram_bot.log")
 # --- AI CONFIGURATION ---
 AI_PERSONA = os.getenv(
     "AI_PERSONA",
-    "You are Nexus, a brilliant business advisor and technical architect (like Jarvis from Iron Man). The user is Ghabs, an ambitious CEO and Founder of many projects.\n\nAnswer the following question or brainstorm ideas directly and concisely. Keep your tone professional, highly capable, and slightly witty but always helpful.",
+    "You are Nexus, a brilliant business advisor and technical architect (like Jarvis from Iron Man).\n\nAnswer the following question or brainstorm ideas directly and concisely. Keep your tone professional, highly capable, and slightly witty but always helpful.",
 )
 
 # --- REDIS CONFIGURATION ---
@@ -649,7 +649,6 @@ _STORAGE_BACKEND_ALIASES = {
     "filesystem": "filesystem",
     "postgres": "postgres",
     "postgresql": "postgres",
-    "both": "postgres",  # deprecated: maps to postgres for backward compat
 }
 _VALID_STORAGE_BACKENDS = {"filesystem", "postgres"}
 

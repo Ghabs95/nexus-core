@@ -920,19 +920,29 @@ def _recover_orphaned_running_agents(max_relaunches: int = 3) -> int:
         if isinstance(tracker_pid, int) and tracker_pid > 0 and runtime.is_pid_alive(tracker_pid):
             continue
 
-        project_name = _resolve_project_for_issue(issue_num) or get_default_project()
+        workflow_id = str(mappings.get(issue_num, "") or "")
+        project_name = _resolve_project_for_issue(issue_num, workflow_id=workflow_id)
+        if not project_name:
+            logger.info(
+                "Skipping orphan recovery for issue #%s: unable to resolve project (workflow_id=%s)",
+                issue_num,
+                workflow_id or "unknown",
+            )
+            _orphan_recovery_last_attempt.pop(issue_num, None)
+            continue
+
         repo_name = _resolve_repo_for_issue(issue_num, default_project=project_name)
         issue_open = runtime.is_issue_open(issue_num, repo_name)
-        if issue_open is False:
-            active_marker = f"{os.sep}active{os.sep}"
-            if active_marker not in task_file:
-                continue
-            logger.warning(
-                "Issue #%s not open/remote-missing in %s, but local active task exists; "
-                "continuing recovery launch",
+        if issue_open is not True:
+            status_label = "unknown" if issue_open is None else "closed/missing"
+            logger.info(
+                "Skipping orphan recovery for issue #%s: remote issue not confirmed open in %s (status=%s)",
                 issue_num,
                 repo_name,
+                status_label,
             )
+            _orphan_recovery_last_attempt.pop(issue_num, None)
+            continue
 
         if not runtime.should_retry_dead_agent(issue_num, expected_agent):
             continue
@@ -963,11 +973,24 @@ def _recover_orphaned_running_agents(max_relaunches: int = 3) -> int:
     return recovered
 
 
-def _resolve_project_for_issue(issue_num: str) -> str | None:
-    """Best-effort project resolution from config for an issue number."""
-    # Try to find which project this issue belongs to by checking agents data
-    for project_name, _ in _iter_project_configs(PROJECT_CONFIG, get_repos):
-        return project_name
+def _resolve_project_for_issue(issue_num: str, workflow_id: str | None = None) -> str | None:
+    """Best-effort project resolution for an issue number."""
+    task_file = _find_task_file_for_issue(issue_num)
+    if task_file:
+        project_name = _resolve_project_from_task_file(task_file)
+        if project_name:
+            return project_name
+
+    normalized_workflow_id = str(workflow_id or "").strip()
+    if normalized_workflow_id:
+        project_keys = [name for name, _ in _iter_project_configs(PROJECT_CONFIG, get_repos)]
+        for project_name in sorted(project_keys, key=len, reverse=True):
+            if (
+                normalized_workflow_id == project_name
+                or normalized_workflow_id.startswith(f"{project_name}-")
+            ):
+                return project_name
+
     return None
 
 
@@ -1189,7 +1212,7 @@ def _recover_unmapped_issues_from_completions(max_relaunches: int = 20) -> int:
 
         repo_name = _resolve_repo_for_issue(issue_num, default_project=project_name)
         issue_open = runtime.is_issue_open(issue_num, repo_name)
-        if issue_open is False:
+        if issue_open is not True:
             continue
 
         issue_url = build_issue_url(repo_name, issue_num, project_cfg)

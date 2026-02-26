@@ -724,7 +724,7 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
             )
             return None, None
     except Exception as e:
-        logger.error(f"Failed to get issue #{issue_number} body: {e}")
+        logger.error(f"Failed to resolve/process issue #{issue_number} body: {e}")
         return None, None
 
     # Find task file

@@ -328,10 +328,10 @@ from integrations.workflow_state_factory import get_workflow_state as _get_wf_st
 
 _WORKFLOW_STATE_PLUGIN_KWARGS = {
     "storage_dir": NEXUS_CORE_STORAGE_DIR,
-    "storage_type": "postgres" if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} else "file",
+    "storage_type": "postgres" if NEXUS_WORKFLOW_BACKEND == "postgres" else "file",
     "storage_config": (
         {"connection_string": NEXUS_STORAGE_DSN}
-        if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} and NEXUS_STORAGE_DSN
+        if NEXUS_WORKFLOW_BACKEND == "postgres" and NEXUS_STORAGE_DSN
         else {}
     ),
     "issue_to_workflow_id": lambda n: _get_wf_state().get_workflow_id(n),

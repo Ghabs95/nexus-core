@@ -281,7 +281,7 @@ def prepare_continue_context(
             "message": (
                 f"✅ Workflow for issue #{issue_num} is already complete and closed.\n"
                 f"Last agent: `{resumed_from}`\n\n"
-                f"Use `/continue {project_key} {issue_num} from:<agent>` to re-run a specific step."
+                f"Use /continue {project_key} {issue_num} from:<agent> to re-run a specific step."
             ),
         }
 

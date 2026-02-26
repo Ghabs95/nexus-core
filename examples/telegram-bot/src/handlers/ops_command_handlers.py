@@ -343,7 +343,7 @@ async def agents_handler(ctx: InteractiveContext, deps: OpsHandlerDeps) -> None:
         agents_list = "\n".join([f"• @{agent}" for agent in sorted(agents_map.keys())])
         await ctx.reply_text(
             f"🤖 **Agents for {project}:**\n\n{agents_list}\n\n"
-            "Use `/direct <project> <@agent> <message>` to send a direct request.\n"
+            "Use /direct <project> <@agent> <message> to send a direct request.\n"
             "Use /chat for project-scoped conversations and strategy threads."
         )
     except Exception as exc:
