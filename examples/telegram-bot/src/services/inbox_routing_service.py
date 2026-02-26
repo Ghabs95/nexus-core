@@ -24,7 +24,9 @@ def process_inbox_task_request(
     base_dir: str,
     get_inbox_dir: Callable[[str, str], str],
 ) -> dict[str, Any]:
-    normalized_project_hint = normalize_project_key(str(project_hint or "")) or str(project_hint or "").strip().lower()
+    normalized_project_hint = (
+        normalize_project_key(str(project_hint or "")) or str(project_hint or "").strip().lower()
+    )
     known_projects = dict(projects)
     if isinstance(project_config, dict):
         for project_key in project_config.keys():
@@ -33,7 +35,10 @@ def process_inbox_task_request(
                 known_projects.setdefault(normalized_key, normalized_key)
 
     if normalized_project_hint in known_projects:
-        logger.info("Using project context '%s' directly; skipping project classification.", normalized_project_hint)
+        logger.info(
+            "Using project context '%s' directly; skipping project classification.",
+            normalized_project_hint,
+        )
         result: dict[str, Any] = {
             "project": normalized_project_hint,
             "type": "feature",
@@ -55,8 +60,12 @@ def process_inbox_task_request(
         project = result.get("project")
         if isinstance(project, str):
             project = normalize_project_key(project) or project.strip().lower()
-        if (not project or project not in known_projects) and normalized_project_hint in known_projects:
-            logger.info("Using contextual project fallback '%s' for inbox routing", normalized_project_hint)
+        if (
+            not project or project not in known_projects
+        ) and normalized_project_hint in known_projects:
+            logger.info(
+                "Using contextual project fallback '%s' for inbox routing", normalized_project_hint
+            )
             project = normalized_project_hint
         if not project or project not in known_projects:
             task_type = result.get("type", "feature")
@@ -69,7 +78,11 @@ def process_inbox_task_request(
                 "task_name": result.get("task_name", ""),
             }
             options = ", ".join(sorted(projects.keys()))
-            logger.error("Project classification failed: project=%s, valid=%s", project, list(known_projects.keys()))
+            logger.error(
+                "Project classification failed: project=%s, valid=%s",
+                project,
+                list(known_projects.keys()),
+            )
             return {
                 "success": False,
                 "message": (
@@ -127,7 +140,10 @@ def process_inbox_task_request(
             logger.info("✅ Postgres inbox task queued: id=%s project=%s", queue_id, project)
         except Exception as exc:
             logger.error("Failed to enqueue Postgres inbox task: %s", exc)
-            return {"success": False, "message": f"⚠️ Failed to queue task in Postgres inbox: {exc}"}
+            return {
+                "success": False,
+                "message": f"⚠️ Failed to queue task in Postgres inbox: {exc}",
+            }
     else:
         target_dir = get_inbox_dir(os.path.join(base_dir, str(workspace)), str(project))
         os.makedirs(target_dir, exist_ok=True)
@@ -197,7 +213,10 @@ def save_resolved_inbox_task_request(
             )
         except Exception as exc:
             logger.error("Failed to enqueue resolved Postgres inbox task: %s", exc)
-            return {"success": False, "message": f"⚠️ Failed to queue task in Postgres inbox: {exc}"}
+            return {
+                "success": False,
+                "message": f"⚠️ Failed to queue task in Postgres inbox: {exc}",
+            }
     else:
         target_dir = get_inbox_dir(os.path.join(base_dir, workspace), str(project))
         os.makedirs(target_dir, exist_ok=True)

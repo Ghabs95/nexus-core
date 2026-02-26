@@ -2,7 +2,6 @@ import logging
 from types import SimpleNamespace
 
 import pytest
-
 from services import ops_direct_service as svc
 from services.ops_direct_service import handle_direct_request
 

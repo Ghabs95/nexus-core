@@ -130,7 +130,9 @@ async def handle_hands_free_message(
             logger.info("Ignoring command in hands_free_handler: %s", update.message.text)
             return
 
-        if await resolve_pending_project_selection(build_ctx(update, context), hands_free_routing_deps_factory()):
+        if await resolve_pending_project_selection(
+            build_ctx(update, context), hands_free_routing_deps_factory()
+        ):
             return
 
         text = ""
@@ -170,7 +172,9 @@ async def handle_hands_free_message(
         ):
             return
 
-        await route_hands_free_text(update, context, status_msg, text, hands_free_routing_deps_factory())
+        await route_hands_free_text(
+            update, context, status_msg, text, hands_free_routing_deps_factory()
+        )
     except Exception as exc:
         logger.error("Unexpected error in hands_free_handler: %s", exc, exc_info=True)
         with contextlib.suppress(Exception):

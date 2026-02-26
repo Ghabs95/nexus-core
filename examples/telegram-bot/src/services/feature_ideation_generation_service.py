@@ -144,7 +144,9 @@ def build_feature_suggestions(
                 )
                 return generated
             if logger:
-                logger.warning("Dynamic feature ideation Copilot retry returned non-JSON/empty output")
+                logger.warning(
+                    "Dynamic feature ideation Copilot retry returned non-JSON/empty output"
+                )
     except Exception as exc:
         if logger:
             logger.warning("Dynamic feature ideation failed on Copilot retry: %s", exc)

@@ -285,9 +285,9 @@ def test_build_feature_suggestions_uses_business_context_folder(tmp_path):
                 "operation_agents": {
                     "chat": {
                         "business": {
-                        "context_path": "business-os",
-                        "context_files": ["README.md"],
-                    }
+                            "context_path": "business-os",
+                            "context_files": ["README.md"],
+                        }
                     }
                 },
             }
@@ -344,9 +344,9 @@ spec:
                 "operation_agents": {
                     "chat": {
                         "marketing": {
-                        "context_path": "marketing-os",
-                        "context_files": ["README.md"],
-                    }
+                            "context_path": "marketing-os",
+                            "context_files": ["README.md"],
+                        }
                     }
                 },
             }
@@ -394,9 +394,9 @@ def test_agent_prompt_discovery_matches_spec_agent_type_without_prompt_map(tmp_p
                 "operation_agents": {
                     "chat": {
                         "business": {
-                        "context_path": "business-os",
-                        "context_files": ["README.md"],
-                    }
+                            "context_path": "business-os",
+                            "context_files": ["README.md"],
+                        }
                     }
                 },
             }
@@ -449,8 +449,8 @@ spec:
                 "operation_agents": {
                     "chat": {
                         "marketing": {
-                        "context_path": "marketing-os",
-                    }
+                            "context_path": "marketing-os",
+                        }
                     }
                 },
             }
@@ -552,9 +552,9 @@ def test_build_feature_suggestions_accepts_top_level_json_array_text(tmp_path):
                 "operation_agents": {
                     "chat": {
                         "business": {
-                        "context_path": "business-os",
-                        "context_files": ["README.md"],
-                    }
+                            "context_path": "business-os",
+                            "context_files": ["README.md"],
+                        }
                     }
                 },
             }
@@ -600,9 +600,9 @@ def test_build_feature_suggestions_logs_primary_non_json_response(tmp_path):
                 "operation_agents": {
                     "chat": {
                         "business": {
-                        "context_path": "business-os",
-                        "context_files": ["README.md"],
-                    }
+                            "context_path": "business-os",
+                            "context_files": ["README.md"],
+                        }
                     }
                 },
             }
@@ -650,9 +650,9 @@ def test_build_feature_suggestions_accepts_structured_single_item_dict(tmp_path)
                 "operation_agents": {
                     "chat": {
                         "business": {
-                        "context_path": "business-os",
-                        "context_files": ["README.md"],
-                    }
+                            "context_path": "business-os",
+                            "context_files": ["README.md"],
+                        }
                     }
                 },
             }
@@ -698,9 +698,9 @@ def test_build_feature_suggestions_accepts_wrapped_response_json_string(tmp_path
                 "operation_agents": {
                     "chat": {
                         "business": {
-                        "context_path": "business-os",
-                        "context_files": ["README.md"],
-                    }
+                            "context_path": "business-os",
+                            "context_files": ["README.md"],
+                        }
                     }
                 },
             }
@@ -747,9 +747,9 @@ def test_build_feature_suggestions_logs_success_when_copilot_fallback_succeeds(t
                 "operation_agents": {
                     "chat": {
                         "business": {
-                        "context_path": "business-os",
-                        "context_files": ["README.md"],
-                    }
+                            "context_path": "business-os",
+                            "context_files": ["README.md"],
+                        }
                     }
                 },
             }

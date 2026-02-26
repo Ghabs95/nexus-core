@@ -15,7 +15,6 @@ Event handlers:
 import asyncio
 import logging
 import os
-import re
 import sys
 
 from flask import Flask, jsonify, request, send_from_directory

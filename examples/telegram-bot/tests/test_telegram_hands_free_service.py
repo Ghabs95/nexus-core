@@ -2,7 +2,6 @@ import logging
 from types import SimpleNamespace
 
 import pytest
-
 from services.telegram_hands_free_service import handle_hands_free_message
 
 

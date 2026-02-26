@@ -1,7 +1,6 @@
 import types
 
 import pytest
-
 from orchestration.telegram_update_bridge import (
     build_telegram_interactive_ctx,
     buttons_to_reply_markup,

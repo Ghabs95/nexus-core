@@ -23,6 +23,9 @@ def test_get_workflow_policy_plugin_forwards_find_existing_pr(monkeypatch):
     def _find_existing_pr(**_kwargs):
         return "https://example/pr/existing"
 
+    def _cleanup_worktree(**_kwargs):
+        return True
+
     def _close_issue(**_kwargs):
         return True
 
@@ -33,6 +36,7 @@ def test_get_workflow_policy_plugin_forwards_find_existing_pr(monkeypatch):
         resolve_git_dir=_resolve_git_dir,
         create_pr_from_changes=_create_pr_from_changes,
         find_existing_pr=_find_existing_pr,
+        cleanup_worktree=_cleanup_worktree,
         close_issue=_close_issue,
         send_notification=_send_notification,
         cache_key="workflow-policy:test",
@@ -43,5 +47,6 @@ def test_get_workflow_policy_plugin_forwards_find_existing_pr(monkeypatch):
     assert captured["overrides"]["resolve_git_dir"] is _resolve_git_dir
     assert captured["overrides"]["create_pr_from_changes"] is _create_pr_from_changes
     assert captured["overrides"]["find_existing_pr"] is _find_existing_pr
+    assert captured["overrides"]["cleanup_worktree"] is _cleanup_worktree
     assert captured["overrides"]["close_issue"] is _close_issue
     assert captured["overrides"]["send_notification"] is _send_notification

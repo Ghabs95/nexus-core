@@ -18,12 +18,19 @@ def test_handle_pull_request_event_opened_notifies_and_autoqueues():
     notifications = []
     launches = []
     result = handle_pull_request_event(
-        event={"action": "opened", "number": 10, "title": "Fix #42", "author": "dev", "repo": "acme/repo"},
+        event={
+            "action": "opened",
+            "number": 10,
+            "title": "Fix #42",
+            "author": "dev",
+            "repo": "acme/repo",
+        },
         logger=MagicMock(),
         policy=_Policy(),
         notify_lifecycle=lambda msg: notifications.append(msg) or True,
         effective_review_mode=lambda _repo: "manual",
-        launch_next_agent=lambda *args, **kwargs: launches.append((args, kwargs)) or (123, "copilot"),
+        launch_next_agent=lambda *args, **kwargs: launches.append((args, kwargs))
+        or (123, "copilot"),
     )
     assert result["status"] == "pr_opened_notified"
     assert notifications == ["created"]
@@ -33,7 +40,13 @@ def test_handle_pull_request_event_opened_notifies_and_autoqueues():
 def test_handle_pull_request_event_merged_manual_skips_notification():
     notifications = []
     result = handle_pull_request_event(
-        event={"action": "closed", "merged": True, "number": 10, "repo": "acme/repo", "author": "dev"},
+        event={
+            "action": "closed",
+            "merged": True,
+            "number": 10,
+            "repo": "acme/repo",
+            "author": "dev",
+        },
         logger=MagicMock(),
         policy=_Policy(),
         notify_lifecycle=lambda msg: notifications.append(msg) or True,
@@ -47,7 +60,13 @@ def test_handle_pull_request_event_merged_manual_skips_notification():
 def test_handle_pull_request_event_merged_auto_notifies():
     notifications = []
     result = handle_pull_request_event(
-        event={"action": "closed", "merged": True, "number": 10, "repo": "acme/repo", "author": "dev"},
+        event={
+            "action": "closed",
+            "merged": True,
+            "number": 10,
+            "repo": "acme/repo",
+            "author": "dev",
+        },
         logger=MagicMock(),
         policy=_Policy(),
         notify_lifecycle=lambda msg: notifications.append(msg) or True,

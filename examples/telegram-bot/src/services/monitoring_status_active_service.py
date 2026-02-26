@@ -5,8 +5,9 @@ import re
 import time
 from typing import Any
 
-from nexus.adapters.notifications.base import Button
 from utils.log_utils import log_unauthorized_access
+
+from nexus.adapters.notifications.base import Button
 
 
 async def handle_status(ctx: Any, deps: Any) -> None:
@@ -61,7 +62,9 @@ async def handle_status(ctx: Any, deps: Any) -> None:
             issue_number = deps.extract_issue_number_from_file(os.path.join(inbox_dir, filename))
             if issue_number:
                 issue_link = deps.build_issue_url(
-                    repo, issue_number, project_issue_cfg if isinstance(project_issue_cfg, dict) else None
+                    repo,
+                    issue_number,
+                    project_issue_cfg if isinstance(project_issue_cfg, dict) else None,
                 )
                 issue_suffix = f" [#{issue_number}]({issue_link})"
             else:
@@ -71,7 +74,11 @@ async def handle_status(ctx: Any, deps: Any) -> None:
             status_text += f"  ... +{len(files) - 3} more\n"
         status_text += "\n"
 
-    status_text += "✨ No pending tasks in inbox!\n" if total_tasks == 0 else f"Total: {total_tasks} pending task(s)"
+    status_text += (
+        "✨ No pending tasks in inbox!\n"
+        if total_tasks == 0
+        else f"Total: {total_tasks} pending task(s)"
+    )
     with_issue_snapshot = bool(issue_num and project_filter)
 
     if with_issue_snapshot:
@@ -134,7 +141,9 @@ async def handle_active(ctx: Any, deps: Any) -> None:
         return
 
     cleanup_mode = any(arg.lower() in {"cleanup", "--cleanup"} for arg in (ctx.args or []))
-    project_tokens = [arg for arg in (ctx.args or []) if arg.lower() not in {"cleanup", "--cleanup"}]
+    project_tokens = [
+        arg for arg in (ctx.args or []) if arg.lower() not in {"cleanup", "--cleanup"}
+    ]
     project_filter = None
     if project_tokens:
         raw = project_tokens[0].strip().lower()
@@ -184,7 +193,9 @@ async def handle_active(ctx: Any, deps: Any) -> None:
                 cache_key = f"{repo}:{issue_number}"
                 if cache_key not in issue_state_cache:
                     details = deps.get_issue_details(issue_number, repo=repo)
-                    issue_state_cache[cache_key] = "orphan" if not details else details.get("state", "unknown").lower()
+                    issue_state_cache[cache_key] = (
+                        "orphan" if not details else details.get("state", "unknown").lower()
+                    )
                 issue_state = issue_state_cache[cache_key]
             else:
                 issue_state = "orphan"
@@ -217,7 +228,9 @@ async def handle_active(ctx: Any, deps: Any) -> None:
             emoji = deps.types_map.get(filename.split("_")[0], "📝")
             if issue_number:
                 issue_link = deps.build_issue_url(
-                    repo, issue_number, project_issue_cfg if isinstance(project_issue_cfg, dict) else None
+                    repo,
+                    issue_number,
+                    project_issue_cfg if isinstance(project_issue_cfg, dict) else None,
                 )
                 issue_suffix = f" [#{issue_number}]({issue_link})"
             else:
@@ -227,7 +240,11 @@ async def handle_active(ctx: Any, deps: Any) -> None:
             active_text += f"  ... +{len(open_files) - 3} more\n"
         active_text += "\n"
 
-    active_text += "💤 No active tasks at the moment.\n" if total_active == 0 else f"Total: {total_active} active task(s)"
+    active_text += (
+        "💤 No active tasks at the moment.\n"
+        if total_active == 0
+        else f"Total: {total_active} active task(s)"
+    )
     if total_skipped_closed:
         active_text += f"\n\nℹ️ Skipped {total_skipped_closed} closed or orphan task file(s)."
     if cleanup_mode:

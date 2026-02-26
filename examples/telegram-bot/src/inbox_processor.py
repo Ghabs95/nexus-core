@@ -65,6 +65,12 @@ from runtime.agent_launcher import (
     is_recent_launch,
 )
 from runtime.nexus_agent_runtime import NexusAgentRuntime
+from services.comment_monitor_service import (
+    run_comment_monitor_cycle as _run_comment_monitor_cycle,
+)
+from services.completion_monitor_service import (
+    run_completion_monitor_cycle as _run_completion_monitor_cycle,
+)
 from services.issue_finalize_service import (
     cleanup_worktree as _finalize_cleanup_worktree,
 )
@@ -98,12 +104,6 @@ from services.processor_loops_service import (
 from services.processor_runtime_state import (
     ProcessorRuntimeState,
 )
-from services.comment_monitor_service import (
-    run_comment_monitor_cycle as _run_comment_monitor_cycle,
-)
-from services.completion_monitor_service import (
-    run_completion_monitor_cycle as _run_completion_monitor_cycle,
-)
 from services.startup_recovery_service import (
     reconcile_completion_signals_on_startup as _startup_reconcile_completion_signals,
 )
@@ -131,12 +131,17 @@ from services.workflow_signal_sync import (
 from state_manager import HostStateManager
 
 _STEP_COMPLETE_COMMENT_RE = re.compile(
-    r"^\s*##\s+.+?\bcomplete\b\s+—\s+([a-zA-Z0-9_-]+)\s*$",
+    r"^\s*##\s+.+?\bcomplete\b\s+—\s+([0-9a-z_-]+)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _READY_FOR_COMMENT_RE = re.compile(
-    r"\bready\s+for\s+(?:\*\*)?`?@?([a-zA-Z0-9_-]+)",
+    r"\bready\s+for\s+(?:\*\*)?`?@?([0-9a-z_-]+)",
     re.IGNORECASE,
+)
+_WORKFLOW_MONITOR_LABELS = (
+    "workflow:full",
+    "workflow:shortened",
+    "workflow:fast-track",
 )
 
 
@@ -165,7 +170,9 @@ orchestrator = get_orchestrator(ORCHESTRATOR_CONFIG)
 # Track mutable runtime state explicitly (aliases kept for behavior-preserving migration)
 PROCESSOR_RUNTIME_STATE = ProcessorRuntimeState()
 alerted_agents = PROCESSOR_RUNTIME_STATE.alerted_agents
-notified_comments = PROCESSOR_RUNTIME_STATE.notified_comments  # Track comment IDs we've already notified about
+notified_comments = (
+    PROCESSOR_RUNTIME_STATE.notified_comments
+)  # Track comment IDs we've already notified about
 auto_chained_agents = PROCESSOR_RUNTIME_STATE.auto_chained_agents  # issue -> log_file
 INBOX_PROCESSOR_STARTED_AT = time.time()
 POLLING_FAILURE_THRESHOLD = 3
@@ -307,7 +314,7 @@ def _resolve_project_from_path(summary_path: str) -> str:
         workspace = cfg.get("workspace")
         if not workspace:
             continue
-        workspace_abs = os.path.join(BASE_DIR, workspace)
+        workspace_abs = os.path.join(BASE_DIR, str(workspace))
         if summary_path.startswith(workspace_abs):
             return key
     return ""
@@ -353,7 +360,7 @@ def _reroute_webhook_task_to_project(filepath: str, target_project: str) -> str 
     if not workspace_rel:
         return None
 
-    workspace_abs = os.path.join(BASE_DIR, workspace_rel)
+    workspace_abs = os.path.join(BASE_DIR, str(workspace_rel))
     inbox_dir = get_inbox_dir(workspace_abs, target_project)
     os.makedirs(inbox_dir, exist_ok=True)
 
@@ -417,7 +424,7 @@ def _resolve_repo_for_issue(issue_num: str, default_project: str | None = None) 
                 workspace = cfg.get("workspace")
                 if not workspace:
                     continue
-                workspace_abs = os.path.join(BASE_DIR, workspace)
+                workspace_abs = os.path.join(BASE_DIR, str(workspace))
                 if task_file.startswith(workspace_abs):
                     project_repos = _project_repos_from_config(project_key, cfg, get_repos)
                     if repo_name in project_repos:
@@ -560,8 +567,8 @@ def _resolve_git_dir(project_name: str) -> str | None:
     Returns absolute path or None.
     """
     proj_cfg = PROJECT_CONFIG.get(project_name, {})
-    workspace = proj_cfg.get("workspace", "")
-    configured_repo = proj_cfg.get("git_repo", "")
+    workspace = str(proj_cfg.get("workspace", "") or "")
+    configured_repo = str(proj_cfg.get("git_repo", "") or "")
     if not workspace:
         return None
     workspace_abs = os.path.join(BASE_DIR, workspace)
@@ -617,6 +624,10 @@ def _resolve_git_dirs(project_name: str) -> dict[str, str]:
     return resolved
 
 
+def _workflow_policy_notify(message: str) -> None:
+    emit_alert(message, severity="info", source="workflow_policy")
+
+
 def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name: str) -> None:
     """Handle workflow completion: close issue, create PR if needed, send Telegram.
 
@@ -669,7 +680,7 @@ def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name:
             issue_number=str(kwargs["issue_number"]),
             comment=kwargs.get("comment"),
         ),
-        send_notification=lambda msg: emit_alert(msg, severity="info", source="workflow_policy"),
+        send_notification=_workflow_policy_notify,
         cache_key="workflow-policy:finalize",
     )
 
@@ -985,9 +996,8 @@ def _resolve_project_for_issue(issue_num: str, workflow_id: str | None = None) -
     if normalized_workflow_id:
         project_keys = [name for name, _ in _iter_project_configs(PROJECT_CONFIG, get_repos)]
         for project_name in sorted(project_keys, key=len, reverse=True):
-            if (
-                normalized_workflow_id == project_name
-                or normalized_workflow_id.startswith(f"{project_name}-")
+            if normalized_workflow_id == project_name or normalized_workflow_id.startswith(
+                f"{project_name}-"
             ):
                 return project_name
 
@@ -1260,7 +1270,7 @@ def _recover_unmapped_issues_from_completions(max_relaunches: int = 20) -> int:
 
 def check_agent_comments():
     """Monitor Git issues for agent comments requesting input across all projects."""
-    workflow_labels = {"workflow:full", "workflow:shortened", "workflow:fast-track"}
+    workflow_labels = set(_WORKFLOW_MONITOR_LABELS)
 
     def _list_workflow_issue_numbers(project_name: str, repo: str) -> list[int]:
         monitor_policy = get_workflow_monitor_policy_plugin(

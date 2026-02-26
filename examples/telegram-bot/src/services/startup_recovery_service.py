@@ -61,7 +61,9 @@ def reconcile_completion_signals_on_startup(
         project_name = str(metadata.get("project_name", "") or "")
 
         local_signal = read_latest_local_completion(str(issue_num))
-        comment_signal = read_latest_structured_comment(str(issue_num), repo, project_name) if repo else None
+        comment_signal = (
+            read_latest_structured_comment(str(issue_num), repo, project_name) if repo else None
+        )
 
         drifts = []
         local_next = (local_signal or {}).get("next_agent", "")

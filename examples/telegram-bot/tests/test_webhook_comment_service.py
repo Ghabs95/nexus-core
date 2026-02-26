@@ -10,7 +10,12 @@ class _Policy:
 
 def test_comment_service_ignores_non_created():
     result = handle_issue_comment_event(
-        event={"action": "edited", "comment_id": 1, "issue_number": "42", "comment_author": "copilot"},
+        event={
+            "action": "edited",
+            "comment_id": 1,
+            "issue_number": "42",
+            "comment_author": "copilot",
+        },
         logger=MagicMock(),
         policy=_Policy(),
         processed_events=set(),

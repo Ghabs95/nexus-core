@@ -2,7 +2,6 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-
 from services.monitoring_logs_service import handle_logs, handle_logsfull, handle_tail
 
 
@@ -24,9 +23,15 @@ class _Ctx:
 
 def _deps():
     class _Logger:
-        def info(self, *a, **k): pass
-        def warning(self, *a, **k): pass
-        def error(self, *a, **k): pass
+        def info(self, *a, **k):
+            pass
+
+        def warning(self, *a, **k):
+            pass
+
+        def error(self, *a, **k):
+            pass
+
     return SimpleNamespace(
         logger=_Logger(),
         allowed_user_ids=[],

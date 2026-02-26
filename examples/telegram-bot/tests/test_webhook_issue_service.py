@@ -72,7 +72,9 @@ def test_handle_issue_opened_event_creates_task_file(tmp_path):
         base_dir=str(tmp_path),
         project_repos=lambda key, cfg, get_repos: cfg.get("git_repos", [cfg.get("git_repo")]),
         get_repos=lambda _key: [],
-        get_tasks_active_dir=lambda root, project: str(tmp_path / "workspace-a" / ".nexus" / "tasks" / project / "active"),
+        get_tasks_active_dir=lambda root, project: str(
+            tmp_path / "workspace-a" / ".nexus" / "tasks" / project / "active"
+        ),
         get_inbox_dir=lambda root, project: str(inbox_dir),
     )
 

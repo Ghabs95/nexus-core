@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from interactive_context import InteractiveContext
 
-from nexus.adapters.notifications.base import Button
 from services.callback_inline_service import (
     handle_merge_queue_inline_action,
     parse_inline_action,

@@ -99,7 +99,9 @@ async def handle_menu_callback(ctx: Any) -> None:
         await ctx.edit_message_text(ctx.text, buttons=[])
         return
     if menu_key == "root":
-        await ctx.edit_message_text("📍 **Nexus Menu**\nChoose a category:", buttons=menu_root_buttons())
+        await ctx.edit_message_text(
+            "📍 **Nexus Menu**\nChoose a category:", buttons=menu_root_buttons()
+        )
         return
 
     await ctx.edit_message_text(menu_section_text(menu_key), buttons=menu_back_close_buttons())

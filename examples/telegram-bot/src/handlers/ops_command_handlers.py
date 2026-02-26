@@ -14,8 +14,6 @@ from interactive_context import InteractiveContext
 from services.ops_direct_service import handle_direct_request as _service_handle_direct_request
 from utils.log_utils import log_unauthorized_access
 
-from nexus.core.chat_agents_schema import get_project_chat_agent_types
-
 
 @dataclass
 class OpsHandlerDeps:
@@ -125,7 +123,7 @@ async def audit_handler(ctx: InteractiveContext, deps: OpsHandlerDeps) -> None:
     msg_id = await ctx.reply_text(f"📊 Fetching audit trail for issue #{issue_num}...")
 
     try:
-        audit_history = deps.get_audit_history(issue_num, limit=100)
+        audit_history = deps.get_audit_history(issue_num, 100)
 
         if not audit_history:
             await ctx.edit_message_text(
@@ -210,7 +208,7 @@ async def stats_handler(ctx: InteractiveContext, deps: OpsHandlerDeps) -> None:
                 await ctx.reply_text("⚠️ Invalid lookback days. Using default 30 days.")
                 lookback_days = 30
 
-        report = deps.get_stats_report(lookback_days=lookback_days)
+        report = deps.get_stats_report(lookback_days)
 
         max_len = 3500
         if len(report) <= max_len:

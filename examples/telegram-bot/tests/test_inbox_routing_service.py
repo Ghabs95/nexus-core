@@ -74,7 +74,12 @@ def test_process_inbox_task_request_returns_pending_resolution_on_unknown_projec
 
 def test_save_resolved_inbox_task_request_file_backend(tmp_path: Path):
     out = save_resolved_inbox_task_request(
-        pending_project={"raw_text": "raw", "content": "content", "task_type": "feature", "task_name": "n"},
+        pending_project={
+            "raw_text": "raw",
+            "content": "content",
+            "task_type": "feature",
+            "task_name": "n",
+        },
         selected_project="acme",
         message_id_or_unique_id="8",
         normalize_project_key=lambda s: s.strip().lower() if s else None,

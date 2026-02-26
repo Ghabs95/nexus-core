@@ -7,7 +7,6 @@ import re
 import threading
 import time
 from functools import partial
-from types import SimpleNamespace
 from typing import Any
 
 from telegram import (
@@ -234,23 +233,23 @@ from nexus.core.completion import scan_for_completions
 from nexus.core.utils.logging_filters import install_secret_redaction
 from nexus.plugins.builtin.ai_runtime_plugin import AIProvider
 from orchestration.ai_orchestrator import get_orchestrator
-from orchestration.telegram_command_router import dispatch_command as _router_dispatch_command
+from orchestration.plugin_runtime import (
+    get_profiled_plugin,
+    get_runtime_ops_plugin,
+    get_workflow_state_plugin,
+)
 from orchestration.telegram_callback_router import (
     call_core_callback_handler as _router_call_core_callback_handler,
 )
 from orchestration.telegram_callback_router import (
     call_core_chat_handler as _router_call_core_chat_handler,
 )
+from orchestration.telegram_command_router import dispatch_command as _router_dispatch_command
 from orchestration.telegram_update_bridge import (
     build_telegram_interactive_ctx as _bridge_build_telegram_interactive_ctx,
 )
 from orchestration.telegram_update_bridge import (
     buttons_to_reply_markup as _bridge_buttons_to_reply_markup,
-)
-from orchestration.plugin_runtime import (
-    get_profiled_plugin,
-    get_runtime_ops_plugin,
-    get_workflow_state_plugin,
 )
 from project_key_utils import normalize_project_key_optional as _normalize_project_key
 from rate_limiter import RateLimit, get_rate_limiter
@@ -268,6 +267,7 @@ from services.memory_service import (
     get_chat_history,
     rename_chat,
 )
+from services.telegram_hands_free_service import handle_hands_free_message
 from services.telegram_task_capture_service import (
     handle_save_task_selection,
     handle_task_confirmation_callback,
@@ -278,7 +278,6 @@ from services.telegram_ui_prompts_service import (
 from services.telegram_ui_prompts_service import (
     prompt_project_selection as _svc_prompt_project_selection,
 )
-from services.telegram_hands_free_service import handle_hands_free_message
 from services.workflow_control_service import (
     kill_issue_agent,
     prepare_continue_context,
@@ -475,7 +474,9 @@ def _ops_handler_deps() -> OpsHandlerDeps:
         get_inbox_storage_backend=get_inbox_storage_backend,
         get_inbox_queue_overview=_get_inbox_queue_overview,
         format_error_for_user=format_error_for_user,
-        get_audit_history=AuditStore.get_audit_history,
+        get_audit_history=lambda issue_num, limit: AuditStore.get_audit_history(
+            int(issue_num), limit
+        ),
         get_repo=get_repo,
         get_direct_issue_plugin=_get_direct_issue_plugin,
         orchestrator=orchestrator,
@@ -663,23 +664,6 @@ def _get_expected_running_agent_from_workflow(issue_num: str) -> str | None:
                 return asyncio.run(_runner())
             except Exception:
                 return None
-
-            holder: dict[str, Any] = {"value": None, "error": None}
-
-            def _thread_target() -> None:
-                try:
-                    holder["value"] = asyncio.run(_runner())
-                except Exception as inner_exc:
-                    holder["error"] = inner_exc
-
-            worker = threading.Thread(target=_thread_target, daemon=True)
-            worker.start()
-            worker.join(timeout=10)
-            if worker.is_alive():
-                return None
-            if holder["error"] is not None:
-                return None
-            return holder["value"]
 
         holder: dict[str, Any] = {"value": None, "error": None}
 
@@ -971,7 +955,7 @@ def _get_project_root(project_key: str) -> str | None:
     workspace = cfg.get("workspace")
     if not workspace:
         return None
-    return os.path.join(BASE_DIR, workspace)
+    return os.path.join(BASE_DIR, str(workspace))
 
 
 def _get_project_logs_dir(project_key: str) -> str | None:

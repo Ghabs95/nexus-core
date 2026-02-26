@@ -160,7 +160,9 @@ The actual agent assignment depends on the current project's workflow configurat
             "repository": repo_name,
         }
     except Exception as exc:
-        logger.error("❌ Error creating task file for issue #%s: %s", issue_number, exc, exc_info=True)
+        logger.error(
+            "❌ Error creating task file for issue #%s: %s", issue_number, exc, exc_info=True
+        )
         emit_alert(
             f"Issue processing error for #{issue_number}: {str(exc)}",
             severity="error",

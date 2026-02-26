@@ -107,7 +107,9 @@ async def prompt_issue_selection(
             text, reply_markup=inline_keyboard_markup_cls(keyboard)
         )
     else:
-        await update.effective_message.reply_text(text, reply_markup=inline_keyboard_markup_cls(keyboard))
+        await update.effective_message.reply_text(
+            text, reply_markup=inline_keyboard_markup_cls(keyboard)
+        )
 
 
 async def prompt_project_selection(
@@ -134,7 +136,11 @@ async def prompt_project_selection(
         return
 
     keyboard = [
-        [inline_keyboard_button_cls(get_project_label(key), callback_data=f"pickcmd:{command}:{key}")]
+        [
+            inline_keyboard_button_cls(
+                get_project_label(key), callback_data=f"pickcmd:{command}:{key}"
+            )
+        ]
         for key in iter_project_keys()
     ]
     keyboard.append([inline_keyboard_button_cls("❌ Close", callback_data="flow:close")])

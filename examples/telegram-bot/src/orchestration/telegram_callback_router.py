@@ -1,10 +1,11 @@
 """Telegram callback/chat wrapper routing extracted from telegram_bot."""
 
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 
-async def call_core_callback_handler(update: Any, context: Any, handler, *, build_ctx, deps_factory) -> None:
+async def call_core_callback_handler(
+    update: Any, context: Any, handler, *, build_ctx, deps_factory
+) -> None:
     """Invoke a core callback handler with Telegram interactive context and deps."""
     await handler(build_ctx(update, context), deps_factory())
 

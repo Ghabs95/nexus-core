@@ -6,8 +6,9 @@ import re
 import time
 from typing import Any
 
-from nexus.adapters.notifications.base import Button
 from utils.log_utils import log_unauthorized_access
+
+from nexus.adapters.notifications.base import Button
 
 
 async def handle_logs(ctx: Any, deps: Any) -> None:
@@ -103,7 +104,9 @@ async def handle_logsfull(ctx: Any, deps: Any) -> None:
     msg_id = await ctx.reply_text(f"📋 Fetching full logs for issue #{issue_num}...")
     repo = deps.project_repo(project_key)
     issue_cfg = deps.project_config.get(project_key)
-    issue_url = deps.build_issue_url(repo, issue_num, issue_cfg if isinstance(issue_cfg, dict) else None)
+    issue_url = deps.build_issue_url(
+        repo, issue_num, issue_cfg if isinstance(issue_cfg, dict) else None
+    )
 
     details = deps.get_issue_details(issue_num, repo=repo)
     timeline = "Git Platform Activity:\n"
@@ -204,7 +207,9 @@ async def handle_tail(ctx: Any, deps: Any) -> None:
             return lines_local
         logs_dir = deps.get_project_logs_dir(project_key)
         if logs_dir:
-            log_files = [os.path.join(logs_dir, f) for f in os.listdir(logs_dir) if f.endswith(".log")]
+            log_files = [
+                os.path.join(logs_dir, f) for f in os.listdir(logs_dir) if f.endswith(".log")
+            ]
             if log_files:
                 log_files.sort(key=os.path.getmtime, reverse=True)
                 latest = log_files[0]
@@ -247,7 +252,9 @@ async def handle_tail(ctx: Any, deps: Any) -> None:
                         await ctx.edit_message_text(message_id=msg_id, text=text, parse_mode=None)
                         previous_text = text
                     except Exception as exc:
-                        deps.logger.warning(f"Failed to update tail message for issue #{issue_num}: {exc}")
+                        deps.logger.warning(
+                            f"Failed to update tail message for issue #{issue_num}: {exc}"
+                        )
                 if time.time() >= deadline:
                     break
                 await asyncio.sleep(refresh_seconds)

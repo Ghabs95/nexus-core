@@ -69,7 +69,9 @@ def test_process_webhook_request_ping_route():
 def test_process_webhook_request_reports_handler_exception():
     alerts = []
     handlers = _handlers()
-    handlers["handle_pull_request"] = lambda payload, event: (_ for _ in ()).throw(RuntimeError("boom"))
+    handlers["handle_pull_request"] = lambda payload, event: (_ for _ in ()).throw(
+        RuntimeError("boom")
+    )
     body, status = process_webhook_request(
         payload_body=b"{}",
         headers={"X-Hub-Signature-256": "x", "X-GitHub-Event": "pull_request"},

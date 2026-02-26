@@ -2,7 +2,6 @@ import logging
 from types import SimpleNamespace
 
 import pytest
-
 from services.feature_ideation_callback_service import handle_feature_ideation_callback
 
 

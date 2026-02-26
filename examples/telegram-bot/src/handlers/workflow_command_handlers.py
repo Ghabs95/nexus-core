@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -66,7 +65,9 @@ async def reprocess_handler(
 ) -> None:
     from nexus.adapters.git.utils import build_issue_url, resolve_repo
 
-    await _service_handle_reprocess(ctx, deps, build_issue_url=build_issue_url, resolve_repo=resolve_repo)
+    await _service_handle_reprocess(
+        ctx, deps, build_issue_url=build_issue_url, resolve_repo=resolve_repo
+    )
 
 
 async def continue_handler(

@@ -15,7 +15,7 @@ import os
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
@@ -35,7 +35,7 @@ _STEP_COMPLETE_HEADER_RE = re.compile(
 _READY_FOR_RE = re.compile(r"\bready\s+for\b", re.IGNORECASE)
 
 
-def _run_coro_sync(coro_factory: Callable[[], object]) -> object | None:
+def _run_coro_sync(coro_factory: Callable[[], Coroutine[Any, Any, object]]) -> object | None:
     """Run an async coroutine from sync code, even if a loop is already running."""
     try:
         asyncio.get_running_loop()
@@ -323,14 +323,11 @@ class NexusAgentRuntime(AgentRuntime):
                         workflow_plugin = get_workflow_state_plugin(
                             storage_dir=NEXUS_CORE_STORAGE_DIR,
                             storage_type=(
-                                "postgres"
-                                if NEXUS_WORKFLOW_BACKEND == "postgres"
-                                else "file"
+                                "postgres" if NEXUS_WORKFLOW_BACKEND == "postgres" else "file"
                             ),
                             storage_config=(
                                 {"connection_string": NEXUS_STORAGE_DSN}
-                                if NEXUS_WORKFLOW_BACKEND == "postgres"
-                                and NEXUS_STORAGE_DSN
+                                if NEXUS_WORKFLOW_BACKEND == "postgres" and NEXUS_STORAGE_DSN
                                 else {}
                             ),
                             issue_to_workflow_id=lambda n: get_workflow_state().get_workflow_id(n),

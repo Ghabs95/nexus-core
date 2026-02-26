@@ -41,7 +41,9 @@ def handle_issue_comment_event(
         r"implementation\s+complete",
         r"all\s+steps\s+completed",
     ]
-    is_completion = any(re.search(pattern, str(comment_body or ""), re.IGNORECASE) for pattern in completion_markers)
+    is_completion = any(
+        re.search(pattern, str(comment_body or ""), re.IGNORECASE) for pattern in completion_markers
+    )
     next_agent_match = re.search(r"@(\w+)", str(comment_body or ""))
     next_agent = next_agent_match.group(1) if next_agent_match else None
 

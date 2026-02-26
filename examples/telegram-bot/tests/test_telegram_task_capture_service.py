@@ -1,9 +1,8 @@
 import logging
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-
 from services.telegram_task_capture_service import (
     handle_save_task_selection,
     handle_task_confirmation_callback,
@@ -198,6 +197,7 @@ async def test_save_task_selection_text_writes_file(tmp_path: Path):
             raise AssertionError(task)
 
     end = object()
+
     async def _transcribe_unused(*_a, **_k):
         return None
 
@@ -243,6 +243,7 @@ async def test_save_task_selection_failed_transcription_returns_end():
     ctx.bot = SimpleNamespace(delete_message=_delete_message)
 
     end = object()
+
     async def _transcribe_none(*_a, **_k):
         return None
 

@@ -4,10 +4,10 @@ import os
 import re
 from typing import Any
 
-from nexus.core.chat_agents_schema import get_project_chat_agent_types
+from handlers.agent_resolution_handler import resolve_agents_for_project
 from utils.log_utils import log_unauthorized_access
 
-from handlers.agent_resolution_handler import resolve_agents_for_project
+from nexus.core.chat_agents_schema import get_project_chat_agent_types
 
 
 async def handle_direct_request(
@@ -54,7 +54,9 @@ async def handle_direct_request(
 
     source_filename = agents_map.get(agent, "")
     project_cfg = deps.project_config.get(project) if isinstance(deps.project_config, dict) else {}
-    project_chat_agent_types = get_project_chat_agent_types(project_cfg if isinstance(project_cfg, dict) else {})
+    project_chat_agent_types = get_project_chat_agent_types(
+        project_cfg if isinstance(project_cfg, dict) else {}
+    )
     agent_type = resolve_agent_type(
         agent,
         source_filename,
@@ -92,7 +94,9 @@ async def handle_direct_request(
             return True
         except Exception as exc:
             deps.logger.error(f"Error in direct chat request: {exc}")
-            await ctx.edit_message_text(message_id=msg_id, text=f"❌ Error in direct chat reply: {exc}")
+            await ctx.edit_message_text(
+                message_id=msg_id, text=f"❌ Error in direct chat reply: {exc}"
+            )
             return True
 
     msg_id = await ctx.reply_text(f"🚀 Creating direct request for @{agent}...")

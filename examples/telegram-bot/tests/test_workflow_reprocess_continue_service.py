@@ -2,7 +2,6 @@ import logging
 from types import SimpleNamespace
 
 import pytest
-
 from services.workflow_reprocess_continue_service import handle_continue, handle_reprocess
 
 
@@ -30,9 +29,14 @@ async def test_reprocess_service_prompts_when_no_args():
         allowed_user_ids=[],
         prompt_project_selection=lambda c, cmd: seen.setdefault("cmd", cmd),
     )
-    async def _prompt(c, cmd): seen["cmd"] = cmd
+
+    async def _prompt(c, cmd):
+        seen["cmd"] = cmd
+
     deps.prompt_project_selection = _prompt
-    await handle_reprocess(ctx, deps, build_issue_url=lambda *a, **k: "", resolve_repo=lambda *a, **k: "")
+    await handle_reprocess(
+        ctx, deps, build_issue_url=lambda *a, **k: "", resolve_repo=lambda *a, **k: ""
+    )
     assert seen["cmd"] == "reprocess"
 
 
@@ -44,7 +48,10 @@ async def test_continue_service_prompts_when_no_args():
         logger=logging.getLogger("test"),
         allowed_user_ids=[],
     )
-    async def _prompt(c, cmd): seen["cmd"] = cmd
+
+    async def _prompt(c, cmd):
+        seen["cmd"] = cmd
+
     deps.prompt_project_selection = _prompt
     await handle_continue(ctx, deps, finalize_workflow=lambda *a, **k: None)
     assert seen["cmd"] == "continue"

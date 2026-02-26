@@ -21,7 +21,9 @@ def parse_inline_action(query_data: str) -> tuple[str, str, str | None] | None:
     return action, issue_num.lstrip("#"), project_hint
 
 
-async def handle_merge_queue_inline_action(ctx: Any, *, action: str, issue_num: str, project_hint: str) -> bool:
+async def handle_merge_queue_inline_action(
+    ctx: Any, *, action: str, issue_num: str, project_hint: str
+) -> bool:
     try:
         queue = HostStateManager.load_merge_queue()
         if not isinstance(queue, dict):
@@ -45,7 +47,9 @@ async def handle_merge_queue_inline_action(ctx: Any, *, action: str, issue_num: 
                     target_status = "pending_auto_merge"
             elif action == "mqretry":
                 if status in {"blocked", "failed"}:
-                    target_status = "pending_auto_merge" if review_mode == "auto" else "pending_manual_review"
+                    target_status = (
+                        "pending_auto_merge" if review_mode == "auto" else "pending_manual_review"
+                    )
             elif action == "mqmerge":
                 if status in {"pending_manual_review", "blocked", "failed"}:
                     target_status = "pending_auto_merge"
@@ -84,4 +88,3 @@ async def handle_merge_queue_inline_action(ctx: Any, *, action: str, issue_num: 
     except Exception as exc:
         await ctx.edit_message_text(f"❌ Merge queue action failed: {exc}")
     return True
-

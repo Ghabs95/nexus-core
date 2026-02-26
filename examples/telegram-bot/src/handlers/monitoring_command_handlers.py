@@ -3,22 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import re
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from interactive_context import InteractiveContext
-from services.monitoring_status_active_service import (
-    handle_active as _service_handle_active,
-    handle_status as _service_handle_status,
-)
 from services.monitoring_logs_service import (
     handle_logs as _service_handle_logs,
     handle_logsfull as _service_handle_logsfull,
     handle_tail as _service_handle_tail,
+)
+from services.monitoring_status_active_service import (
+    handle_active as _service_handle_active,
+    handle_status as _service_handle_status,
 )
 from utils.log_utils import log_unauthorized_access
 
@@ -104,7 +101,7 @@ async def tailstop_handler(
         deps.active_tail_sessions.pop(session_key, None)
         if active_task and not active_task.done():
             active_task.cancel()
-        deps.active_tail_tasks.pop(session_key, None)
+        await deps.active_tail_tasks.pop(session_key, None)
         await ctx.reply_text("⏹️ Stopped live tail session.")
     else:
         await ctx.reply_text("ℹ️ No active live tail session to stop.")

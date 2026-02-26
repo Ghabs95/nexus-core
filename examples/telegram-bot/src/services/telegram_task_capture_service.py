@@ -51,7 +51,9 @@ async def handle_task_confirmation_callback(
         return
 
     text = str(pending.get("text") or "").strip()
-    message_id = str(pending.get("message_id") or getattr(getattr(query, "message", None), "message_id", ""))
+    message_id = str(
+        pending.get("message_id") or getattr(getattr(query, "message", None), "message_id", "")
+    )
     context.user_data.pop("pending_task_confirmation", None)
 
     result = await route_task_with_context(
@@ -97,7 +99,9 @@ async def handle_save_task_selection(
     if update.message.voice:
         msg = await update.message.reply_text("🎧 Transcribing (CLI)...")
         text = await transcribe_voice_message(update.message.voice.file_id, context)
-        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg.message_id)
+        await context.bot.delete_message(
+            chat_id=update.effective_chat.id, message_id=msg.message_id
+        )
     else:
         text = update.message.text
 
