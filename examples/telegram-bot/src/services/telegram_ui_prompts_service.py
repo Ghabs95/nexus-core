@@ -15,6 +15,12 @@ async def prompt_issue_selection(
 ) -> None:
     """Show a list of issues for the user to pick from."""
     issues = list_project_issues(project_key, state=issue_state)
+    if not issues and command in {"logs", "logsfull", "tail"}:
+        alt_state = "closed" if issue_state == "open" else "open"
+        alt_issues = list_project_issues(project_key, state=alt_state)
+        if alt_issues:
+            issue_state = alt_state
+            issues = alt_issues
     state_label = "open" if issue_state == "open" else "closed"
 
     if not issues:

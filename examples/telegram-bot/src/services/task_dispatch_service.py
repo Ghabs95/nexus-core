@@ -6,6 +6,12 @@ import shutil
 from collections.abc import Callable
 from typing import Any
 
+from config import NEXUS_STORAGE_BACKEND
+
+
+def _db_only_task_mode() -> bool:
+    return str(NEXUS_STORAGE_BACKEND or "").strip().lower() == "postgres"
+
 
 def handle_webhook_task(
     *,
@@ -70,11 +76,17 @@ def handle_webhook_task(
     if configured_repos and issue_repo not in configured_repos:
         reroute_project = resolve_project_for_repo(issue_repo)
         if reroute_project and reroute_project != project_name:
-            rerouted_path = reroute_webhook_task_to_project(filepath, reroute_project)
+            rerouted_path = None
+            if not _db_only_task_mode() and filepath and "://" not in str(filepath):
+                rerouted_path = reroute_webhook_task_to_project(filepath, reroute_project)
             message = (
                 f"⚠️ Re-routed webhook task for issue #{issue_number}: "
                 f"repo {issue_repo} does not match project {project_name} ({configured_repos}); "
-                f"moved to project '{reroute_project}'."
+                + (
+                    f"moved to project '{reroute_project}'."
+                    if rerouted_path
+                    else f"would route to project '{reroute_project}' (non-filesystem queue payload)."
+                )
             )
             logger.warning(message)
             emit_alert(
@@ -109,17 +121,20 @@ def handle_webhook_task(
         logger.info(
             "⏭️ Skipping webhook launch for issue #%s — agent recently launched", issue_number
         )
+        if not _db_only_task_mode():
+            active_dir = get_tasks_active_dir(project_root, project_name)
+            os.makedirs(active_dir, exist_ok=True)
+            new_filepath = os.path.join(active_dir, os.path.basename(filepath))
+            shutil.move(filepath, new_filepath)
+        return True
+
+    new_filepath = ""
+    if not _db_only_task_mode():
         active_dir = get_tasks_active_dir(project_root, project_name)
         os.makedirs(active_dir, exist_ok=True)
         new_filepath = os.path.join(active_dir, os.path.basename(filepath))
+        logger.info("Moving task to active: %s", new_filepath)
         shutil.move(filepath, new_filepath)
-        return True
-
-    active_dir = get_tasks_active_dir(project_root, project_name)
-    os.makedirs(active_dir, exist_ok=True)
-    new_filepath = os.path.join(active_dir, os.path.basename(filepath))
-    logger.info("Moving task to active: %s", new_filepath)
-    shutil.move(filepath, new_filepath)
 
     agents_dir_val = config.get("agents_dir")
     if agents_dir_val and issue_url:
@@ -179,7 +194,7 @@ def handle_webhook_task(
             project_name=project_name,
         )
 
-        if pid:
+        if pid and new_filepath:
             try:
                 with open(new_filepath, "a") as f:
                     f.write(f"\n**Agent PID:** {pid}\n")
@@ -243,11 +258,13 @@ def handle_new_task(
     workflow_checklist = render_checklist_from_workflow(project_name, tier_name)
     sop_checklist = workflow_checklist or sop_template or render_fallback_checklist(tier_name)
 
-    active_dir = get_tasks_active_dir(project_root, project_name)
-    os.makedirs(active_dir, exist_ok=True)
-    new_filepath = os.path.join(active_dir, os.path.basename(filepath))
-    logger.info("Moving task to active: %s", new_filepath)
-    shutil.move(filepath, new_filepath)
+    new_filepath = ""
+    if not _db_only_task_mode():
+        active_dir = get_tasks_active_dir(project_root, project_name)
+        os.makedirs(active_dir, exist_ok=True)
+        new_filepath = os.path.join(active_dir, os.path.basename(filepath))
+        logger.info("Moving task to active: %s", new_filepath)
+        shutil.move(filepath, new_filepath)
 
     type_prefixes = {
         "feature": "feat",
@@ -265,6 +282,7 @@ def handle_new_task(
     issue_title = f"[{project_name}] {prefix}/{slug}"
     branch_name = f"{prefix}/{slug}"
 
+    task_file_line = f"\n**Task File:** `{new_filepath}`" if new_filepath else ""
     issue_body = f"""## Task
 {content}
 
@@ -276,8 +294,7 @@ def handle_new_task(
 
 **Project:** {project_name}
 **Tier:** {tier_name}
-**Target Branch:** `{branch_name}`
-**Task File:** `{new_filepath}`"""
+**Target Branch:** `{branch_name}`{task_file_line}"""
 
     repo_key = get_repo_for_project(project_name)
     issue_url = create_issue(
@@ -292,25 +309,26 @@ def handle_new_task(
     issue_num = ""
     if issue_url:
         issue_num = issue_url.split("/")[-1]
-        old_basename = os.path.basename(new_filepath)
-        new_basename = re.sub(r"_(\d+)\.md$", f"_{issue_num}.md", old_basename)
-        if new_basename != old_basename:
-            try:
-                new_filepath = rename_task_file_and_sync_issue_body(
-                    task_file_path=new_filepath,
-                    issue_url=issue_url,
-                    issue_body=issue_body,
-                    project_name=project_name,
-                    repo_key=repo_key,
-                )
-            except Exception as exc:
-                logger.error("Failed to rename task file to issue-number name: %s", exc)
+        if new_filepath:
+            old_basename = os.path.basename(new_filepath)
+            new_basename = re.sub(r"_(\d+)\.md$", f"_{issue_num}.md", old_basename)
+            if new_basename != old_basename:
+                try:
+                    new_filepath = rename_task_file_and_sync_issue_body(
+                        task_file_path=new_filepath,
+                        issue_url=issue_url,
+                        issue_body=issue_body,
+                        project_name=project_name,
+                        repo_key=repo_key,
+                    )
+                except Exception as exc:
+                    logger.error("Failed to rename task file to issue-number name: %s", exc)
 
-        try:
-            with open(new_filepath, "a") as f:
-                f.write(f"\n\n**Issue:** {issue_url}\n")
-        except Exception as exc:
-            logger.error("Failed to append issue URL: %s", exc)
+            try:
+                with open(new_filepath, "a") as f:
+                    f.write(f"\n\n**Issue:** {issue_url}\n")
+            except Exception as exc:
+                logger.error("Failed to append issue URL: %s", exc)
 
         workflow_plugin = get_workflow_state_plugin(
             **workflow_state_plugin_kwargs,
@@ -338,11 +356,12 @@ def handle_new_task(
                     workflow_id,
                     issue_num,
                 )
-            try:
-                with open(new_filepath, "a") as f:
-                    f.write(f"**Workflow ID:** {workflow_id}\n")
-            except Exception as exc:
-                logger.error("Failed to append workflow ID: %s", exc)
+            if new_filepath:
+                try:
+                    with open(new_filepath, "a") as f:
+                        f.write(f"**Workflow ID:** {workflow_id}\n")
+                except Exception as exc:
+                    logger.error("Failed to append workflow ID: %s", exc)
 
     agents_dir_val = config["agents_dir"]
     if agents_dir_val is not None and issue_url:
@@ -371,7 +390,7 @@ def handle_new_task(
             project_name=project_name,
         )
 
-        if pid:
+        if pid and new_filepath:
             try:
                 with open(new_filepath, "a") as f:
                     f.write(f"**Agent PID:** {pid}\n")

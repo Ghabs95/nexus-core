@@ -3,13 +3,15 @@ import logging
 import os
 import re
 
-from config import get_nexus_dir_name, BASE_DIR
+from config import get_nexus_dir_name, BASE_DIR, NEXUS_STORAGE_BACKEND
 
 logger = logging.getLogger(__name__)
 
 
 def find_task_file_by_issue(issue_num: str) -> str | None:
     """Search for a task file that references the issue number."""
+    if str(NEXUS_STORAGE_BACKEND or "").strip().lower() == "postgres":
+        raise RuntimeError("find_task_file_by_issue is disabled in postgres mode")
     nexus_dir_name = get_nexus_dir_name()
     patterns = [
         os.path.join(BASE_DIR, "**", nexus_dir_name, "tasks", "*", "active", "*.md"),

@@ -18,6 +18,8 @@ def handle_issue_opened_event(
     get_repos,
     get_tasks_active_dir,
     get_inbox_dir,
+    get_inbox_storage_backend,
+    enqueue_task,
 ) -> dict[str, Any]:
     """Handle parsed issue webhook event and create inbox task file when applicable."""
     action = event.get("action")
@@ -48,22 +50,24 @@ def handle_issue_opened_event(
         )
         return {"status": "ignored", "reason": "self-created issue (has workflow label)"}
 
-    try:
-        for key, cfg in project_config.items():
-            if isinstance(cfg, dict) and repo_name in project_repos(key, cfg, get_repos):
-                ws = os.path.join(base_dir, cfg.get("workspace", ""))
-                active_dir = get_tasks_active_dir(ws, key)
-                task_path = os.path.join(active_dir, f"issue_{issue_number}.md")
-                if os.path.exists(task_path):
-                    logger.info(
-                        "⏭️ Skipping issue #%s — active task file already exists: %s",
-                        issue_number,
-                        task_path,
-                    )
-                    return {"status": "ignored", "reason": "task file already exists"}
-                break
-    except Exception as exc:
-        logger.warning("Could not check for existing task file: %s", exc)
+    inbox_backend = str(get_inbox_storage_backend() or "").strip().lower()
+    if inbox_backend != "postgres":
+        try:
+            for key, cfg in project_config.items():
+                if isinstance(cfg, dict) and repo_name in project_repos(key, cfg, get_repos):
+                    ws = os.path.join(base_dir, cfg.get("workspace", ""))
+                    active_dir = get_tasks_active_dir(ws, key)
+                    task_path = os.path.join(active_dir, f"issue_{issue_number}.md")
+                    if os.path.exists(task_path):
+                        logger.info(
+                            "⏭️ Skipping issue #%s — active task file already exists: %s",
+                            issue_number,
+                            task_path,
+                        )
+                        return {"status": "ignored", "reason": "task file already exists"}
+                    break
+        except Exception as exc:
+            logger.warning("Could not check for existing task file: %s", exc)
 
     try:
         triage_config = project_config.get("issue_triage", {})
@@ -119,8 +123,7 @@ def handle_issue_opened_event(
 
         workspace_abs = os.path.join(base_dir, project_workspace)
         inbox_dir = get_inbox_dir(workspace_abs, project_key)
-        Path(inbox_dir).mkdir(parents=True, exist_ok=True)
-        task_file = Path(inbox_dir) / f"issue_{issue_number}.md"
+        task_filename = f"issue_{issue_number}.md"
 
         task_content = f"""# Issue #{issue_number}: {issue_title}
 
@@ -145,16 +148,36 @@ This issue will be routed to the {agent_type} agent as defined in the workflow.
 The actual agent assignment depends on the current project's workflow configuration.
 """
 
-        task_file.write_text(task_content)
-        logger.info("✅ Created task file: %s (agent_type: %s)", task_file, agent_type)
+        queue_id = None
+        if inbox_backend == "postgres":
+            queue_id = enqueue_task(
+                project_key=str(project_key),
+                workspace=str(project_workspace),
+                filename=task_filename,
+                markdown_content=task_content,
+            )
+            logger.info(
+                "✅ Queued webhook issue task in Postgres inbox: id=%s issue=#%s agent_type=%s",
+                queue_id,
+                issue_number,
+                agent_type,
+            )
+            task_file_str = None
+        else:
+            Path(inbox_dir).mkdir(parents=True, exist_ok=True)
+            task_file = Path(inbox_dir) / task_filename
+            task_file.write_text(task_content)
+            logger.info("✅ Created task file: %s (agent_type: %s)", task_file, agent_type)
+            task_file_str = str(task_file)
 
         message = policy.build_issue_created_message(event, agent_type)
         notify_lifecycle(message)
 
         return {
-            "status": "task_created",
+            "status": "task_queued" if inbox_backend == "postgres" else "task_created",
             "issue": issue_number,
-            "task_file": str(task_file),
+            "task_file": task_file_str,
+            "queue_id": queue_id,
             "title": issue_title,
             "agent_type": agent_type,
             "repository": repo_name,

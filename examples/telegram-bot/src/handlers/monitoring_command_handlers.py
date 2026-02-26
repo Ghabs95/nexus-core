@@ -39,6 +39,8 @@ class MonitoringHandlersDeps:
     get_project_label: Callable[[str], str]
     get_project_root: Callable[[str], str | None]
     get_project_logs_dir: Callable[[str], str | None]
+    get_inbox_storage_backend: Callable[[], str]
+    get_inbox_queue_overview: Callable[[int], dict[str, Any]]
     project_repo: Callable[[str], str]
     get_issue_details: Callable[[str, str | None], dict[str, Any] | None]
     get_inbox_dir: Callable[[str, str], str]

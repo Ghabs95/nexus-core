@@ -202,6 +202,7 @@ def get_queue_overview(*, limit: int = 10) -> dict[str, Any]:
         "failed": 0,
     }
     recent: list[dict[str, Any]] = []
+    pending_by_project: dict[str, dict[str, Any]] = {}
 
     with Session(engine) as session:
         grouped = (
@@ -230,9 +231,44 @@ def get_queue_overview(*, limit: int = 10) -> dict[str, Any]:
                 }
             )
 
+        pending_counts = (
+            session.query(_InboxTaskRow.project_key, sa.func.count(_InboxTaskRow.id))
+            .filter(_InboxTaskRow.status == "pending")
+            .group_by(_InboxTaskRow.project_key)
+            .all()
+        )
+        for project_key, count in pending_counts:
+            pending_by_project[str(project_key)] = {
+                "count": int(count),
+                "samples": [],
+            }
+
+        sample_rows = (
+            session.query(_InboxTaskRow)
+            .filter(_InboxTaskRow.status == "pending")
+            .order_by(_InboxTaskRow.id.desc())
+            .limit(max(50, safe_limit * 10))
+            .all()
+        )
+        for row in sample_rows:
+            bucket = pending_by_project.get(str(row.project_key))
+            if not bucket:
+                continue
+            samples = bucket["samples"]
+            if len(samples) >= 3:
+                continue
+            samples.append(
+                {
+                    "id": int(row.id),
+                    "filename": row.filename,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+            )
+
     counts["total"] = sum(counts.values())
     return {
         "counts": counts,
         "recent": recent,
+        "pending_by_project": pending_by_project,
         "limit": safe_limit,
     }
