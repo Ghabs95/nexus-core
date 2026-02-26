@@ -193,7 +193,7 @@ async def test_reconcile_issue_from_signals_uses_storage_completion_when_local_d
             {"completed_agent": "developer", "next_agent": "qa", "comment_id": "c2"}
         ],
         workflow_state_plugin_kwargs={},
-        write_local_completion_from_signal=lambda *args: (_ for _ in ()).throw(
+        write_local_completion_from_signal=lambda *args: ().throw(
             AssertionError("should not write local")
         ),
     )
