@@ -92,10 +92,10 @@ def _collect_visualizer_snapshot() -> list[dict]:
 
         workflow_plugin = get_workflow_state_plugin(
             storage_dir=NEXUS_CORE_STORAGE_DIR,
-            storage_type=("postgres" if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} else "file"),
+            storage_type=("postgres" if NEXUS_WORKFLOW_BACKEND == "postgres" else "file"),
             storage_config=(
                 {"connection_string": NEXUS_STORAGE_DSN}
-                if NEXUS_WORKFLOW_BACKEND in {"postgres", "both"} and NEXUS_STORAGE_DSN
+                if NEXUS_WORKFLOW_BACKEND == "postgres" and NEXUS_STORAGE_DSN
                 else {}
             ),
             issue_to_workflow_id=lambda n: workflow_state.get_workflow_id(n),

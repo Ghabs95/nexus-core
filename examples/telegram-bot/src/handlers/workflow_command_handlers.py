@@ -339,7 +339,7 @@ async def continue_handler(
                 f"Prompt: {continue_ctx['continuation_prompt']}\n\n"
                 "ℹ️ **Note:** The agent will first check if the workflow has already progressed.\n"
                 "If another agent is already handling the next step, this agent will exit gracefully.\n"
-                "Use `/continue` only when an agent is truly stuck mid-step.\n\n"
+                "Use /continue only when an agent is truly stuck mid-step.\n\n"
                 f"🔗 {continue_ctx['issue_url']}"
             ),
         )
