@@ -12,7 +12,8 @@ def reconcile_completion_signals_on_startup(
     logger,
     emit_alert: Callable[..., Any],
     get_workflow_state_mappings: Callable[[], dict[str, Any]],
-    nexus_core_storage_dir: str,
+    nexus_core_storage_dir: str | None,
+    load_workflow_payload: Callable[[str], dict[str, Any] | None] | None = None,
     normalize_agent_reference: Callable[[str], str],
     extract_repo_from_issue_url: Callable[[str], str],
     read_latest_local_completion: Callable[[str], dict[str, Any] | None],
@@ -26,11 +27,23 @@ def reconcile_completion_signals_on_startup(
         return
 
     for issue_num, workflow_id in mappings.items():
-        wf_file = os.path.join(nexus_core_storage_dir, "workflows", f"{workflow_id}.json")
-        try:
-            with open(wf_file, encoding="utf-8") as handle:
-                payload = json.load(handle)
-        except Exception:
+        payload: dict[str, Any] | None = None
+        if load_workflow_payload is not None:
+            try:
+                candidate = load_workflow_payload(str(workflow_id))
+                payload = candidate if isinstance(candidate, dict) else None
+            except Exception:
+                payload = None
+        elif nexus_core_storage_dir:
+            wf_file = os.path.join(nexus_core_storage_dir, "workflows", f"{workflow_id}.json")
+            try:
+                with open(wf_file, encoding="utf-8") as handle:
+                    loaded = json.load(handle)
+                payload = loaded if isinstance(loaded, dict) else None
+            except Exception:
+                payload = None
+
+        if not payload:
             continue
 
         state = str(payload.get("state", "")).strip().lower()

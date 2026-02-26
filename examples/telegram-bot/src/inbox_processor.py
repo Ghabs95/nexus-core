@@ -18,6 +18,7 @@ from config import (
     BASE_DIR,
     INBOX_PROCESSOR_LOG_FILE,
     NEXUS_CORE_STORAGE_DIR,
+    NEXUS_STORAGE_BACKEND,
     NEXUS_STATE_DIR,
     ORCHESTRATOR_CONFIG,
     PROJECT_CONFIG,
@@ -199,6 +200,10 @@ _ORPHAN_RECOVERY_COOLDOWN_SECONDS = max(
 _orphan_recovery_last_attempt = PROCESSOR_RUNTIME_STATE.orphan_recovery_last_attempt
 from integrations.workflow_state_factory import get_workflow_state as _get_wf_state
 from integrations.workflow_state_factory import get_storage_backend as _get_storage_backend
+
+
+def _db_only_task_mode() -> bool:
+    return str(NEXUS_STORAGE_BACKEND or "").strip().lower() == "postgres"
 
 _WORKFLOW_STATE_PLUGIN_KWARGS = {
     "storage_dir": NEXUS_CORE_STORAGE_DIR,
@@ -435,7 +440,22 @@ def _resolve_repo_strict(project_name: str, issue_num: str) -> str:
 
 
 def _read_latest_local_completion(issue_num: str) -> dict | None:
-    """Return latest local completion summary for issue, if present."""
+    """Return latest completion summary for issue (storage-backed in postgres mode)."""
+    if _db_only_task_mode():
+        try:
+            backend = _get_storage_backend()
+            items = asyncio.run(backend.list_completions(str(issue_num)))
+        except Exception:
+            return None
+        if not items:
+            return None
+        payload = items[0] if isinstance(items[0], dict) else {}
+        return {
+            "file": None,
+            "mtime": 0,
+            "agent_type": _normalize_agent_reference(str(payload.get("agent_type") or payload.get("_agent_type") or "")).lower(),
+            "next_agent": _normalize_agent_reference(str(payload.get("next_agent", ""))).lower(),
+        }
     nexus_dir_name = get_nexus_dir_name()
     pattern = os.path.join(
         BASE_DIR,
@@ -500,11 +520,52 @@ def reconcile_completion_signals_on_startup() -> None:
     Safe startup check only: emits alerts when signals diverge, does not mutate
     workflow state or completion files.
     """
+    def _load_startup_workflow_payload(workflow_id: str) -> dict | None:
+        if _db_only_task_mode():
+            try:
+                storage = _get_storage_backend()
+                workflow = asyncio.run(storage.load_workflow(str(workflow_id)))
+            except Exception as exc:
+                logger.debug(
+                    "Startup reconciliation could not load workflow %s from storage: %s",
+                    workflow_id,
+                    exc,
+                )
+                return None
+            if workflow is None:
+                return None
+            steps_payload = []
+            for step in getattr(workflow, "steps", []) or []:
+                agent = getattr(step, "agent", None)
+                steps_payload.append(
+                    {
+                        "status": str(getattr(getattr(step, "status", None), "value", getattr(step, "status", "")) or ""),
+                        "agent": {
+                            "name": str(getattr(agent, "name", "") or ""),
+                            "display_name": str(getattr(agent, "display_name", "") or ""),
+                        },
+                    }
+                )
+            return {
+                "state": str(getattr(getattr(workflow, "state", None), "value", getattr(workflow, "state", "")) or ""),
+                "steps": steps_payload,
+                "metadata": getattr(workflow, "metadata", {}) or {},
+            }
+
+        wf_file = os.path.join(NEXUS_CORE_STORAGE_DIR, "workflows", f"{workflow_id}.json")
+        try:
+            with open(wf_file, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
+
     _startup_reconcile_completion_signals(
         logger=logger,
         emit_alert=emit_alert,
         get_workflow_state_mappings=lambda: _get_wf_state().load_all_mappings(),
         nexus_core_storage_dir=NEXUS_CORE_STORAGE_DIR,
+        load_workflow_payload=_load_startup_workflow_payload,
         normalize_agent_reference=_normalize_agent_reference,
         extract_repo_from_issue_url=_extract_repo_from_issue_url,
         read_latest_local_completion=_read_latest_local_completion,
@@ -978,6 +1039,8 @@ def _resolve_project_for_issue(issue_num: str, workflow_id: str | None = None) -
 
 def _find_task_file_for_issue(issue_num: str) -> str | None:
     """Find a local task markdown file for an issue number."""
+    if _db_only_task_mode():
+        return None
     issue = str(issue_num).strip()
     if not issue:
         return None
@@ -1051,6 +1114,9 @@ def _recover_unmapped_issues_from_completions(max_relaunches: int = 20) -> int:
     This path handles cases where workflow mapping is lost after restarts but
     local completion + task context still indicates the next agent to run.
     """
+    if _db_only_task_mode():
+        return 0
+
     runtime = getattr(_get_process_orchestrator(), "_runtime", None)
     return _service_recover_unmapped_issues_from_completions(
         max_relaunches=max_relaunches,
@@ -1303,7 +1369,6 @@ def process_file(filepath):
     logger.info(f"Processing: {filepath}")
 
     try:
-        project_root = None
         task_ctx = _load_task_context(
             filepath=filepath,
             project_config=PROJECT_CONFIG,
@@ -1313,68 +1378,108 @@ def process_file(filepath):
             get_repos=get_repos,
         )
         if not task_ctx:
-            logger.warning(f"⚠️ No project config for workspace '{project_root}', skipping.")
-            return
-        content = task_ctx["content"]
-        task_type = str(task_ctx["task_type"])
-        project_name = task_ctx["project_name"]
-        project_root = task_ctx["project_root"]
-        config = task_ctx["config"]
-
-        logger.info(f"Project: {project_name}")
-
-        if _handle_webhook_task(
-            filepath=filepath,
-            content=content,
-            project_name=str(project_name),
-            project_root=str(project_root),
-            config=config,
-            base_dir=BASE_DIR,
-            logger=logger,
-            emit_alert=emit_alert,
-            get_repos_for_project=get_repos,
-            extract_repo_from_issue_url=_extract_repo_from_issue_url,
-            resolve_project_for_repo=_resolve_project_for_repo,
-            reroute_webhook_task_to_project=_reroute_webhook_task_to_project,
-            get_tasks_active_dir=get_tasks_active_dir,
-            is_recent_launch=is_recent_launch,
-            get_initial_agent_from_workflow=_get_initial_agent_from_workflow,
-            get_repo_for_project=get_repo,
-            resolve_tier_for_issue=_resolve_tier_for_issue,
-            invoke_copilot_agent=invoke_copilot_agent,
-        ):
-            return
-
-        _handle_new_task(
-            filepath=filepath,
-            content=content,
-            task_type=task_type,
-            project_name=str(project_name),
-            project_root=str(project_root),
-            config=config,
-            base_dir=BASE_DIR,
-            logger=logger,
-            emit_alert=emit_alert,
-            get_repo_for_project=get_repo,
-            get_tasks_active_dir=get_tasks_active_dir,
-            refine_issue_content=_refine_issue_content,
-            extract_inline_task_name=_extract_inline_task_name,
-            slugify=slugify,
-            generate_issue_name=generate_issue_name,
-            get_sop_tier=get_sop_tier,
-            render_checklist_from_workflow=_render_checklist_from_workflow,
-            render_fallback_checklist=_render_fallback_checklist,
-            create_issue=_create_issue,
-            rename_task_file_and_sync_issue_body=_rename_task_file_and_sync_issue_body,
-            get_workflow_state_plugin=get_workflow_state_plugin,
-            workflow_state_plugin_kwargs=_WORKFLOW_STATE_PLUGIN_KWARGS,
-            start_workflow=start_workflow,
-            get_initial_agent_from_workflow=_get_initial_agent_from_workflow,
-            invoke_copilot_agent=invoke_copilot_agent,
-        )
+            logger.warning("⚠️ No project config for file '%s', skipping.", filepath)
+            return False
+        return _process_task_context(task_ctx=task_ctx, filepath=filepath)
 
     except Exception as e:
         logger.error(f"Failed to process {filepath}: {e}")
+        return False
+
+
+def process_task_payload(*, project_key: str, workspace: str, filename: str, content: str) -> bool:
+    """Process a Postgres inbox queue payload without writing a temporary inbox file."""
+    logger.info(
+        "Processing queued task payload: project=%s workspace=%s filename=%s",
+        project_key,
+        workspace,
+        filename,
+    )
+    try:
+        cfg = PROJECT_CONFIG.get(str(project_key))
+        if not isinstance(cfg, dict):
+            logger.warning("⚠️ No project config for queued task project '%s', skipping.", project_key)
+            return False
+        type_match = re.search(r"\*\*Type:\*\*\s*(.+)", str(content or ""))
+        task_type = type_match.group(1).strip().lower() if type_match else "feature"
+        task_ctx = {
+            "content": str(content or ""),
+            "task_type": task_type,
+            "project_name": str(project_key),
+            "project_root": os.path.join(BASE_DIR, str(workspace or cfg.get("workspace", project_key))),
+            "config": cfg,
+        }
+        synthetic_path = f"postgres://inbox/{project_key}/{filename}"
+        return _process_task_context(task_ctx=task_ctx, filepath=synthetic_path)
+    except Exception as exc:
+        logger.error(
+            "Failed to process queued task payload for project=%s filename=%s: %s",
+            project_key,
+            filename,
+            exc,
+        )
+        return False
+
+
+def _process_task_context(*, task_ctx: dict[str, object], filepath: str) -> bool:
+    content = task_ctx["content"]
+    task_type = str(task_ctx["task_type"])
+    project_name = task_ctx["project_name"]
+    project_root = task_ctx["project_root"]
+    config = task_ctx["config"]
+
+    logger.info(f"Project: {project_name}")
+
+    if _handle_webhook_task(
+        filepath=filepath,
+        content=str(content),
+        project_name=str(project_name),
+        project_root=str(project_root),
+        config=config,
+        base_dir=BASE_DIR,
+        logger=logger,
+        emit_alert=emit_alert,
+        get_repos_for_project=get_repos,
+        extract_repo_from_issue_url=_extract_repo_from_issue_url,
+        resolve_project_for_repo=_resolve_project_for_repo,
+        reroute_webhook_task_to_project=_reroute_webhook_task_to_project,
+        get_tasks_active_dir=get_tasks_active_dir,
+        is_recent_launch=is_recent_launch,
+        get_initial_agent_from_workflow=_get_initial_agent_from_workflow,
+        get_repo_for_project=get_repo,
+        resolve_tier_for_issue=_resolve_tier_for_issue,
+        invoke_copilot_agent=invoke_copilot_agent,
+    ):
+        return True
+
+    _handle_new_task(
+        filepath=filepath,
+        content=str(content),
+        task_type=task_type,
+        project_name=str(project_name),
+        project_root=str(project_root),
+        config=config,
+        base_dir=BASE_DIR,
+        logger=logger,
+        emit_alert=emit_alert,
+        get_repo_for_project=get_repo,
+        get_tasks_active_dir=get_tasks_active_dir,
+        refine_issue_content=_refine_issue_content,
+        extract_inline_task_name=_extract_inline_task_name,
+        slugify=slugify,
+        generate_issue_name=generate_issue_name,
+        get_sop_tier=get_sop_tier,
+        render_checklist_from_workflow=_render_checklist_from_workflow,
+        render_fallback_checklist=_render_fallback_checklist,
+        create_issue=_create_issue,
+        rename_task_file_and_sync_issue_body=_rename_task_file_and_sync_issue_body,
+        get_workflow_state_plugin=get_workflow_state_plugin,
+        workflow_state_plugin_kwargs=_WORKFLOW_STATE_PLUGIN_KWARGS,
+        start_workflow=start_workflow,
+        get_initial_agent_from_workflow=_get_initial_agent_from_workflow,
+        invoke_copilot_agent=invoke_copilot_agent,
+    )
+    return True
 
 
 def _process_filesystem_inbox_once(base_dir: str) -> None:
@@ -1423,11 +1528,7 @@ def main():
 
 
 def _drain_postgres_inbox_queue(batch_size: int = 25) -> None:
-    """Claim pending Postgres inbox tasks and hand them to existing file processor.
-
-    Tasks are materialized into the per-project inbox path and then processed using
-    existing `process_file` logic to minimize migration risk.
-    """
+    """Claim pending Postgres inbox tasks and process queue payloads directly."""
     worker_id = f"{os.uname().nodename}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
     try:
         tasks = claim_pending_tasks(limit=batch_size, worker_id=worker_id)
@@ -1441,22 +1542,15 @@ def _drain_postgres_inbox_queue(batch_size: int = 25) -> None:
     for task in tasks:
         task_path = ""
         try:
-            workspace_abs = os.path.join(BASE_DIR, str(task.workspace))
-            inbox_dir = get_inbox_dir(workspace_abs, str(task.project_key))
-            os.makedirs(inbox_dir, exist_ok=True)
-            task_path = os.path.join(inbox_dir, str(task.filename))
+            processed_ok = process_task_payload(
+                project_key=str(task.project_key),
+                workspace=str(task.workspace),
+                filename=str(task.filename),
+                content=str(task.markdown_content),
+            )
 
-            if os.path.exists(task_path):
-                stem, ext = os.path.splitext(str(task.filename))
-                task_path = os.path.join(inbox_dir, f"{stem}_{int(time.time())}{ext}")
-
-            with open(task_path, "w", encoding="utf-8") as handle:
-                handle.write(str(task.markdown_content))
-
-            process_file(task_path)
-
-            if os.path.exists(task_path):
-                mark_task_failed(task.id, "Task file remained in inbox after processing")
+            if not processed_ok:
+                mark_task_failed(task.id, "Task processing failed (see processor logs)")
                 continue
 
             mark_task_done(task.id)

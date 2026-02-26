@@ -54,8 +54,10 @@ from config import (
     get_default_project,
     get_repos,
     get_inbox_dir,
+    get_inbox_storage_backend,
     get_tasks_active_dir,
 )
+from integrations.inbox_queue import enqueue_task
 from integrations.notifications import (
     emit_alert,
     send_notification,
@@ -191,7 +193,7 @@ def handle_issue_opened(payload, event):
     """
     Handle issues.opened events.
 
-    Converts Git issue to a markdown task file in .nexus/inbox/<project>/
+    Converts Git issue into an inbox task (Postgres queue or filesystem inbox)
     for the inbox processor to route to the appropriate agent based on type.
 
     Agent types (abstract roles):
@@ -214,6 +216,8 @@ def handle_issue_opened(payload, event):
         get_repos=get_repos,
         get_tasks_active_dir=get_tasks_active_dir,
         get_inbox_dir=get_inbox_dir,
+        get_inbox_storage_backend=get_inbox_storage_backend,
+        enqueue_task=enqueue_task,
     )
 
 

@@ -10,8 +10,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from config import NEXUS_STORAGE_BACKEND
 from interactive_context import InteractiveContext
 from utils.log_utils import log_unauthorized_access
+
+
+def _db_only_task_mode() -> bool:
+    return str(NEXUS_STORAGE_BACKEND or "").strip().lower() == "postgres"
 
 
 @dataclass
@@ -20,6 +25,7 @@ class IssueHandlerDeps:
     allowed_user_ids: list[int]
     base_dir: str
     default_repo: str
+    project_config: dict[str, dict[str, Any]]
     prompt_project_selection: Callable[[InteractiveContext, str], Awaitable[None]]
     ensure_project_issue: Callable[
         [InteractiveContext, str], Awaitable[tuple[str | None, str | None, list[str]]]
@@ -546,27 +552,35 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
     msg_id = await ctx.reply_text(f"📝 Posting response to issue #{issue_num}...")
 
     try:
-        task_file = deps.find_task_file_by_issue(issue_num)
         details = None
-        repo = None
+        repo = deps.project_repo(project_key)
+        task_file = None if _db_only_task_mode() else deps.find_task_file_by_issue(issue_num)
         if not task_file:
-            repo = deps.project_repo(project_key)
             details = deps.get_issue_details(issue_num, repo=repo)
-            if details:
+            if details and not _db_only_task_mode():
                 body = details.get("body", "")
                 match = re.search(r"Task File:\s*`([^`]+)`", body)
                 task_file = match.group(1) if match else None
 
-        if not task_file or not os.path.exists(task_file):
-            await ctx.reply_text("⚠️ Posted comment but couldn't find task file to continue agent.")
-            return
+        if _db_only_task_mode():
+            project_name = project_key
+            project_cfg = deps.project_config.get(project_key) if isinstance(deps.project_config, dict) else None
+            config = project_cfg if isinstance(project_cfg, dict) else None
+            if not config or not config.get("agents_dir") or not config.get("workspace"):
+                await ctx.reply_text("⚠️ Posted comment but no agents/workspace config for project.")
+                return
+            repo = deps.resolve_repo(config, deps.default_repo)
+        else:
+            if not task_file or not os.path.exists(task_file):
+                await ctx.reply_text("⚠️ Posted comment but couldn't find task file to continue agent.")
+                return
 
-        project_name, config = deps.resolve_project_config_from_task(task_file)
-        if not config or not config.get("agents_dir"):
-            await ctx.reply_text("⚠️ Posted comment but no agents config for project.")
-            return
+            project_name, config = deps.resolve_project_config_from_task(task_file)
+            if not config or not config.get("agents_dir"):
+                await ctx.reply_text("⚠️ Posted comment but no agents config for project.")
+                return
 
-        repo = deps.resolve_repo(config, deps.default_repo)
+            repo = deps.resolve_repo(config, deps.default_repo)
 
         plugin = deps.get_direct_issue_plugin(repo)
         if not plugin or not plugin.add_comment(issue_num, response_text):
@@ -589,11 +603,30 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
                 )
                 return
 
-        with open(task_file, encoding="utf-8") as handle:
-            content = handle.read()
+        if _db_only_task_mode():
+            issue_body = str(details.get("body") or "") if isinstance(details, dict) else ""
+            issue_title = str(details.get("title") or "") if isinstance(details, dict) else ""
+            content = (
+                f"# {issue_title}\n\n{issue_body}"
+                if issue_title and issue_body
+                else (issue_body or issue_title or f"Issue #{issue_num}")
+            )
+            task_type = "feature"
+            labels = details.get("labels") if isinstance(details, dict) else None
+            if isinstance(labels, list):
+                for label in labels:
+                    name = str(label.get("name") if isinstance(label, dict) else label or "").strip().lower()
+                    if name.startswith("type:"):
+                        candidate = name.split(":", 1)[1].strip()
+                        if candidate:
+                            task_type = candidate
+                            break
+        else:
+            with open(task_file, encoding="utf-8") as handle:
+                content = handle.read()
 
-        type_match = re.search(r"\*\*Type:\*\*\s*(.+)", content)
-        task_type = type_match.group(1).strip().lower() if type_match else "feature"
+            type_match = re.search(r"\*\*Type:\*\*\s*(.+)", content)
+            task_type = type_match.group(1).strip().lower() if type_match else "feature"
 
         tier_name, _, _ = deps.get_sop_tier(task_type)
         issue_url = deps.build_issue_url(repo, issue_num, config)

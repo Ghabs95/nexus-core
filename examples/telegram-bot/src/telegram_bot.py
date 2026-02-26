@@ -402,6 +402,8 @@ def _monitoring_handler_deps() -> MonitoringHandlersDeps:
         get_project_label=_get_project_label,
         get_project_root=_get_project_root,
         get_project_logs_dir=_get_project_logs_dir,
+        get_inbox_storage_backend=get_inbox_storage_backend,
+        get_inbox_queue_overview=_get_inbox_queue_overview,
         project_repo=_project_repo,
         get_issue_details=get_issue_details,
         get_inbox_dir=get_inbox_dir,
@@ -433,6 +435,7 @@ def _issue_handler_deps() -> IssueHandlerDeps:
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
         base_dir=BASE_DIR,
         default_repo=DEFAULT_REPO,
+        project_config=PROJECT_CONFIG,
         prompt_project_selection=_ctx_prompt_project_selection,
         ensure_project_issue=_ctx_ensure_project_issue,
         project_repo=_project_repo,
@@ -560,13 +563,22 @@ def _hands_free_routing_handler_deps() -> HandsFreeRoutingDeps:
 
 def _get_direct_issue_plugin(repo: str):
     """Return issue plugin for direct Telegram operations."""
-    return get_profiled_plugin(
-        "git_telegram",
-        overrides={
-            "repo": repo,
-        },
-        cache_key=f"git:telegram:{repo}",
-    )
+    overrides = {"repo": repo}
+    cache_key = f"git:telegram:{repo}"
+    try:
+        return get_profiled_plugin(
+            "git_telegram",
+            overrides=overrides,
+            cache_key=cache_key,
+        )
+    except Exception:
+        # Legacy profile was never registered in some deployments; fall back to
+        # the shared GitHub issue CLI profile used by agent launch/recovery.
+        return get_profiled_plugin(
+            "git_agent_launcher",
+            overrides=overrides,
+            cache_key=cache_key,
+        )
 
 
 # --- RATE LIMITING DECORATOR ---
@@ -1027,32 +1039,70 @@ async def _prompt_monitor_project_selection(
 
 
 def _list_project_issues(project_key: str, state: str = "open", limit: int = 10) -> list[dict]:
-    """Fetch recent issues from a project's GitHub repo.
+    """Fetch recent issues from a project's configured repos.
 
     Returns a list of dicts with 'number', 'title', and 'state' keys.
     """
     config = PROJECT_CONFIG.get(project_key, {})
     if not isinstance(config, dict):
         return []
-    repo = config.get("git_repo")
-    if (not isinstance(repo, str) or not repo.strip()) and isinstance(
-        config.get("git_repos"), list
-    ):
-        repos = [r for r in config.get("git_repos", []) if isinstance(r, str) and r.strip()]
-        repo = repos[0] if repos else None
-    if not repo:
-        repos = get_repos(project_key)
-        repo = repos[0] if repos else None
-    if not repo:
+
+    repo_candidates: list[str] = []
+
+    def _add_repo(value: object) -> None:
+        repo_value = str(value or "").strip()
+        if repo_value and repo_value not in repo_candidates:
+            repo_candidates.append(repo_value)
+
+    _add_repo(config.get("git_repo"))
+    repo_list = config.get("git_repos")
+    if isinstance(repo_list, list):
+        for repo_name in repo_list:
+            _add_repo(repo_name)
+    for repo_name in get_repos(project_key):
+        _add_repo(repo_name)
+
+    if not repo_candidates:
         return []
-    try:
-        plugin = _get_direct_issue_plugin(repo)
-        if not plugin:
-            return []
-        return plugin.list_issues(state=state, limit=limit, fields=["number", "title", "state"])
-    except Exception as e:
-        logger.error(f"Failed to list issues for {project_key}: {e}")
-        return []
+
+    merged: list[dict] = []
+    multi_repo = len(repo_candidates) > 1
+
+    for repo in repo_candidates:
+        try:
+            plugin = _get_direct_issue_plugin(repo)
+            if not plugin:
+                continue
+            rows = plugin.list_issues(state=state, limit=limit, fields=["number", "title", "state"])
+            for row in rows or []:
+                if not isinstance(row, dict):
+                    continue
+                item = {
+                    "number": row.get("number"),
+                    "title": row.get("title"),
+                    "state": row.get("state"),
+                }
+                if multi_repo:
+                    repo_suffix = repo.split("/")[-1] if "/" in repo else repo
+                    title = str(item.get("title") or "").strip()
+                    item["title"] = f"[{repo_suffix}] {title}" if title else f"[{repo_suffix}]"
+                merged.append(item)
+        except Exception as e:
+            logger.error("Failed to list %s issues for %s via %s: %s", state, project_key, repo, e)
+
+    # Callbacks currently encode only issue number, so collapse duplicates conservatively.
+    deduped: list[dict] = []
+    seen_numbers: set[str] = set()
+    for item in merged:
+        num = str(item.get("number") or "").strip()
+        if not num or num in seen_numbers:
+            continue
+        seen_numbers.add(num)
+        deduped.append(item)
+        if len(deduped) >= max(1, int(limit)):
+            break
+
+    return deduped
 
 
 async def _prompt_issue_selection(
@@ -1128,6 +1178,7 @@ async def _ensure_project_issue(
         sanitized_args.append(value)
 
     project_key, issue_num, rest = _parse_project_issue_args(sanitized_args)
+    default_issue_state = "closed" if command in {"logs", "logsfull", "tail"} else "open"
     if not project_key or not issue_num:
         if len(sanitized_args) == 1:
             arg = sanitized_args[0]
@@ -1144,14 +1195,26 @@ async def _ensure_project_issue(
                 if normalized and normalized in project_keys:
                     context.user_data["pending_command"] = command
                     context.user_data["pending_project"] = normalized
-                    await _prompt_issue_selection(update, context, command, normalized)
+                    await _prompt_issue_selection(
+                        update,
+                        context,
+                        command,
+                        normalized,
+                        issue_state=default_issue_state,
+                    )
                 else:
                     await _prompt_project_selection(update, context, command)
         else:
             if single_project:
                 context.user_data["pending_command"] = command
                 context.user_data["pending_project"] = single_project
-                await _prompt_issue_selection(update, context, command, single_project)
+                await _prompt_issue_selection(
+                    update,
+                    context,
+                    command,
+                    single_project,
+                    issue_state=default_issue_state,
+                )
                 return None, None, []
             await _prompt_project_selection(update, context, command)
         return None, None, []

@@ -18,6 +18,7 @@ from audit_store import AuditStore
 from config import (
     BASE_DIR,
     ORCHESTRATOR_CONFIG,
+    NEXUS_STORAGE_BACKEND,
     PROJECT_CONFIG,
     get_repo,
     get_repos,
@@ -40,8 +41,43 @@ from nexus.core.project.repo_utils import (
 from nexus.plugins.builtin.ai_runtime_plugin import ToolUnavailableError
 
 logger = logging.getLogger(__name__)
-_issue_plugin_cache = {}
+_git_platform_cache = {}
 _launch_policy_plugin = None
+
+def _db_only_task_mode() -> bool:
+    return str(NEXUS_STORAGE_BACKEND or "").strip().lower() == "postgres"
+
+
+def _run_coro_sync(coro_factory):
+    try:
+        asyncio.get_running_loop()
+        in_running_loop = True
+    except RuntimeError:
+        in_running_loop = False
+
+    if not in_running_loop:
+        try:
+            return asyncio.run(coro_factory())
+        except Exception:
+            return None
+
+    holder = {"value": None, "error": None}
+
+    def _runner() -> None:
+        try:
+            holder["value"] = asyncio.run(coro_factory())
+        except Exception as exc:
+            holder["error"] = exc
+
+    import threading
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    t.join(timeout=10)
+    if t.is_alive() or holder.get("error") is not None:
+        return None
+    return holder.get("value")
+
 
 _NON_AGENT_TRIGGER_SOURCES = {
     "unknown",
@@ -71,21 +107,16 @@ def _completed_agent_from_trigger(trigger_source: str) -> str | None:
     return normalized
 
 
-def _get_issue_plugin(repo: str):
-    """Return Git issue plugin instance for repository."""
-    if repo in _issue_plugin_cache:
-        return _issue_plugin_cache[repo]
+def _get_git_platform_client(repo: str, project_name: str | None = None):
+    """Return cached abstract git platform adapter for repository."""
+    cache_key = f"{project_name or ''}:{repo}"
+    if cache_key in _git_platform_cache:
+        return _git_platform_cache[cache_key]
 
-    plugin = get_profiled_plugin(
-        "git_agent_launcher",
-        overrides={
-            "repo": repo,
-        },
-        cache_key=f"github:agent-launcher:{repo}",
-    )
-    if plugin:
-        _issue_plugin_cache[repo] = plugin
-    return plugin
+    platform = get_git_platform(repo=repo, project_name=project_name or None)
+    if platform:
+        _git_platform_cache[cache_key] = platform
+    return platform
 
 
 def _resolve_project_from_task_file(task_file: str) -> str:
@@ -97,6 +128,17 @@ def _resolve_project_from_task_file(task_file: str) -> str:
     return ""
 
 
+def _resolve_project_from_repo(repo_name: str) -> str:
+    """Resolve project key from configured project repo mappings."""
+    target = str(repo_name or "").strip()
+    if not target:
+        return ""
+    for project_key, cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
+        if target in _project_repos(project_key, cfg, get_repos):
+            return project_key
+    return ""
+
+
 def _load_issue_body_from_project_repo(issue_number: str):
     """Load issue body from the repo that matches task-file/project boundaries.
 
@@ -104,41 +146,41 @@ def _load_issue_body_from_project_repo(issue_number: str):
         ``(body, repo, task_file)`` when resolved, otherwise ``("", "", "")``.
     """
     issue_number = str(issue_number)
-    candidate_repos = []
+    candidate_repos: list[tuple[str, str]] = []
     for project_key, cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
         project_repos = _project_repos(project_key, cfg, get_repos)
         for repo_name in project_repos:
-            if repo_name not in candidate_repos:
-                candidate_repos.append(repo_name)
+            pair = (project_key, repo_name)
+            if pair not in candidate_repos:
+                candidate_repos.append(pair)
 
-    for repo_name in candidate_repos:
-        plugin = _get_issue_plugin(repo_name)
-        if not plugin:
+    for project_key, repo_name in candidate_repos:
+        platform = _get_git_platform_client(repo_name, project_name=project_key)
+        if not platform:
             continue
 
-        try:
-            data = plugin.get_issue(issue_number, ["body"])
-        except Exception:
+        issue = _run_coro_sync(lambda: platform.get_issue(issue_number))
+        if not issue:
             continue
 
-        if not data:
-            continue
-
-        body = data.get("body", "")
+        body = str(getattr(issue, "body", "") or "")
         if not body:
             continue
 
         task_file_match = re.search(r"\*\*Task File:\*\*\s*`([^`]+)`", body)
-        if not task_file_match:
+        task_file = task_file_match.group(1) if task_file_match else ""
+        if _db_only_task_mode():
+            # In DB-only mode, trust project->repo binding and avoid local task-file path resolution.
+            return body, repo_name, task_file
+        if not task_file:
             continue
 
-        task_file = task_file_match.group(1)
-        project_key = _resolve_project_from_task_file(task_file)
-        if not project_key:
+        resolved_project_key = _resolve_project_from_task_file(task_file)
+        if not resolved_project_key:
             continue
 
-        project_cfg = PROJECT_CONFIG.get(project_key, {})
-        expected_repos = _project_repos(project_key, project_cfg, get_repos)
+        project_cfg = PROJECT_CONFIG.get(resolved_project_key, {})
+        expected_repos = _project_repos(resolved_project_key, project_cfg, get_repos)
         if repo_name not in expected_repos:
             continue
 
@@ -727,41 +769,47 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
         logger.error(f"Failed to resolve/process issue #{issue_number} body: {e}")
         return None, None
 
-    # Find task file
+    # Find task-file metadata (optional in postgres mode)
     task_file_match = re.search(r"\*\*Task File:\*\*\s*`([^`]+)`", body)
-    if not task_file_match:
+    task_file = task_file_match.group(1) if task_file_match else (resolved_task_file or "")
+    if not task_file and not _db_only_task_mode():
         logger.warning(f"No task file in issue #{issue_number}")
         return None, None
 
-    task_file = task_file_match.group(1)
-    if resolved_task_file and resolved_task_file != task_file:
+    if task_file and resolved_task_file and resolved_task_file != task_file:
         logger.warning(
             f"Issue #{issue_number} task file mismatch between resolution and body parse: "
             f"{resolved_task_file} vs {task_file}"
         )
     normalized_task_file = task_file.replace("\\", "/")
     is_shared_active_task_file = "/active/" in normalized_task_file
-    task_file_exists = os.path.exists(task_file)
-    if not task_file_exists and not is_shared_active_task_file:
+    task_file_exists = (False if _db_only_task_mode() else os.path.exists(task_file))
+    if not _db_only_task_mode() and not task_file_exists and not is_shared_active_task_file:
         logger.warning(f"Task file not found: {task_file}")
         return None, None
 
     # Get project config
-    project_root = None
+    project_root = ""
     config = {}
-    for key, cfg in PROJECT_CONFIG.items():
-        if not isinstance(cfg, dict):
-            continue
-        workspace = cfg.get("workspace")
-        if workspace:
-            workspace_abs = os.path.join(BASE_DIR, workspace)
-            if task_file.startswith(workspace_abs):
-                project_root = key
-                config = cfg
-                break
+    if _db_only_task_mode():
+        project_root = _resolve_project_from_repo(resolved_repo or "")
+        config = PROJECT_CONFIG.get(project_root, {}) if project_root else {}
+    else:
+        for key, cfg in PROJECT_CONFIG.items():
+            if not isinstance(cfg, dict):
+                continue
+            workspace = cfg.get("workspace")
+            if workspace and task_file:
+                workspace_abs = os.path.join(BASE_DIR, workspace)
+                if task_file.startswith(workspace_abs):
+                    project_root = key
+                    config = cfg
+                    break
 
     if not project_root or not config.get("agents_dir"):
-        logger.warning(f"No project config for task file: {task_file}")
+        logger.warning(
+            f"No project config for issue #{issue_number} (repo={resolved_repo or 'unknown'}, task_file={task_file or 'n/a'})"
+        )
         return None, None
 
     expected_repos = _project_repos(project_root, config, get_repos)
@@ -776,7 +824,13 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
     # Use issue body as authoritative task snapshot when Task File points to the shared
     # active path, which can be overwritten by later issues and cause cross-issue bleed.
     task_content = body
-    if is_shared_active_task_file:
+    if _db_only_task_mode():
+        logger.info(
+            "Postgres mode: using issue body task snapshot for issue #%s (task-file metadata: %s)",
+            issue_number,
+            (task_file or "missing"),
+        )
+    elif is_shared_active_task_file:
         logger.info(
             "Using issue body task snapshot for issue #%s (shared active task file: %s)",
             issue_number,

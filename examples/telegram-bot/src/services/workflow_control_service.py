@@ -2,16 +2,69 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
 
+from config import NEXUS_STORAGE_BACKEND
+
+from integrations.workflow_state_factory import get_storage_backend
 from nexus.adapters.git.utils import build_issue_url, resolve_repo
 
 logger = logging.getLogger(__name__)
+
+
+def _run_coro_sync(coro_factory):
+    try:
+        asyncio.get_running_loop()
+        in_running_loop = True
+    except RuntimeError:
+        in_running_loop = False
+
+    if not in_running_loop:
+        try:
+            return asyncio.run(coro_factory())
+        except Exception:
+            return None
+
+    holder: dict[str, Any] = {"value": None, "error": None}
+
+    def _runner() -> None:
+        try:
+            holder["value"] = asyncio.run(coro_factory())
+        except Exception as exc:
+            holder["error"] = exc
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    t.join(timeout=10)
+    if t.is_alive() or holder.get("error") is not None:
+        return None
+    return holder.get("value")
+
+
+def _read_latest_completion_from_storage(issue_num: str) -> dict[str, Any] | None:
+    async def _load():
+        backend = get_storage_backend()
+        items = await backend.list_completions(str(issue_num))
+        return items[0] if items else None
+
+    payload = _run_coro_sync(_load)
+    if not isinstance(payload, dict):
+        return None
+
+    return {
+        "agent_type": str(payload.get("agent_type") or payload.get("_agent_type") or "").strip().lower(),
+        "next_agent": str(payload.get("next_agent") or "").strip().lower(),
+        "status": str(payload.get("status") or "").strip().lower(),
+        "is_workflow_done": bool(payload.get("is_workflow_done", False)),
+        "summary": payload,
+    }
 
 
 def prepare_continue_context(
@@ -80,6 +133,9 @@ def prepare_continue_context(
                 return issue_details, candidate_repo
         return None, None
 
+    def _db_only_task_mode() -> bool:
+        return str(NEXUS_STORAGE_BACKEND or "").strip().lower() == "postgres"
+
     def _looks_like_agent_ref(token: str) -> bool:
         value = str(token or "").strip()
         if not value:
@@ -113,7 +169,7 @@ def prepare_continue_context(
             ),
         }
 
-    task_file = find_task_file_by_issue(issue_num)
+    task_file = None if _db_only_task_mode() else find_task_file_by_issue(issue_num)
     details = None
     repo = None
 
@@ -126,8 +182,9 @@ def prepare_continue_context(
                 "message": (f"❌ Could not load issue #{issue_num}.\n" f"Checked repos: {checked}"),
             }
         body = details.get("body", "")
-        match = re.search(r"Task File:\s*`([^`]+)`", body)
-        task_file = match.group(1) if match else None
+        if not _db_only_task_mode():
+            match = re.search(r"Task File:\s*`([^`]+)`", body)
+            task_file = match.group(1) if match else None
 
     project_name = None
     config: dict[str, Any] | None = None
@@ -135,7 +192,7 @@ def prepare_continue_context(
     task_type = "feature"
     local_issue_fallback = False
 
-    if task_file and os.path.exists(task_file):
+    if (not _db_only_task_mode()) and task_file and os.path.exists(task_file):
         project_name, config = resolve_project_config_from_task(task_file)
         if not config or not config.get("agents_dir"):
             fallback_config = project_config.get(project_key)
@@ -231,37 +288,50 @@ def prepare_continue_context(
     resumed_from = None
     workflow_already_done = False
 
-    try:
-        completions = scan_for_completions(base_dir)
-        issue_completions = [c for c in completions if c.issue_number == str(issue_num)]
-        if issue_completions:
-            latest = max(issue_completions, key=lambda c: os.path.getmtime(c.file_path))
-            if getattr(latest.summary, "is_workflow_done", False):
-                workflow_already_done = True
-                resumed_from = latest.summary.agent_type
-            else:
-                raw_next = latest.summary.next_agent
-                normalized = normalize_agent_reference(raw_next)
-                if normalized and normalized.lower() not in {
-                    "none",
-                    "n/a",
-                    "null",
-                    "done",
-                    "end",
-                    "finish",
-                    "complete",
-                    "",
-                }:
-                    agent_type = normalized
+    if not _db_only_task_mode():
+        try:
+            completions = scan_for_completions(base_dir)
+            issue_completions = [c for c in completions if c.issue_number == str(issue_num)]
+            if issue_completions:
+                latest = max(issue_completions, key=lambda c: os.path.getmtime(c.file_path))
+                if getattr(latest.summary, "is_workflow_done", False):
+                    workflow_already_done = True
                     resumed_from = latest.summary.agent_type
-                    logger.info(
-                        "Continue issue #%s: last step was %s, resuming with next_agent=%s",
-                        issue_num,
-                        resumed_from,
-                        agent_type,
-                    )
-    except Exception as exc:
-        logger.warning("Could not scan completions for issue #%s: %s", issue_num, exc)
+                else:
+                    raw_next = latest.summary.next_agent
+                    normalized = normalize_agent_reference(raw_next)
+                    if normalized and normalized.lower() not in {
+                        "none",
+                        "n/a",
+                        "null",
+                        "done",
+                        "end",
+                        "finish",
+                        "complete",
+                        "",
+                    }:
+                        agent_type = normalized
+                        resumed_from = latest.summary.agent_type
+                        logger.info(
+                            "Continue issue #%s: last step was %s, resuming with next_agent=%s",
+                            issue_num,
+                            resumed_from,
+                            agent_type,
+                        )
+        except Exception as exc:
+            logger.warning("Could not scan completions for issue #%s: %s", issue_num, exc)
+    else:
+        latest_completion = _read_latest_completion_from_storage(str(issue_num))
+        if latest_completion:
+            if latest_completion.get("is_workflow_done") or latest_completion.get("status") in {"done", "complete", "completed"}:
+                workflow_already_done = True
+                resumed_from = latest_completion.get("agent_type") or resumed_from
+            else:
+                normalized = normalize_agent_reference(latest_completion.get("next_agent"))
+                if normalized and normalized.lower() not in {"none", "n/a", "null", "done", "end", "finish", "complete", ""}:
+                    agent_type = normalized
+                    resumed_from = latest_completion.get("agent_type") or resumed_from
+
 
     if forced_agent:
         agent_type = normalize_agent_reference(forced_agent) or forced_agent

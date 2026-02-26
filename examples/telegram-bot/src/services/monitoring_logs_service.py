@@ -11,6 +11,36 @@ from utils.log_utils import log_unauthorized_access
 from nexus.adapters.notifications.base import Button
 
 
+def _resolve_project_only_arg(ctx: Any, deps: Any) -> str | None:
+    args = list(getattr(ctx, "args", []) or [])
+    if len(args) != 1:
+        return None
+    raw = str(args[0] or "").strip().lower()
+    if not raw or raw.lstrip("#").isdigit():
+        return None
+    normalized = deps.normalize_project_key(raw)
+    if normalized and normalized in deps.iter_project_keys():
+        return normalized
+    return None
+
+
+def _read_latest_project_log(project_key: str, deps: Any, *, max_lines: int) -> tuple[str | None, list[str]]:
+    logs_dir = deps.get_project_logs_dir(project_key)
+    if not logs_dir or not os.path.isdir(logs_dir):
+        return None, []
+    log_files = [os.path.join(logs_dir, f) for f in os.listdir(logs_dir) if f.endswith(".log")]
+    if not log_files:
+        return None, []
+    log_files.sort(key=os.path.getmtime, reverse=True)
+    latest = log_files[0]
+    try:
+        with open(latest, encoding="utf-8") as handle:
+            lines = [ln.rstrip() for ln in handle.readlines()[-max_lines:]]
+        return os.path.basename(latest), lines
+    except Exception:
+        return os.path.basename(latest), []
+
+
 async def handle_logs(ctx: Any, deps: Any) -> None:
     deps.logger.info(f"Logs requested by user: {ctx.user_id}")
     if deps.allowed_user_ids and int(ctx.user_id) not in deps.allowed_user_ids:
@@ -25,6 +55,7 @@ async def handle_logs(ctx: Any, deps: Any) -> None:
         await ctx.reply_text("Please select a project to view logs:", buttons=buttons)
         return
 
+    inbox_backend = str(deps.get_inbox_storage_backend() or "").strip().lower()
     project_key, issue_num, _ = await deps.ensure_project_issue(ctx, "logs")
     if not project_key:
         return
@@ -39,7 +70,7 @@ async def handle_logs(ctx: Any, deps: Any) -> None:
         match = re.search(r"Task File:\s*`([^`]+)`", details.get("body", ""))
         if match:
             task_file = match.group(1)
-    if not task_file:
+    if not task_file and inbox_backend != "postgres":
         task_file = deps.find_task_file_by_issue(issue_num)
 
     issue_logs = deps.find_issue_log_files(issue_num, task_file=task_file)
@@ -159,6 +190,7 @@ async def handle_tail(ctx: Any, deps: Any) -> None:
         await ctx.reply_text("Please select a project to tail logs:", buttons=buttons)
         return
 
+    inbox_backend = str(deps.get_inbox_storage_backend() or "").strip().lower()
     project_key, issue_num, rest = await deps.ensure_project_issue(ctx, "tail")
     if not project_key:
         return
@@ -186,7 +218,7 @@ async def handle_tail(ctx: Any, deps: Any) -> None:
         match = re.search(r"Task File:\s*`([^`]+)`", details.get("body", ""))
         if match:
             task_file = match.group(1)
-    if not task_file:
+    if not task_file and inbox_backend != "postgres":
         task_file = deps.find_task_file_by_issue(issue_num)
 
     def _read_tail_lines() -> list[str]:
