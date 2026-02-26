@@ -21,8 +21,28 @@ from nexus.core.events import (
     WorkflowPaused,
     WorkflowStarted,
 )
+from nexus.core.workflow_engine.completion_service import (
+    apply_step_completion_result,
+)
+from nexus.core.workflow_engine.condition_eval import evaluate_condition
+from nexus.core.workflow_engine.audit_event_service import (
+    finalize_step_completion_tail,
+    finalize_terminal_success,
+)
+from nexus.core.workflow_engine.transition_service import advance_after_success
+from nexus.core.workflow_engine.transition_service import (
+    reset_step_for_goto as reset_step_for_goto_impl,
+    resolve_route_target,
+)
+from nexus.core.workflow_engine.workflow_definition_loader import (
+    canonicalize_next_agent_from_steps,
+    build_dry_run_report_fields,
+    build_prompt_context_text,
+    build_workflow_steps,
+    parse_require_human_merge_approval,
+    resolve_next_agent_types_from_steps,
+)
 from nexus.core.models import (
-    Agent,
     AuditEvent,
     DryRunReport,
     StepStatus,
@@ -198,195 +218,68 @@ class WorkflowEngine:
         step = workflow.get_step(step_num)
         if not step:
             raise ValueError(f"Step {step_num} not found in workflow")
-
-        # Update step
-        step.completed_at = datetime.now(UTC)
-        step.outputs = outputs
-        step.error = error
-
-        if error:
-            # Determine effective max retries (step-level overrides agent-level)
-            max_retries = step.retry if step.retry is not None else step.agent.max_retries
-            if step.retry_count < max_retries:
-                step.retry_count += 1
-                step.status = StepStatus.PENDING
-                step.completed_at = None
-                step.error = None
-                # Compute backoff delay using step's configured strategy and initial_delay
-                strategy = step.backoff_strategy or "exponential"
-                base = step.initial_delay if step.initial_delay > 0 else _DEFAULT_BACKOFF_BASE
-                if strategy == "linear":
-                    backoff = min(base * step.retry_count, 60)
-                elif strategy == "constant":
-                    backoff = base
-                else:  # exponential (default)
-                    backoff = min(base * (2 ** (step.retry_count - 1)), 60)
-                workflow.updated_at = datetime.now(UTC)
-                await self.storage.save_workflow(workflow)
-                await self._audit(
-                    workflow_id,
-                    "STEP_RETRY",
-                    {
-                        "step_num": step_num,
-                        "step_name": step.name,
-                        "retry_count": step.retry_count,
-                        "backoff_seconds": backoff,
-                        "error": error,
-                    },
-                )
-                logger.info(
-                    f"Retrying step {step_num} in workflow {workflow_id} "
-                    f"(attempt {step.retry_count}/{max_retries}, backoff {backoff}s)"
-                )
-                return workflow
-            step.status = StepStatus.FAILED
-            await self._emit(
-                StepFailed(
-                    workflow_id=workflow_id,
-                    step_num=step_num,
-                    step_name=step.name,
-                    agent_type=step.agent.name,
-                    error=error,
-                )
-            )
-        else:
-            step.status = StepStatus.COMPLETED
-            await self._emit(
-                StepCompleted(
-                    workflow_id=workflow_id,
-                    step_num=step_num,
-                    step_name=step.name,
-                    agent_type=step.agent.name,
-                    outputs=outputs,
-                )
-            )
+        completion_result = await apply_step_completion_result(
+            workflow=workflow,
+            workflow_id=workflow_id,
+            step=step,
+            step_num=step_num,
+            outputs=outputs,
+            error=error,
+            default_backoff_base=_DEFAULT_BACKOFF_BASE,
+            save_workflow=self.storage.save_workflow,
+            audit=self._audit,
+            emit=self._emit,
+        )
+        if completion_result.retry_handled:
+            return workflow
 
         activated_step: WorkflowStep | None = None
 
-        if not error:
+        if not completion_result.has_error:
             if step.final_step:
-                workflow.state = WorkflowState.COMPLETED
-                workflow.completed_at = datetime.now(UTC)
-                workflow.updated_at = datetime.now(UTC)
-                await self.storage.save_workflow(workflow)
-                await self._audit(
-                    workflow_id,
-                    "STEP_COMPLETED",
-                    {
-                        "step_num": step_num,
-                        "step_name": step.name,
-                        "error": error,
-                    },
+                return await finalize_terminal_success(
+                    workflow=workflow,
+                    workflow_id=workflow_id,
+                    step_num=step_num,
+                    step_name=step.name,
+                    outputs=outputs,
+                    save_workflow=self.storage.save_workflow,
+                    audit=self._audit,
+                    emit=self._emit,
+                    on_workflow_complete=self._on_workflow_complete,
                 )
-                logger.info(f"Completed step {step_num} in workflow {workflow_id}")
-                await self._emit(WorkflowCompleted(workflow_id=workflow_id))
-                if self._on_workflow_complete:
-                    try:
-                        await self._on_workflow_complete(workflow, outputs)
-                    except Exception as exc:
-                        logger.error(
-                            f"on_workflow_complete callback failed for workflow {workflow_id}: {exc}"
-                        )
+
+            if step.on_success and self._find_step_by_name(workflow, step.on_success) is None:
+                logger.warning(
+                    "Step %s in workflow %s has unresolved on_success target '%s'; "
+                    "falling back to sequential progression",
+                    step.name,
+                    workflow_id,
+                    step.on_success,
+                )
+
+            transition_outcome = await advance_after_success(
+                workflow=workflow,
+                workflow_id=workflow_id,
+                completed_step=step,
+                build_step_context=self._build_step_context,
+                find_step_by_name=self._find_step_by_name,
+                reset_step_for_goto=self._reset_step_for_goto,
+                resolve_route=self._resolve_route,
+                evaluate_condition=self._evaluate_condition,
+                emit=self._emit,
+                audit=self._audit,
+            )
+            activated_step = transition_outcome.activated_step
+
+            if transition_outcome.goto_reset_error:
+                logger.error(transition_outcome.goto_reset_error)
+                workflow.state = WorkflowState.FAILED
+                workflow.completed_at = datetime.now(UTC)
+                await self.storage.save_workflow(workflow)
                 return workflow
 
-            # Build context once; walk forward handling routers, conditions, and gotos
-            context = self._build_step_context(workflow)
-            next_step: WorkflowStep | None = None
-            if step.on_success:
-                next_step = self._find_step_by_name(workflow, step.on_success)
-                if next_step is None:
-                    logger.warning(
-                        "Step %s in workflow %s has unresolved on_success target '%s'; "
-                        "falling back to sequential progression",
-                        step.name,
-                        workflow_id,
-                        step.on_success,
-                    )
-                elif next_step.status != StepStatus.PENDING:
-                    try:
-                        self._reset_step_for_goto(next_step)
-                    except RuntimeError as exc:
-                        logger.error(str(exc))
-                        workflow.state = WorkflowState.FAILED
-                        workflow.completed_at = datetime.now(UTC)
-                        await self.storage.save_workflow(workflow)
-                        return workflow
-
-            if next_step is None:
-                next_step = workflow.get_next_step()
-
-            while next_step:
-                # --- Router step: evaluate routes and jump to target ---
-                if next_step.routes:
-                    next_step.status = StepStatus.SKIPPED
-                    next_step.completed_at = datetime.now(UTC)
-                    await self._audit(
-                        workflow_id,
-                        "STEP_SKIPPED",
-                        {
-                            "step_num": next_step.step_num,
-                            "step_name": next_step.name,
-                            "reason": "router evaluated",
-                        },
-                    )
-                    workflow.current_step = next_step.step_num
-                    target = self._resolve_route(workflow, next_step, context)
-                    if target is None:
-                        # No route matched and no default — workflow is done
-                        workflow.state = WorkflowState.COMPLETED
-                        workflow.completed_at = datetime.now(UTC)
-                        break
-                    try:
-                        self._reset_step_for_goto(target)
-                    except RuntimeError as exc:
-                        logger.error(str(exc))
-                        workflow.state = WorkflowState.FAILED
-                        workflow.completed_at = datetime.now(UTC)
-                        await self.storage.save_workflow(workflow)
-                        return workflow
-                    next_step = target
-                    continue
-
-                # --- Normal step: evaluate optional condition ---
-                if self._evaluate_condition(next_step.condition, context):
-                    # Condition passed (or no condition) – run this step
-                    workflow.current_step = next_step.step_num
-                    next_step.status = StepStatus.RUNNING
-                    next_step.started_at = datetime.now(UTC)
-                    activated_step = next_step
-                    await self._emit(
-                        StepStarted(
-                            workflow_id=workflow_id,
-                            step_num=next_step.step_num,
-                            step_name=next_step.name,
-                            agent_type=next_step.agent.name,
-                        )
-                    )
-                    break
-                else:
-                    # Condition failed – skip this step
-                    next_step.status = StepStatus.SKIPPED
-                    next_step.completed_at = datetime.now(UTC)
-                    await self._audit(
-                        workflow_id,
-                        "STEP_SKIPPED",
-                        {
-                            "step_num": next_step.step_num,
-                            "step_name": next_step.name,
-                            "condition": next_step.condition,
-                            "reason": f"Condition evaluated to False: {next_step.condition}",
-                        },
-                    )
-                    logger.info(
-                        f"Skipped step {next_step.step_num} ({next_step.name}) in workflow "
-                        f"{workflow_id}: condition '{next_step.condition}' was False"
-                    )
-                    workflow.current_step = next_step.step_num
-                    next_step = workflow.get_next_step()
-            else:
-                # No more steps
-                workflow.state = WorkflowState.COMPLETED
-                workflow.completed_at = datetime.now(UTC)
+            if workflow.state == WorkflowState.COMPLETED and activated_step is None:
                 await self._emit(WorkflowCompleted(workflow_id=workflow_id))
         else:
             # Workflow failed
@@ -399,32 +292,19 @@ class WorkflowEngine:
                 )
             )
 
-        workflow.updated_at = datetime.now(UTC)
-        await self.storage.save_workflow(workflow)
-
-        event_type = "STEP_FAILED" if error else "STEP_COMPLETED"
-        await self._audit(
-            workflow_id, event_type, {"step_num": step_num, "step_name": step.name, "error": error}
+        await finalize_step_completion_tail(
+            workflow=workflow,
+            workflow_id=workflow_id,
+            step_num=step_num,
+            step_name=step.name,
+            outputs=outputs,
+            error=error,
+            activated_step=activated_step,
+            save_workflow=self.storage.save_workflow,
+            audit=self._audit,
+            on_step_transition=self._on_step_transition,
+            on_workflow_complete=self._on_workflow_complete,
         )
-
-        logger.info(f"Completed step {step_num} in workflow {workflow_id}")
-
-        # --- Fire transition callbacks ---
-        if not error and activated_step and self._on_step_transition:
-            try:
-                await self._on_step_transition(workflow, activated_step, outputs)
-            except Exception as exc:
-                logger.error(
-                    f"on_step_transition callback failed for workflow {workflow_id}, "
-                    f"step {activated_step.step_num}: {exc}"
-                )
-        elif workflow.state == WorkflowState.COMPLETED and self._on_workflow_complete:
-            try:
-                await self._on_workflow_complete(workflow, outputs)
-            except Exception as exc:
-                logger.error(
-                    f"on_workflow_complete callback failed for workflow {workflow_id}: {exc}"
-                )
 
         return workflow
 
@@ -457,33 +337,17 @@ class WorkflowEngine:
         Route dict supports either ``goto:`` (YAML convention) or ``then:`` (alias).
         A ``default: true`` entry is used when no ``when:`` clause matches.
         """
-        default_target: str | None = None
-        for route in router_step.routes:
-            when: str | None = route.get("when")
-            # Support both "goto" (YAML convention) and "then" (alias)
-            target_name: str | None = route.get("goto") or route.get("then")
-            is_default: bool = bool(route.get("default")) and not when
-            if is_default:
-                # "default" can be a step name directly (``default: "develop"``)
-                # or a boolean flag alongside ``goto:``/``then:`` (``default: true, goto: "develop"``).
-                default_val = route.get("default")
-                default_target = target_name or (
-                    default_val if isinstance(default_val, str) else None
-                )
-                continue
-            if (
-                when
-                and target_name
-                and self._evaluate_condition(
-                    when,
-                    context,
-                    default_on_error=False,
-                )
-            ):
-                return self._find_step_by_name(workflow, target_name)
-        if default_target:
-            return self._find_step_by_name(workflow, default_target)
-        return None
+        return resolve_route_target(
+            workflow=workflow,
+            router_step=router_step,
+            context=context,
+            evaluate_condition=lambda cond, ctx, default: self._evaluate_condition(
+                cond,
+                ctx,
+                default_on_error=default,
+            ),
+            find_step_by_name=self._find_step_by_name,
+        )
 
     def _find_step_by_name(self, workflow: Workflow, name: str) -> WorkflowStep | None:
         """Find a step by its slugified id or agent_type name."""
@@ -499,18 +363,7 @@ class WorkflowEngine:
         Raises RuntimeError if the step has already been re-activated
         _MAX_LOOP_ITERATIONS times to guard against infinite loops.
         """
-        if step.iteration >= _MAX_LOOP_ITERATIONS:
-            raise RuntimeError(
-                f"Step '{step.name}' has been re-activated {step.iteration} times "
-                f"(limit {_MAX_LOOP_ITERATIONS}). Aborting to prevent infinite loop."
-            )
-        step.iteration += 1
-        step.status = StepStatus.PENDING
-        step.started_at = None
-        step.completed_at = None
-        step.error = None
-        step.outputs = {}
-        step.retry_count = 0
+        reset_step_for_goto_impl(step, max_loop_iterations=_MAX_LOOP_ITERATIONS)
 
     def _build_step_context(self, workflow: Workflow) -> dict[str, Any]:
         """Build evaluation context from all completed/skipped step outputs.
@@ -551,23 +404,7 @@ class WorkflowEngine:
         Returns False when the expression evaluates to a falsy value.
         Logs a warning and returns *default_on_error* if the expression raises.
         """
-        if not condition:
-            return True
-        try:
-            eval_locals = dict(context)
-            eval_locals.setdefault("true", True)
-            eval_locals.setdefault("false", False)
-            eval_locals.setdefault("null", None)
-            result = eval(condition, {"__builtins__": {}}, eval_locals)  # noqa: S307
-            return bool(result)
-        except Exception as exc:
-            logger.warning(
-                "Condition evaluation error for '%s': %s. Defaulting to %s.",
-                condition,
-                exc,
-                default_on_error,
-            )
-            return default_on_error
+        return evaluate_condition(condition, context, default_on_error=default_on_error)
 
     async def get_audit_log(self, workflow_id: str) -> list:
         """Get audit log for a workflow."""
@@ -625,23 +462,15 @@ class WorkflowEngine:
 
     async def _emit(
         self,
-        event: (
-            WorkflowStarted
-            | WorkflowCompleted
-            | WorkflowFailed
-            | WorkflowPaused
-            | WorkflowCancelled
-            | StepStarted
-            | StepCompleted
-            | StepFailed
-        ),
+        event: object,
     ) -> None:
         """Emit event to EventBus if configured."""
         if self._event_bus:
             try:
                 await self._event_bus.emit(event)
             except Exception as exc:
-                logger.warning("EventBus emit failed for %s: %s", event.event_type, exc)
+                event_type = getattr(event, "event_type", type(event).__name__)
+                logger.warning("EventBus emit failed for %s: %s", event_type, exc)
 
 
 class WorkflowDefinition:
@@ -803,84 +632,12 @@ class WorkflowDefinition:
         if not isinstance(steps_data, list) or not steps_data:
             raise ValueError("Workflow definition must include a non-empty steps list")
 
-        # Parse workflow-level approval settings
-        monitoring = data.get("monitoring", {})
-        require_human_merge_approval = True  # Default to safe option
-        if isinstance(monitoring, dict):
-            require_human_merge_approval = monitoring.get("require_human_merge_approval", True)
-
-        # Also check top-level (backwards compatibility)
-        if "require_human_merge_approval" in data:
-            require_human_merge_approval = data.get("require_human_merge_approval", True)
-
-        steps = []
-        for idx, step_data in enumerate(steps_data, start=1):
-            if not isinstance(step_data, dict):
-                raise ValueError(f"Step {idx} must be a dict")
-
-            agent_type = step_data.get("agent_type", "agent")
-            step_name = step_data.get("id") or step_data.get("name") or f"step_{idx}"
-            step_desc = step_data.get("description", "")
-            prompt_template = step_data.get("prompt_template") or step_desc or "Execute step"
-
-            # Resolve retry: explicit `retry` integer or `retry_policy.max_retries`
-            step_retry: int | None = step_data.get("retry")
-            retry_policy = step_data.get("retry_policy")
-            step_backoff_strategy: str | None = None
-            step_initial_delay: float = 0.0
-            if isinstance(retry_policy, dict):
-                if step_retry is None:
-                    step_retry = retry_policy.get("max_retries")
-                step_backoff_strategy = retry_policy.get("backoff")
-                raw_delay = retry_policy.get("initial_delay", 0.0)
-                try:
-                    step_initial_delay = float(raw_delay) if raw_delay else 0.0
-                except (TypeError, ValueError):
-                    step_initial_delay = 0.0
-
-            agent = Agent(
-                name=agent_type,
-                display_name=step_data.get("name", agent_type),
-                description=step_desc or f"Step {idx}",
-                timeout=data.get("timeout_seconds", 600),
-                max_retries=2,
-            )
-
-            inputs_data = step_data.get("inputs", {})
-            if isinstance(inputs_data, list):
-                normalized_inputs = {}
-                for entry in inputs_data:
-                    if isinstance(entry, dict):
-                        normalized_inputs.update(entry)
-                inputs_data = normalized_inputs
-
-            # `parallel` field: list of step ids that form a parallel group with this step
-            parallel_raw = step_data.get("parallel", [])
-            if isinstance(parallel_raw, list):
-                parallel_with: list[str] = [
-                    WorkflowDefinition._slugify(step_id) or step_id for step_id in parallel_raw
-                ]
-            else:
-                parallel_with = []
-
-            step_routes = step_data.get("routes", [])
-            steps.append(
-                WorkflowStep(
-                    step_num=idx,
-                    name=WorkflowDefinition._slugify(step_name) or step_name,
-                    agent=agent,
-                    prompt_template=prompt_template,
-                    condition=step_data.get("condition"),
-                    retry=step_retry,
-                    backoff_strategy=step_backoff_strategy,
-                    initial_delay=step_initial_delay,
-                    inputs=inputs_data,
-                    routes=step_routes,
-                    on_success=step_data.get("on_success"),
-                    final_step=bool(step_data.get("final_step", False)),
-                    parallel_with=parallel_with,
-                )
-            )
+        require_human_merge_approval = parse_require_human_merge_approval(data)
+        steps = build_workflow_steps(
+            data=data,
+            steps_data=steps_data,
+            slugify=WorkflowDefinition._slugify,
+        )
 
         workflow_metadata = {"definition": data}
         if metadata:
@@ -929,55 +686,10 @@ class WorkflowDefinition:
             return []
 
         steps = WorkflowDefinition._resolve_steps(data, workflow_type)
-        if not steps:
-            return []
-
-        # Build id → step lookup
-        by_id: dict[str, dict] = {s["id"]: s for s in steps if "id" in s}
-
-        # Find the step(s) matching current_agent_type
-        current_steps = [s for s in steps if s.get("agent_type") == current_agent_type]
-        if not current_steps:
-            return []
-
-        result: list[str] = []
-        for step in current_steps:
-            on_success = step.get("on_success")
-            if step.get("final_step"):
-                result.append("none")
-                continue
-            if not on_success:
-                result.append("none")
-                continue
-
-            target = by_id.get(on_success)
-            if not target:
-                continue
-
-            # If target is a router, expand its routes
-            if target.get("agent_type") == "router":
-                for route in target.get("routes", []):
-                    route_target_id = route.get("then") or route.get("default")
-                    if route_target_id and route_target_id in by_id:
-                        result.append(by_id[route_target_id].get("agent_type", "unknown"))
-                    elif route_target_id:
-                        # route_target_id may itself be an agent_type
-                        result.append(route_target_id)
-                # Also get default route
-                default_route = target.get("default")
-                if default_route and default_route in by_id:
-                    result.append(by_id[default_route].get("agent_type", "unknown"))
-            else:
-                result.append(target.get("agent_type", "unknown"))
-
-        # Deduplicate while preserving order
-        seen: set = set()
-        unique: list[str] = []
-        for agent in result:
-            if agent not in seen:
-                seen.add(agent)
-                unique.append(agent)
-        return unique
+        return resolve_next_agent_types_from_steps(
+            steps=steps,
+            current_agent_type=current_agent_type,
+        )
 
     @staticmethod
     def canonicalize_next_agent(
@@ -1023,19 +735,11 @@ class WorkflowDefinition:
             return valid_next[0] if len(valid_next) == 1 else ""
 
         steps = WorkflowDefinition._resolve_steps(data, workflow_type)
-        candidate_lc = candidate.lower()
-        for step in steps:
-            step_id = str(step.get("id", "")).strip().lower()
-            step_name = str(step.get("name", "")).strip().lower()
-            if candidate_lc in (step_id, step_name):
-                mapped = str(step.get("agent_type", "")).strip()
-                if mapped in valid_next:
-                    return mapped
-
-        if len(valid_next) == 1:
-            return valid_next[0]
-
-        return ""
+        return canonicalize_next_agent_from_steps(
+            steps=steps,
+            candidate=candidate,
+            valid_next_agents=valid_next,
+        )
 
     @staticmethod
     def to_prompt_context(
@@ -1069,58 +773,20 @@ class WorkflowDefinition:
             if not steps:
                 return ""
 
-            basename = os.path.basename(yaml_path)
-            tier_label = f" [{workflow_type}]" if workflow_type else ""
-            lines: list[str] = [f"**Workflow Steps{tier_label} (from {basename}):**\n"]
-            for idx, step_data in enumerate(steps, 1):
-                agent_type = step_data.get("agent_type", "unknown")
-                name = step_data.get("name", step_data.get("id", f"Step {idx}"))
-                desc = step_data.get("description", "")
-                # Skip router steps — they're internal
-                if agent_type == "router":
-                    continue
-                lines.append(f"- {idx}. **{name}** — `{agent_type}` : {desc}")
-
-            lines.append(
-                "\n**CRITICAL:** Use ONLY the agent_type names listed above. "
-                "DO NOT use old agent names or reference other workflow YAML files."
-            )
-
-            # Build display-name mapping (agent_type → Capitalized)
-            # Used by agents for the "Ready for @..." comment line.
-            seen: set = set()
-            display_pairs: list[str] = []
-            for step_data in steps:
-                at = step_data.get("agent_type", "")
-                if at and at != "router" and at not in seen:
-                    seen.add(at)
-                    display_pairs.append(f"`{at}` → **{at.title()}**")
-            if display_pairs:
-                lines.append(
-                    "\n**Display Names (for the 'Ready for @...' line in your comment):**\n"
-                    + ", ".join(display_pairs)
-                )
-
-            # Resolve and embed next-agent constraint
-            if current_agent_type:
-                valid_next = WorkflowDefinition.resolve_next_agents(
+            valid_next = (
+                WorkflowDefinition.resolve_next_agents(
                     yaml_path, current_agent_type, workflow_type=workflow_type
                 )
-                if valid_next:
-                    names = ", ".join(f"`{a}`" for a in valid_next)
-                    if len(valid_next) == 1:
-                        lines.append(
-                            f"\n**YOUR next_agent MUST be:** {names}\n"
-                            f"Do NOT skip ahead or pick a different agent."
-                        )
-                    else:
-                        lines.append(
-                            f"\n**YOUR next_agent MUST be one of:** {names}\n"
-                            f"Choose based on your classification. "
-                            f"Do NOT skip ahead or pick a different agent."
-                        )
-
-            return "\n".join(lines)
+                if current_agent_type
+                else []
+            )
+            return build_prompt_context_text(
+                steps=steps,
+                yaml_basename=os.path.basename(yaml_path),
+                workflow_type=workflow_type,
+                current_agent_type=current_agent_type,
+                valid_next_agents=valid_next,
+            )
         except Exception as exc:
             logger.warning(f"Could not render workflow prompt context from {yaml_path}: {exc}")
             return ""
@@ -1157,83 +823,11 @@ class WorkflowDefinition:
         Returns:
             A :class:`DryRunReport` with ``errors`` and ``predicted_flow``.
         """
-        errors: list[str] = []
-        predicted_flow: list[str] = []
-
-        if not isinstance(data, dict):
-            return DryRunReport(errors=["Workflow definition must be a dict"])
-
-        # --- Top-level field validation ---
-        if not data.get("name") and not data.get("id"):
-            errors.append("Missing required top-level field: 'name' or 'id'")
-
-        # --- Steps validation ---
-        steps = WorkflowDefinition._resolve_steps(data, workflow_type)
-        if not steps:
-            errors.append(
-                f"No steps found for workflow_type={workflow_type!r}. "
-                "Check that the workflow definition contains a non-empty steps list."
-            )
-        else:
-            step_ids = {s["id"] for s in steps if isinstance(s, dict) and "id" in s}
-
-            for idx, step in enumerate(steps, start=1):
-                if not isinstance(step, dict):
-                    errors.append(f"Step {idx}: must be a dict, got {type(step).__name__}")
-                    continue
-
-                step_label = step.get("id") or step.get("name") or f"step_{idx}"
-
-                # agent_type presence
-                agent_type = step.get("agent_type", "")
-                if not agent_type:
-                    errors.append(f"Step '{step_label}': missing 'agent_type'")
-
-                # on_success reference validity (only when step IDs are used)
-                on_success = step.get("on_success")
-                if on_success and step_ids and on_success not in step_ids:
-                    errors.append(
-                        f"Step '{step_label}': 'on_success' references unknown step id '{on_success}'"
-                    )
-
-                # condition syntax check
-                condition = step.get("condition")
-                if condition:
-                    try:
-                        compile(condition, "<condition>", "eval")
-                    except SyntaxError as exc:
-                        errors.append(
-                            f"Step '{step_label}': malformed condition expression "
-                            f"'{condition}' — {exc}"
-                        )
-
-        # --- Simulation ---
-        for idx, step in enumerate(steps, start=1):
-            if not isinstance(step, dict):
-                continue
-            agent_type = step.get("agent_type", "")
-            if agent_type == "router":
-                continue
-
-            step_label = step.get("name") or step.get("id") or f"step_{idx}"
-            condition = step.get("condition")
-
-            if not condition:
-                predicted_flow.append(f"RUN  {step_label} ({agent_type})")
-                continue
-
-            # Simulate with empty context; NameError → RUN (outputs not available yet)
-            try:
-                result = eval(condition, {"__builtins__": {}}, {})  # noqa: S307
-                status = "RUN " if result else "SKIP"
-            except NameError:
-                # References to step outputs that don't exist yet → treat as RUN
-                status = "RUN "
-            except Exception:
-                status = "SKIP"
-
-            predicted_flow.append(f"{status} {step_label} ({agent_type}) [condition: {condition}]")
-
+        errors, predicted_flow = build_dry_run_report_fields(
+            data=data,
+            workflow_type=workflow_type,
+            resolve_steps=WorkflowDefinition._resolve_steps,
+        )
         return DryRunReport(errors=errors, predicted_flow=predicted_flow)
 
     @staticmethod

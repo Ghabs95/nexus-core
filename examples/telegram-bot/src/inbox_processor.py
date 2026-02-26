@@ -104,6 +104,9 @@ from services.processor_loops_service import (
 from services.processor_runtime_state import (
     ProcessorRuntimeState,
 )
+from services.repo_resolution_service import (
+    resolve_repo_for_issue as _service_resolve_repo_for_issue,
+)
 from services.startup_recovery_service import (
     reconcile_completion_signals_on_startup as _startup_reconcile_completion_signals,
 )
@@ -122,11 +125,23 @@ from services.task_dispatch_service import (
 from services.tier_resolution_service import (
     resolve_tier_for_issue as _resolve_tier_for_issue,
 )
+from services.workflow_pr_monitor_service import (
+    build_bot_comments_getter as _build_bot_comments_getter,
+)
+from services.workflow_pr_monitor_service import (
+    build_workflow_issue_number_lister as _build_workflow_issue_number_lister,
+)
+from services.workflow_pr_monitor_service import (
+    check_and_notify_pr as _service_check_and_notify_pr,
+)
 from services.workflow_recovery_service import (
     run_stuck_agents_cycle as _run_stuck_agents_cycle,
 )
 from services.workflow_signal_sync import (
     normalize_agent_reference as _normalize_agent_reference,
+)
+from services.workflow_unmapped_recovery_service import (
+    recover_unmapped_issues_from_completions as _service_recover_unmapped_issues_from_completions,
 )
 from state_manager import HostStateManager
 
@@ -377,62 +392,19 @@ def _reroute_webhook_task_to_project(filepath: str, target_project: str) -> str 
 
 
 def _resolve_repo_for_issue(issue_num: str, default_project: str | None = None) -> str:
-    """Resolve the repository that owns an issue across all configured project repos."""
-    default_repo = get_repo(default_project) if default_project else get_repo(get_default_project())
-
-    repo_candidates: list[str] = []
-    if default_project and default_project in PROJECT_CONFIG:
-        repo_candidates.extend(
-            _project_repos_from_config(default_project, PROJECT_CONFIG[default_project], get_repos)
-        )
-    if default_repo and default_repo not in repo_candidates:
-        repo_candidates.append(default_repo)
-
-    for project_key, cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
-        for repo_name in _project_repos_from_config(project_key, cfg, get_repos):
-            if repo_name not in repo_candidates:
-                repo_candidates.append(repo_name)
-
-    for repo_name in repo_candidates:
-        matched_project = None
-        for project_key, cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
-            if repo_name in _project_repos_from_config(project_key, cfg, get_repos):
-                matched_project = project_key
-                break
-        if not matched_project:
-            matched_project = default_project or get_default_project()
-
-        try:
-            issue = asyncio.run(
-                get_git_platform(repo_name, project_name=matched_project).get_issue(str(issue_num))
-            )
-        except Exception:
-            continue
-        if not issue:
-            continue
-
-        issue_url = getattr(issue, "url", "") or ""
-        url_repo = _extract_repo_from_issue_url(issue_url)
-        if url_repo:
-            return url_repo
-
-        body = getattr(issue, "body", "") or ""
-        task_file_match = re.search(r"\*\*Task File:\*\*\s*`([^`]+)`", body)
-        if task_file_match:
-            task_file = task_file_match.group(1)
-            for project_key, cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
-                workspace = cfg.get("workspace")
-                if not workspace:
-                    continue
-                workspace_abs = os.path.join(BASE_DIR, str(workspace))
-                if task_file.startswith(workspace_abs):
-                    project_repos = _project_repos_from_config(project_key, cfg, get_repos)
-                    if repo_name in project_repos:
-                        return repo_name
-
-        return repo_name
-
-    return default_repo
+    return _service_resolve_repo_for_issue(
+        issue_num=str(issue_num),
+        default_project=default_project,
+        project_config=PROJECT_CONFIG,
+        get_default_project=get_default_project,
+        get_repo=get_repo,
+        iter_project_configs=_iter_project_configs,
+        project_repos_from_config=_project_repos_from_config,
+        get_repos=get_repos,
+        get_git_platform=get_git_platform,
+        extract_repo_from_issue_url=_extract_repo_from_issue_url,
+        base_dir=BASE_DIR,
+    )
 
 
 def _resolve_repo_strict(project_name: str, issue_num: str) -> str:
@@ -1080,236 +1052,46 @@ def _recover_unmapped_issues_from_completions(max_relaunches: int = 20) -> int:
     local completion + task context still indicates the next agent to run.
     """
     runtime = getattr(_get_process_orchestrator(), "_runtime", None)
-    if runtime is None:
-        return 0
-
-    try:
-        detected = _get_completion_store().scan()
-    except Exception as exc:
-        logger.debug(f"Unmapped recovery skipped (completion scan failed): {exc}")
-        return 0
-
-    if not detected:
-        return 0
-
-    latest_by_issue: dict[str, object] = {}
-    for item in detected:
-        issue_num = str(getattr(item, "issue_number", "") or "").strip()
-        if not issue_num:
-            continue
-        existing = latest_by_issue.get(issue_num)
-        if existing is None:
-            latest_by_issue[issue_num] = item
-            continue
-        try:
-            if os.path.getmtime(getattr(item, "file_path", "")) > os.path.getmtime(
-                getattr(existing, "file_path", "")
-            ):
-                latest_by_issue[issue_num] = item
-        except Exception:
-            continue
-
-    launched = HostStateManager.load_launched_agents(recent_only=False)
-    if not isinstance(launched, dict):
-        launched = {}
-
-    now = time.time()
-
-    def _completion_mtime(issue_key: str) -> float:
-        detection = latest_by_issue.get(issue_key)
-        if detection is None:
-            return 0.0
-        try:
-            return float(os.path.getmtime(getattr(detection, "file_path", "")))
-        except Exception:
-            return 0.0
-
-    issue_order = sorted(
-        latest_by_issue.keys(),
-        key=_completion_mtime,
-        reverse=True,
+    return _service_recover_unmapped_issues_from_completions(
+        max_relaunches=max_relaunches,
+        logger=logger,
+        runtime=runtime,
+        completion_store=_get_completion_store(),
+        host_state_manager=HostStateManager,
+        get_workflow_id=lambda issue_num: _get_wf_state().get_workflow_id(issue_num),
+        normalize_agent_reference=_normalize_agent_reference,
+        is_terminal_agent_reference=_is_terminal_agent_reference,
+        find_task_file_for_issue=_find_task_file_for_issue,
+        resolve_project_from_task_file=_resolve_project_from_task_file,
+        get_default_project=get_default_project,
+        project_config=PROJECT_CONFIG,
+        resolve_repo_for_issue=_resolve_repo_for_issue,
+        build_issue_url=build_issue_url,
+        get_sop_tier=get_sop_tier,
+        invoke_copilot_agent=invoke_copilot_agent,
+        base_dir=BASE_DIR,
+        orphan_recovery_last_attempt=_orphan_recovery_last_attempt,
+        orphan_recovery_cooldown_seconds=_ORPHAN_RECOVERY_COOLDOWN_SECONDS,
     )
-
-    relaunched = 0
-
-    for issue_num in issue_order:
-        if relaunched >= max_relaunches:
-            break
-
-        completion_mtime = _completion_mtime(issue_num)
-        if completion_mtime > 0 and (now - completion_mtime) > (7 * 24 * 3600):
-            continue
-
-        workflow_id = _get_wf_state().get_workflow_id(issue_num)
-        expected_running_agent = runtime.get_expected_running_agent(issue_num)
-        workflow_state = runtime.get_workflow_state(issue_num)
-
-        if workflow_state in {"PAUSED", "STOPPED", "COMPLETED", "FAILED", "CANCELLED"}:
-            continue
-
-        # If mapped workflow still has a RUNNING agent, leave recovery to
-        # _recover_orphaned_running_agents().
-        if workflow_id and expected_running_agent:
-            continue
-
-        last_attempt = _orphan_recovery_last_attempt.get(issue_num, 0.0)
-        if (now - last_attempt) < _ORPHAN_RECOVERY_COOLDOWN_SECONDS:
-            continue
-
-        if runtime.is_process_running(issue_num):
-            continue
-
-        tracker_entry = launched.get(issue_num, {})
-        if not isinstance(tracker_entry, dict):
-            tracker_entry = {}
-        tracker_pid = tracker_entry.get("pid")
-        if isinstance(tracker_pid, int) and tracker_pid > 0 and runtime.is_pid_alive(tracker_pid):
-            continue
-
-        detection = latest_by_issue[issue_num]
-        summary = getattr(detection, "summary", None)
-        raw_next_agent = str(getattr(summary, "next_agent", "") or "")
-        next_agent = _normalize_agent_reference(raw_next_agent) or raw_next_agent
-        next_agent = str(next_agent or "").strip().lower().lstrip("@")
-        if not next_agent or _is_terminal_agent_reference(next_agent):
-            continue
-
-        task_file = _find_task_file_for_issue(issue_num)
-        project_name = None
-        task_content = ""
-        task_type = "feature"
-
-        if task_file and os.path.exists(task_file):
-            project_name = _resolve_project_from_task_file(task_file)
-            try:
-                with open(task_file, encoding="utf-8") as handle:
-                    task_content = handle.read()
-            except Exception:
-                task_content = ""
-
-            type_match = re.search(r"\*\*Type:\*\*\s*(.+)", task_content)
-            if type_match:
-                task_type = type_match.group(1).strip().lower()
-        else:
-            raw_payload = getattr(summary, "raw", {})
-            if isinstance(raw_payload, dict):
-                guessed_project = raw_payload.get("_project")
-                if isinstance(guessed_project, str) and guessed_project.strip():
-                    project_name = guessed_project.strip()
-
-                findings = raw_payload.get("key_findings")
-                findings_text = ""
-                if isinstance(findings, list) and findings:
-                    cleaned = [str(item).strip() for item in findings if str(item).strip()]
-                    if cleaned:
-                        findings_text = "\n".join(f"- {item}" for item in cleaned[:5])
-
-                summary_text = str(raw_payload.get("summary") or "").strip()
-                if summary_text:
-                    task_content = f"Recovered from completion summary:\n{summary_text}"
-                    if findings_text:
-                        task_content += f"\n\nKey findings:\n{findings_text}"
-
-        project_name = project_name or get_default_project()
-        project_cfg = PROJECT_CONFIG.get(project_name, {})
-        if not isinstance(project_cfg, dict):
-            continue
-
-        agents_dir = project_cfg.get("agents_dir")
-        workspace = project_cfg.get("workspace")
-        if not agents_dir or not workspace:
-            continue
-
-        repo_name = _resolve_repo_for_issue(issue_num, default_project=project_name)
-        issue_open = runtime.is_issue_open(issue_num, repo_name)
-        if issue_open is not True:
-            continue
-
-        issue_url = build_issue_url(repo_name, issue_num, project_cfg)
-        if not task_content:
-            task_content = f"Issue #{issue_num}"
-
-        tier_name = HostStateManager.get_last_tier_for_issue(issue_num)
-        if not tier_name:
-            tier_name, _, _ = get_sop_tier(task_type)
-
-        _orphan_recovery_last_attempt[issue_num] = now
-        pid, tool_used = invoke_copilot_agent(
-            agents_dir=os.path.join(BASE_DIR, agents_dir),
-            workspace_dir=os.path.join(BASE_DIR, workspace),
-            issue_url=issue_url,
-            tier_name=tier_name,
-            task_content=task_content,
-            continuation=True,
-            continuation_prompt=(
-                "Automatic recovery after restart: continue from last completion signal."
-            ),
-            log_subdir=project_name,
-            agent_type=next_agent,
-            project_name=project_name,
-        )
-
-        if pid:
-            relaunched += 1
-            logger.warning(
-                "Recovered issue #%s from completion signal: launching %s (PID %s, tool=%s)",
-                issue_num,
-                next_agent,
-                pid,
-                tool_used,
-            )
-        else:
-            logger.info(
-                "Completion-signal recovery skipped/failed for issue #%s (next_agent=%s)",
-                issue_num,
-                next_agent,
-            )
-
-    return relaunched
 
 
 def check_agent_comments():
     """Monitor Git issues for agent comments requesting input across all projects."""
-    workflow_labels = set(_WORKFLOW_MONITOR_LABELS)
-
-    def _list_workflow_issue_numbers(project_name: str, repo: str) -> list[int]:
-        monitor_policy = get_workflow_monitor_policy_plugin(
-            list_open_issues=lambda **kwargs: asyncio.run(
-                get_git_platform(kwargs["repo"], project_name=project_name).list_open_issues(
-                    limit=kwargs["limit"],
-                    labels=sorted(kwargs["workflow_labels"]),
-                )
-            ),
-            cache_key=None,
-        )
-        return monitor_policy.list_workflow_issue_numbers(
-            repo=repo,
-            workflow_labels=workflow_labels,
-            limit=100,
-        )
-
-    def _get_bot_comments(project_name: str, repo: str, issue_number: str):
-        monitor_policy = get_workflow_monitor_policy_plugin(
-            get_comments=lambda **kwargs: asyncio.run(
-                get_git_platform(kwargs["repo"], project_name=project_name).get_comments(
-                    str(kwargs["issue_number"])
-                )
-            ),
-            cache_key=None,
-        )
-        return monitor_policy.get_bot_comments(
-            repo=repo,
-            issue_number=str(issue_number),
-            bot_author="Ghabs95",
-        )
-
     _run_comment_monitor_cycle(
         logger=logger,
         iter_projects=lambda: _iter_project_configs(PROJECT_CONFIG, get_repos),
         get_project_platform=get_project_platform,
         get_repo=get_repo,
-        list_workflow_issue_numbers=_list_workflow_issue_numbers,
-        get_bot_comments=_get_bot_comments,
+        list_workflow_issue_numbers=_build_workflow_issue_number_lister(
+            get_workflow_monitor_policy_plugin=get_workflow_monitor_policy_plugin,
+            get_git_platform=get_git_platform,
+            workflow_labels=_WORKFLOW_MONITOR_LABELS,
+        ),
+        get_bot_comments=_build_bot_comments_getter(
+            get_workflow_monitor_policy_plugin=get_workflow_monitor_policy_plugin,
+            get_git_platform=get_git_platform,
+            bot_author="Ghabs95",
+        ),
         notify_agent_needs_input=notify_agent_needs_input,
         notified_comments=PROCESSOR_RUNTIME_STATE.notified_comments,
         clear_polling_failures=_clear_polling_failures,
@@ -1327,33 +1109,15 @@ def check_and_notify_pr(issue_num, project):
         issue_num: Git issue number
         project: Project name
     """
-    try:
-        repo = get_repo(project)
-        monitor_policy = get_workflow_monitor_policy_plugin(
-            search_linked_prs=lambda **kwargs: asyncio.run(
-                get_git_platform(kwargs["repo"], project_name=project).search_linked_prs(
-                    str(kwargs["issue_number"])
-                )
-            ),
-            cache_key=None,
-        )
-        pr = monitor_policy.find_open_linked_pr(repo=repo, issue_number=str(issue_num))
-        if pr:
-            logger.info(f"✅ Found PR #{pr.number} for issue #{issue_num}")
-            notify_workflow_completed(
-                issue_num,
-                project,
-                pr_urls=[pr.url],
-            )
-            return
-
-        logger.info(f"ℹ️ No open PR found for issue #{issue_num}")
-        notify_workflow_completed(issue_num, project)
-
-    except Exception as e:
-        logger.error(f"Error checking for PR: {e}")
-        # Still notify even if PR check fails
-        notify_workflow_completed(issue_num, project)
+    _service_check_and_notify_pr(
+        issue_num=issue_num,
+        project=project,
+        logger=logger,
+        get_repo=get_repo,
+        get_workflow_monitor_policy_plugin=get_workflow_monitor_policy_plugin,
+        get_git_platform=get_git_platform,
+        notify_workflow_completed=notify_workflow_completed,
+    )
 
 
 def check_completed_agents():

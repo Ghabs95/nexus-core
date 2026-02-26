@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from services.callback_registry_service import dispatch_callback_action
 from state_manager import HostStateManager
 
 
@@ -72,19 +73,31 @@ async def handle_merge_queue_inline_action(
             )
             return True
 
-        if action == "mqapprove":
-            text = (
+        async def _approve_text() -> None:
+            await ctx.edit_message_text(
                 f"✅ Merge approved for {changed} PR(s) on issue #{issue_num}.\n\n"
                 "Queue worker will process them automatically."
             )
-        elif action == "mqretry":
-            text = f"🔄 Merge retry queued for {changed} PR(s) on issue #{issue_num}."
-        else:
-            text = (
+
+        async def _retry_text() -> None:
+            await ctx.edit_message_text(
+                f"🔄 Merge retry queued for {changed} PR(s) on issue #{issue_num}."
+            )
+
+        async def _default_text() -> None:
+            await ctx.edit_message_text(
                 f"🚀 Merge requested for {changed} PR(s) on issue #{issue_num}.\n\n"
                 "Queue worker will attempt merge on the next cycle."
             )
-        await ctx.edit_message_text(text)
+
+        await dispatch_callback_action(
+            action=action,
+            handlers={
+                "mqapprove": _approve_text,
+                "mqretry": _retry_text,
+            },
+            default_handler=_default_text,
+        )
     except Exception as exc:
         await ctx.edit_message_text(f"❌ Merge queue action failed: {exc}")
     return True

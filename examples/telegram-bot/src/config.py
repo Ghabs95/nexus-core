@@ -2,15 +2,46 @@
 
 import logging
 import os
-import subprocess
 import sys
-import urllib.parse
 from typing import Any
 
-import yaml
 from dotenv import load_dotenv
 
-from nexus.core.chat_agents_schema import get_project_chat_agents
+from config_chat_agents import (
+    get_chat_agent_types as _svc_get_chat_agent_types,
+    get_chat_agents as _svc_get_chat_agents,
+    get_operation_agents as _svc_get_operation_agents,
+)
+from config_loaders import (
+    load_and_validate_project_config as _svc_load_and_validate_project_config,
+)
+from config_nexus_paths import (
+    get_inbox_dir as _svc_get_inbox_dir,
+    get_nexus_dir as _svc_get_nexus_dir,
+    get_nexus_dir_name as _svc_get_nexus_dir_name,
+    get_tasks_active_dir as _svc_get_tasks_active_dir,
+    get_tasks_closed_dir as _svc_get_tasks_closed_dir,
+    get_tasks_logs_dir as _svc_get_tasks_logs_dir,
+)
+from config_paths import load_path_config_from_env
+from config_project_registry import (
+    get_project_aliases as _svc_get_project_aliases,
+    get_project_registry as _svc_get_project_registry,
+    normalize_project_key as _svc_normalize_project_key,
+)
+from config_project_workflow import (
+    get_default_project as _svc_get_default_project,
+    get_track_short_projects as _svc_get_track_short_projects,
+    get_workflow_profile as _svc_get_workflow_profile,
+)
+from config_repos import (
+    get_default_repo as _svc_get_default_repo,
+    get_gitlab_base_url as _svc_get_gitlab_base_url,
+    get_project_platform as _svc_get_project_platform,
+    get_repo as _svc_get_repo,
+    get_repos as _svc_get_repos,
+)
+from config_validators import validate_project_config as _svc_validate_project_config
 
 # Load secrets from local file if exists
 SECRET_FILE = ".env"
@@ -52,19 +83,17 @@ DISCORD_ALLOWED_USER_IDS = _parse_int_list("DISCORD_ALLOWED_USER_IDS")
 DISCORD_GUILD_ID = int(os.getenv("DISCORD_GUILD_ID")) if os.getenv("DISCORD_GUILD_ID") else None
 
 # --- PATHS & DIRECTORIES ---
-BASE_DIR = os.getenv("BASE_DIR", "/home/ubuntu/git")
-NEXUS_RUNTIME_DIR = os.getenv("NEXUS_RUNTIME_DIR", "/var/lib/nexus")
-NEXUS_STATE_DIR = os.path.join(NEXUS_RUNTIME_DIR, "state")
-LOGS_DIR = os.getenv(
-    "LOGS_DIR",
-    "/var/log/nexus",
-)
-TRACKED_ISSUES_FILE = os.path.join(NEXUS_STATE_DIR, "tracked_issues.json")
-LAUNCHED_AGENTS_FILE = os.path.join(NEXUS_STATE_DIR, "launched_agents.json")
-WORKFLOW_STATE_FILE = os.path.join(NEXUS_STATE_DIR, "workflow_state.json")
-AUDIT_LOG_FILE = os.path.join(LOGS_DIR, "audit.log")
-INBOX_PROCESSOR_LOG_FILE = os.path.join(LOGS_DIR, "inbox_processor.log")
-TELEGRAM_BOT_LOG_FILE = os.path.join(LOGS_DIR, "telegram_bot.log")
+_PATH_CONFIG = load_path_config_from_env()
+BASE_DIR = _PATH_CONFIG["BASE_DIR"]
+NEXUS_RUNTIME_DIR = _PATH_CONFIG["NEXUS_RUNTIME_DIR"]
+NEXUS_STATE_DIR = _PATH_CONFIG["NEXUS_STATE_DIR"]
+LOGS_DIR = _PATH_CONFIG["LOGS_DIR"]
+TRACKED_ISSUES_FILE = _PATH_CONFIG["TRACKED_ISSUES_FILE"]
+LAUNCHED_AGENTS_FILE = _PATH_CONFIG["LAUNCHED_AGENTS_FILE"]
+WORKFLOW_STATE_FILE = _PATH_CONFIG["WORKFLOW_STATE_FILE"]
+AUDIT_LOG_FILE = _PATH_CONFIG["AUDIT_LOG_FILE"]
+INBOX_PROCESSOR_LOG_FILE = _PATH_CONFIG["INBOX_PROCESSOR_LOG_FILE"]
+TELEGRAM_BOT_LOG_FILE = _PATH_CONFIG["TELEGRAM_BOT_LOG_FILE"]
 
 # --- AI CONFIGURATION ---
 AI_PERSONA = os.getenv(
@@ -84,109 +113,13 @@ _cached_config_path = None  # Track which path was cached
 
 
 def _load_project_config(path: str) -> dict:
-    """Load PROJECT_CONFIG from YAML file (required).
+    from config_loaders import load_project_config_yaml
 
-    Args:
-        path: Path to project config YAML file
-
-    Returns:
-        Loaded project configuration dict
-
-    Raises:
-        FileNotFoundError: If file doesn't exist
-        ValueError: If YAML is invalid or not a mapping
-    """
-    with open(path, encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    if not isinstance(data, dict):
-        raise ValueError("PROJECT_CONFIG must be a YAML mapping")
-    return data
+    return load_project_config_yaml(path)
 
 
 def _validate_config_with_project_config(config: dict) -> None:
-    """Validate project configuration dict."""
-    if not config or len(config) == 0:
-        # Empty config is okay for tests
-        return
-
-    # Global config keys that aren't projects
-    global_keys = {
-        "nexus_dir",  # VCS-agnostic inbox/tasks directory name
-        "workflow_definition_path",
-        "projects",
-        "task_types",
-        "ai_tool_preferences",
-        "operation_agents",
-        "merge_queue",
-        "workflow_chains",
-        "final_agents",
-        "issue_triage",  # Git issue → triage agent routing configuration
-        "shared_agents_dir",  # Shared org-level agent YAML definitions directory
-    }
-
-    for project, proj_config in config.items():
-        # Skip global settings
-        if project in global_keys:
-            continue
-
-        # All other keys should be project dicts
-        if not isinstance(proj_config, dict):
-            raise ValueError(f"PROJECT_CONFIG['{project}'] must be a dict")
-
-        if "workspace" not in proj_config:
-            raise ValueError(f"PROJECT_CONFIG['{project}'] missing 'workspace' key")
-
-        repos_list = proj_config.get("git_repos")
-
-        if repos_list is not None:
-            if not isinstance(repos_list, list):
-                raise ValueError(f"PROJECT_CONFIG['{project}']['git_repos'] must be a list")
-            for repo_name in repos_list:
-                if not isinstance(repo_name, str) or not repo_name.strip():
-                    raise ValueError(
-                        f"PROJECT_CONFIG['{project}']['git_repos'] contains invalid repo entry"
-                    )
-
-        git_platform = str(proj_config.get("git_platform", "github")).lower().strip()
-        if git_platform not in {"github", "gitlab"}:
-            raise ValueError(
-                f"PROJECT_CONFIG['{project}']['git_platform'] must be 'github' or 'gitlab'"
-            )
-
-    registry = config.get("projects")
-    if registry is not None:
-        if not isinstance(registry, dict) or not registry:
-            raise ValueError("PROJECT_CONFIG['projects'] must be a non-empty mapping")
-        for short_key, payload in registry.items():
-            normalized_short = str(short_key).strip().lower()
-            if not normalized_short:
-                raise ValueError("PROJECT_CONFIG['projects'] contains empty short key")
-            if not isinstance(payload, dict):
-                raise ValueError(
-                    f"PROJECT_CONFIG['projects']['{normalized_short}'] must be a mapping"
-                )
-
-            code = str(payload.get("code", "")).strip().lower()
-            if not code:
-                raise ValueError(
-                    f"PROJECT_CONFIG['projects']['{normalized_short}'] missing non-empty 'code'"
-                )
-            if code not in config or not isinstance(config.get(code), dict):
-                raise ValueError(
-                    f"PROJECT_CONFIG['projects']['{normalized_short}']['code'] references unknown project '{code}'"
-                )
-
-            aliases = payload.get("aliases", [])
-            if aliases is not None and not isinstance(aliases, list):
-                raise ValueError(
-                    f"PROJECT_CONFIG['projects']['{normalized_short}']['aliases'] must be a list"
-                )
-            if isinstance(aliases, list):
-                for alias in aliases:
-                    if not isinstance(alias, str) or not alias.strip():
-                        raise ValueError(
-                            f"PROJECT_CONFIG['projects']['{normalized_short}']['aliases'] contains invalid alias"
-                        )
+    _svc_validate_project_config(config)
 
 
 def _load_and_validate_project_config() -> dict:
@@ -198,39 +131,15 @@ def _load_and_validate_project_config() -> dict:
         ValueError: If config is invalid
     """
     global _project_config_cache, _cached_config_path
-
-    # Read PROJECT_CONFIG_PATH from environment (not cached to support monkeypatch in tests)
-    project_config_path = os.getenv("PROJECT_CONFIG_PATH")
-    if not project_config_path:
-        raise ValueError(
-            "PROJECT_CONFIG_PATH environment variable is required. "
-            "It must point to a YAML file with project configuration."
-        )
-
-    # Clear cache if PROJECT_CONFIG_PATH changed (e.g., in tests with monkeypatch)
-    if _cached_config_path != project_config_path:
-        _project_config_cache = None
-        _cached_config_path = project_config_path
-
-    if _project_config_cache is not None:
-        return _project_config_cache
-
-    resolved_config_path = (
-        project_config_path
-        if os.path.isabs(project_config_path)
-        else os.path.join(BASE_DIR, project_config_path)
+    cache = {"value": _project_config_cache, "path": _cached_config_path}
+    loaded = _svc_load_and_validate_project_config(
+        base_dir=BASE_DIR,
+        cache=cache,
+        validator=_validate_config_with_project_config,
     )
-
-    try:
-        _project_config_cache = _load_project_config(resolved_config_path)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"PROJECT_CONFIG file not found: {resolved_config_path}")
-    except Exception as e:
-        raise ValueError(f"Failed to load PROJECT_CONFIG from {resolved_config_path}: {e}")
-
-    # Validate the loaded config
-    _validate_config_with_project_config(_project_config_cache)
-    return _project_config_cache
+    _project_config_cache = cache.get("value")
+    _cached_config_path = cache.get("path")
+    return loaded
 
 
 # Create a property-like accessor for PROJECT_CONFIG
@@ -293,21 +202,7 @@ def get_operation_agents(project: str = "nexus") -> dict:
     The orchestrator then resolves provider preference for the selected
     agent type via ``ai_tool_preferences``.
     """
-    config = _get_project_config()
-
-    if project in config:
-        proj_config = config[project]
-        if isinstance(proj_config, dict) and "operation_agents" in proj_config:
-            value = proj_config["operation_agents"]
-            if isinstance(value, dict):
-                return value
-
-    if "operation_agents" in config:
-        value = config["operation_agents"]
-        if isinstance(value, dict):
-            return value
-
-    return {"default": "triage"}
+    return _svc_get_operation_agents(_get_project_config, project)
 
 
 def get_chat_agent_types(project: str = "nexus") -> list[str]:
@@ -321,10 +216,7 @@ def get_chat_agent_types(project: str = "nexus") -> list[str]:
 
     The first item is treated as the default primary chat agent.
     """
-    entries = get_chat_agents(project)
-    if entries:
-        return [entry["agent_type"] for entry in entries]
-    return ["triage"]
+    return _svc_get_chat_agent_types(get_chat_agents, project)
 
 
 def get_chat_agents(project: str = "nexus") -> list[dict[str, Any]]:
@@ -339,66 +231,12 @@ def get_chat_agents(project: str = "nexus") -> list[dict[str, Any]]:
     Fallbacks:
     1. keys of ``ai_tool_preferences``
     """
-    config = _get_project_config()
-    entries: list[dict[str, Any]] = []
-
-    project_cfg = config.get(project)
-    if isinstance(project_cfg, dict):
-        entries = get_project_chat_agents(project_cfg)
-        if entries:
-            return entries
-
-    global_operation_agents = config.get("operation_agents")
-    if isinstance(global_operation_agents, dict):
-        raw_chat = global_operation_agents.get("chat")
-        if isinstance(raw_chat, (dict, list)):
-            entries = get_project_chat_agents({"operation_agents": {"chat": raw_chat}})
-            if entries:
-                return entries
-
-    preferences = get_ai_tool_preferences(project)
-    if isinstance(preferences, dict) and preferences:
-        for agent_type in preferences:
-            normalized = str(agent_type).strip().lower()
-            if normalized:
-                entries.append({"agent_type": normalized})
-        if entries:
-            return entries
-
-    return [{"agent_type": "triage"}]
+    return _svc_get_chat_agents(_get_project_config, get_ai_tool_preferences, project)
 
 
 def get_project_registry() -> dict[str, dict[str, object]]:
     """Return normalized short-key project registry from PROJECT_CONFIG['projects']."""
-    config = _get_project_config()
-    raw_registry = config.get("projects")
-    if not isinstance(raw_registry, dict):
-        return {}
-
-    registry: dict[str, dict[str, object]] = {}
-    for short_key, payload in raw_registry.items():
-        normalized_short = str(short_key).strip().lower()
-        if not normalized_short or not isinstance(payload, dict):
-            continue
-
-        code = str(payload.get("code", "")).strip().lower()
-        if not code:
-            continue
-        raw_aliases = payload.get("aliases", [])
-        aliases = []
-        if isinstance(raw_aliases, list):
-            aliases = [
-                str(alias).strip().lower()
-                for alias in raw_aliases
-                if isinstance(alias, str) and str(alias).strip()
-            ]
-
-        registry[normalized_short] = {
-            "code": code,
-            "aliases": aliases,
-        }
-
-    return registry
+    return _svc_get_project_registry(_get_project_config)
 
 
 def get_project_display_names() -> dict[str, str]:
@@ -456,54 +294,17 @@ def get_task_types() -> dict[str, str]:
 
 def get_project_aliases() -> dict[str, str]:
     """Return normalized aliases resolved from PROJECT_CONFIG['projects']."""
-    config = _get_project_config()
-    aliases: dict[str, str] = {}
-
-    for short_key, payload in get_project_registry().items():
-        code = str(payload.get("code", "")).strip().lower()
-        if not code:
-            continue
-        aliases[short_key] = code
-        raw_aliases = payload.get("aliases", [])
-        if isinstance(raw_aliases, list):
-            for alias in raw_aliases:
-                normalized = str(alias).strip().lower()
-                if normalized:
-                    aliases[normalized] = code
-
-    for key, value in config.items():
-        if isinstance(value, dict) and value.get("workspace"):
-            canonical = str(key).strip().lower()
-            if canonical:
-                aliases.setdefault(canonical, canonical)
-
-    return aliases
+    return _svc_get_project_aliases(_get_project_config, get_project_registry)
 
 
 def normalize_project_key(project: str) -> str | None:
     """Normalize a project key using configured aliases."""
-    candidate = str(project or "").strip().lower()
-    if not candidate:
-        return None
-    aliases = get_project_aliases()
-    return aliases.get(candidate, candidate)
+    return _svc_normalize_project_key(get_project_aliases, project)
 
 
 def get_track_short_projects() -> list[str]:
     """Return short project keys for /track commands from projects registry."""
-    derived: list[str] = []
-    for short_key, payload in get_project_registry().items():
-        code = str(payload.get("code", "")).strip().lower()
-        if not code:
-            continue
-        if short_key != code and short_key.replace("-", "").replace("_", "").isalnum():
-            derived.append(short_key)
-
-    unique: list[str] = []
-    for item in derived:
-        if item not in unique:
-            unique.append(item)
-    return unique
+    return _svc_get_track_short_projects(get_project_registry)
 
 
 def get_workflow_profile(project: str = "nexus") -> str:
@@ -514,19 +315,7 @@ def get_workflow_profile(project: str = "nexus") -> str:
     2. Global ``workflow_definition_path``
     3. ``ghabs_org_workflow`` fallback
     """
-    config = _get_project_config()
-
-    workflow_value = ""
-    project_cfg = config.get(project)
-    if isinstance(project_cfg, dict):
-        workflow_value = str(project_cfg.get("workflow_definition_path", "")).strip()
-
-    if not workflow_value:
-        workflow_value = str(config.get("workflow_definition_path", "")).strip()
-
-    if workflow_value:
-        return workflow_value
-    return "ghabs_org_workflow"
+    return _svc_get_workflow_profile(_get_project_config, project)
 
 
 # Caching wrappers for lazy-loading on first access (support monkeypatch in tests)
@@ -699,15 +488,7 @@ def get_default_project() -> str:
     1. explicit "nexus" project when present
     2. first configured project dict containing workspace + repo metadata
     """
-    config = _get_project_config()
-    if isinstance(config.get("nexus"), dict):
-        return "nexus"
-
-    for key, value in config.items():
-        if isinstance(value, dict) and value.get("workspace"):
-            return key
-
-    raise ValueError("No project with repository configuration found in PROJECT_CONFIG")
+    return _svc_get_default_project(_get_project_config)
 
 
 def get_repos(project: str) -> list[str]:
@@ -715,40 +496,7 @@ def get_repos(project: str) -> list[str]:
 
     Uses provider-neutral ``git_repo`` / ``git_repos``.
     """
-    config = _get_project_config()
-    if project not in config:
-        raise KeyError(
-            f"Project '{project}' not found in PROJECT_CONFIG. "
-            f"Available projects: {[k for k in config if isinstance(config.get(k), dict)]}"
-        )
-
-    project_cfg = config[project]
-    if not isinstance(project_cfg, dict):
-        raise ValueError(f"Project '{project}' configuration must be a mapping")
-
-    repos: list[str] = []
-    single_repo = project_cfg.get("git_repo")
-    if isinstance(single_repo, str) and single_repo.strip():
-        repos.append(single_repo.strip())
-
-    repo_list = project_cfg.get("git_repos")
-    if isinstance(repo_list, list):
-        for repo_name in repo_list:
-            if isinstance(repo_name, str):
-                value = repo_name.strip()
-                if value and value not in repos:
-                    repos.append(value)
-
-    if not repos:
-        repos = _discover_workspace_repos(project_cfg)
-
-    if not repos:
-        raise ValueError(
-            f"Project '{project}' is missing repository configuration and "
-            "workspace auto-discovery found no git remotes"
-        )
-
-    return repos
+    return _svc_get_repos(_get_project_config, BASE_DIR, project)
 
 
 def _discover_workspace_repos(project_cfg: dict) -> list[str]:
@@ -756,82 +504,26 @@ def _discover_workspace_repos(project_cfg: dict) -> list[str]:
 
     Scans workspace root and first-level subdirectories that are git repos.
     """
-    workspace = project_cfg.get("workspace") if isinstance(project_cfg, dict) else None
-    if not workspace:
-        return []
+    from config_repos import discover_workspace_repos
 
-    workspace_abs = workspace if os.path.isabs(workspace) else os.path.join(BASE_DIR, workspace)
-    if not os.path.isdir(workspace_abs):
-        return []
-
-    candidates = [workspace_abs]
-    try:
-        for entry in os.scandir(workspace_abs):
-            if entry.is_dir(follow_symlinks=False):
-                candidates.append(entry.path)
-    except Exception:
-        pass
-
-    repos: list[str] = []
-    for candidate in candidates:
-        if not os.path.isdir(os.path.join(candidate, ".git")):
-            continue
-        try:
-            result = subprocess.run(
-                ["git", "-C", candidate, "remote", "get-url", "origin"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-        except Exception:
-            continue
-
-        if result.returncode != 0:
-            continue
-
-        slug = _repo_slug_from_remote_url(result.stdout.strip())
-        if slug and slug not in repos:
-            repos.append(slug)
-
-    return repos
+    return discover_workspace_repos(project_cfg, BASE_DIR)
 
 
 def _repo_slug_from_remote_url(remote_url: str) -> str:
     """Normalize git remote URL into ``namespace/repo`` slug."""
-    if not remote_url:
-        return ""
+    from config_repos import repo_slug_from_remote_url
 
-    value = remote_url.strip()
-
-    # SCP-like URLs: git@host:group/subgroup/repo.git
-    if value.startswith("git@") and ":" in value:
-        value = value.split(":", 1)[1]
-    elif "://" in value:
-        try:
-            parsed = urllib.parse.urlparse(value)
-            value = parsed.path or ""
-        except Exception:
-            return ""
-
-    value = value.strip().lstrip("/")
-    if value.endswith(".git"):
-        value = value[:-4]
-
-    return value
+    return repo_slug_from_remote_url(remote_url)
 
 
 def get_default_repo() -> str:
     """Return default git repo for legacy single-repo call sites."""
-    return get_repo(get_default_project())
+    return _svc_get_default_repo(get_repo, get_default_project)
 
 
 def get_project_platform(project: str) -> str:
     """Return VCS platform type for a project (``github`` or ``gitlab``)."""
-    config = _get_project_config()
-    if project not in config or not isinstance(config[project], dict):
-        raise KeyError(f"Project '{project}' not found in PROJECT_CONFIG")
-    return str(config[project].get("git_platform", "github")).lower().strip()
+    return _svc_get_project_platform(_get_project_config, project)
 
 
 def get_gitlab_base_url(project: str) -> str:
@@ -842,13 +534,7 @@ def get_gitlab_base_url(project: str) -> str:
     2. env var ``GITLAB_BASE_URL``
     3. default ``https://gitlab.com``
     """
-    config = _get_project_config()
-    project_cfg = config.get(project, {}) if isinstance(config, dict) else {}
-    if isinstance(project_cfg, dict):
-        project_url = project_cfg.get("gitlab_base_url")
-        if isinstance(project_url, str) and project_url.strip():
-            return project_url.strip()
-    return os.getenv("GITLAB_BASE_URL", "https://gitlab.com")
+    return _svc_get_gitlab_base_url(_get_project_config, project)
 
 
 def get_repo(project: str) -> str:
@@ -863,7 +549,7 @@ def get_repo(project: str) -> str:
     Raises:
         KeyError: If project not found in PROJECT_CONFIG
     """
-    return get_repos(project)[0]
+    return _svc_get_repo(get_repos, project)
 
 
 def get_nexus_dir_name() -> str:
@@ -872,8 +558,7 @@ def get_nexus_dir_name() -> str:
     Returns:
         Directory name (e.g., ".nexus") from config
     """
-    config = _get_project_config()
-    return config.get("nexus_dir", ".nexus")
+    return _svc_get_nexus_dir_name(_get_project_config)
 
 
 def get_nexus_dir(workspace: str = None) -> str:
@@ -887,14 +572,7 @@ def get_nexus_dir(workspace: str = None) -> str:
     Returns:
         Path to nexus directory (e.g., /path/to/workspace/.nexus)
     """
-    if workspace is None:
-        workspace = os.getcwd()
-
-    # Get nexus_dir from config (defaults to .nexus)
-    config = _get_project_config()
-    nexus_dir_name = config.get("nexus_dir", ".nexus")
-
-    return os.path.join(workspace, nexus_dir_name)
+    return _svc_get_nexus_dir(_get_project_config, workspace)
 
 
 def get_inbox_dir(workspace: str = None, project: str = None) -> str:
@@ -907,11 +585,7 @@ def get_inbox_dir(workspace: str = None, project: str = None) -> str:
     Returns:
         Path to {nexus_dir}/inbox or {nexus_dir}/inbox/{project}
     """
-    nexus_dir = get_nexus_dir(workspace)
-    inbox_dir = os.path.join(nexus_dir, "inbox")
-    if project:
-        inbox_dir = os.path.join(inbox_dir, project)
-    return inbox_dir
+    return _svc_get_inbox_dir(_get_project_config, workspace, project)
 
 
 def get_tasks_active_dir(workspace: str, project: str) -> str:
@@ -924,8 +598,7 @@ def get_tasks_active_dir(workspace: str, project: str) -> str:
     Returns:
         Path to {nexus_dir}/tasks/{project}/active
     """
-    nexus_dir = get_nexus_dir(workspace)
-    return os.path.join(nexus_dir, "tasks", project, "active")
+    return _svc_get_tasks_active_dir(_get_project_config, workspace, project)
 
 
 def get_tasks_closed_dir(workspace: str, project: str) -> str:
@@ -938,8 +611,7 @@ def get_tasks_closed_dir(workspace: str, project: str) -> str:
     Returns:
         Path to {nexus_dir}/tasks/{project}/closed
     """
-    nexus_dir = get_nexus_dir(workspace)
-    return os.path.join(nexus_dir, "tasks", project, "closed")
+    return _svc_get_tasks_closed_dir(_get_project_config, workspace, project)
 
 
 def get_tasks_logs_dir(workspace: str, project: str) -> str:
@@ -952,8 +624,7 @@ def get_tasks_logs_dir(workspace: str, project: str) -> str:
     Returns:
         Path to {nexus_dir}/tasks/{project}/logs
     """
-    nexus_dir = get_nexus_dir(workspace)
-    return os.path.join(nexus_dir, "tasks", project, "logs")
+    return _svc_get_tasks_logs_dir(_get_project_config, workspace, project)
 
 
 # --- TIMING CONFIGURATION ---

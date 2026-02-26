@@ -8,10 +8,12 @@ from nexus.core.chat_agents_schema import (
 
 def test_get_project_chat_agents_from_mapping_preserves_order():
     project_cfg = {
-        "chat_agents": {
-            "business": {"label": "Business", "context_path": "business-os"},
-            "marketing": {"label": "Marketing", "context_path": "marketing-os"},
-        }
+        "operation_agents": {
+            "chat": {
+                "business": {"label": "Business", "context_path": "business-os"},
+                "marketing": {"label": "Marketing", "context_path": "marketing-os"},
+            }
+        },
     }
 
     entries = get_project_chat_agents(project_cfg)
@@ -23,10 +25,12 @@ def test_get_project_chat_agents_from_mapping_preserves_order():
 
 def test_get_project_chat_agents_from_list_supports_both_shapes():
     project_cfg = {
-        "chat_agents": [
-            {"business": {"label": "Business"}},
-            {"agent_type": "marketing", "label": "Marketing"},
-        ]
+        "operation_agents": {
+            "chat": [
+                {"business": {"label": "Business"}},
+                {"agent_type": "marketing", "label": "Marketing"},
+            ]
+        },
     }
 
     entries = get_project_chat_agents(project_cfg)
@@ -38,11 +42,13 @@ def test_get_project_chat_agents_from_list_supports_both_shapes():
 
 def test_get_project_chat_agent_types_returns_ordered_types():
     project_cfg = {
-        "chat_agents": [
-            {"agent_type": "business"},
-            {"agent_type": "marketing"},
-            {"agent_type": "triage"},
-        ]
+        "operation_agents": {
+            "chat": [
+                {"agent_type": "business"},
+                {"agent_type": "marketing"},
+                {"agent_type": "triage"},
+            ]
+        },
     }
 
     assert get_project_chat_agent_types(project_cfg) == ["business", "marketing", "triage"]
@@ -50,10 +56,7 @@ def test_get_project_chat_agent_types_returns_ordered_types():
 
 def test_get_default_project_chat_agent_type_uses_first_entry():
     project_cfg = {
-        "chat_agents": {
-            "business": {},
-            "marketing": {},
-        }
+        "operation_agents": {"chat": {"business": {}, "marketing": {}}},
     }
 
     assert get_default_project_chat_agent_type(project_cfg) == "business"
@@ -61,10 +64,12 @@ def test_get_default_project_chat_agent_type_uses_first_entry():
 
 def test_get_project_chat_agent_config_returns_payload_only():
     project_cfg = {
-        "chat_agents": {
-            "business": {"label": "Business", "context_path": "business-os"},
-            "marketing": {"label": "Marketing"},
-        }
+        "operation_agents": {
+            "chat": {
+                "business": {"label": "Business", "context_path": "business-os"},
+                "marketing": {"label": "Marketing"},
+            }
+        },
     }
 
     payload = get_project_chat_agent_config(project_cfg, "business")
@@ -73,21 +78,23 @@ def test_get_project_chat_agent_config_returns_payload_only():
 
 
 def test_get_project_chat_agent_config_returns_empty_when_missing():
-    project_cfg = {"chat_agents": {"marketing": {"label": "Marketing"}}}
+    project_cfg = {"operation_agents": {"chat": {"marketing": {"label": "Marketing"}}}}
 
     assert get_project_chat_agent_config(project_cfg, "business") == {}
 
 
 def test_get_project_chat_agents_skips_malformed_entries():
     project_cfg = {
-        "chat_agents": [
-            "business",
-            {"agent_type": ""},
-            {"agent_type": "marketing", "label": "Marketing"},
-            {"invalid": {}, "extra": {}},
-            {"business": {"label": "Business"}},
-            42,
-        ]
+        "operation_agents": {
+            "chat": [
+                "business",
+                {"agent_type": ""},
+                {"agent_type": "marketing", "label": "Marketing"},
+                {"invalid": {}, "extra": {}},
+                {"business": {"label": "Business"}},
+                42,
+            ]
+        },
     }
 
     entries = get_project_chat_agents(project_cfg)

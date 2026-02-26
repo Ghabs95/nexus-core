@@ -1,16 +1,60 @@
 """Built-in plugin: AI runtime orchestration for Copilot/Gemini/Codex CLIs."""
 
-import json
 import logging
 import os
-import re
-import shutil
 import subprocess
-import tempfile
 import time
 from collections.abc import Callable, Mapping
 from enum import Enum
 from typing import Any
+
+from nexus.plugins.builtin.ai_runtime.fallback_policy import (
+    fallback_order_from_preferences as fallback_order_from_preferences_impl,
+    resolve_analysis_tool_order as resolve_analysis_tool_order_impl,
+)
+from nexus.plugins.builtin.ai_runtime.operation_agent_policy import (
+    resolve_issue_override_agent as resolve_issue_override_agent_impl,
+)
+from nexus.plugins.builtin.ai_runtime.transcription_service import (
+    is_non_transcription_artifact as is_non_transcription_artifact_impl,
+    is_transcription_refusal as is_transcription_refusal_impl,
+    normalize_local_whisper_model_name as normalize_local_whisper_model_name_impl,
+    run_transcription_attempts as run_transcription_attempts_impl,
+    resolve_transcription_attempts as resolve_transcription_attempts_impl,
+)
+from nexus.plugins.builtin.ai_runtime.provider_registry import (
+    parse_provider as parse_provider_impl,
+    supports_analysis as supports_analysis_impl,
+    unique_tools as unique_tools_impl,
+)
+from nexus.plugins.builtin.ai_runtime.analysis_service import (
+    build_analysis_prompt as build_analysis_prompt_impl,
+    parse_analysis_result as parse_analysis_result_impl,
+    run_analysis_attempts as run_analysis_attempts_impl,
+    run_analysis_with_provider as run_analysis_with_provider_impl,
+    strip_cli_tool_output as strip_cli_tool_output_impl,
+)
+from nexus.plugins.builtin.ai_runtime.agent_invoke_service import (
+    invoke_agent_with_fallback as invoke_agent_with_fallback_impl,
+)
+from nexus.plugins.builtin.ai_runtime.provider_invokers.analysis_invokers import (
+    run_copilot_analysis_cli as run_copilot_analysis_cli_impl,
+    run_gemini_analysis_cli as run_gemini_analysis_cli_impl,
+)
+from nexus.plugins.builtin.ai_runtime.provider_invokers.agent_invokers import (
+    invoke_copilot_agent_cli as invoke_copilot_agent_cli_impl,
+    invoke_gemini_agent_cli as invoke_gemini_agent_cli_impl,
+)
+from nexus.plugins.builtin.ai_runtime.provider_invokers.codex_invoker import (
+    invoke_codex_cli as invoke_codex_cli_impl,
+)
+from nexus.plugins.builtin.ai_runtime.provider_invokers.transcription_invokers import (
+    transcribe_with_copilot_cli as transcribe_with_copilot_cli_impl,
+    transcribe_with_gemini_cli as transcribe_with_gemini_cli_impl,
+)
+from nexus.plugins.builtin.ai_runtime.provider_invokers.whisper_invoker import (
+    transcribe_with_local_whisper as transcribe_with_local_whisper_impl,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +87,7 @@ class AIOrchestrator:
     """Manages AI tool orchestration with fallback support."""
 
     _rate_limits: dict[str, dict[str, Any]] = {}
-    _tool_available: dict[str, Any] = {}
+    _tool_available: dict[str, bool | float] = {}
 
     def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
@@ -95,17 +139,16 @@ class AIOrchestrator:
 
     @staticmethod
     def _parse_provider(candidate: Any) -> AIProvider | None:
-        value = str(candidate or "").strip().lower()
-        if not value:
-            return None
-        for provider in AIProvider:
-            if provider.value == value:
-                return provider
-        return None
+        parsed = parse_provider_impl(candidate, AIProvider)
+        return parsed if isinstance(parsed, AIProvider) else None
 
     @staticmethod
     def _supports_analysis(tool: AIProvider) -> bool:
-        return tool in {AIProvider.GEMINI, AIProvider.COPILOT}
+        return supports_analysis_impl(
+            tool,
+            gemini_provider=AIProvider.GEMINI,
+            copilot_provider=AIProvider.COPILOT,
+        )
 
     @staticmethod
     def _looks_like_bug_issue(text: str) -> bool:
@@ -134,14 +177,7 @@ class AIOrchestrator:
 
     @staticmethod
     def _unique_tools(order: list[AIProvider]) -> list[AIProvider]:
-        unique: list[AIProvider] = []
-        seen: set[AIProvider] = set()
-        for tool in order:
-            if tool in seen:
-                continue
-            unique.append(tool)
-            seen.add(tool)
-        return unique
+        return unique_tools_impl(order)
 
     def _resolved_tool_preferences(self, project_name: str | None = None) -> dict[str, Any]:
         if project_name and callable(self.tool_preferences_resolver):
@@ -173,14 +209,10 @@ class AIOrchestrator:
 
     def _fallback_order_from_preferences(self, project_name: str | None = None) -> list[AIProvider]:
         tool_preferences = self._resolved_tool_preferences(project_name)
-        ordered: list[AIProvider] = []
-        seen: set[AIProvider] = set()
-        for provider_name in tool_preferences.values():
-            provider = self._parse_provider(provider_name)
-            if provider and provider not in seen:
-                ordered.append(provider)
-                seen.add(provider)
-        return ordered
+        return fallback_order_from_preferences_impl(
+            resolved_tool_preferences=tool_preferences,
+            parse_provider=self._parse_provider,
+        )
 
     def _default_chat_agent_type(self, project_name: str | None = None) -> str:
         if not project_name or not callable(self.chat_agent_types_resolver):
@@ -208,29 +240,19 @@ class AIOrchestrator:
         text: str,
         operation_agents: Mapping[str, Any] | None,
     ) -> str:
-        if not self._looks_like_bug_issue(text):
-            return mapped_agent
-        if not isinstance(operation_agents, Mapping):
-            return mapped_agent
-
-        overrides = operation_agents.get("overrides")
-        if not isinstance(overrides, Mapping):
-            return mapped_agent
-
-        issue_overrides = overrides.get("issue")
-        if not isinstance(issue_overrides, Mapping):
-            return mapped_agent
-
-        override_agent = str(
-            issue_overrides.get(task_key) or issue_overrides.get("default") or ""
-        ).strip()
-        return override_agent or mapped_agent
+        return resolve_issue_override_agent_impl(
+            task_key=task_key,
+            mapped_agent=mapped_agent,
+            text=text,
+            operation_agents=operation_agents,
+            looks_like_bug_issue=self._looks_like_bug_issue,
+        )
 
     def check_tool_available(self, tool: AIProvider) -> bool:
         if tool.value in self._tool_available:
-            cached_at = self._tool_available.get(f"{tool.value}_cached_at", 0)
+            cached_at = float(self._tool_available.get(f"{tool.value}_cached_at", 0.0))
             if time.time() - cached_at < 300:
-                return self._tool_available[tool.value]
+                return bool(self._tool_available[tool.value])
 
         if tool.value in self._rate_limits:
             rate_info = self._rate_limits[tool.value]
@@ -309,89 +331,64 @@ class AIOrchestrator:
         project_name: str | None = None,
         text: str = "",
     ) -> list[AIProvider]:
-        task_key = str(task or "").strip().lower()
         operation_agents = self._resolved_operation_agents(project_name)
-        mapped_agent = ""
-        if isinstance(operation_agents, Mapping):
-            if task_key == "chat":
-                mapped_agent = str(operation_agents.get(task_key) or "").strip()
-                if not mapped_agent:
-                    mapped_agent = self._default_chat_agent_type(project_name)
-                if not mapped_agent:
-                    mapped_agent = str(operation_agents.get("default") or "").strip()
-            else:
-                mapped_agent = str(
-                    operation_agents.get(task_key) or operation_agents.get("default") or ""
-                ).strip()
-
-        if isinstance(operation_agents, Mapping):
-            mapped_agent = self._resolve_issue_override_agent(
-                task_key=task_key,
-                mapped_agent=mapped_agent,
-                text=text,
-                operation_agents=operation_agents,
-            )
-
-        preferred = self.get_primary_tool(mapped_agent or None, project_name=project_name)
-
-        base_order = self._fallback_order_from_preferences(project_name)
-        if not base_order:
-            base_order = [AIProvider.GEMINI, AIProvider.COPILOT]
-
-        ordered = [preferred] + [tool for tool in base_order if tool != preferred]
-        filtered = [tool for tool in self._unique_tools(ordered) if self._supports_analysis(tool)]
-        if not filtered:
-            filtered = [AIProvider.GEMINI, AIProvider.COPILOT]
-
-        if not self.fallback_enabled:
-            return filtered[:1]
-
-        return filtered
+        if not isinstance(operation_agents, Mapping):
+            operation_agents = {}
+        return resolve_analysis_tool_order_impl(
+            task=task,
+            text=text,
+            project_name=project_name,
+            fallback_enabled=bool(self.fallback_enabled),
+            operation_agents=operation_agents,
+            default_chat_agent_type=self._default_chat_agent_type(project_name),
+            resolve_issue_override_agent=self._resolve_issue_override_agent,
+            get_primary_tool=lambda agent, project: self.get_primary_tool(
+                agent,
+                project_name=project,
+            ),
+            fallback_order_from_preferences_fn=self._fallback_order_from_preferences,
+            unique_tools=self._unique_tools,
+            supports_analysis=self._supports_analysis,
+            gemini_provider=AIProvider.GEMINI,
+            copilot_provider=AIProvider.COPILOT,
+        )
 
     def _resolve_transcription_attempts(self, project_name: str | None = None) -> list[str]:
         operation_agents = self._resolved_operation_agents(project_name)
-        mapped_agent = ""
-        if isinstance(operation_agents, Mapping):
-            mapped_agent = str(operation_agents.get("transcribe_audio") or "").strip()
-
-        if mapped_agent:
-            mapped_primary = self.get_primary_tool(mapped_agent, project_name=project_name)
-            if mapped_primary in {AIProvider.GEMINI, AIProvider.COPILOT}:
-                base_order = [
-                    tool
-                    for tool in self._fallback_order_from_preferences(project_name)
-                    if tool in {AIProvider.GEMINI, AIProvider.COPILOT}
-                ]
-                if not base_order:
-                    base_order = [AIProvider.GEMINI, AIProvider.COPILOT]
-                ordered = [mapped_primary] + [tool for tool in base_order if tool != mapped_primary]
-                normalized = [tool.value for tool in self._unique_tools(ordered)]
-                if not self.fallback_enabled:
-                    return normalized[:1]
-                return normalized
-
-            logger.warning(
+        if not isinstance(operation_agents, Mapping):
+            operation_agents = {}
+        return resolve_transcription_attempts_impl(
+            project_name=project_name,
+            operation_agents=operation_agents,
+            fallback_enabled=bool(self.fallback_enabled),
+            transcription_primary=self.transcription_primary,
+            get_primary_tool=lambda agent, project: self.get_primary_tool(agent, project_name=project),
+            fallback_order_from_preferences_fn=self._fallback_order_from_preferences,
+            unique_tools=self._unique_tools,
+            gemini_provider=AIProvider.GEMINI,
+            copilot_provider=AIProvider.COPILOT,
+            warn_unsupported_mapped_provider=lambda provider, agent: logger.warning(
                 "Ignoring unsupported transcription provider '%s' for mapped agent '%s'; "
                 "falling back to transcription_primary",
-                mapped_primary.value,
-                mapped_agent,
-            )
-
-        primary = self.transcription_primary
-        if primary == "whisper":
-            return ["whisper", "gemini", "copilot"] if self.fallback_enabled else ["whisper"]
-        if primary == "copilot":
-            return ["copilot", "gemini"] if self.fallback_enabled else ["copilot"]
-        return ["gemini", "copilot"] if self.fallback_enabled else ["gemini"]
+                provider,
+                agent,
+            ),
+        )
 
     def _run_analysis_with_provider(
         self, tool: AIProvider, text: str, task: str, **kwargs
     ) -> dict[str, Any]:
-        if tool == AIProvider.GEMINI:
-            return self._run_gemini_cli_analysis(text, task, **kwargs)
-        if tool == AIProvider.COPILOT:
-            return self._run_copilot_analysis(text, task, **kwargs)
-        raise ToolUnavailableError(f"{tool.value} does not support analysis tasks")
+        return run_analysis_with_provider_impl(
+            tool=tool,
+            gemini_provider=AIProvider.GEMINI,
+            copilot_provider=AIProvider.COPILOT,
+            run_gemini_cli_analysis=self._run_gemini_cli_analysis,
+            run_copilot_analysis=self._run_copilot_analysis,
+            text=text,
+            task=task,
+            kwargs=kwargs,
+            tool_unavailable_error=ToolUnavailableError,
+        )
 
     def _get_tool_order(self, agent_name: str | None = None, use_gemini: bool = False) -> list:
         """Return all known tools in priority order for this agent.
@@ -506,55 +503,30 @@ class AIOrchestrator:
         be skipped entirely — used by the retry path so a crashed tool is not retried.
         Adding a new provider only requires extending AIProvider + _invoke_tool.
         """
-        issue_num = None
-        if issue_url:
-            match = re.search(r"/issues/(\d+)", issue_url)
-            issue_num = match.group(1) if match else None
-
-        excluded = set(exclude_tools or [])
-        ordered = self._get_tool_order(agent_name, use_gemini)
-        candidates = [t for t in ordered if t.value not in excluded]
-
-        if not candidates:
-            raise ToolUnavailableError(
-                f"All tools excluded. Order: {[t.value for t in ordered]}, "
-                f"Excluded: {list(excluded)}"
-            )
-
-        tried: list = []
-        for tool in candidates:
-            if not self.check_tool_available(tool):
-                logger.warning("⏭️  Skipping unavailable tool: %s", tool.value)
-                tried.append(f"{tool.value}(unavailable)")
-                continue
-            try:
-                if tried:
-                    logger.info("🔄 Trying next tool %s (previously tried: %s)", tool.value, tried)
-                pid = self._invoke_tool(
-                    tool,
-                    agent_prompt,
-                    workspace_dir,
-                    agents_dir,
-                    base_dir,
-                    issue_num=issue_num,
-                    log_subdir=log_subdir,
-                    env=env,
-                )
-                if pid:
-                    if tried:
-                        logger.info("✅ %s succeeded after: %s", tool.value, tried)
-                    return pid, tool
-                tried.append(f"{tool.value}(no-pid)")
-            except RateLimitedError as exc:
-                self._record_rate_limit_with_context(tool, exc, context="invoke_agent")
-                tried.append(f"{tool.value}(rate-limited)")
-            except Exception as exc:
-                logger.error("❌ %s invocation failed: %s", tool.value, exc)
-                self.record_failure(tool)
-                tried.append(f"{tool.value}(error)")
-
-        raise ToolUnavailableError(
-            f"All AI tools exhausted. Tried: {tried}, Excluded: {list(excluded)}"
+        return invoke_agent_with_fallback_impl(
+            issue_url=issue_url,
+            exclude_tools=exclude_tools,
+            get_tool_order=lambda: self._get_tool_order(agent_name, use_gemini),
+            check_tool_available=self.check_tool_available,
+            invoke_tool=lambda tool, issue_num: self._invoke_tool(
+                tool,
+                agent_prompt,
+                workspace_dir,
+                agents_dir,
+                base_dir,
+                issue_num=issue_num,
+                log_subdir=log_subdir,
+                env=env,
+            ),
+            record_rate_limit_with_context=lambda tool, exc, context: self._record_rate_limit_with_context(
+                tool,
+                exc,
+                context=context,
+            ),
+            record_failure=self.record_failure,
+            rate_limited_error_type=RateLimitedError,
+            tool_unavailable_error_type=ToolUnavailableError,
+            logger=logger,
         )
 
     def _invoke_copilot(
@@ -567,59 +539,21 @@ class AIOrchestrator:
         log_subdir: str | None = None,
         env: dict[str, str] | None = None,
     ) -> int | None:
-        if not self.check_tool_available(AIProvider.COPILOT):
-            raise ToolUnavailableError("Copilot not available")
-
-        cmd = [
-            self.copilot_cli_path,
-            "-p",
-            agent_prompt,
-            "--add-dir",
-            base_dir,
-            "--add-dir",
-            workspace_dir,
-            "--add-dir",
-            agents_dir,
-            "--allow-all-tools",
-        ]
-
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        log_dir = self.get_tasks_logs_dir(workspace_dir, log_subdir)
-        os.makedirs(log_dir, exist_ok=True)
-        log_suffix = f"{issue_num}_{timestamp}" if issue_num else timestamp
-        log_path = os.path.join(log_dir, f"copilot_{log_suffix}.log")
-
-        logger.info("🤖 Launching Copilot CLI agent")
-        logger.info("   Workspace: %s", workspace_dir)
-        logger.info("   Log: %s", log_path)
-
-        log_file = None
-        try:
-            log_file = open(log_path, "w", encoding="utf-8")
-
-            merged_env = {**os.environ}
-            if env:
-                merged_env.update(env)
-
-            process = subprocess.Popen(
-                cmd,
-                cwd=workspace_dir,
-                stdin=subprocess.DEVNULL,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                env=merged_env,
-            )
-            log_file.close()
-            logger.info("🚀 Copilot launched (PID: %s)", process.pid)
-            return process.pid
-        except Exception as exc:
-            try:
-                if log_file:
-                    log_file.close()
-            except Exception:
-                pass
-            logger.error("❌ Copilot launch failed: %s", exc)
-            raise
+        return invoke_copilot_agent_cli_impl(
+            check_tool_available=self.check_tool_available,
+            copilot_provider=AIProvider.COPILOT,
+            copilot_cli_path=self.copilot_cli_path,
+            get_tasks_logs_dir=self.get_tasks_logs_dir,
+            tool_unavailable_error=ToolUnavailableError,
+            logger=logger,
+            agent_prompt=agent_prompt,
+            workspace_dir=workspace_dir,
+            agents_dir=agents_dir,
+            base_dir=base_dir,
+            issue_num=issue_num,
+            log_subdir=log_subdir,
+            env=env,
+        )
 
     def _invoke_gemini_agent(
         self,
@@ -631,83 +565,22 @@ class AIOrchestrator:
         log_subdir: str | None = None,
         env: dict[str, str] | None = None,
     ) -> int | None:
-        if not self.check_tool_available(AIProvider.GEMINI):
-            raise ToolUnavailableError("Gemini CLI not available")
-
-        cmd = [
-            self.gemini_cli_path,
-            "--prompt",
-            agent_prompt,
-            "--include-directories",
-            agents_dir,
-            "--yolo",
-        ]
-        if self.gemini_model:
-            cmd.extend(["--model", self.gemini_model])
-
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        log_dir = self.get_tasks_logs_dir(workspace_dir, log_subdir)
-        os.makedirs(log_dir, exist_ok=True)
-        log_suffix = f"{issue_num}_{timestamp}" if issue_num else timestamp
-        log_path = os.path.join(log_dir, f"gemini_{log_suffix}.log")
-
-        logger.info("🤖 Launching Gemini CLI agent")
-        logger.info("   Workspace: %s", workspace_dir)
-        logger.info("   Log: %s", log_path)
-
-        def _read_log_excerpt(max_chars: int = 2000) -> str:
-            try:
-                with open(log_path, encoding="utf-8", errors="replace") as handle:
-                    data = handle.read()
-                if len(data) <= max_chars:
-                    return data
-                return data[-max_chars:]
-            except Exception:
-                return ""
-
-        log_file = None
-        try:
-            log_file = open(log_path, "w", encoding="utf-8")
-
-            merged_env = {**os.environ}
-            if env:
-                merged_env.update(env)
-
-            process = subprocess.Popen(
-                cmd,
-                cwd=workspace_dir,
-                stdin=subprocess.DEVNULL,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                env=merged_env,
-            )
-            log_file.close()
-            logger.info("🚀 Gemini launched (PID: %s)", process.pid)
-
-            # Detect immediate startup failure so invoke_agent can fallback to the next tool.
-            time.sleep(1.5)
-            exit_code = process.poll()
-            if exit_code is not None:
-                log_excerpt = _read_log_excerpt().lower()
-                if (
-                    "ratelimitexceeded" in log_excerpt
-                    or "status 429" in log_excerpt
-                    or "no capacity available" in log_excerpt
-                ):
-                    raise RateLimitedError(
-                        f"Gemini exited immediately with rate limit (exit={exit_code})"
-                    )
-                raise ToolUnavailableError(f"Gemini exited immediately (exit={exit_code})")
-
-            return process.pid
-        except Exception as exc:
-            try:
-                if log_file:
-                    log_file.close()
-            except Exception:
-                pass
-            logger.error("❌ Gemini launch failed: %s", exc)
-            raise
+        return invoke_gemini_agent_cli_impl(
+            check_tool_available=self.check_tool_available,
+            gemini_provider=AIProvider.GEMINI,
+            gemini_cli_path=self.gemini_cli_path,
+            gemini_model=self.gemini_model,
+            get_tasks_logs_dir=self.get_tasks_logs_dir,
+            tool_unavailable_error=ToolUnavailableError,
+            rate_limited_error=RateLimitedError,
+            logger=logger,
+            agent_prompt=agent_prompt,
+            workspace_dir=workspace_dir,
+            agents_dir=agents_dir,
+            issue_num=issue_num,
+            log_subdir=log_subdir,
+            env=env,
+        )
 
     def _invoke_codex(
         self,
@@ -719,523 +592,162 @@ class AIOrchestrator:
         log_subdir: str | None = None,
         env: dict[str, str] | None = None,
     ) -> int | None:
-        if not self.check_tool_available(AIProvider.CODEX):
-            raise ToolUnavailableError("Codex CLI not available")
-
-        cmd = [
-            self.codex_cli_path,
-            "exec",
-        ]
-        if self.codex_model:
-            cmd.extend(["--model", self.codex_model])
-        cmd.append(agent_prompt)
-
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        log_dir = self.get_tasks_logs_dir(workspace_dir, log_subdir)
-        os.makedirs(log_dir, exist_ok=True)
-        log_suffix = f"{issue_num}_{timestamp}" if issue_num else timestamp
-        log_path = os.path.join(log_dir, f"codex_{log_suffix}.log")
-
-        logger.info("🤖 Launching Codex CLI agent")
-        logger.info("   Workspace: %s", workspace_dir)
-        logger.info("   Log: %s", log_path)
-
-        log_file = None
-        try:
-            log_file = open(log_path, "w", encoding="utf-8")
-
-            merged_env = {**os.environ}
-            if env:
-                merged_env.update(env)
-
-            process = subprocess.Popen(
-                cmd,
-                cwd=workspace_dir,
-                stdin=subprocess.DEVNULL,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                env=merged_env,
-            )
-            log_file.close()
-            logger.info("🚀 Codex launched (PID: %s)", process.pid)
-            return process.pid
-        except Exception as exc:
-            try:
-                if log_file:
-                    log_file.close()
-            except Exception:
-                pass
-            logger.error("❌ Codex launch failed: %s", exc)
-            raise
+        return invoke_codex_cli_impl(
+            check_tool_available=self.check_tool_available,
+            codex_provider=AIProvider.CODEX,
+            codex_cli_path=self.codex_cli_path,
+            codex_model=self.codex_model,
+            get_tasks_logs_dir=self.get_tasks_logs_dir,
+            tool_unavailable_error=ToolUnavailableError,
+            logger=logger,
+            agent_prompt=agent_prompt,
+            workspace_dir=workspace_dir,
+            issue_num=issue_num,
+            log_subdir=log_subdir,
+            env=env,
+        )
 
     def transcribe_audio(self, audio_file_path: str, project_name: str | None = None) -> str | None:
         attempts = self._resolve_transcription_attempts(project_name=project_name)
-
-        for tool_name in attempts:
-            try:
-                if tool_name == "whisper":
-                    text = self._transcribe_with_whisper_api(audio_file_path)
-                elif tool_name == "gemini":
-                    text = self._transcribe_with_gemini_cli(audio_file_path)
-                else:
-                    text = self._transcribe_with_copilot_cli(audio_file_path)
-
-                if text:
-                    logger.info("✅ Transcription successful with %s", tool_name)
-                    return text
-            except RateLimitedError as exc:
-                if tool_name in {"gemini", "copilot"}:
-                    ai_tool = AIProvider.GEMINI if tool_name == "gemini" else AIProvider.COPILOT
-                    self._record_rate_limit_with_context(ai_tool, exc, context="transcribe")
-                else:
-                    logger.warning("⚠️  %s transcription failed (rate-limited): %s", tool_name, exc)
-            except Exception as exc:
-                logger.warning("⚠️  %s transcription failed: %s", tool_name, exc)
-
-        logger.error("❌ All transcription tools failed (attempted: %s)", attempts)
-        return None
+        return run_transcription_attempts_impl(
+            attempts=attempts,
+            audio_file_path=audio_file_path,
+            transcribe_with_whisper=self._transcribe_with_whisper_api,
+            transcribe_with_gemini=self._transcribe_with_gemini_cli,
+            transcribe_with_copilot=self._transcribe_with_copilot_cli,
+            rate_limited_error_type=RateLimitedError,
+            record_rate_limit_with_context=lambda tool, exc, context: self._record_rate_limit_with_context(
+                tool,
+                exc,
+                context=context,
+            ),
+            gemini_provider=AIProvider.GEMINI,
+            copilot_provider=AIProvider.COPILOT,
+            logger=logger,
+        )
 
     def _transcribe_with_whisper_api(self, audio_file_path: str) -> str | None:
-        if not os.path.exists(audio_file_path):
-            raise ValueError(f"Audio file not found: {audio_file_path}")
-
-        try:
-            import whisper
-        except ImportError as exc:  # pragma: no cover - optional dependency
-            raise ToolUnavailableError(
-                "Local Whisper requires the 'openai-whisper' package. "
-                "Install with: pip install openai-whisper"
-            ) from exc
-
-        model_name = self._normalize_local_whisper_model_name(self.whisper_model)
-        if self._whisper_model_instance is None or self._whisper_model_name != model_name:
-            logger.info("🔧 Loading local Whisper model: %s", model_name)
-            self._whisper_model_instance = whisper.load_model(model_name)
-            self._whisper_model_name = model_name
-
-        logger.info("🎧 Transcribing with local Whisper model %s: %s", model_name, audio_file_path)
-        try:
-            transcribe_kwargs: dict[str, Any] = {"fp16": False}
-            if self.whisper_language:
-                transcribe_kwargs["language"] = self.whisper_language
-            elif self.whisper_languages:
-                transcribe_kwargs["language"] = self.whisper_languages[0]
-            response = self._whisper_model_instance.transcribe(audio_file_path, **transcribe_kwargs)
-        except Exception as exc:
-            raise Exception(f"Local Whisper error: {exc}") from exc
-
-        detected_language = ""
-        if isinstance(response, dict):
-            detected_language = str(response.get("language") or "").strip().lower()
-        if (
-            self.whisper_languages
-            and detected_language
-            and detected_language not in self.whisper_languages
-        ):
-            raise Exception(
-                f"Detected language {detected_language!r} is outside allowed set: {self.whisper_languages}"
-            )
-
-        text = response.get("text") if isinstance(response, dict) else None
-        text = str(text or "").strip()
-        if not text:
-            raise Exception("Whisper returned empty transcription")
-        return text
+        result = transcribe_with_local_whisper_impl(
+            audio_file_path=audio_file_path,
+            current_model_instance=self._whisper_model_instance,
+            current_model_name=self._whisper_model_name,
+            configured_model=self.whisper_model,
+            whisper_language=self.whisper_language,
+            whisper_languages=self.whisper_languages,
+            normalize_local_whisper_model_name=self._normalize_local_whisper_model_name,
+            tool_unavailable_error=ToolUnavailableError,
+            logger=logger,
+        )
+        self._whisper_model_instance = result["model_instance"]
+        self._whisper_model_name = str(result["model_name"])
+        return str(result["text"])
 
     @staticmethod
     def _normalize_local_whisper_model_name(configured_model: str) -> str:
-        model_name = (configured_model or "").strip().lower()
-        if not model_name:
-            return "base"
-        if model_name in {"whisper-1", "gpt-4o-mini-transcribe", "gpt-4o-transcribe"}:
-            return "base"
-        return model_name
+        return normalize_local_whisper_model_name_impl(configured_model)
 
     @staticmethod
     def _is_transcription_refusal(text: str) -> bool:
-        normalized = (text or "").lower().strip()
-        if not normalized:
-            return True
-
-        refusal_markers = [
-            "cannot directly transcribe audio",
-            "can't directly transcribe audio",
-            "cannot transcribe audio",
-            "can't transcribe audio",
-            "unable to transcribe audio",
-            "capabilities are limited to text-based",
-            "i do not have the ability to listen",
-            "as a text-based ai",
-            "i can't access audio",
-            "i cannot access audio",
-        ]
-        return any(marker in normalized for marker in refusal_markers)
+        return is_transcription_refusal_impl(text)
 
     @staticmethod
     def _is_non_transcription_artifact(text: str, audio_file_path: str) -> bool:
-        normalized = (text or "").strip()
-        if not normalized:
-            return True
-
-        if AIOrchestrator._is_transcription_refusal(normalized):
-            return True
-
-        audio_basename = os.path.basename(audio_file_path).lower()
-        lowered = normalized.lower()
-
-        if lowered == audio_basename:
-            return True
-
-        if lowered == f"file: {audio_basename}":
-            return True
-
-        if re.fullmatch(r"file:\s*[^\n\r]+\.(ogg|mp3|wav|m4a)\s*", lowered):
-            return True
-
-        if "permission denied and could not request permission from user" in lowered:
-            return True
-
-        if "i'm unable to transcribe the audio file" in lowered:
-            return True
-
-        if re.search(r"(?m)^\$\s", normalized):
-            return True
-
-        if re.search(r"(?m)^✗\s", normalized):
-            return True
-
-        debug_markers = [
-            "check for transcription tools",
-            "check whisper availability",
-            "transcribe with whisper",
-            "install whisper",
-            "pip install openai-whisper",
-            "which whisper",
-            "which ffmpeg",
-        ]
-        return bool(any(marker in lowered for marker in debug_markers))
+        return is_non_transcription_artifact_impl(text, audio_file_path)
 
     def _transcribe_with_gemini_cli(self, audio_file_path: str) -> str | None:
-        if not self.check_tool_available(AIProvider.GEMINI):
-            raise ToolUnavailableError("Gemini CLI not available")
-
-        if not os.path.exists(audio_file_path):
-            raise ValueError(f"Audio file not found: {audio_file_path}")
-
-        logger.info("🎧 Transcribing with Gemini: %s", audio_file_path)
-
-        prompt = (
-            "You are a speech-to-text (STT) transcriber. "
-            "Transcribe only the spoken words from the provided audio file.\n"
-            "Output rules:\n"
-            "- Return ONLY the transcript text\n"
-            "- Do NOT summarize, explain, or describe the file\n"
-            "- Do NOT include labels like 'File:' or any metadata\n"
-            "- Do NOT include apologies or capability statements\n"
-            f"Audio file path: {audio_file_path}"
+        return transcribe_with_gemini_cli_impl(
+            check_tool_available=self.check_tool_available,
+            gemini_provider=AIProvider.GEMINI,
+            gemini_cli_path=self.gemini_cli_path,
+            strip_cli_tool_output=self._strip_cli_tool_output,
+            is_non_transcription_artifact=self._is_non_transcription_artifact,
+            tool_unavailable_error=ToolUnavailableError,
+            rate_limited_error=RateLimitedError,
+            logger=logger,
+            audio_file_path=audio_file_path,
+            timeout=self.gemini_transcription_timeout,
         )
-        try:
-            result = subprocess.run(
-                [self.gemini_cli_path, "-p", prompt],
-                capture_output=True,
-                text=True,
-                timeout=self.gemini_transcription_timeout,
-            )
-
-            if result.returncode != 0:
-                if "rate limit" in result.stderr.lower() or "quota" in result.stderr.lower():
-                    raise RateLimitedError(f"Gemini rate-limited: {result.stderr}")
-                raise Exception(f"Gemini error: {result.stderr}")
-
-            text = self._strip_cli_tool_output(result.stdout).strip()
-            if text:
-                if self._is_non_transcription_artifact(text, audio_file_path):
-                    raise Exception("Gemini returned non-transcription content")
-                return text
-            raise Exception("Gemini returned empty transcription")
-
-        except subprocess.TimeoutExpired as exc:
-            raise Exception(
-                f"Gemini transcription timed out (>{self.gemini_transcription_timeout}s)"
-            ) from exc
 
     def _transcribe_with_copilot_cli(self, audio_file_path: str) -> str | None:
-        if not self.check_tool_available(AIProvider.COPILOT):
-            raise ToolUnavailableError("Copilot CLI not available")
-
-        if not os.path.exists(audio_file_path):
-            raise ValueError(f"Audio file not found: {audio_file_path}")
-
-        logger.info("🎧 Transcribing with Copilot (fallback): %s", audio_file_path)
-
-        try:
-            with tempfile.TemporaryDirectory(prefix="nexus_audio_") as temp_dir:
-                audio_basename = os.path.basename(audio_file_path)
-                staged_audio_path = os.path.join(temp_dir, audio_basename)
-                shutil.copy2(audio_file_path, staged_audio_path)
-
-                prompt = (
-                    "You are a speech-to-text (STT) transcriber. "
-                    "Transcribe only the spoken words from the attached audio file.\n"
-                    "Output rules:\n"
-                    "- Return ONLY the transcript text\n"
-                    "- Do NOT summarize, explain, or describe the file\n"
-                    "- Do NOT include labels like 'File:' or any metadata\n"
-                    "- Do NOT include apologies or capability statements\n"
-                    f"Audio file name: {audio_basename}"
-                )
-
-                result = subprocess.run(
-                    [
-                        self.copilot_cli_path,
-                        "-p",
-                        prompt,
-                        "--add-dir",
-                        temp_dir,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=self.copilot_transcription_timeout,
-                )
-
-            if result.returncode != 0:
-                raise Exception(f"Copilot error: {result.stderr}")
-
-            text = self._strip_cli_tool_output(result.stdout).strip()
-            if text:
-                if self._is_non_transcription_artifact(text, audio_file_path):
-                    raise Exception("Copilot returned non-transcription content")
-                return text
-            raise Exception("Copilot returned empty transcription")
-
-        except subprocess.TimeoutExpired as exc:
-            raise Exception(
-                f"Copilot transcription timed out (>{self.copilot_transcription_timeout}s)"
-            ) from exc
+        return transcribe_with_copilot_cli_impl(
+            check_tool_available=self.check_tool_available,
+            copilot_provider=AIProvider.COPILOT,
+            copilot_cli_path=self.copilot_cli_path,
+            strip_cli_tool_output=self._strip_cli_tool_output,
+            is_non_transcription_artifact=self._is_non_transcription_artifact,
+            tool_unavailable_error=ToolUnavailableError,
+            logger=logger,
+            audio_file_path=audio_file_path,
+            timeout=self.copilot_transcription_timeout,
+        )
 
     def run_text_to_speech_analysis(
         self, text: str, task: str = "classify", **kwargs
     ) -> dict[str, Any]:
         project_name = kwargs.get("project_name")
         tool_order = self._resolve_analysis_tool_order(task, project_name=project_name, text=text)
-
-        last_error: Exception | None = None
-        for index, tool in enumerate(tool_order):
-            try:
-                result = self._run_analysis_with_provider(tool, text, task, **kwargs)
-                if result:
-                    if index > 0:
-                        logger.info("✅ Fallback analysis succeeded with %s", tool.value)
-                    return result
-            except RateLimitedError as exc:
-                last_error = exc
-                self._record_rate_limit_with_context(tool, exc, context=f"analysis:{task}")
-            except Exception as exc:
-                last_error = exc
-                logger.warning("⚠️  %s analysis failed: %s", tool.value, exc)
-
-        if last_error:
-            logger.error("❌ All analysis providers failed for %s: %s", task, last_error)
-
-        logger.warning("⚠️  All tools failed for %s, returning default", task)
-        return self._get_default_analysis_result(task, text=text, **kwargs)
+        return run_analysis_attempts_impl(
+            tool_order=tool_order,
+            text=text,
+            task=task,
+            kwargs=kwargs,
+            invoke_provider=lambda tool, text_arg, task_arg, kw: self._run_analysis_with_provider(
+                tool, text_arg, task_arg, **kw
+            ),
+            rate_limited_error_type=RateLimitedError,
+            record_rate_limit_with_context=lambda tool, exc, retry_count, context: self._record_rate_limit_with_context(
+                tool,
+                exc,
+                retry_count=retry_count,
+                context=context,
+            ),
+            get_default_analysis_result=self._get_default_analysis_result,
+            logger=logger,
+        )
 
     def _run_gemini_cli_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
-        if not self.check_tool_available(AIProvider.GEMINI):
-            raise ToolUnavailableError("Gemini CLI not available")
-
-        prompt = self._build_analysis_prompt(text, task, **kwargs)
-        timeout = self.analysis_timeout
-
-        try:
-            result = subprocess.run(
-                [self.gemini_cli_path, "-p", prompt],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-
-            if result.returncode != 0:
-                if "rate limit" in result.stderr.lower() or "quota" in result.stderr.lower():
-                    raise RateLimitedError(f"Gemini rate-limited: {result.stderr}")
-                raise Exception(f"Gemini error: {result.stderr}")
-
-            return self._parse_analysis_result(result.stdout, task)
-        except subprocess.TimeoutExpired as exc:
-            raise Exception(f"Gemini analysis timed out (>{timeout}s)") from exc
+        return run_gemini_analysis_cli_impl(
+            check_tool_available=self.check_tool_available,
+            gemini_provider=AIProvider.GEMINI,
+            gemini_cli_path=self.gemini_cli_path,
+            build_analysis_prompt=self._build_analysis_prompt,
+            parse_analysis_result=self._parse_analysis_result,
+            tool_unavailable_error=ToolUnavailableError,
+            rate_limited_error=RateLimitedError,
+            text=text,
+            task=task,
+            timeout=self.analysis_timeout,
+            kwargs=kwargs,
+        )
 
     def _run_copilot_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
-        if not self.check_tool_available(AIProvider.COPILOT):
-            raise ToolUnavailableError("Copilot CLI not available")
-
-        prompt = self._build_analysis_prompt(text, task, **kwargs)
         timeout = (
             self.refine_description_timeout
             if task == "refine_description"
             else self.analysis_timeout
         )
-
-        try:
-            result = subprocess.run(
-                [self.copilot_cli_path, "-p", prompt],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-
-            if result.returncode != 0:
-                raise Exception(f"Copilot error: {result.stderr}")
-
-            return self._parse_analysis_result(result.stdout, task)
-        except subprocess.TimeoutExpired as exc:
-            raise Exception(f"Copilot analysis timed out (>{timeout}s)") from exc
+        return run_copilot_analysis_cli_impl(
+            check_tool_available=self.check_tool_available,
+            copilot_provider=AIProvider.COPILOT,
+            copilot_cli_path=self.copilot_cli_path,
+            build_analysis_prompt=self._build_analysis_prompt,
+            parse_analysis_result=self._parse_analysis_result,
+            tool_unavailable_error=ToolUnavailableError,
+            text=text,
+            task=task,
+            timeout=timeout,
+            kwargs=kwargs,
+        )
 
     def _build_analysis_prompt(self, text: str, task: str, **kwargs) -> str:
-        if task == "classify":
-            projects = kwargs.get("projects", [])
-            types = kwargs.get("types", [])
-            return f"""Classify this task:
-Text: {text[:500]}
-
-1. Map to project (one of: {", ".join(projects)}). Use key format.
-2. Classify type (one of: {", ".join(types)}).
-3. Generate concise task name (3-6 words, kebab-case).
-4. Return JSON: {{"project": "key", "type": "type_key", "task_name": "name"}}
-
-Return ONLY valid JSON."""
-
-        if task == "route":
-            return f"""Route this task to the best agent:
-{text[:500]}
-
-1. Identify primary work type (coding, design, testing, ops, content).
-2. Suggest best agent.
-3. Rate confidence 0-100.
-4. Return JSON: {{"agent": "name", "type": "work_type", "confidence": 85}}
-
-Return ONLY valid JSON."""
-
-        if task == "generate_name":
-            project = kwargs.get("project_name", "")
-            return f"""Generate a concise task name (3-6 words, kebab-case):
-{text[:300]}
-Project: {project}
-
-Return ONLY the name, no quotes."""
-
-        if task == "refine_description":
-            return f"""Rewrite this task description to be clear, concise, and structured.
-Preserve all concrete requirements, constraints, and details. Do not invent facts.
-
-Return in plain text (no Markdown headers), using short paragraphs and bullet points if helpful.
-
-Input:
-{text.strip()}
-"""
-
-        if task == "detect_intent":
-            return f"""Is the following input a concrete software task (feature, bug, chore) that should be sent to the developer inbox, or is it a conversational question / brainstorming idea meant to be answered directly by an AI advisor?
-
-Input:
-{text[:500]}
-
-Return JSON: {{"intent": "conversation"}} or {{"intent": "task"}}
-
-Return ONLY valid JSON."""
-
-        if task == "chat":
-            history = kwargs.get("history", "")
-            persona = kwargs.get("persona", "You are a helpful AI assistant.")
-            return f"""{persona}
-
-Recent Conversation History:
-{history}
-
-User Input:
-{text.strip()}"""
-
-        return text
+        return build_analysis_prompt_impl(text, task, **kwargs)
 
     @staticmethod
     def _strip_cli_tool_output(text: str) -> str:
-        """Remove Copilot/Gemini CLI tool-use artifacts from analysis output.
-
-        CLI tools emit lines like::
-
-            ● No-op
-              $ true
-              └ 1 line...
-
-        These are tool-use progress indicators and must not leak into
-        user-facing content.
-        """
-        lines = text.splitlines()
-        cleaned: list[str] = []
-        skip_until_blank = False
-        for line in lines:
-            stripped = line.lstrip()
-            # Tool-use block header (● List directory, ● No-op, ● Read file, etc.)
-            if stripped.startswith("●"):
-                skip_until_blank = True
-                continue
-            # Tool-use command ($ true, $ cd ...)
-            if skip_until_blank and stripped.startswith("$"):
-                continue
-            # Tool-use result (└ 1 line...)
-            if skip_until_blank and stripped.startswith("└"):
-                continue
-            # Blank line ends a tool-use block
-            if not stripped:
-                skip_until_blank = False
-                # Keep blank line only if we have preceding content
-                if cleaned:
-                    cleaned.append(line)
-                continue
-            skip_until_blank = False
-            cleaned.append(line)
-        # Strip leading/trailing blank lines
-        result = "\n".join(cleaned).strip()
-        return result
+        return strip_cli_tool_output_impl(text)
 
     def _parse_analysis_result(self, output: str, task: str) -> dict[str, Any]:
-        output = self._strip_cli_tool_output(output)
-
-        def _parse_json_candidates(text: str) -> dict[str, Any] | None:
-            candidates: list[str] = [text.strip()]
-
-            fenced_blocks = re.findall(
-                r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE
-            )
-            candidates.extend(block.strip() for block in fenced_blocks if block.strip())
-
-            first_brace = text.find("{")
-            last_brace = text.rfind("}")
-            if first_brace != -1 and last_brace > first_brace:
-                candidates.append(text[first_brace : last_brace + 1].strip())
-
-            seen: set[str] = set()
-            for candidate in candidates:
-                if not candidate or candidate in seen:
-                    continue
-                seen.add(candidate)
-                try:
-                    parsed = json.loads(candidate)
-                    if isinstance(parsed, dict):
-                        return parsed
-                except json.JSONDecodeError:
-                    continue
-            return None
-
-        parsed_json = _parse_json_candidates(output)
-        if parsed_json is not None:
-            return parsed_json
-
-        looks_like_json = "{" in output and "}" in output
-        if looks_like_json or "```" in output:
-            logger.warning("Failed to parse %s result as JSON: %s", task, output[:100])
-            return {"text": output, "parse_error": True}
-
-        return {"text": output}
+        return parse_analysis_result_impl(output, task, logger=logger)
 
     def _get_default_analysis_result(self, task: str, **kwargs) -> dict[str, Any]:
         if task == "classify":

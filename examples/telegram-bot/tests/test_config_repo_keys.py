@@ -3,6 +3,7 @@
 
 def test_get_github_repos_auto_discovers_from_workspace(monkeypatch, tmp_path):
     import config
+    import config_repos
 
     workspace_root = tmp_path / "sampleco"
     backend_dir = workspace_root / "backend"
@@ -37,14 +38,14 @@ def test_get_github_repos_auto_discovers_from_workspace(monkeypatch, tmp_path):
             return _Result(0, "https://gitlab.com/sample-org/mobile-app.git\n")
         return _Result(1, "")
 
-    monkeypatch.setattr(config.subprocess, "run", fake_run)
+    monkeypatch.setattr(config_repos.subprocess, "run", fake_run)
 
-    repos = config.get_github_repos("sampleco")
+    repos = config.get_repos("sampleco")
 
     assert sorted(repos) == ["sample-org/backend", "sample-org/mobile-app"]
 
 
-def test_get_github_repos_supports_git_repo_and_git_repos(monkeypatch):
+def test_get_repos_supports_git_repo_and_git_repos(monkeypatch):
     import config
 
     monkeypatch.setattr(
@@ -60,7 +61,7 @@ def test_get_github_repos_supports_git_repo_and_git_repos(monkeypatch):
         },
     )
 
-    repos = config.get_github_repos("sampleco")
+    repos = config.get_repos("sampleco")
 
     assert repos == ["sample-org/backend", "sample-org/mobile-app"]
 
@@ -151,9 +152,11 @@ def test_get_chat_agents_reads_mapping_shape(monkeypatch):
         lambda: {
             "sampleco": {
                 "workspace": "sampleco",
-                "chat_agents": {
-                    "business": {"context_path": "sample-business-os", "label": "Business"},
-                    "marketing": {"context_path": "sample-marketing-os", "label": "Marketing"},
+                "operation_agents": {
+                    "chat": {
+                        "business": {"context_path": "sample-business-os", "label": "Business"},
+                        "marketing": {"context_path": "sample-marketing-os", "label": "Marketing"},
+                    }
                 },
             }
         },
@@ -175,10 +178,12 @@ def test_get_chat_agents_reads_list_shape(monkeypatch):
         lambda: {
             "sampleco": {
                 "workspace": "sampleco",
-                "chat_agents": [
-                    {"business": {"context_path": "sample-business-os"}},
-                    {"agent_type": "marketing", "context_path": "sample-marketing-os"},
-                ],
+                "operation_agents": {
+                    "chat": [
+                        {"business": {"context_path": "sample-business-os"}},
+                        {"agent_type": "marketing", "context_path": "sample-marketing-os"},
+                    ]
+                },
             }
         },
     )
