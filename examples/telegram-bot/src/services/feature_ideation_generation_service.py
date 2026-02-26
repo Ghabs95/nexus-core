@@ -1,0 +1,152 @@
+from __future__ import annotations
+
+import json
+from typing import Any, Callable
+
+from utils.log_utils import log_feature_ideation_success, truncate_for_log
+
+
+def _extract_items_from_result(
+    result: dict[str, Any],
+    *,
+    feature_count: int,
+    normalize_generated_features: Callable[[Any, int], list[dict[str, Any]]],
+    extract_json_payload: Callable[[str], Any],
+) -> list[dict[str, Any]]:
+    if not isinstance(result, dict):
+        return []
+
+    if isinstance(result.get("title"), str) and isinstance(result.get("summary"), str):
+        single = normalize_generated_features([result], feature_count)
+        if single:
+            return single
+
+    if isinstance(result.get("items"), list):
+        direct = normalize_generated_features(result.get("items"), feature_count)
+        if direct:
+            return direct
+
+    for list_key in ("features", "suggestions", "proposals"):
+        if isinstance(result.get(list_key), list):
+            direct = normalize_generated_features(result.get(list_key), feature_count)
+            if direct:
+                return direct
+
+    for wrapped_key in ("response", "content", "message"):
+        wrapped_value = result.get(wrapped_key)
+        if not isinstance(wrapped_value, str) or not wrapped_value.strip():
+            continue
+        payload = extract_json_payload(wrapped_value)
+        if isinstance(payload, list):
+            direct = normalize_generated_features(payload, feature_count)
+            if direct:
+                return direct
+        if isinstance(payload, dict):
+            direct = normalize_generated_features(payload.get("items"), feature_count)
+            if direct:
+                return direct
+
+    payload = extract_json_payload(str(result.get("text", "")))
+    if isinstance(payload, list):
+        return normalize_generated_features(payload, feature_count)
+    if isinstance(payload, dict):
+        return normalize_generated_features(payload.get("items"), feature_count)
+    return []
+
+
+def build_feature_suggestions(
+    *,
+    project_key: str,
+    feature_count: int,
+    text: str,
+    routed_agent_type: str,
+    persona: str,
+    orchestrator: Any,
+    logger: Any | None,
+    normalize_generated_features: Callable[[Any, int], list[dict[str, Any]]],
+    extract_json_payload: Callable[[str], Any],
+) -> list[dict[str, Any]]:
+    try:
+        result = orchestrator.run_text_to_speech_analysis(
+            text=text,
+            task="chat",
+            persona=persona,
+            project_name=project_key,
+        )
+        raw_text = result.get("text", "") if isinstance(result, dict) else ""
+        if logger:
+            logger.info("AI returned feature ideation text (length %d)", len(raw_text))
+
+        generated = _extract_items_from_result(
+            result or {},
+            feature_count=feature_count,
+            normalize_generated_features=normalize_generated_features,
+            extract_json_payload=extract_json_payload,
+        )
+        if generated:
+            provider = "primary"
+            if isinstance(result, dict):
+                provider = str(result.get("provider") or result.get("model") or "primary")
+            log_feature_ideation_success(
+                logger,
+                provider=provider,
+                primary_success=True,
+                fallback_used=False,
+                item_count=len(generated),
+                project_key=project_key,
+                agent_type=routed_agent_type,
+            )
+            return generated
+
+        if logger:
+            raw_text = ""
+            if isinstance(result, dict):
+                raw_text = str(result.get("text", ""))
+            if not raw_text and isinstance(result, dict):
+                logger.warning(
+                    "Primary feature ideation structured response keys: %s",
+                    sorted(result.keys()),
+                )
+                logger.warning(
+                    "Primary feature ideation structured response payload (truncated): %s",
+                    truncate_for_log(json.dumps(result, ensure_ascii=False)),
+                )
+            logger.warning(
+                "Primary feature ideation raw response (truncated): %s",
+                truncate_for_log(raw_text),
+            )
+            logger.warning(
+                "Dynamic feature ideation returned non-JSON/empty output (primary path), retrying with Copilot"
+            )
+    except Exception as exc:
+        if logger:
+            logger.warning("Dynamic feature ideation failed on primary path: %s", exc)
+
+    try:
+        run_copilot = getattr(orchestrator, "_run_copilot_analysis", None)
+        if callable(run_copilot):
+            copilot_result = run_copilot(text, task="chat", persona=persona)
+            generated = _extract_items_from_result(
+                copilot_result or {},
+                feature_count=feature_count,
+                normalize_generated_features=normalize_generated_features,
+                extract_json_payload=extract_json_payload,
+            )
+            if generated:
+                log_feature_ideation_success(
+                    logger,
+                    provider="copilot",
+                    primary_success=False,
+                    fallback_used=True,
+                    item_count=len(generated),
+                    project_key=project_key,
+                    agent_type=routed_agent_type,
+                )
+                return generated
+            if logger:
+                logger.warning("Dynamic feature ideation Copilot retry returned non-JSON/empty output")
+    except Exception as exc:
+        if logger:
+            logger.warning("Dynamic feature ideation failed on Copilot retry: %s", exc)
+
+    return []

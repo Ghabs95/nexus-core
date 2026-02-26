@@ -11,6 +11,11 @@ if TYPE_CHECKING:
     from interactive_context import InteractiveContext
 
 from nexus.adapters.notifications.base import Button
+from services.callback_inline_service import (
+    handle_merge_queue_inline_action,
+    parse_inline_action,
+)
+from services.callback_menu_service import handle_menu_callback as service_menu_callback_handler
 from state_manager import HostStateManager
 
 
@@ -175,100 +180,7 @@ async def flow_close_handler(ctx: InteractiveContext, deps: CallbackHandlerDeps)
 
 
 async def menu_callback_handler(ctx: InteractiveContext, deps: CallbackHandlerDeps):
-    await ctx.answer_callback_query()
-    query_data = ctx.query.data
-
-    if not query_data:
-        return
-
-    menu_key = query_data.split(":", 1)[1]
-
-    if menu_key == "close":
-        await ctx.edit_message_text(ctx.text, buttons=[])
-        return
-
-    if menu_key == "root":
-        keyboard = [
-            [Button("🗣️ Chat", callback_data="menu:chat")],
-            [Button("✨ Task Creation", callback_data="menu:tasks")],
-            [Button("📊 Monitoring", callback_data="menu:monitor")],
-            [Button("🔁 Workflow Control", callback_data="menu:workflow")],
-            [Button("🤝 Agents", callback_data="menu:agents")],
-            [Button("🔧 Git Platform", callback_data="menu:github")],
-            [Button("ℹ️ Help", callback_data="menu:help")],
-            [Button("❌ Close", callback_data="menu:close")],
-        ]
-        await ctx.edit_message_text("📍 **Nexus Menu**\nChoose a category:", buttons=keyboard)
-        return
-
-    menu_texts = {
-        "chat": (
-            "🗣️ **Chat**\n"
-            "- /chat — Open chat threads and context controls\n"
-            "- /chatagents [project] — Show ordered chat agent types (first is primary)\n"
-            "- Configure project, mode, and primary agent for conversational routing"
-        ),
-        "tasks": (
-            "✨ **Task Creation**\n"
-            "- /menu — Open command menu\n"
-            "- /new — Start task creation\n"
-            "- /cancel — Abort the current guided process\n\n"
-            "Tip: send a voice note or text to auto-create a task."
-        ),
-        "monitor": (
-            "📊 **Monitoring**\n"
-            "- /status — View pending tasks in inbox\n"
-            "- /inboxq [limit] — Inspect inbox queue status\n"
-            "- /active — View tasks currently being worked on\n"
-            "- /myissues — View your tracked issues\n"
-            "- /logs <project> <issue#> — View task logs\n"
-            "- /logsfull <project> <issue#> — Full log lines (no truncation)\n"
-            "- /tail <project> <issue#> [lines] [seconds] — Follow live logs\n"
-            "- /tailstop — Stop current live tail session\n"
-            "- /fuse <project> <issue#> — View retry fuse state\n"
-            "- /audit <project> <issue#> — View workflow audit trail\n"
-            "- /stats [days] — View system analytics (default: 30 days)\n"
-            "- /comments <project> <issue#> — View issue comments\n"
-            "- /track <project> <issue#> — Subscribe to updates\n"
-            "- /untrack <project> <issue#> — Stop tracking"
-        ),
-        "workflow": (
-            "🔁 **Workflow Control**\n"
-            "- /visualize <project> <issue#> — Show Mermaid workflow diagram\n"
-            "- /reprocess <project> <issue#> — Re-run agent processing\n"
-            "- /wfstate <project> <issue#> — Show workflow state + drift\n"
-            "- /reconcile <project> <issue#> — Reconcile workflow/comment/local state\n"
-            "- /continue <project> <issue#> — Resume a stuck agent\n"
-            "- /forget <project> <issue#> — Purge local state for a stale/deleted issue\n"
-            "- /kill <project> <issue#> — Stop a running agent\n"
-            "- /pause <project> <issue#> — Pause auto-chaining\n"
-            "- /resume <project> <issue#> — Resume auto-chaining\n"
-            "- /stop <project> <issue#> — Stop workflow completely\n"
-            "- /respond <project> <issue#> <text> — Respond to agent questions"
-        ),
-        "agents": (
-            "🤝 **Agents**\n"
-            "- /agents <project> — List agents for a project\n"
-            "- /direct <project> <@agent> <message> — Send direct request\n"
-            "- /direct <project> <@agent> --new-chat <message> — Strategic direct reply in a new chat"
-        ),
-        "github": (
-            "🔧 **Git Platform**\n"
-            "- /assign <project> <issue#> — Assign issue to yourself\n"
-            "- /implement <project> <issue#> — Request Copilot implementation\n"
-            "- /prepare <project> <issue#> — Add Copilot-friendly instructions"
-        ),
-        "help": "ℹ️ Use /help for the full command list.",
-    }
-
-    text = menu_texts.get(menu_key, "Unknown menu option.")
-    await ctx.edit_message_text(
-        text,
-        buttons=[
-            [Button("⬅️ Back", callback_data="menu:root")],
-            [Button("❌ Close", callback_data="menu:close")],
-        ],
-    )
+    await service_menu_callback_handler(ctx)
 
 
 async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandlerDeps):
@@ -278,21 +190,10 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
     if not query_data:
         return
 
-    parts = query_data.split("_", 1)
-    if len(parts) < 2:
+    parsed = parse_inline_action(query_data)
+    if not parsed:
         return
-
-    action = parts[0]
-    payload = parts[1]
-
-    issue_num = payload
-    project_hint: str | None = None
-    if "|" in payload:
-        raw_issue, raw_project = payload.split("|", 1)
-        issue_num = raw_issue.strip()
-        project_hint = raw_project.strip() or None
-
-    issue_num = issue_num.lstrip("#")
+    action, issue_num, project_hint = parsed
 
     if not project_hint:
         await ctx.edit_message_text(
@@ -311,72 +212,9 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
         await deps.dispatch_command(ctx, action, project_hint, issue_num)
         return
     elif action in {"mqapprove", "mqretry", "mqmerge"}:
-        try:
-            queue = HostStateManager.load_merge_queue()
-            if not isinstance(queue, dict):
-                queue = {}
-
-            changed = 0
-            for pr_url, item in list(queue.items()):
-                if not isinstance(item, dict):
-                    continue
-                if str(item.get("issue") or "") != str(issue_num):
-                    continue
-                if str(item.get("project") or "") != str(project_hint):
-                    continue
-
-                status = str(item.get("status") or "").strip().lower()
-                review_mode = str(item.get("review_mode") or "manual").strip().lower()
-
-                target_status: str | None = None
-                if action == "mqapprove":
-                    if status == "pending_manual_review":
-                        target_status = "pending_auto_merge"
-                elif action == "mqretry":
-                    if status in {"blocked", "failed"}:
-                        target_status = (
-                            "pending_auto_merge"
-                            if review_mode == "auto"
-                            else "pending_manual_review"
-                        )
-                elif action == "mqmerge":
-                    if status in {"pending_manual_review", "blocked", "failed"}:
-                        target_status = "pending_auto_merge"
-
-                if not target_status:
-                    continue
-
-                updated = HostStateManager.update_merge_candidate(
-                    pr_url,
-                    status=target_status,
-                    last_error="",
-                    manual_override=(action in {"mqapprove", "mqmerge"}),
-                )
-                if updated is not None:
-                    changed += 1
-
-            if changed == 0:
-                await ctx.edit_message_text(
-                    f"ℹ️ No merge-queue entries updated for issue #{issue_num} ({project_hint})."
-                )
-                return
-
-            if action == "mqapprove":
-                await ctx.edit_message_text(
-                    f"✅ Merge approved for {changed} PR(s) on issue #{issue_num}.\n\n"
-                    "Queue worker will process them automatically."
-                )
-            elif action == "mqretry":
-                await ctx.edit_message_text(
-                    f"🔄 Merge retry queued for {changed} PR(s) on issue #{issue_num}."
-                )
-            else:
-                await ctx.edit_message_text(
-                    f"🚀 Merge requested for {changed} PR(s) on issue #{issue_num}.\n\n"
-                    "Queue worker will attempt merge on the next cycle."
-                )
-        except Exception as exc:
-            await ctx.edit_message_text(f"❌ Merge queue action failed: {exc}")
+        await handle_merge_queue_inline_action(
+            ctx, action=action, issue_num=issue_num, project_hint=project_hint
+        )
         return
     elif action == "respond":
         await ctx.edit_message_text(

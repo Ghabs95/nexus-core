@@ -18,6 +18,7 @@ def run_processor_loop(
     check_agent_comments: Callable[[], None],
     check_completed_agents: Callable[[], None],
     merge_queue_auto_merge_once: Callable[[], None],
+    runtime_state=None,
     time_module: Any = time,
 ) -> None:
     """Run the main processor polling loop forever."""

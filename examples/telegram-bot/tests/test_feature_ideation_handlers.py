@@ -227,10 +227,12 @@ def test_build_feature_suggestions_requires_agent_prompt(tmp_path):
         project_config={
             "acme": {
                 "workspace": "workspace",
-                "chat_agents": {
-                    "business": {
-                        "context_path": "business-os",
-                        "context_files": ["README.md"],
+                "operation_agents": {
+                    "chat": {
+                        "business": {
+                            "context_path": "business-os",
+                            "context_files": ["README.md"],
+                        }
                     }
                 },
             }
@@ -280,10 +282,12 @@ def test_build_feature_suggestions_uses_business_context_folder(tmp_path):
             "acme": {
                 "workspace": "workspace",
                 "agents_dir": "workspace/agents",
-                "chat_agents": {
-                    "business": {
+                "operation_agents": {
+                    "chat": {
+                        "business": {
                         "context_path": "business-os",
                         "context_files": ["README.md"],
+                    }
                     }
                 },
             }
@@ -337,10 +341,12 @@ spec:
             "acme": {
                 "workspace": "workspace",
                 "agents_dir": "workspace/agents",
-                "chat_agents": {
-                    "marketing": {
+                "operation_agents": {
+                    "chat": {
+                        "marketing": {
                         "context_path": "marketing-os",
                         "context_files": ["README.md"],
+                    }
                     }
                 },
             }
@@ -385,10 +391,12 @@ def test_agent_prompt_discovery_matches_spec_agent_type_without_prompt_map(tmp_p
             "acme": {
                 "workspace": "workspace",
                 "agents_dir": "workspace/agents",
-                "chat_agents": {
-                    "business": {
+                "operation_agents": {
+                    "chat": {
+                        "business": {
                         "context_path": "business-os",
                         "context_files": ["README.md"],
+                    }
                     }
                 },
             }
@@ -438,9 +446,11 @@ spec:
             "acme": {
                 "workspace": "workspace",
                 "agents_dir": "workspace/agents",
-                "chat_agents": {
-                    "marketing": {
+                "operation_agents": {
+                    "chat": {
+                        "marketing": {
                         "context_path": "marketing-os",
+                    }
                     }
                 },
             }
@@ -490,14 +500,16 @@ def test_chat_agents_list_shape_is_supported_for_context(tmp_path):
             "acme": {
                 "workspace": "workspace",
                 "agents_dir": "workspace/agents",
-                "chat_agents": [
-                    {
-                        "business": {
-                            "context_path": "business-os",
-                            "context_files": ["README.md"],
+                "operation_agents": {
+                    "chat": [
+                        {
+                            "business": {
+                                "context_path": "business-os",
+                                "context_files": ["README.md"],
+                            }
                         }
-                    }
-                ],
+                    ]
+                },
             }
         },
     )
@@ -537,10 +549,12 @@ def test_build_feature_suggestions_accepts_top_level_json_array_text(tmp_path):
             "acme": {
                 "workspace": "workspace",
                 "agents_dir": "workspace/agents",
-                "chat_agents": {
-                    "business": {
+                "operation_agents": {
+                    "chat": {
+                        "business": {
                         "context_path": "business-os",
                         "context_files": ["README.md"],
+                    }
                     }
                 },
             }
@@ -583,10 +597,12 @@ def test_build_feature_suggestions_logs_primary_non_json_response(tmp_path):
             "acme": {
                 "workspace": "workspace",
                 "agents_dir": "workspace/agents",
-                "chat_agents": {
-                    "business": {
+                "operation_agents": {
+                    "chat": {
+                        "business": {
                         "context_path": "business-os",
                         "context_files": ["README.md"],
+                    }
                     }
                 },
             }
@@ -631,10 +647,12 @@ def test_build_feature_suggestions_accepts_structured_single_item_dict(tmp_path)
             "acme": {
                 "workspace": "workspace",
                 "agents_dir": "workspace/agents",
-                "chat_agents": {
-                    "business": {
+                "operation_agents": {
+                    "chat": {
+                        "business": {
                         "context_path": "business-os",
                         "context_files": ["README.md"],
+                    }
                     }
                 },
             }
@@ -677,10 +695,12 @@ def test_build_feature_suggestions_accepts_wrapped_response_json_string(tmp_path
             "acme": {
                 "workspace": "workspace",
                 "agents_dir": "workspace/agents",
-                "chat_agents": {
-                    "business": {
+                "operation_agents": {
+                    "chat": {
+                        "business": {
                         "context_path": "business-os",
                         "context_files": ["README.md"],
+                    }
                     }
                 },
             }
@@ -724,10 +744,12 @@ def test_build_feature_suggestions_logs_success_when_copilot_fallback_succeeds(t
             "acme": {
                 "workspace": "workspace",
                 "agents_dir": "workspace/agents",
-                "chat_agents": {
-                    "business": {
+                "operation_agents": {
+                    "chat": {
+                        "business": {
                         "context_path": "business-os",
                         "context_files": ["README.md"],
+                    }
                     }
                 },
             }
@@ -774,7 +796,9 @@ def test_handle_feature_ideation_request_prompts_count_first(tmp_path):
             "acme": {
                 "workspace": "workspace",
                 "agents_dir": "workspace/agents",
-                "chat_agents": {"business": {}},
+                "operation_agents": {
+                    "chat": {"business": {}},
+                },
             }
         },
     )
@@ -878,7 +902,9 @@ def test_count_selection_shows_thinking_before_generating_features(tmp_path):
             "acme": {
                 "workspace": "workspace",
                 "agents_dir": "workspace/agents",
-                "chat_agents": {"business": {}},
+                "operation_agents": {
+                    "chat": {"business": {}},
+                },
             }
         },
     )

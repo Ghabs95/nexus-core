@@ -12,6 +12,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from interactive_context import InteractiveContext
 from nexus.adapters.notifications.base import Button
+from services.feature_ideation_callback_service import (
+    handle_feature_ideation_callback as _service_handle_feature_ideation_callback,
+)
+from services.feature_ideation_generation_service import (
+    build_feature_suggestions as _service_build_feature_suggestions,
+)
 from nexus.core.chat_agents_schema import (
     get_default_project_chat_agent_type,
     get_project_chat_agent_config,
@@ -28,11 +34,7 @@ from handlers.agent_context_utils import (
     resolve_project_root,
 )
 from handlers.common_routing import extract_json_dict
-from utils.log_utils import (
-    log_feature_ideation_success,
-    log_unauthorized_callback_access,
-    truncate_for_log,
-)
+from utils.log_utils import log_unauthorized_callback_access
 
 FEATURE_STATE_KEY = "feature_suggestions"
 FEATURE_MIN_COUNT = 1
@@ -425,123 +427,17 @@ def _build_feature_suggestions(
         agent_prompt,
     )
 
-    def _extract_items_from_result(result: dict[str, Any]) -> list[dict[str, Any]]:
-        if not isinstance(result, dict):
-            return []
-
-        if isinstance(result.get("title"), str) and isinstance(result.get("summary"), str):
-            single = _normalize_generated_features([result], feature_count)
-            if single:
-                return single
-
-        if isinstance(result.get("items"), list):
-            direct = _normalize_generated_features(result.get("items"), feature_count)
-            if direct:
-                return direct
-
-        for list_key in ("features", "suggestions", "proposals"):
-            if isinstance(result.get(list_key), list):
-                direct = _normalize_generated_features(result.get(list_key), feature_count)
-                if direct:
-                    return direct
-
-        for wrapped_key in ("response", "content", "message"):
-            wrapped_value = result.get(wrapped_key)
-            if not isinstance(wrapped_value, str) or not wrapped_value.strip():
-                continue
-            payload = _extract_json_payload(wrapped_value)
-            if isinstance(payload, list):
-                direct = _normalize_generated_features(payload, feature_count)
-                if direct:
-                    return direct
-            if isinstance(payload, dict):
-                direct = _normalize_generated_features(payload.get("items"), feature_count)
-                if direct:
-                    return direct
-
-        payload = _extract_json_payload(str(result.get("text", "")))
-        if isinstance(payload, list):
-            return _normalize_generated_features(payload, feature_count)
-        if isinstance(payload, dict):
-            return _normalize_generated_features(payload.get("items"), feature_count)
-        return []
-
-    try:
-        result = deps.orchestrator.run_text_to_speech_analysis(
-            text=text,
-            task="chat",
-            persona=persona,
-            project_name=project_key,
-        )
-        raw_text = result.get("text", "") if isinstance(result, dict) else ""
-        if getattr(deps, "logger", None):
-            deps.logger.info("AI returned feature ideation text (length %d)", len(raw_text))
-
-        generated = _extract_items_from_result(result or {})
-        if generated:
-            provider = "primary"
-            if isinstance(result, dict):
-                provider = str(result.get("provider") or result.get("model") or "primary")
-            log_feature_ideation_success(
-                getattr(deps, "logger", None),
-                provider=provider,
-                primary_success=True,
-                fallback_used=False,
-                item_count=len(generated),
-                project_key=project_key,
-                agent_type=routed_agent_type,
-            )
-            return generated
-
-        if getattr(deps, "logger", None):
-            raw_text = ""
-            if isinstance(result, dict):
-                raw_text = str(result.get("text", ""))
-            if not raw_text and isinstance(result, dict):
-                deps.logger.warning(
-                    "Primary feature ideation structured response keys: %s",
-                    sorted(result.keys()),
-                )
-                deps.logger.warning(
-                    "Primary feature ideation structured response payload (truncated): %s",
-                    truncate_for_log(json.dumps(result, ensure_ascii=False)),
-                )
-            deps.logger.warning(
-                "Primary feature ideation raw response (truncated): %s",
-                truncate_for_log(raw_text),
-            )
-            deps.logger.warning(
-                "Dynamic feature ideation returned non-JSON/empty output (primary path), retrying with Copilot"
-            )
-    except Exception as exc:
-        if getattr(deps, "logger", None):
-            deps.logger.warning("Dynamic feature ideation failed on primary path: %s", exc)
-
-    try:
-        run_copilot = getattr(deps.orchestrator, "_run_copilot_analysis", None)
-        if callable(run_copilot):
-            copilot_result = run_copilot(text, task="chat", persona=persona)
-            generated = _extract_items_from_result(copilot_result or {})
-            if generated:
-                log_feature_ideation_success(
-                    getattr(deps, "logger", None),
-                    provider="copilot",
-                    primary_success=False,
-                    fallback_used=True,
-                    item_count=len(generated),
-                    project_key=project_key,
-                    agent_type=routed_agent_type,
-                )
-                return generated
-            if getattr(deps, "logger", None):
-                deps.logger.warning(
-                    "Dynamic feature ideation Copilot retry returned non-JSON/empty output"
-                )
-    except Exception as exc:
-        if getattr(deps, "logger", None):
-            deps.logger.warning("Dynamic feature ideation failed on Copilot retry: %s", exc)
-
-    return []
+    return _service_build_feature_suggestions(
+        project_key=project_key,
+        feature_count=feature_count,
+        text=text,
+        routed_agent_type=routed_agent_type,
+        persona=persona,
+        orchestrator=deps.orchestrator,
+        logger=getattr(deps, "logger", None),
+        normalize_generated_features=_normalize_generated_features,
+        extract_json_payload=_extract_json_payload,
+    )
 
 
 def _feature_generation_retry_text(project_key: str, deps: FeatureIdeationHandlerDeps) -> str:
@@ -799,338 +695,19 @@ async def feature_callback_handler(
     if ctx is None or deps is None:
         return
 
-    try:
-        await ctx.answer_callback_query()
-    except Exception as exc:
-        logger = getattr(deps, "logger", None)
-        if logger is not None:
-            log_warning = getattr(logger, "warning", None)
-            if callable(log_warning):
-                log_warning("Feature callback answer failed (continuing): %s", exc)
-
-    if deps.allowed_user_ids and int(ctx.user_id) not in deps.allowed_user_ids:
-        log_unauthorized_callback_access(getattr(deps, "logger", None), ctx.user_id)
-        return
-
-    data = ctx.query.data or ""
-    feature_state = ctx.user_state.get(FEATURE_STATE_KEY) or {}
-
-    if data == "feat:choose_project":
-        if _is_project_locked(feature_state):
-            await ctx.edit_message_text(
-                text=(
-                    "🔒 Project is fixed by your active context for this ideation flow.\n"
-                    "Start a new request to use a different project context."
-                )
-            )
-            return
-
-        ctx.user_state[FEATURE_STATE_KEY] = {
-            **feature_state,
-            "project": None,
-            "items": [],
-            "selected_items": [],
-        }
-        await ctx.edit_message_text(
-            text="📁 Select a project to continue feature ideation:",
-            buttons=_feature_project_keyboard(deps),
-        )
-        return
-
-    if data.startswith("feat:count:"):
-        parts = data.split(":")
-        if len(parts) != 3:
-            await ctx.edit_message_text("⚠️ Invalid count selection.")
-            return
-
-        feature_count = _clamp_feature_count(parts[2])
-        project_key = feature_state.get("project")
-        preferred_agent_type = feature_state.get("agent_type")
-        source_text = str(feature_state.get("source_text") or "")
-        ctx.user_state[FEATURE_STATE_KEY] = {
-            **feature_state,
-            "feature_count": feature_count,
-            "items": [],
-            "selected_items": [],
-        }
-
-        if not project_key:
-            await ctx.edit_message_text(
-                text=(
-                    "📁 Great — now choose a project to continue.\n\n"
-                    f"Selected count: *{feature_count}*"
-                ),
-                buttons=_feature_project_keyboard(deps),
-            )
-            return
-
-        await ctx.edit_message_text(
-            text="🧠 *Nexus thinking...*",
-        )
-
-        features = _build_feature_suggestions(
-            project_key=project_key,
-            text=source_text,
-            deps=deps,
-            preferred_agent_type=preferred_agent_type,
-            feature_count=feature_count,
-        )
-        ctx.user_state[FEATURE_STATE_KEY] = {
-            **feature_state,
-            "project": project_key,
-            "items": features,
-            "selected_items": [],
-            "agent_type": preferred_agent_type,
-            "feature_count": feature_count,
-            "source_text": source_text,
-        }
-
-        if not features:
-            project_locked = _is_project_locked(feature_state)
-            retry_keyboard_rows = []
-            if not project_locked:
-                retry_keyboard_rows.append(
-                    [Button("📁 Choose project", callback_data="feat:choose_project")]
-                )
-            retry_keyboard_rows.append([Button("❌ Close", callback_data="flow:close")])
-            await ctx.edit_message_text(
-                text=_feature_generation_retry_text(project_key, deps),
-                buttons=retry_keyboard_rows,
-            )
-            return
-
-        project_locked = _is_project_locked(feature_state)
-
-        await ctx.edit_message_text(
-            text=_feature_list_text(
-                project_key,
-                features,
-                deps,
-                preferred_agent_type,
-                selected_features=[],
-            ),
-            buttons=_feature_list_keyboard(features, allow_project_change=not project_locked),
-        )
-        return
-
-    if data.startswith("feat:project:"):
-        project_key = data.split(":", 2)[2]
-        if project_key not in deps.projects:
-            await ctx.edit_message_text("⚠️ Invalid project selection.")
-            return
-
-        project_locked = _is_project_locked(feature_state)
-        current_project = str(feature_state.get("project") or "")
-        current_items = (
-            feature_state.get("items") if isinstance(feature_state.get("items"), list) else []
-        )
-        selected_items = (
-            feature_state.get("selected_items")
-            if isinstance(feature_state.get("selected_items"), list)
-            else []
-        )
-        if project_locked and current_project and project_key != current_project:
-            await ctx.edit_message_text(
-                text=(
-                    "🔒 Project is fixed by your active context for this ideation flow.\n"
-                    "Start a new request to use a different project context."
-                )
-            )
-            return
-
-        preferred_agent_type = feature_state.get("agent_type")
-        if project_key == current_project and current_items:
-            await ctx.edit_message_text(
-                text=_feature_list_text(
-                    project_key,
-                    current_items,
-                    deps,
-                    preferred_agent_type,
-                    selected_features=selected_items,
-                ),
-                buttons=_feature_list_keyboard(
-                    current_items, allow_project_change=not project_locked
-                ),
-            )
-            return
-
-        preferred_agent_type = feature_state.get("agent_type")
-        feature_count_raw = feature_state.get("feature_count")
-        source_text = str(feature_state.get("source_text") or "")
-
-        if feature_count_raw is None:
-            ctx.user_state[FEATURE_STATE_KEY] = {
-                **feature_state,
-                "project": project_key,
-                "items": [],
-                "selected_items": [],
-            }
-            await ctx.edit_message_text(
-                text=_feature_count_prompt_text(project_key, deps),
-                buttons=_feature_count_keyboard(allow_project_change=not project_locked),
-            )
-            return
-
-        feature_count = _clamp_feature_count(feature_count_raw)
-        await ctx.edit_message_text(
-            text="🧠 *Nexus thinking...*",
-        )
-        features = _build_feature_suggestions(
-            project_key=project_key,
-            text=source_text,
-            deps=deps,
-            preferred_agent_type=preferred_agent_type,
-            feature_count=feature_count,
-        )
-        ctx.user_state[FEATURE_STATE_KEY] = {
-            **feature_state,
-            "project": project_key,
-            "items": features,
-            "selected_items": [],
-            "agent_type": preferred_agent_type,
-            "feature_count": feature_count,
-            "source_text": source_text,
-        }
-
-        if not features:
-            project_locked = _is_project_locked(feature_state)
-            retry_keyboard_rows = []
-            if not project_locked:
-                retry_keyboard_rows.append(
-                    [Button("📁 Choose project", callback_data="feat:choose_project")]
-                )
-            retry_keyboard_rows.append([Button("❌ Close", callback_data="flow:close")])
-            await ctx.edit_message_text(
-                text=_feature_generation_retry_text(project_key, deps),
-                buttons=retry_keyboard_rows,
-            )
-            return
-
-        project_locked = _is_project_locked(feature_state)
-
-        await ctx.edit_message_text(
-            text=_feature_list_text(
-                project_key,
-                features,
-                deps,
-                preferred_agent_type,
-                selected_features=[],
-            ),
-            buttons=_feature_list_keyboard(features, allow_project_change=not project_locked),
-        )
-        return
-
-    if data.startswith("feat:pick:"):
-        parts = data.split(":")
-        if len(parts) != 3:
-            await ctx.edit_message_text("⚠️ Invalid selection.")
-            return
-
-        project_key = feature_state.get("project")
-        features = feature_state.get("items") or []
-        if not project_key or not features:
-            await ctx.edit_message_text(
-                text="📁 Session expired. Select a project to get feature proposals:",
-                buttons=_feature_project_keyboard(deps),
-            )
-            return
-
-        try:
-            selected_index = int(parts[2])
-        except ValueError:
-            await ctx.edit_message_text("⚠️ Invalid feature selection.")
-            return
-
-        if selected_index < 0 or selected_index >= len(features):
-            await ctx.edit_message_text("⚠️ Invalid feature selection.")
-            return
-
-        selected = features[selected_index]
-        selected_items = (
-            feature_state.get("selected_items")
-            if isinstance(feature_state.get("selected_items"), list)
-            else []
-        )
-        remaining_features = [item for idx, item in enumerate(features) if idx != selected_index]
-        ctx.user_state[FEATURE_STATE_KEY] = {
-            **feature_state,
-            "project": project_key,
-            "items": remaining_features,
-            "selected_items": [*selected_items, selected],
-        }
-
-        create_feature_task = getattr(deps, "create_feature_task", None)
-        if callable(create_feature_task):
-            await ctx.edit_message_text(
-                text="🧠 *Nexus thinking...*",
-            )
-            task_text = _feature_to_task_text(project_key, selected, deps)
-
-            trigger_message_id = (
-                getattr(ctx.raw_event, "message_id", "feature-pick")
-                if hasattr(ctx.raw_event, "message_id")
-                else "feature-pick"
-            )
-            if hasattr(ctx.raw_event, "message") and hasattr(ctx.raw_event.message, "message_id"):
-                trigger_message_id = str(ctx.raw_event.message.message_id)
-
-            result = await create_feature_task(task_text, trigger_message_id, str(project_key))
-            message = str(result.get("message") or "⚠️ Task processing completed.")
-            project_locked = _is_project_locked(feature_state)
-            keyboard_rows: list[list[Button]] = []
-            if remaining_features:
-                keyboard_rows.append(
-                    [Button("⬅️ Back to feature list", callback_data=f"feat:project:{project_key}")]
-                )
-            elif message:
-                message = (
-                    f"{message}\n\n" "✅ All feature proposals from this list have been selected."
-                )
-            if remaining_features and not project_locked:
-                keyboard_rows.append(
-                    [Button("📁 Choose project", callback_data="feat:choose_project")]
-                )
-            keyboard_rows.append([Button("❌ Close", callback_data="flow:close")])
-            await ctx.edit_message_text(
-                text=message,
-                buttons=keyboard_rows,
-            )
-            return
-
-        detail_lines = [
-            f"💡 *{selected['title']}*",
-            "",
-            selected["summary"],
-            "",
-            "*Why now*",
-            selected["why"],
-            "",
-            "*Implementation outline*",
-        ]
-        for idx, step in enumerate(selected.get("steps", []), start=1):
-            detail_lines.append(f"{idx}. {step}")
-
-        project_locked = _is_project_locked(feature_state)
-        keyboard_rows = []
-        if remaining_features:
-            keyboard_rows.append(
-                [Button("⬅️ Back to feature list", callback_data=f"feat:project:{project_key}")]
-            )
-        else:
-            detail_lines.extend(
-                [
-                    "",
-                    "✅ All feature proposals from this list have been selected.",
-                ]
-            )
-
-        if remaining_features and not project_locked:
-            keyboard_rows.append([Button("📁 Choose project", callback_data="feat:choose_project")])
-        keyboard_rows.append([Button("❌ Close", callback_data="flow:close")])
-        await ctx.edit_message_text(
-            text="\n".join(detail_lines),
-            buttons=keyboard_rows,
-        )
-        return
-
-    await ctx.edit_message_text("⚠️ Unknown feature action.")
+    await _service_handle_feature_ideation_callback(
+        ctx=ctx,
+        deps=deps,
+        feature_state_key=FEATURE_STATE_KEY,
+        is_project_locked=_is_project_locked,
+        feature_project_keyboard=_feature_project_keyboard,
+        clamp_feature_count=_clamp_feature_count,
+        build_feature_suggestions=_build_feature_suggestions,
+        feature_generation_retry_text=_feature_generation_retry_text,
+        feature_list_text=_feature_list_text,
+        feature_list_keyboard=_feature_list_keyboard,
+        feature_count_prompt_text=_feature_count_prompt_text,
+        feature_count_keyboard=_feature_count_keyboard,
+        feature_to_task_text=_feature_to_task_text,
+        log_unauthorized_callback_access=log_unauthorized_callback_access,
+    )

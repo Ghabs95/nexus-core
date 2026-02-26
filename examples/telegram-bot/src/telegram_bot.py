@@ -234,6 +234,19 @@ from nexus.core.completion import scan_for_completions
 from nexus.core.utils.logging_filters import install_secret_redaction
 from nexus.plugins.builtin.ai_runtime_plugin import AIProvider
 from orchestration.ai_orchestrator import get_orchestrator
+from orchestration.telegram_command_router import dispatch_command as _router_dispatch_command
+from orchestration.telegram_callback_router import (
+    call_core_callback_handler as _router_call_core_callback_handler,
+)
+from orchestration.telegram_callback_router import (
+    call_core_chat_handler as _router_call_core_chat_handler,
+)
+from orchestration.telegram_update_bridge import (
+    build_telegram_interactive_ctx as _bridge_build_telegram_interactive_ctx,
+)
+from orchestration.telegram_update_bridge import (
+    buttons_to_reply_markup as _bridge_buttons_to_reply_markup,
+)
 from orchestration.plugin_runtime import (
     get_profiled_plugin,
     get_runtime_ops_plugin,
@@ -255,6 +268,17 @@ from services.memory_service import (
     get_chat_history,
     rename_chat,
 )
+from services.telegram_task_capture_service import (
+    handle_save_task_selection,
+    handle_task_confirmation_callback,
+)
+from services.telegram_ui_prompts_service import (
+    prompt_issue_selection as _svc_prompt_issue_selection,
+)
+from services.telegram_ui_prompts_service import (
+    prompt_project_selection as _svc_prompt_project_selection,
+)
+from services.telegram_hands_free_service import handle_hands_free_message
 from services.workflow_control_service import (
     kill_issue_agent,
     prepare_continue_context,
@@ -1056,123 +1080,34 @@ async def _prompt_issue_selection(
     edit_message: bool = False,
     issue_state: str = "open",
 ) -> None:
-    """Show a list of issues for the user to pick from."""
-    issues = _list_project_issues(project_key, state=issue_state)
-    state_label = "open" if issue_state == "open" else "closed"
-
-    if not issues:
-        # No issues in current state — still offer toggle + manual entry
-        keyboard = []
-        if issue_state == "open":
-            keyboard.append(
-                [
-                    InlineKeyboardButton(
-                        "📦 Closed issues",
-                        callback_data=f"pickissue_state:closed:{command}:{project_key}",
-                    )
-                ]
-            )
-        else:
-            keyboard.append(
-                [
-                    InlineKeyboardButton(
-                        "🔓 Open issues",
-                        callback_data=f"pickissue_state:open:{command}:{project_key}",
-                    )
-                ]
-            )
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    "✏️ Enter manually", callback_data=f"pickissue_manual:{command}:{project_key}"
-                )
-            ]
-        )
-        keyboard.append([InlineKeyboardButton("❌ Close", callback_data="flow:close")])
-
-        text = f"No {state_label} issues found for {_get_project_label(project_key)}."
-        if edit_message and update.callback_query:
-            await update.callback_query.edit_message_text(
-                text, reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        else:
-            await update.effective_message.reply_text(
-                text, reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        return
-
-    keyboard = []
-    for issue in issues:
-        num = issue["number"]
-        title = issue["title"]
-        label = f"#{num} — {title}"
-        if len(label) > 60:
-            label = label[:57] + "..."
-        keyboard.append(
-            [InlineKeyboardButton(label, callback_data=f"pickissue:{command}:{project_key}:{num}")]
-        )
-
-    # Toggle button: show closed when viewing open, and vice versa
-    if issue_state == "open":
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    "📦 Closed issues",
-                    callback_data=f"pickissue_state:closed:{command}:{project_key}",
-                )
-            ]
-        )
-    else:
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    "🔓 Open issues",
-                    callback_data=f"pickissue_state:open:{command}:{project_key}",
-                )
-            ]
-        )
-
-    keyboard.append(
-        [
-            InlineKeyboardButton(
-                "✏️ Enter manually", callback_data=f"pickissue_manual:{command}:{project_key}"
-            )
-        ]
+    await _svc_prompt_issue_selection(
+        update=update,
+        command=command,
+        project_key=project_key,
+        list_project_issues=_list_project_issues,
+        get_project_label=_get_project_label,
+        inline_keyboard_button_cls=InlineKeyboardButton,
+        inline_keyboard_markup_cls=InlineKeyboardMarkup,
+        edit_message=edit_message,
+        issue_state=issue_state,
     )
-    keyboard.append([InlineKeyboardButton("❌ Close", callback_data="flow:close")])
-
-    emoji = "📋" if issue_state == "open" else "📦"
-    text = f"{emoji} {state_label.capitalize()} issues for /{command} ({_get_project_label(project_key)}):"
-    if edit_message and update.callback_query:
-        await update.callback_query.edit_message_text(
-            text, reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    else:
-        await update.effective_message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def _prompt_project_selection(
     update: Update, context: ContextTypes.DEFAULT_TYPE, command: str
 ) -> None:
-    single_project = _get_single_project_key()
-    if single_project:
-        context.user_data["pending_command"] = command
-        context.user_data["pending_project"] = single_project
-        if command == "agents":
-            await _dispatch_command(update, context, command, single_project, "")
-            return
-        await _prompt_issue_selection(update, context, command, single_project)
-        return
-
-    keyboard = [
-        [InlineKeyboardButton(_get_project_label(key), callback_data=f"pickcmd:{command}:{key}")]
-        for key in _iter_project_keys()
-    ]
-    keyboard.append([InlineKeyboardButton("❌ Close", callback_data="flow:close")])
-    await update.effective_message.reply_text(
-        f"Select a project for /{command}:", reply_markup=InlineKeyboardMarkup(keyboard)
+    await _svc_prompt_project_selection(
+        update=update,
+        context=context,
+        command=command,
+        get_single_project_key=_get_single_project_key,
+        dispatch_command=lambda u, c, cmd, proj, issue: _dispatch_command(u, c, cmd, proj, issue),
+        prompt_issue_selection=lambda u, c, cmd, proj: _prompt_issue_selection(u, c, cmd, proj),
+        iter_project_keys=_iter_project_keys,
+        get_project_label=_get_project_label,
+        inline_keyboard_button_cls=InlineKeyboardButton,
+        inline_keyboard_markup_cls=InlineKeyboardMarkup,
     )
-    context.user_data["pending_command"] = command
 
 
 def _parse_project_issue_args(args: list[str]) -> tuple[str | None, str | None, list[str]]:
@@ -1321,101 +1256,15 @@ def _command_handler_map():
 
 
 def _buttons_to_reply_markup(buttons):
-    if not buttons:
-        return None
-
-    keyboard: list[list[InlineKeyboardButton]] = []
-    for row in buttons:
-        keyboard_row: list[InlineKeyboardButton] = []
-        for btn in row:
-            label = getattr(btn, "label", "")
-            callback_data = getattr(btn, "callback_data", None)
-            url = getattr(btn, "url", None)
-            if url:
-                keyboard_row.append(InlineKeyboardButton(label, url=url))
-            else:
-                keyboard_row.append(InlineKeyboardButton(label, callback_data=callback_data or ""))
-        if keyboard_row:
-            keyboard.append(keyboard_row)
-    return InlineKeyboardMarkup(keyboard) if keyboard else None
+    return _bridge_buttons_to_reply_markup(buttons, InlineKeyboardButton, InlineKeyboardMarkup)
 
 
 def _build_telegram_interactive_ctx(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query_obj = update.callback_query
-    effective_message = update.effective_message
-
-    class _TelegramInteractiveCtx:
-        def __init__(self):
-            self.user_id = str(getattr(getattr(update, "effective_user", None), "id", ""))
-            self.chat_id = int(getattr(getattr(update, "effective_chat", None), "id", 0) or 0)
-            self.text = str(getattr(effective_message, "text", "") or "")
-            self.args = list(getattr(context, "args", []) or [])
-            self.raw_event = update
-            self.telegram_context = context
-            self.user_state = getattr(context, "user_data", {})
-            self.client = SimpleNamespace(name="telegram")
-            self.query = (
-                SimpleNamespace(
-                    data=str(getattr(query_obj, "data", "") or ""),
-                    action_data=str(getattr(query_obj, "data", "") or ""),
-                    message_id=str(getattr(getattr(query_obj, "message", None), "message_id", "")),
-                )
-                if query_obj is not None
-                else None
-            )
-
-        async def reply_text(
-            self,
-            text: str,
-            buttons=None,
-            parse_mode: str | None = "Markdown",
-            disable_web_page_preview: bool = True,
-        ) -> str:
-            reply_markup = _buttons_to_reply_markup(buttons)
-            msg = await effective_message.reply_text(
-                text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode,
-                disable_web_page_preview=disable_web_page_preview,
-            )
-            return str(getattr(msg, "message_id", ""))
-
-        async def edit_message_text(
-            self,
-            text: str,
-            message_id: str | None = None,
-            buttons=None,
-            parse_mode: str | None = "Markdown",
-            disable_web_page_preview: bool = True,
-        ) -> None:
-            reply_markup = _buttons_to_reply_markup(buttons)
-            if query_obj is not None and hasattr(query_obj, "edit_message_text"):
-                await query_obj.edit_message_text(
-                    text=text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode,
-                    disable_web_page_preview=disable_web_page_preview,
-                )
-                return
-
-            target_message_id = message_id
-            if target_message_id is None and effective_message is not None:
-                target_message_id = str(getattr(effective_message, "message_id", ""))
-
-            await context.bot.edit_message_text(
-                chat_id=getattr(getattr(update, "effective_chat", None), "id", None),
-                message_id=target_message_id,
-                text=text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode,
-                disable_web_page_preview=disable_web_page_preview,
-            )
-
-        async def answer_callback_query(self, text: str | None = None) -> None:
-            if query_obj is not None and hasattr(query_obj, "answer"):
-                await query_obj.answer(text=text)
-
-    return _TelegramInteractiveCtx()
+    return _bridge_build_telegram_interactive_ctx(
+        update,
+        context,
+        buttons_to_reply_markup_fn=_buttons_to_reply_markup,
+    )
 
 
 def _ctx_telegram_runtime(ctx) -> tuple[Update, ContextTypes.DEFAULT_TYPE]:
@@ -1494,13 +1343,24 @@ async def _ctx_dispatch_command(
 async def _call_core_callback_handler(
     update: Update, context: ContextTypes.DEFAULT_TYPE, handler
 ) -> None:
-    await handler(_build_telegram_interactive_ctx(update, context), _callback_handler_deps())
+    await _router_call_core_callback_handler(
+        update,
+        context,
+        handler,
+        build_ctx=_build_telegram_interactive_ctx,
+        deps_factory=_callback_handler_deps,
+    )
 
 
 async def _call_core_chat_handler(
     update: Update, context: ContextTypes.DEFAULT_TYPE, handler
 ) -> None:
-    await handler(_build_telegram_interactive_ctx(update, context))
+    await _router_call_core_chat_handler(
+        update,
+        context,
+        handler,
+        build_ctx=_build_telegram_interactive_ctx,
+    )
 
 
 async def _dispatch_command(
@@ -1511,16 +1371,19 @@ async def _dispatch_command(
     issue_num: str,
     rest: list[str] | None = None,
 ) -> None:
-    project_only_commands = {"agents"}
-    if command in project_only_commands:
-        context.args = [project_key] + (rest or [])
-    else:
-        context.args = [project_key, issue_num] + (rest or [])
-    handler = _command_handler_map().get(command)
-    if handler:
-        await handler(update, context)
-    else:
-        await update.effective_message.reply_text("Unsupported command.")
+    async def _reply_unsupported(_update):
+        await _update.effective_message.reply_text("Unsupported command.")
+
+    await _router_dispatch_command(
+        update=update,
+        context=context,
+        command=command,
+        project_key=project_key,
+        issue_num=issue_num,
+        rest=rest,
+        command_handler_map=_command_handler_map,
+        reply_unsupported=_reply_unsupported,
+    )
 
 
 async def project_picker_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1836,56 +1699,16 @@ async def feature_callback_handler(update: Update, context: ContextTypes.DEFAULT
 
 
 async def task_confirmation_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if not query:
-        return
-    await query.answer()
-
-    if TELEGRAM_ALLOWED_USER_IDS and update.effective_user.id not in TELEGRAM_ALLOWED_USER_IDS:
-        logger.warning(f"Unauthorized callback access attempt by ID: {update.effective_user.id}")
-        return
-
-    data = query.data or ""
-    pending = context.user_data.get("pending_task_confirmation")
-    if not pending:
-        await query.edit_message_text("⚠️ Task confirmation expired. Send the request again.")
-        return
-
-    if data == "taskconfirm:cancel":
-        context.user_data.pop("pending_task_confirmation", None)
-        context.user_data.pop("pending_task_edit", None)
-        await query.edit_message_text("❎ Task creation canceled.")
-        return
-
-    if data == "taskconfirm:edit":
-        context.user_data["pending_task_edit"] = True
-        await query.edit_message_text(
-            "✏️ Send the updated task text now.\n\n"
-            "I will show the confirmation preview again before creating anything.\n"
-            "Type `cancel` to abort."
-        )
-        return
-
-    if data != "taskconfirm:confirm":
-        await query.edit_message_text("⚠️ Unknown confirmation action.")
-        return
-
-    text = str(pending.get("text") or "").strip()
-    message_id = str(pending.get("message_id") or query.message.message_id)
-    context.user_data.pop("pending_task_confirmation", None)
-
-    result = await route_task_with_context(
-        user_id=update.effective_user.id,
-        text=text,
+    await handle_task_confirmation_callback(
+        update=update,
+        context=context,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        logger=logger,
+        route_task_with_context=route_task_with_context,
         orchestrator=orchestrator,
-        message_id=message_id,
         get_chat=get_chat,
         process_inbox_task=process_inbox_task,
     )
-    if not result.get("success") and "pending_resolution" in result:
-        context.user_data["pending_task_project_resolution"] = result["pending_resolution"]
-
-    await query.edit_message_text(result.get("message", "⚠️ Task processing completed."))
 
 
 async def _transcribe_voice_message(
@@ -1898,171 +1721,26 @@ async def _transcribe_voice_message(
 
 # --- 1. HANDS-FREE MODE (Auto-Router) ---
 async def hands_free_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        logger.info(
-            "Hands-free task received: user=%s message_id=%s has_voice=%s has_text=%s",
-            update.effective_user.id,
-            update.message.message_id if update.message else None,
-            bool(update.message and update.message.voice),
-            bool(update.message and update.message.text),
-        )
-        if TELEGRAM_ALLOWED_USER_IDS and update.effective_user.id not in TELEGRAM_ALLOWED_USER_IDS:
-            logger.warning(f"Unauthorized access attempt by ID: {update.effective_user.id}")
-            return
-
-        if context.user_data.get("pending_chat_rename"):
-            if update.message.voice:
-                await update.message.reply_text(
-                    "⚠️ Please send the new chat name as text (or type `cancel`)."
-                )
-                return
-
-            candidate = (update.message.text or "").strip()
-            if not candidate:
-                await update.message.reply_text(
-                    "⚠️ Chat name cannot be empty. Send a name or type `cancel`."
-                )
-                return
-
-            if candidate.lower() in {"cancel", "/cancel"}:
-                context.user_data.pop("pending_chat_rename", None)
-                await update.message.reply_text("❎ Rename canceled.")
-                return
-
-            user_id = update.effective_user.id
-            active_chat_id = get_active_chat(user_id)
-            if not active_chat_id:
-                context.user_data.pop("pending_chat_rename", None)
-                await update.message.reply_text(
-                    "⚠️ No active chat found. Use /chat to create or select one."
-                )
-                return
-
-            renamed = rename_chat(user_id, active_chat_id, candidate)
-            context.user_data.pop("pending_chat_rename", None)
-            if not renamed:
-                await update.message.reply_text(
-                    "⚠️ Could not rename the active chat. Please try again."
-                )
-                return
-
-            await update.message.reply_text(
-                f"✅ Active chat renamed to: *{candidate}*",
-                parse_mode="Markdown",
-            )
-            await chat_menu_handler(update, context)
-            return
-
-        if (not update.message.voice) and await _handle_pending_issue_input(update, context):
-            return
-
-        if context.user_data.get("pending_task_edit"):
-            if not update.message.voice:
-                candidate = (update.message.text or "").strip().lower()
-                if candidate in {"cancel", "/cancel"}:
-                    context.user_data.pop("pending_task_edit", None)
-                    context.user_data.pop("pending_task_confirmation", None)
-                    await update.message.reply_text("❎ Task edit canceled.")
-                    return
-
-            revised_text = ""
-            if update.message.voice:
-                msg = await update.message.reply_text("🎧 Transcribing your edited task...")
-                revised_text = await _transcribe_voice_message(
-                    update.message.voice.file_id, context
-                )
-                await context.bot.delete_message(
-                    chat_id=update.effective_chat.id, message_id=msg.message_id
-                )
-            else:
-                revised_text = (update.message.text or "").strip()
-
-            if not revised_text:
-                await update.message.reply_text(
-                    "⚠️ I couldn't read the edited task text. Please try again."
-                )
-                return
-
-            context.user_data["pending_task_edit"] = False
-            context.user_data["pending_task_confirmation"] = {
-                "text": revised_text,
-                "message_id": str(update.message.message_id),
-            }
-            preview = revised_text if len(revised_text) <= 300 else f"{revised_text[:300]}..."
-            keyboard = InlineKeyboardMarkup(
-                [
-                    [InlineKeyboardButton("✅ Confirm", callback_data="taskconfirm:confirm")],
-                    [InlineKeyboardButton("✏️ Edit", callback_data="taskconfirm:edit")],
-                    [InlineKeyboardButton("❌ Cancel", callback_data="taskconfirm:cancel")],
-                ]
-            )
-            await update.message.reply_text(
-                "🛡️ *Confirm task creation*\n\n" "Updated request preview:\n\n" f"_{preview}_",
-                reply_markup=keyboard,
-                parse_mode="Markdown",
-            )
-            return
-
-        # Guard: Don't process commands as tasks
-        if update.message.text and update.message.text.startswith("/"):
-            logger.info(f"Ignoring command in hands_free_handler: {update.message.text}")
-            return
-
-        if await resolve_pending_project_selection(
-            _build_telegram_interactive_ctx(update, context),
-            _hands_free_routing_handler_deps(),
-        ):
-            return
-
-        text = ""
-        status_text = "⚡ AI Listening..." if update.message.voice else "🤖 Nexus thinking..."
-        status_msg = await update.message.reply_text(status_text)
-
-        # Get text from Audio or Text
-        if update.message.voice:
-            logger.info("Processing voice message...")
-            text = await _transcribe_voice_message(update.message.voice.file_id, context)
-            if not text:
-                logger.warning("Voice transcription returned empty text")
-                await context.bot.edit_message_text(
-                    chat_id=update.effective_chat.id,
-                    message_id=status_msg.message_id,
-                    text="⚠️ Transcription failed",
-                )
-                return
-        else:
-            logger.info(f"Processing text input... text={update.message.text[:50]}")
-            text = update.message.text
-
-        active_chat = get_chat(update.effective_user.id)
-        active_chat_metadata = active_chat.get("metadata") if isinstance(active_chat, dict) else {}
-        preferred_project_key = None
-        preferred_agent_type = None
-        if isinstance(active_chat_metadata, dict):
-            preferred_project_key = active_chat_metadata.get("project_key")
-            preferred_agent_type = active_chat_metadata.get("primary_agent_type")
-
-        if await handle_feature_ideation_request(
-            _build_telegram_interactive_ctx(update, context),
-            str(getattr(status_msg, "message_id", "")),
-            text,
-            _feature_ideation_handler_deps(),
-            preferred_project_key=preferred_project_key,
-            preferred_agent_type=preferred_agent_type,
-        ):
-            return
-
-        await route_hands_free_text(
-            update,
-            context,
-            status_msg,
-            text,
-            _hands_free_routing_handler_deps(),
-        )
-    except Exception as e:
-        logger.error(f"Unexpected error in hands_free_handler: {e}", exc_info=True)
-        with contextlib.suppress(Exception):
-            await update.message.reply_text(f"❌ Error: {str(e)[:100]}")
+    await handle_hands_free_message(
+        update=update,
+        context=context,
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        get_active_chat=get_active_chat,
+        rename_chat=rename_chat,
+        chat_menu_handler=chat_menu_handler,
+        handle_pending_issue_input=_handle_pending_issue_input,
+        transcribe_voice_message=_transcribe_voice_message,
+        inline_keyboard_button_cls=InlineKeyboardButton,
+        inline_keyboard_markup_cls=InlineKeyboardMarkup,
+        resolve_pending_project_selection=resolve_pending_project_selection,
+        build_ctx=_build_telegram_interactive_ctx,
+        hands_free_routing_deps_factory=_hands_free_routing_handler_deps,
+        get_chat=get_chat,
+        handle_feature_ideation_request=handle_feature_ideation_request,
+        feature_ideation_deps_factory=_feature_ideation_handler_deps,
+        route_hands_free_text=route_hands_free_text,
+    )
 
 
 # --- 2. SELECTION MODE (Menu) ---
@@ -2104,80 +1782,19 @@ async def type_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- 3. SAVING THE TASK (Uses Gemini only if Voice) ---
 async def save_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    project = context.user_data["project"]
-    task_type = context.user_data["type"]
-
-    logger.info(
-        "Selection task received: user=%s message_id=%s project=%s type=%s has_voice=%s",
-        update.effective_user.id,
-        update.message.message_id if update.message else None,
-        project,
-        task_type,
-        bool(update.message and update.message.voice),
+    return await handle_save_task_selection(
+        update=update,
+        context=context,
+        logger=logger,
+        orchestrator=orchestrator,
+        projects=PROJECTS,
+        types_map=TYPES,
+        project_config=PROJECT_CONFIG,
+        base_dir=BASE_DIR,
+        get_inbox_dir=get_inbox_dir,
+        transcribe_voice_message=_transcribe_voice_message,
+        conversation_end=ConversationHandler.END,
     )
-
-    text = ""
-    if update.message.voice:
-        msg = await update.message.reply_text("🎧 Transcribing (CLI)...")
-        # Re-use the helper function to just get text
-        text = await _transcribe_voice_message(update.message.voice.file_id, context)
-        await context.bot.delete_message(
-            chat_id=update.effective_chat.id, message_id=msg.message_id
-        )
-    else:
-        text = update.message.text
-
-    if not text:
-        await update.message.reply_text("⚠️ Transcription failed. Please try again.")
-        return ConversationHandler.END
-
-    # Refine description using orchestrator (Gemini CLI preferred)
-    refined_text = text
-    try:
-        logger.info("Refining description with orchestrator (len=%s)", len(text))
-        refine_result = orchestrator.run_text_to_speech_analysis(
-            text=text, task="refine_description", project_name=PROJECTS.get(project)
-        )
-        candidate = refine_result.get("text", "").strip()
-        if candidate:
-            refined_text = candidate
-    except Exception as e:
-        logger.warning(f"Failed to refine description: {e}")
-
-    # Generate task name using orchestrator (CLI only)
-    task_name = ""
-    try:
-        logger.info("Generating task name with orchestrator (len=%s)", len(refined_text))
-        name_result = orchestrator.run_text_to_speech_analysis(
-            text=refined_text[:300], task="generate_name", project_name=PROJECTS.get(project)
-        )
-        task_name = name_result.get("text", "").strip().strip("\"`'")
-    except Exception as e:
-        logger.warning(f"Failed to generate task name: {e}")
-        task_name = ""
-
-    # Write File
-    # Map project name to workspace (e.g., "nexus" → "ghabs")
-    workspace = project
-    if project in PROJECT_CONFIG:
-        workspace = PROJECT_CONFIG[project].get("workspace", project)
-
-    target_dir = get_inbox_dir(os.path.join(BASE_DIR, workspace), project)
-    os.makedirs(target_dir, exist_ok=True)
-    filename = f"{task_type}_{update.message.message_id}.md"
-
-    with open(os.path.join(target_dir, filename), "w") as f:
-        task_name_line = f"**Task Name:** {task_name}\n" if task_name else ""
-        f.write(
-            f"# {TYPES[task_type]}\n**Project:** {PROJECTS[project]}\n**Type:** {task_type}\n"
-            f"{task_name_line}**Status:** Pending\n\n"
-            f"{refined_text}\n\n"
-            f"---\n"
-            f"**Raw Input:**\n{text}"
-        )
-
-    await update.message.reply_text(f"✅ Saved to `{project}`.")
-    return ConversationHandler.END
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):

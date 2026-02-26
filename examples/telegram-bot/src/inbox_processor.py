@@ -95,6 +95,18 @@ from services.merge_queue_service import (
 from services.processor_loops_service import (
     run_processor_loop as _run_processor_loop,
 )
+from services.processor_runtime_state import (
+    ProcessorRuntimeState,
+)
+from services.comment_monitor_service import (
+    run_comment_monitor_cycle as _run_comment_monitor_cycle,
+)
+from services.completion_monitor_service import (
+    run_completion_monitor_cycle as _run_completion_monitor_cycle,
+)
+from services.startup_recovery_service import (
+    reconcile_completion_signals_on_startup as _startup_reconcile_completion_signals,
+)
 from services.task_archive_service import (
     archive_closed_task_files as _archive_closed_task_files,
 )
@@ -150,18 +162,19 @@ def get_issue_repo(project: str = "nexus") -> str:
 # Initialize orchestrator (CLI-only)
 orchestrator = get_orchestrator(ORCHESTRATOR_CONFIG)
 
-# Track alerted agents to avoid spam
-alerted_agents = set()
-notified_comments = set()  # Track comment IDs we've already notified about
-auto_chained_agents = {}  # Track issue -> log_file to avoid re-chaining same completion
+# Track mutable runtime state explicitly (aliases kept for behavior-preserving migration)
+PROCESSOR_RUNTIME_STATE = ProcessorRuntimeState()
+alerted_agents = PROCESSOR_RUNTIME_STATE.alerted_agents
+notified_comments = PROCESSOR_RUNTIME_STATE.notified_comments  # Track comment IDs we've already notified about
+auto_chained_agents = PROCESSOR_RUNTIME_STATE.auto_chained_agents  # issue -> log_file
 INBOX_PROCESSOR_STARTED_AT = time.time()
 POLLING_FAILURE_THRESHOLD = 3
-polling_failure_counts: dict[str, int] = {}
+polling_failure_counts = PROCESSOR_RUNTIME_STATE.polling_failure_counts
 _ORPHAN_RECOVERY_COOLDOWN_SECONDS = max(
     60,
     int(os.getenv("NEXUS_ORPHAN_RECOVERY_COOLDOWN_SECONDS", "180")),
 )
-_orphan_recovery_last_attempt: dict[str, float] = {}
+_orphan_recovery_last_attempt = PROCESSOR_RUNTIME_STATE.orphan_recovery_last_attempt
 from integrations.workflow_state_factory import get_workflow_state as _get_wf_state
 from integrations.workflow_state_factory import get_storage_backend as _get_storage_backend
 
@@ -240,6 +253,7 @@ failed_task_lookups = load_failed_lookups()
 completion_comments = load_completion_comments()
 
 # Logging — force=True overrides the root handler set by config.py at import time
+os.makedirs(os.path.dirname(INBOX_PROCESSOR_LOG_FILE), exist_ok=True)
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -507,147 +521,18 @@ def reconcile_completion_signals_on_startup() -> None:
     Safe startup check only: emits alerts when signals diverge, does not mutate
     workflow state or completion files.
     """
-    mappings = _get_wf_state().load_all_mappings()
-    if not mappings:
-        return
-
-    for issue_num, workflow_id in mappings.items():
-        wf_file = os.path.join(NEXUS_CORE_STORAGE_DIR, "workflows", f"{workflow_id}.json")
-        try:
-            with open(wf_file, encoding="utf-8") as handle:
-                payload = json.load(handle)
-        except Exception:
-            continue
-
-        state = str(payload.get("state", "")).strip().lower()
-        if state not in {"running", "paused"}:
-            continue
-
-        expected_running_agent = ""
-        for step in payload.get("steps", []):
-            if not isinstance(step, dict):
-                continue
-            if str(step.get("status", "")).strip().lower() != "running":
-                continue
-            agent = step.get("agent")
-            if not isinstance(agent, dict):
-                continue
-            expected_running_agent = _normalize_agent_reference(
-                str(agent.get("name") or agent.get("display_name") or "")
-            ).lower()
-            if expected_running_agent:
-                break
-
-        if not expected_running_agent:
-            continue
-
-        metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
-        issue_url = str(metadata.get("issue_url", "") or "")
-        repo = _extract_repo_from_issue_url(issue_url)
-        project_name = str(metadata.get("project_name", "") or "")
-
-        local_signal = _read_latest_local_completion(str(issue_num))
-        comment_signal = (
-            _read_latest_structured_comment(str(issue_num), repo, project_name) if repo else None
-        )
-
-        drifts = []
-        local_next = (local_signal or {}).get("next_agent", "")
-        comment_next = (comment_signal or {}).get("next_agent", "")
-
-        # Safe auto-reconcile path:
-        # if latest structured comment is from the currently RUNNING agent and
-        # points to a non-terminal next step, trust it and advance workflow.
-        comment_completed = (comment_signal or {}).get("completed_agent", "")
-        if (
-            comment_signal
-            and comment_completed
-            and comment_completed == expected_running_agent
-            and comment_next
-            and not _is_terminal_agent_reference(comment_next)
-        ):
-            try:
-                outputs = {
-                    "status": "complete",
-                    "agent_type": comment_completed,
-                    "next_agent": comment_next,
-                    "summary": (
-                        f"Auto-reconciled on startup from comment "
-                        f"{comment_signal.get('comment_id', 'n/a')}"
-                    ),
-                    "source": "startup-auto-reconcile",
-                }
-                asyncio.run(
-                    complete_step_for_issue(
-                        str(issue_num),
-                        comment_completed,
-                        outputs,
-                        event_id=f"startup:{comment_signal.get('comment_id', 'n/a')}",
-                    )
-                )
-                if local_signal and local_signal.get("file"):
-                    try:
-                        with open(local_signal["file"], "w", encoding="utf-8") as handle:
-                            json.dump(
-                                {
-                                    "status": "complete",
-                                    "agent_type": comment_completed,
-                                    "summary": outputs["summary"],
-                                    "key_findings": [
-                                        "Startup auto-reconciled from structured comment"
-                                    ],
-                                    "next_agent": comment_next,
-                                },
-                                handle,
-                                indent=2,
-                            )
-                    except Exception as file_exc:
-                        logger.debug(
-                            "Startup auto-reconcile could not rewrite local completion for issue #%s: %s",
-                            issue_num,
-                            file_exc,
-                        )
-                logger.info(
-                    "Startup auto-reconciled issue #%s: %s -> %s",
-                    issue_num,
-                    comment_completed,
-                    comment_next,
-                )
-                continue
-            except Exception as exc:
-                logger.debug(
-                    "Startup auto-reconcile skipped for issue #%s due to error: %s",
-                    issue_num,
-                    exc,
-                )
-
-        if local_next and local_next != expected_running_agent:
-            drifts.append(f"local next={local_next}")
-        if comment_next and comment_next != expected_running_agent:
-            drifts.append(f"comment next={comment_next}")
-        if local_next and comment_next and local_next != comment_next:
-            drifts.append("local/comment disagree")
-
-        if not drifts:
-            continue
-
-        details = (
-            f"expected RUNNING={expected_running_agent}; "
-            f"local={local_next or 'n/a'}; "
-            f"comment={comment_next or 'n/a'}"
-        )
-        logger.warning(
-            f"Startup signal drift for issue #{issue_num} ({', '.join(drifts)}): {details}"
-        )
-        emit_alert(
-            f"⚠️ Startup routing drift detected for issue #{issue_num}\n"
-            f"Workflow RUNNING: `{expected_running_agent}`\n"
-            f"Local completion next: `{local_next or 'n/a'}`\n"
-            f"Latest structured comment next: `{comment_next or 'n/a'}`\n\n"
-            "No automatic state changes were made. Reconcile manually before /continue.",
-            severity="warning",
-            source="inbox_processor",
-        )
+    _startup_reconcile_completion_signals(
+        logger=logger,
+        emit_alert=emit_alert,
+        get_workflow_state_mappings=lambda: _get_wf_state().load_all_mappings(),
+        nexus_core_storage_dir=NEXUS_CORE_STORAGE_DIR,
+        normalize_agent_reference=_normalize_agent_reference,
+        extract_repo_from_issue_url=_extract_repo_from_issue_url,
+        read_latest_local_completion=_read_latest_local_completion,
+        read_latest_structured_comment=_read_latest_structured_comment,
+        is_terminal_agent_reference=_is_terminal_agent_reference,
+        complete_step_for_issue=complete_step_for_issue,
+    )
 
 
 def _is_terminal_agent_reference(agent_ref: str) -> bool:
@@ -1352,129 +1237,51 @@ def _recover_unmapped_issues_from_completions(max_relaunches: int = 20) -> int:
 
 def check_agent_comments():
     """Monitor Git issues for agent comments requesting input across all projects."""
-    loop_scope = "agent-comments:loop"
-    try:
-        # Query issues from all project repos
-        all_issue_nums = []
-        for project_name, _ in _iter_project_configs(PROJECT_CONFIG, get_repos):
-            project_platform = (get_project_platform(project_name) or "github").lower().strip()
-            if project_platform != "github":
-                logger.debug(
-                    f"Skipping Git issue polling for non-GitHub project "
-                    f"{project_name} (platform={project_platform})"
+    workflow_labels = {"workflow:full", "workflow:shortened", "workflow:fast-track"}
+
+    def _list_workflow_issue_numbers(project_name: str, repo: str) -> list[int]:
+        monitor_policy = get_workflow_monitor_policy_plugin(
+            list_open_issues=lambda **kwargs: asyncio.run(
+                get_git_platform(kwargs["repo"], project_name=project_name).list_open_issues(
+                    limit=kwargs["limit"],
+                    labels=sorted(kwargs["workflow_labels"]),
                 )
-                continue
+            ),
+            cache_key=None,
+        )
+        return monitor_policy.list_workflow_issue_numbers(
+            repo=repo,
+            workflow_labels=workflow_labels,
+            limit=100,
+        )
 
-            repo = get_repo(project_name)
-            list_scope = f"agent-comments:list-issues:{project_name}"
-            try:
-                monitor_policy = get_workflow_monitor_policy_plugin(
-                    list_open_issues=lambda **kwargs: asyncio.run(
-                        get_git_platform(
-                            kwargs["repo"], project_name=project_name
-                        ).list_open_issues(
-                            limit=kwargs["limit"],
-                            labels=sorted(kwargs["workflow_labels"]),
-                        )
-                    ),
-                    cache_key=None,
+    def _get_bot_comments(project_name: str, repo: str, issue_number: str):
+        monitor_policy = get_workflow_monitor_policy_plugin(
+            get_comments=lambda **kwargs: asyncio.run(
+                get_git_platform(kwargs["repo"], project_name=project_name).get_comments(
+                    str(kwargs["issue_number"])
                 )
-                workflow_labels = {
-                    "workflow:full",
-                    "workflow:shortened",
-                    "workflow:fast-track",
-                }
-                issue_numbers = monitor_policy.list_workflow_issue_numbers(
-                    repo=repo,
-                    workflow_labels=workflow_labels,
-                    limit=100,
-                )
-                for issue_number in issue_numbers:
-                    all_issue_nums.append((issue_number, project_name, repo))
-                _clear_polling_failures(list_scope)
-            except Exception as e:
-                logger.warning(f"Issue list failed for project {project_name}: {e}")
-                _record_polling_failure(list_scope, e)
-                continue
+            ),
+            cache_key=None,
+        )
+        return monitor_policy.get_bot_comments(
+            repo=repo,
+            issue_number=str(issue_number),
+            bot_author="Ghabs95",
+        )
 
-        if not all_issue_nums:
-            return
-
-        for issue_num, project_name, repo in all_issue_nums:
-            if not issue_num:
-                continue
-
-            # Get issue comments via framework
-            comments_scope = f"agent-comments:get-comments:{project_name}"
-            try:
-                monitor_policy = get_workflow_monitor_policy_plugin(
-                    get_comments=lambda **kwargs: asyncio.run(
-                        get_git_platform(kwargs["repo"], project_name=project_name).get_comments(
-                            str(kwargs["issue_number"])
-                        )
-                    ),
-                    cache_key=None,
-                )
-                bot_comments = monitor_policy.get_bot_comments(
-                    repo=repo,
-                    issue_number=str(issue_num),
-                    bot_author="Ghabs95",
-                )
-                _clear_polling_failures(comments_scope)
-            except Exception as e:
-                logger.warning(f"Failed to fetch comments for issue #{issue_num}: {e}")
-                _record_polling_failure(comments_scope, e)
-                continue
-
-            if not bot_comments:
-                continue
-
-            for comment in bot_comments:
-                try:
-                    comment_id = comment.id
-                    body = comment.body or ""
-
-                    # Skip if we've already notified about this comment
-                    if comment_id in notified_comments:
-                        continue
-
-                    # Check if comment contains questions or blockers
-                    needs_input = any(
-                        pattern in body.lower()
-                        for pattern in [
-                            "questions for @ghabs",
-                            "questions for `@ghabs",  # Escaped mention
-                            "waiting for @ghabs",
-                            "waiting for `@ghabs",  # Escaped mention
-                            "need your input",
-                            "please provide",
-                            "owner:** @ghabs",
-                            "owner:** `@ghabs",  # Escaped mention
-                            "blocker:",
-                            "your input to proceed",
-                        ]
-                    )
-
-                    if needs_input:
-                        # Extract preview (first 200 chars)
-                        preview = body[:200] + "..." if len(body) > 200 else body
-
-                        if notify_agent_needs_input(
-                            issue_num, "agent", preview, project=project_name
-                        ):
-                            logger.info(f"📨 Sent input request alert for issue #{issue_num}")
-                            notified_comments.add(comment_id)
-                        else:
-                            logger.warning(f"Failed to send input alert for issue #{issue_num}")
-
-                except Exception as e:
-                    logger.error(f"Error processing comment for issue #{issue_num}: {e}")
-
-        _clear_polling_failures(loop_scope)
-
-    except Exception as e:
-        logger.error(f"Error in check_agent_comments: {e}")
-        _record_polling_failure(loop_scope, e)
+    _run_comment_monitor_cycle(
+        logger=logger,
+        iter_projects=lambda: _iter_project_configs(PROJECT_CONFIG, get_repos),
+        get_project_platform=get_project_platform,
+        get_repo=get_repo,
+        list_workflow_issue_numbers=_list_workflow_issue_numbers,
+        get_bot_comments=_get_bot_comments,
+        notify_agent_needs_input=notify_agent_needs_input,
+        notified_comments=PROCESSOR_RUNTIME_STATE.notified_comments,
+        clear_polling_failures=_clear_polling_failures,
+        record_polling_failure=_record_polling_failure,
+    )
 
 
 def check_and_notify_pr(issue_num, project):
@@ -1522,7 +1329,9 @@ def check_completed_agents():
     Delegates to _post_completion_comments_from_logs()
     which uses the nexus-core framework for completion scanning and auto-chaining.
     """
-    _post_completion_comments_from_logs()
+    _run_completion_monitor_cycle(
+        post_completion_comments_from_logs=_post_completion_comments_from_logs,
+    )
 
 
 def _render_checklist_from_workflow(project_name: str, tier_name: str) -> str:
@@ -1811,6 +1620,7 @@ def main():
         check_agent_comments=check_agent_comments,
         check_completed_agents=check_completed_agents,
         merge_queue_auto_merge_once=_merge_queue_auto_merge_once,
+        runtime_state=PROCESSOR_RUNTIME_STATE,
         time_module=time,
     )
 
