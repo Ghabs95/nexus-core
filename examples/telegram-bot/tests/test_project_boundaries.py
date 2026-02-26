@@ -146,6 +146,57 @@ def test_agent_launcher_resolves_issue_body_from_matching_project_repo(monkeypat
     assert task_file.endswith("issue_43.md")
 
 
+def test_launch_next_agent_uses_issue_body_for_shared_active_task_file(monkeypatch):
+    import runtime.agent_launcher as agent_launcher
+
+    issue_body = (
+        "## Task\n"
+        "Implementation outline:\n"
+        "1. Feature for issue 86\n"
+        "**Task File:** `/tmp/base/.nexus/tasks/nexus/active/task_feature-pick.md`\n"
+    )
+
+    monkeypatch.setattr(
+        agent_launcher,
+        "_load_issue_body_from_project_repo",
+        lambda issue_number: (issue_body, "org/repo-b", "/tmp/base/.nexus/tasks/nexus/active/task_feature-pick.md"),
+    )
+    monkeypatch.setattr(
+        agent_launcher,
+        "PROJECT_CONFIG",
+        {
+            "nexus": {
+                "workspace": ".nexus",
+                "agents_dir": "agents",
+                "git_repo": "org/repo-b",
+            }
+        },
+    )
+    monkeypatch.setattr(agent_launcher, "BASE_DIR", "/tmp/base")
+    monkeypatch.setattr(agent_launcher, "_project_repos", lambda *args, **kwargs: ["org/repo-b"])
+    monkeypatch.setattr(agent_launcher, "get_repos", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(agent_launcher, "get_repo", lambda _project_root: "org/repo-b")
+    monkeypatch.setattr(agent_launcher.HostStateManager, "get_last_tier_for_issue", lambda _issue: "full")
+    monkeypatch.setattr(agent_launcher, "get_sop_tier_from_issue", lambda *args, **kwargs: "full")
+    monkeypatch.setattr(agent_launcher, "is_recent_launch", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(agent_launcher, "notify_agent_completed", lambda **_kwargs: None)
+
+    captured: dict[str, str] = {}
+
+    def _fake_invoke(**kwargs):
+        captured["task_content"] = kwargs.get("task_content", "")
+        return 999, "copilot"
+
+    monkeypatch.setattr(agent_launcher, "invoke_copilot_agent", _fake_invoke)
+
+    pid, tool = agent_launcher.launch_next_agent("86", "developer", "orphan-recovery")
+
+    assert pid == 999
+    assert tool == "copilot"
+    assert "Feature for issue 86" in captured["task_content"]
+    assert "Task File:" in captured["task_content"]
+
+
 def test_resolve_project_for_repo_matches_secondary_repo(monkeypatch):
     import inbox_processor
 

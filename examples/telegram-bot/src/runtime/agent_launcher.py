@@ -734,7 +734,10 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
             f"Issue #{issue_number} task file mismatch between resolution and body parse: "
             f"{resolved_task_file} vs {task_file}"
         )
-    if not os.path.exists(task_file):
+    normalized_task_file = task_file.replace("\\", "/")
+    is_shared_active_task_file = "/active/" in normalized_task_file
+    task_file_exists = os.path.exists(task_file)
+    if not task_file_exists and not is_shared_active_task_file:
         logger.warning(f"Task file not found: {task_file}")
         return None, None
 
@@ -765,12 +768,26 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
         return None, None
 
     # Read task content
-    try:
-        with open(task_file) as f:
-            task_content = f.read()
-    except Exception as e:
-        logger.error(f"Failed to read task file {task_file}: {e}")
-        return None, None
+    # Use issue body as authoritative task snapshot when Task File points to the shared
+    # active path, which can be overwritten by later issues and cause cross-issue bleed.
+    task_content = body
+    if is_shared_active_task_file:
+        logger.info(
+            "Using issue body task snapshot for issue #%s (shared active task file: %s)",
+            issue_number,
+            task_file,
+        )
+    elif task_file_exists:
+        try:
+            with open(task_file) as f:
+                task_content = f.read()
+        except Exception as e:
+            logger.warning(
+                "Failed to read task file %s for issue #%s, falling back to issue body: %s",
+                task_file,
+                issue_number,
+                e,
+            )
     
     # Get workflow tier: launched_agents tracker → issue labels → halt if unknown
     from state_manager import HostStateManager
