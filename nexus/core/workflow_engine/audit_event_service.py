@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Awaitable, Callable
 
-from nexus.core.events import WorkflowCompleted
+from nexus.core.events import NexusEvent, WorkflowCompleted
 from nexus.core.models import Workflow, WorkflowState, WorkflowStep
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ async def finalize_terminal_success(
     outputs: dict,
     save_workflow: Callable[[Workflow], Awaitable[None]],
     audit: Callable[[str, str, dict], Awaitable[None]],
-    emit: Callable[[object], Awaitable[None]],
+    emit: Callable[[NexusEvent], Awaitable[None]],
     on_workflow_complete: Callable[[Workflow, dict], Awaitable[None]] | None,
 ) -> Workflow:
     """Finalize a workflow when a completed step is marked final_step."""
@@ -36,7 +36,9 @@ async def finalize_terminal_success(
         try:
             await on_workflow_complete(workflow, outputs)
         except Exception as exc:
-            logger.error("on_workflow_complete callback failed for workflow %s: %s", workflow_id, exc)
+            logger.error(
+                "on_workflow_complete callback failed for workflow %s: %s", workflow_id, exc
+            )
     return workflow
 
 
@@ -81,4 +83,6 @@ async def finalize_step_completion_tail(
         try:
             await on_workflow_complete(workflow, outputs)
         except Exception as exc:
-            logger.error("on_workflow_complete callback failed for workflow %s: %s", workflow_id, exc)
+            logger.error(
+                "on_workflow_complete callback failed for workflow %s: %s", workflow_id, exc
+            )

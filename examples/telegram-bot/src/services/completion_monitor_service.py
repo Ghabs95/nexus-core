@@ -1,7 +1,7 @@
 """Completion monitoring helpers extracted from inbox_processor."""
 
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 
 class _CompletionStoreLike(Protocol):
@@ -29,19 +29,20 @@ def post_completion_comments_from_logs(
     completion_comments: dict,
     save_completion_comments: Callable[[dict], None],
     get_completion_replay_window_seconds: Callable[[], int],
-    get_process_orchestrator: Callable[[], _ProcessOrchestratorLike],
+    get_process_orchestrator: Callable[[], Any],
     get_workflow_policy_plugin: Callable[..., _WorkflowPolicyLike],
-    get_completion_store: Callable[[], _CompletionStoreLike],
+    get_completion_store: Callable[[], Any],
     resolve_project,
     resolve_repo,
 ) -> None:
     """Detect agent completions and auto-chain to the next workflow step."""
-    orchestrator = get_process_orchestrator()
+    orchestrator = cast(_ProcessOrchestratorLike, get_process_orchestrator())
     workflow_policy = get_workflow_policy_plugin(cache_key="workflow-policy:inbox")
 
     dedup = set(completion_comments.keys())
     replay_window_seconds = get_completion_replay_window_seconds()
-    detected_completions = get_completion_store().scan()
+    completion_store = cast(_CompletionStoreLike, get_completion_store())
+    detected_completions = completion_store.scan()
     orchestrator.scan_and_process_completions(
         base_dir,
         dedup,

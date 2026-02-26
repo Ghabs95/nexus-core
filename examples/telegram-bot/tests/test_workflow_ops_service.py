@@ -77,7 +77,7 @@ async def test_reconcile_issue_from_signals_uses_local_completion_writer_when_en
             self.resumed = False
             self.paused = False
 
-        async def get_workflow_status(self, issue_num):  # noqa: ANN001
+        def get_workflow_status(self, issue_num):  # noqa: ANN001
             if not self.completed:
                 return {"state": "paused"}
             return {
@@ -87,16 +87,16 @@ async def test_reconcile_issue_from_signals_uses_local_completion_writer_when_en
                 "total_steps": 5,
             }
 
-        async def resume_workflow(self, issue_num):  # noqa: ANN001
+        def resume_workflow(self, issue_num):  # noqa: ANN001
             self.resumed = True
 
-        async def complete_step_for_issue(
+        def complete_step_for_issue(
             self, issue_number, completed_agent_type, outputs
         ):  # noqa: ANN001
             self.completed.append((issue_number, completed_agent_type, outputs))
             return {"ok": True}
 
-        async def pause_workflow(self, issue_num, reason):  # noqa: ANN001
+        def pause_workflow(self, issue_num, reason):  # noqa: ANN001
             self.paused = True
 
     wf_plugin = _WorkflowPlugin()
@@ -151,18 +151,18 @@ async def test_reconcile_issue_from_signals_uses_storage_completion_when_local_d
             return {"comments": [{"id": "c2"}], "title": "Issue"}
 
     class _WorkflowPlugin:
-        async def get_workflow_status(self, issue_num):  # noqa: ANN001
+        def get_workflow_status(self, issue_num):  # noqa: ANN001
             return {"state": "running", "current_agent": "qa", "current_step": 3, "total_steps": 7}
 
-        async def resume_workflow(self, issue_num):  # noqa: ANN001
+        def resume_workflow(self, issue_num):  # noqa: ANN001
             return None
 
-        async def complete_step_for_issue(
+        def complete_step_for_issue(
             self, issue_number, completed_agent_type, outputs
         ):  # noqa: ANN001
             return {"ok": True}
 
-        async def pause_workflow(self, issue_num, reason):  # noqa: ANN001
+        def pause_workflow(self, issue_num, reason):  # noqa: ANN001
             return None
 
     monkeypatch.setattr(
@@ -219,7 +219,7 @@ async def test_fetch_workflow_state_snapshot_uses_capabilities_for_mixed_mode(mo
         ),
     )
 
-    async def _noop_reconcile(**kwargs):  # noqa: ANN003
+    def _noop_reconcile(**kwargs):  # noqa: ANN003
         return {"ok": True}
 
     monkeypatch.setattr(svc, "reconcile_issue_from_signals", _noop_reconcile)
@@ -257,8 +257,11 @@ async def test_fetch_workflow_state_snapshot_uses_capabilities_for_mixed_mode(mo
     assert captured["local_task_files_enabled"] is False
     assert captured["local_workflow_files_enabled"] is True
     assert captured["expected_running_agent"] == "developer"
-    find_task_file = captured["find_task_file_by_issue"]
-    read_latest_completion = captured["read_latest_local_completion"]
+    find_task_file = cast(Callable[[str], Any], captured["find_task_file_by_issue"])
+    read_latest_completion = cast(
+        Callable[[str], dict[str, Any] | None],
+        captured["read_latest_local_completion"],
+    )
     assert callable(find_task_file)
     assert callable(read_latest_completion)
     assert find_task_file("83") is None
@@ -266,3 +269,7 @@ async def test_fetch_workflow_state_snapshot_uses_capabilities_for_mixed_mode(mo
         "agent_type": "triage",
         "next_agent": "developer",
     }
+
+
+from collections.abc import Callable
+from typing import Any, cast

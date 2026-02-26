@@ -48,6 +48,14 @@ from nexus.plugins.builtin.ai_runtime.provider_invokers.subprocess_utils import 
 from nexus.plugins.builtin.ai_runtime_plugin import AIProvider
 
 
+def _noop_rate_limit_with_retries(tool, exc: Exception, retries: int, context: str) -> None:
+    return None
+
+
+def _noop_rate_limit(tool, exc: Exception, context: str) -> None:
+    return None
+
+
 def test_fallback_order_from_preferences_dedupes_and_parses():
     prefs = {"triage": "gemini", "designer": "copilot", "writer": "gemini", "x": "invalid"}
     order = fallback_order_from_preferences(
@@ -230,7 +238,7 @@ def test_run_analysis_attempts_falls_back_and_defaults():
         kwargs={},
         invoke_provider=lambda tool, text, task, kwargs: (_ for _ in ()).throw(Exception("fail")),
         rate_limited_error_type=_RateLimit,
-        record_rate_limit_with_context=lambda tool, exc, retries, context: None,
+        record_rate_limit_with_context=_noop_rate_limit_with_retries,
         get_default_analysis_result=lambda task, **kwargs: {"default": True},
         logger=_Logger(),
     )
@@ -748,7 +756,7 @@ def test_run_transcription_attempts_fallback_and_rate_limit_recording():
         transcribe_with_gemini=lambda p: None,
         transcribe_with_copilot=lambda p: None,
         rate_limited_error_type=_RateLimited,
-        record_rate_limit_with_context=lambda tool, exc, context: None,
+        record_rate_limit_with_context=_noop_rate_limit,
         gemini_provider="gemini-provider",
         copilot_provider="copilot-provider",
         logger=_Logger(),
@@ -834,7 +842,7 @@ def test_invoke_agent_with_fallback_all_excluded_raises():
             get_tool_order=lambda: [_Tool("gemini")],
             check_tool_available=lambda t: True,
             invoke_tool=lambda tool, issue_num: 1,
-            record_rate_limit_with_context=lambda tool, exc, context: None,
+            record_rate_limit_with_context=_noop_rate_limit,
             record_failure=lambda tool: None,
             rate_limited_error_type=RuntimeError,
             tool_unavailable_error_type=_Unavailable,

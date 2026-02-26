@@ -295,8 +295,9 @@ class AIOrchestrator:
             available = False
             logger.warning("⚠️  %s unavailable: %s", tool.value.upper(), exc)
 
-        self._tool_available[tool.value] = available
-        self._tool_available[f"{tool.value}_cached_at"] = time.time()
+        tool_key = str(tool.value)
+        self._tool_available[tool_key] = available
+        self._tool_available[f"{tool_key}_cached_at"] = time.time()
         return available
 
     def get_primary_tool(

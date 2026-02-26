@@ -3,8 +3,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-
-from nexus.core.events import StepCompleted, StepFailed
+from nexus.core.events import NexusEvent, StepCompleted, StepFailed
 from nexus.core.models import StepStatus, Workflow, WorkflowStep
 
 logger = logging.getLogger(__name__)
@@ -74,7 +73,7 @@ async def apply_step_completion_result(
     default_backoff_base: float,
     save_workflow: Callable[[Workflow], Awaitable[None]],
     audit: Callable[[str, str, dict[str, Any]], Awaitable[None]],
-    emit: Callable[[object], Awaitable[None]],
+    emit: Callable[[NexusEvent], Awaitable[None]],
 ) -> StepCompletionApplyResult:
     """Apply step outputs/error, emit step event, and handle retry path when needed."""
     step.completed_at = datetime.now(UTC)

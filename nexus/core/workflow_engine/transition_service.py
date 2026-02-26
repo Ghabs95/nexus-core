@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Awaitable, Callable
 
-from nexus.core.events import StepStarted
+from nexus.core.events import NexusEvent, StepStarted
 from nexus.core.models import StepStatus, Workflow, WorkflowState, WorkflowStep
 
 
@@ -63,7 +63,7 @@ async def advance_after_success(
     reset_step_for_goto: Callable[[WorkflowStep], None],
     resolve_route: Callable[[Workflow, WorkflowStep, dict[str, Any]], WorkflowStep | None],
     evaluate_condition: Callable[[str | None, dict[str, Any]], bool],
-    emit: Callable[[object], Awaitable[None]],
+    emit: Callable[[NexusEvent], Awaitable[None]],
     audit: Callable[[str, str, dict], Awaitable[None]],
 ) -> SuccessTransitionOutcome:
     """Advance workflow state after a successful step completion."""
