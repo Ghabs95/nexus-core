@@ -645,11 +645,9 @@ def _get_completion_store():
         backend = NEXUS_STORAGE_BACKEND
         storage = None
         if backend == "postgres":
-            try:
-                from integrations.workflow_state_factory import get_storage_backend
-                storage = get_storage_backend()
-            except Exception:
-                logger.warning("Could not get postgres storage backend for completions")
+            from integrations.workflow_state_factory import get_storage_backend
+
+            storage = get_storage_backend()
 
         _get_completion_store._instance = CompletionStore(
             backend=backend,

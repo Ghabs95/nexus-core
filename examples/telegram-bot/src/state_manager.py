@@ -100,12 +100,14 @@ class HostStateManager:
         """Load JSON state — routes to postgres or filesystem based on config."""
         if NEXUS_STORAGE_BACKEND == "postgres":
             backend = _get_storage_backend()
-            if backend:
-                import asyncio
-                key = _host_state_key_from_path(path)
-                result = asyncio.run(backend.load_host_state(key))
-                return result if result is not None else default
-            logger.warning("Postgres backend unavailable, falling back to filesystem")
+            if not backend:
+                raise RuntimeError(
+                    "NEXUS_STORAGE_BACKEND=postgres but postgres host-state backend is unavailable"
+                )
+            import asyncio
+            key = _host_state_key_from_path(path)
+            result = asyncio.run(backend.load_host_state(key))
+            return result if result is not None else default
 
         if ensure_logs:
             ensure_logs_dir()
@@ -122,12 +124,14 @@ class HostStateManager:
         """Save JSON state — routes to postgres or filesystem based on config."""
         if NEXUS_STORAGE_BACKEND == "postgres":
             backend = _get_storage_backend()
-            if backend:
-                import asyncio
-                key = _host_state_key_from_path(path)
-                asyncio.run(backend.save_host_state(key, data))
-                return
-            logger.warning("Postgres backend unavailable, falling back to filesystem for %s", context)
+            if not backend:
+                raise RuntimeError(
+                    "NEXUS_STORAGE_BACKEND=postgres but postgres host-state backend is unavailable"
+                )
+            import asyncio
+            key = _host_state_key_from_path(path)
+            asyncio.run(backend.save_host_state(key, data))
+            return
 
         if ensure_logs:
             ensure_logs_dir()

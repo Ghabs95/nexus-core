@@ -35,7 +35,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 
-from nexus.core.completion import build_completion_comment, scan_for_completions
+from nexus.core.completion import (
+    DetectedCompletion,
+    build_completion_comment,
+    scan_for_completions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +302,7 @@ class ProcessOrchestrator:
         base_dir: str,
         dedup_seen: set[str],
         *,
+        detected_completions: list[DetectedCompletion] | None = None,
         resolve_project: Callable[[str], str | None] | None = None,
         resolve_repo: Callable[[str, str], str] | None = None,
         build_transition_message: Callable[..., str] | None = None,
@@ -326,9 +331,15 @@ class ProcessOrchestrator:
                 skipped and marked as deduped.
             stale_reference_ts: Optional reference unix timestamp for replay
                 cutoff calculations. Defaults to ``time.time()`` when omitted.
+            detected_completions: Optional pre-scanned completion list. When
+                provided, filesystem scanning is skipped.
         """
         replay_ref = stale_reference_ts if stale_reference_ts is not None else time.time()
-        detected = scan_for_completions(base_dir, nexus_dir=self._nexus_dir)
+        detected = (
+            detected_completions
+            if detected_completions is not None
+            else scan_for_completions(base_dir, nexus_dir=self._nexus_dir)
+        )
         for detection in detected:
             issue_num = detection.issue_number
             summary = detection.summary
@@ -342,14 +353,29 @@ class ProcessOrchestrator:
                         mtime = os.path.getmtime(detection.file_path)
                         age_seconds = max(0.0, replay_ref - mtime)
                         if age_seconds > stale_completion_seconds:
-                            logger.info(
-                                "Skipping stale completion replay for issue #%s (%s), age=%ss",
-                                issue_num,
-                                detection.file_path,
-                                int(age_seconds),
+                            expected_agent = self._runtime.get_expected_running_agent(
+                                detection.issue_number
                             )
-                            dedup_seen.add(comment_key)
-                            continue
+                            completion_agent = str(detection.summary.agent_type or "").strip().lower()
+                            if (
+                                isinstance(expected_agent, str)
+                                and expected_agent.strip().lower().lstrip("@")
+                                == completion_agent.lstrip("@")
+                            ):
+                                logger.info(
+                                    "Allowing stale completion for issue #%s because workflow still expects %s",
+                                    issue_num,
+                                    completion_agent,
+                                )
+                            else:
+                                logger.info(
+                                    "Skipping stale completion replay for issue #%s (%s), age=%ss",
+                                    issue_num,
+                                    detection.file_path,
+                                    int(age_seconds),
+                                )
+                                dedup_seen.add(comment_key)
+                                continue
                     except OSError:
                         logger.debug(
                             "Unable to read completion mtime for replay guard: %s",
@@ -381,7 +407,12 @@ class ProcessOrchestrator:
 
                 # Ask the workflow engine what happens next.
                 engine_workflow = asyncio.run(
-                    self._complete_step_fn(issue_num, completed_agent, summary.to_dict(), comment_key)
+                    self._complete_step_fn(
+                        issue_num,
+                        completed_agent,
+                        summary.to_dict(),
+                        event_id=comment_key,
+                    )
                 )
 
                 next_agent: str | None = None
@@ -547,7 +578,7 @@ class ProcessOrchestrator:
 
         for log_file in log_files:
             match = re.search(
-                r"(?:copilot|gemini)_(\d+)_\d{8}_", os.path.basename(log_file)
+                r"(?:copilot|gemini|codex)_(\d+)_\d{8}_", os.path.basename(log_file)
             )
             if not match:
                 continue
@@ -558,7 +589,7 @@ class ProcessOrchestrator:
                 [
                     f for f in log_files
                     if re.search(
-                        rf"(?:copilot|gemini)_{issue_num}_\d{{8}}_",
+                        rf"(?:copilot|gemini|codex)_{issue_num}_\d{{8}}_",
                         os.path.basename(f),
                     )
                 ],

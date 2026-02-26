@@ -539,6 +539,18 @@ async def tail_handler(ctx: InteractiveContext, deps: MonitoringHandlersDeps) ->
         task_file = deps.find_task_file_by_issue(issue_num)
 
     def _read_tail_lines() -> list[str]:
+        issue_logs = deps.find_issue_log_files(issue_num, task_file=task_file)
+        if issue_logs:
+            issue_logs.sort(key=os.path.getmtime)
+            non_empty = [lf for lf in reversed(issue_logs) if os.path.getsize(lf) > 0]
+            latest = non_empty[0] if non_empty else issue_logs[-1]
+            try:
+                with open(latest, encoding="utf-8") as handle:
+                    tail_lines = handle.readlines()[-max_lines:]
+                return [f"[{os.path.basename(latest)}] {line.rstrip()}" for line in tail_lines]
+            except Exception as exc:
+                deps.logger.error(f"Error reading log file: {exc}", exc_info=True)
+
         lines_local = deps.read_latest_log_tail(task_file, max_lines=max_lines)
         if lines_local:
             return lines_local

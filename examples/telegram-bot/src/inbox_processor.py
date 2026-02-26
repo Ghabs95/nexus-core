@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 import uuid
 
 import yaml
+from nexus.adapters.git.utils import build_issue_url
+from nexus.core.completion_store import CompletionStore
 from nexus.core.process_orchestrator import ProcessOrchestrator
 from nexus.core.project.repo_utils import (
     iter_project_configs as _iter_project_configs,
@@ -108,7 +110,13 @@ auto_chained_agents = {}  # Track issue -> log_file to avoid re-chaining same co
 INBOX_PROCESSOR_STARTED_AT = time.time()
 POLLING_FAILURE_THRESHOLD = 3
 polling_failure_counts: dict[str, int] = {}
+_ORPHAN_RECOVERY_COOLDOWN_SECONDS = max(
+    60,
+    int(os.getenv("NEXUS_ORPHAN_RECOVERY_COOLDOWN_SECONDS", "180")),
+)
+_orphan_recovery_last_attempt: dict[str, float] = {}
 from integrations.workflow_state_factory import get_workflow_state as _get_wf_state
+from integrations.workflow_state_factory import get_storage_backend as _get_storage_backend
 
 _WORKFLOW_STATE_PLUGIN_KWARGS = {
     "storage_dir": NEXUS_CORE_STORAGE_DIR,
@@ -930,6 +938,7 @@ def _archive_closed_task_files(issue_num: str, project_name: str = "") -> int:
 # ---------------------------------------------------------------------------
 
 _process_orchestrator: ProcessOrchestrator | None = None
+_completion_store: CompletionStore | None = None
 
 
 def _get_process_orchestrator() -> ProcessOrchestrator:
@@ -951,6 +960,26 @@ def _get_process_orchestrator() -> ProcessOrchestrator:
     return _process_orchestrator
 
 
+def _get_completion_store() -> CompletionStore:
+    """Build (or return cached) CompletionStore for current backend."""
+    global _completion_store
+    if _completion_store is not None:
+        return _completion_store
+
+    backend = get_inbox_storage_backend()
+    storage = None
+    if backend == "postgres":
+        storage = _get_storage_backend()
+
+    _completion_store = CompletionStore(
+        backend=backend,
+        storage=storage,
+        base_dir=BASE_DIR,
+        nexus_dir=get_nexus_dir_name(),
+    )
+    return _completion_store
+
+
 def _post_completion_comments_from_logs() -> None:
     """Detect agent completions and auto-chain to the next workflow step.
 
@@ -962,9 +991,11 @@ def _post_completion_comments_from_logs() -> None:
     dedup = set(completion_comments.keys())
     replay_window_seconds = get_completion_replay_window_seconds()
     replay_ref_ts = INBOX_PROCESSOR_STARTED_AT
+    detected_completions = _get_completion_store().scan()
     orc.scan_and_process_completions(
         BASE_DIR,
         dedup,
+        detected_completions=detected_completions,
         resolve_project=_resolve_project_from_path,
         resolve_repo=lambda proj, issue: _resolve_repo_strict(proj, issue),
         build_transition_message=lambda **kw: wfp.build_transition_message(**kw),
@@ -1035,10 +1066,121 @@ def check_stuck_agents():
     scope = "stuck-agents:loop"
     try:
         _get_process_orchestrator().check_stuck_agents(BASE_DIR)
+        recovered = _recover_orphaned_running_agents()
+        if recovered:
+            logger.info("Recovered %s orphaned workflow issue(s)", recovered)
+        recovered_from_signals = _recover_unmapped_issues_from_completions()
+        if recovered_from_signals:
+            logger.info(
+                "Recovered %s issue(s) from completion signals",
+                recovered_from_signals,
+            )
         _clear_polling_failures(scope)
     except Exception as e:
         logger.error(f"Error in check_stuck_agents: {e}")
         _record_polling_failure(scope, e)
+
+
+def _recover_orphaned_running_agents(max_relaunches: int = 3) -> int:
+    """Relaunch missing processes for workflows still marked RUNNING.
+
+    This recovery path is restart-safe: if services restart and launched-process
+    tracker entries are missing while workflow state still expects an agent,
+    this function relaunches that expected agent.
+    """
+    orchestrator = _get_process_orchestrator()
+    runtime = getattr(orchestrator, "_runtime", None)
+    if runtime is None:
+        return 0
+
+    try:
+        mappings = _get_wf_state().load_all_mappings()
+    except Exception as exc:
+        logger.debug(f"Orphan recovery skipped (mapping load failed): {exc}")
+        return 0
+
+    if not isinstance(mappings, dict) or not mappings:
+        return 0
+
+    launched = HostStateManager.load_launched_agents(recent_only=False)
+    if not isinstance(launched, dict):
+        launched = {}
+
+    now = time.time()
+    recovered = 0
+
+    issue_keys = [str(key) for key in mappings.keys()]
+    issue_keys.sort(key=lambda value: int(value) if value.isdigit() else value)
+
+    for issue_num in issue_keys:
+        if recovered >= max_relaunches:
+            break
+
+        last_attempt = _orphan_recovery_last_attempt.get(issue_num, 0.0)
+        if (now - last_attempt) < _ORPHAN_RECOVERY_COOLDOWN_SECONDS:
+            continue
+
+        workflow_state = runtime.get_workflow_state(issue_num)
+        if workflow_state in {"PAUSED", "STOPPED", "COMPLETED", "FAILED", "CANCELLED"}:
+            _orphan_recovery_last_attempt.pop(issue_num, None)
+            continue
+
+        expected_agent = runtime.get_expected_running_agent(issue_num)
+        if not expected_agent:
+            continue
+
+        if runtime.is_process_running(issue_num):
+            _orphan_recovery_last_attempt.pop(issue_num, None)
+            continue
+
+        tracker_entry = launched.get(issue_num, {})
+        if not isinstance(tracker_entry, dict):
+            tracker_entry = {}
+        tracker_pid = tracker_entry.get("pid")
+        if isinstance(tracker_pid, int) and tracker_pid > 0 and runtime.is_pid_alive(tracker_pid):
+            continue
+
+        project_name = _resolve_project_for_issue(issue_num) or get_default_project()
+        repo_name = _resolve_repo_for_issue(issue_num, default_project=project_name)
+        issue_open = runtime.is_issue_open(issue_num, repo_name)
+        if issue_open is False:
+            active_marker = f"{os.sep}active{os.sep}"
+            if active_marker not in task_file:
+                continue
+            logger.warning(
+                "Issue #%s not open/remote-missing in %s, but local active task exists; "
+                "continuing recovery launch",
+                issue_num,
+                repo_name,
+            )
+
+        if not runtime.should_retry_dead_agent(issue_num, expected_agent):
+            continue
+
+        _orphan_recovery_last_attempt[issue_num] = now
+        pid, tool = runtime.launch_agent(
+            issue_num,
+            expected_agent,
+            trigger_source="orphan-recovery",
+        )
+        if pid:
+            recovered += 1
+            logger.warning(
+                "Recovered orphaned workflow issue #%s by launching %s (PID %s, tool=%s)",
+                issue_num,
+                expected_agent,
+                pid,
+                tool,
+            )
+        else:
+            logger.info(
+                "Orphan recovery launch skipped/failed for issue #%s (agent=%s, reason=%s)",
+                issue_num,
+                expected_agent,
+                tool,
+            )
+
+    return recovered
 
 
 def _resolve_project_for_issue(issue_num: str) -> str | None:
@@ -1047,6 +1189,269 @@ def _resolve_project_for_issue(issue_num: str) -> str | None:
     for project_name, _ in _iter_project_configs(PROJECT_CONFIG, get_repos):
         return project_name
     return None
+
+
+def _find_task_file_for_issue(issue_num: str) -> str | None:
+    """Find a local task markdown file for an issue number."""
+    issue = str(issue_num).strip()
+    if not issue:
+        return None
+
+    nexus_dir_name = get_nexus_dir_name()
+    patterns = [
+        os.path.join(
+            BASE_DIR,
+            "**",
+            nexus_dir_name,
+            "tasks",
+            "*",
+            "active",
+            f"issue_{issue}.md",
+        ),
+        os.path.join(
+            BASE_DIR,
+            "**",
+            nexus_dir_name,
+            "tasks",
+            "*",
+            "active",
+            f"*_{issue}.md",
+        ),
+        os.path.join(
+            BASE_DIR,
+            "**",
+            nexus_dir_name,
+            "tasks",
+            "*",
+            "closed",
+            f"issue_{issue}.md",
+        ),
+        os.path.join(
+            BASE_DIR,
+            "**",
+            nexus_dir_name,
+            "tasks",
+            "*",
+            "closed",
+            f"*_{issue}.md",
+        ),
+    ]
+    candidates: list[str] = []
+    for pattern in patterns:
+        candidates.extend(glob.glob(pattern, recursive=True))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=os.path.getmtime, reverse=True)
+    return candidates[0]
+
+
+def _resolve_project_from_task_file(task_file: str) -> str | None:
+    """Resolve project key from a task file path."""
+    task_abs = os.path.abspath(task_file)
+    for project_key, project_cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
+        workspace = project_cfg.get("workspace") if isinstance(project_cfg, dict) else None
+        if not workspace:
+            continue
+        workspace_abs = os.path.abspath(os.path.join(BASE_DIR, workspace))
+        if task_abs.startswith(workspace_abs + os.sep) or task_abs == workspace_abs:
+            return project_key
+    return None
+
+
+def _recover_unmapped_issues_from_completions(max_relaunches: int = 20) -> int:
+    """Recover issues missing workflow mapping using latest completion signal.
+
+    This path handles cases where workflow mapping is lost after restarts but
+    local completion + task context still indicates the next agent to run.
+    """
+    runtime = getattr(_get_process_orchestrator(), "_runtime", None)
+    if runtime is None:
+        return 0
+
+    try:
+        detected = _get_completion_store().scan()
+    except Exception as exc:
+        logger.debug(f"Unmapped recovery skipped (completion scan failed): {exc}")
+        return 0
+
+    if not detected:
+        return 0
+
+    latest_by_issue: dict[str, object] = {}
+    for item in detected:
+        issue_num = str(getattr(item, "issue_number", "") or "").strip()
+        if not issue_num:
+            continue
+        existing = latest_by_issue.get(issue_num)
+        if existing is None:
+            latest_by_issue[issue_num] = item
+            continue
+        try:
+            if os.path.getmtime(getattr(item, "file_path", "")) > os.path.getmtime(
+                getattr(existing, "file_path", "")
+            ):
+                latest_by_issue[issue_num] = item
+        except Exception:
+            continue
+
+    launched = HostStateManager.load_launched_agents(recent_only=False)
+    if not isinstance(launched, dict):
+        launched = {}
+
+    now = time.time()
+    def _completion_mtime(issue_key: str) -> float:
+        detection = latest_by_issue.get(issue_key)
+        if detection is None:
+            return 0.0
+        try:
+            return float(os.path.getmtime(getattr(detection, "file_path", "")))
+        except Exception:
+            return 0.0
+
+    issue_order = sorted(
+        latest_by_issue.keys(),
+        key=_completion_mtime,
+        reverse=True,
+    )
+
+    relaunched = 0
+
+    for issue_num in issue_order:
+        if relaunched >= max_relaunches:
+            break
+
+        completion_mtime = _completion_mtime(issue_num)
+        if completion_mtime > 0 and (now - completion_mtime) > (7 * 24 * 3600):
+            continue
+
+        workflow_id = _get_wf_state().get_workflow_id(issue_num)
+        expected_running_agent = runtime.get_expected_running_agent(issue_num)
+        workflow_state = runtime.get_workflow_state(issue_num)
+
+        if workflow_state in {"PAUSED", "STOPPED", "COMPLETED", "FAILED", "CANCELLED"}:
+            continue
+
+        # If mapped workflow still has a RUNNING agent, leave recovery to
+        # _recover_orphaned_running_agents().
+        if workflow_id and expected_running_agent:
+            continue
+
+        last_attempt = _orphan_recovery_last_attempt.get(issue_num, 0.0)
+        if (now - last_attempt) < _ORPHAN_RECOVERY_COOLDOWN_SECONDS:
+            continue
+
+        if runtime.is_process_running(issue_num):
+            continue
+
+        tracker_entry = launched.get(issue_num, {})
+        if not isinstance(tracker_entry, dict):
+            tracker_entry = {}
+        tracker_pid = tracker_entry.get("pid")
+        if isinstance(tracker_pid, int) and tracker_pid > 0 and runtime.is_pid_alive(tracker_pid):
+            continue
+
+        detection = latest_by_issue[issue_num]
+        summary = getattr(detection, "summary", None)
+        raw_next_agent = str(getattr(summary, "next_agent", "") or "")
+        next_agent = _normalize_agent_reference(raw_next_agent) or raw_next_agent
+        next_agent = str(next_agent or "").strip().lower().lstrip("@")
+        if not next_agent or _is_terminal_agent_reference(next_agent):
+            continue
+
+        task_file = _find_task_file_for_issue(issue_num)
+        project_name = None
+        task_content = ""
+        task_type = "feature"
+
+        if task_file and os.path.exists(task_file):
+            project_name = _resolve_project_from_task_file(task_file)
+            try:
+                with open(task_file, encoding="utf-8") as handle:
+                    task_content = handle.read()
+            except Exception:
+                task_content = ""
+
+            type_match = re.search(r"\*\*Type:\*\*\s*(.+)", task_content)
+            if type_match:
+                task_type = type_match.group(1).strip().lower()
+        else:
+            raw_payload = getattr(summary, "raw", {})
+            if isinstance(raw_payload, dict):
+                guessed_project = raw_payload.get("_project")
+                if isinstance(guessed_project, str) and guessed_project.strip():
+                    project_name = guessed_project.strip()
+
+                findings = raw_payload.get("key_findings")
+                findings_text = ""
+                if isinstance(findings, list) and findings:
+                    cleaned = [str(item).strip() for item in findings if str(item).strip()]
+                    if cleaned:
+                        findings_text = "\n".join(f"- {item}" for item in cleaned[:5])
+
+                summary_text = str(raw_payload.get("summary") or "").strip()
+                if summary_text:
+                    task_content = f"Recovered from completion summary:\n{summary_text}"
+                    if findings_text:
+                        task_content += f"\n\nKey findings:\n{findings_text}"
+
+        project_name = project_name or get_default_project()
+        project_cfg = PROJECT_CONFIG.get(project_name, {})
+        if not isinstance(project_cfg, dict):
+            continue
+
+        agents_dir = project_cfg.get("agents_dir")
+        workspace = project_cfg.get("workspace")
+        if not agents_dir or not workspace:
+            continue
+
+        repo_name = _resolve_repo_for_issue(issue_num, default_project=project_name)
+        issue_open = runtime.is_issue_open(issue_num, repo_name)
+        if issue_open is False:
+            continue
+
+        issue_url = build_issue_url(repo_name, issue_num, project_cfg)
+        if not task_content:
+            task_content = f"Issue #{issue_num}"
+
+        tier_name = HostStateManager.get_last_tier_for_issue(issue_num)
+        if not tier_name:
+            tier_name, _, _ = get_sop_tier(task_type)
+
+        _orphan_recovery_last_attempt[issue_num] = now
+        pid, tool_used = invoke_copilot_agent(
+            agents_dir=os.path.join(BASE_DIR, agents_dir),
+            workspace_dir=os.path.join(BASE_DIR, workspace),
+            issue_url=issue_url,
+            tier_name=tier_name,
+            task_content=task_content,
+            continuation=True,
+            continuation_prompt=(
+                "Automatic recovery after restart: continue from last completion signal."
+            ),
+            log_subdir=project_name,
+            agent_type=next_agent,
+            project_name=project_name,
+        )
+
+        if pid:
+            relaunched += 1
+            logger.warning(
+                "Recovered issue #%s from completion signal: launching %s (PID %s, tool=%s)",
+                issue_num,
+                next_agent,
+                pid,
+                tool_used,
+            )
+        else:
+            logger.info(
+                "Completion-signal recovery skipped/failed for issue #%s (next_agent=%s)",
+                issue_num,
+                next_agent,
+            )
+
+    return relaunched
 
 
 def check_agent_comments():
@@ -1779,6 +2184,9 @@ def main():
         reconcile_completion_signals_on_startup()
     except Exception as e:
         logger.error(f"Startup completion-signal drift check failed: {e}")
+    # Run one immediate recovery pass on startup so restarts do not leave
+    # RUNNING workflow steps orphaned until the first periodic check.
+    check_stuck_agents()
     last_check = time.time()
     check_interval = 60  # Check for stuck agents and comments every 60 seconds
     

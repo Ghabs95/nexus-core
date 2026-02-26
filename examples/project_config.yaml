@@ -53,7 +53,7 @@ issue_triage:
     # "enhancement": "design"       # Features → design agent (optional)
 
 # Global AI tool preferences: which AI tool to use for each AGENT TYPE
-# Options: copilot (GitHub Copilot, better for code reasoning), gemini (Google Gemini, faster for analysis)
+# Options: copilot (GitHub Copilot), gemini (Google Gemini), codex (OpenAI Codex CLI)
 #
 # IMPORTANT: This maps AGENT TYPES (system roles) to AI tools, not individual agents
 # - Agent types are defined in agent YAML files with `agent_type` field
@@ -118,7 +118,7 @@ custom_project:
   workflow_definition_path: custom-project/workflows/custom_workflow.yaml
   
   # Custom AI tool preferences for this project's agents
-  # Map agent_type (from workflow YAML) to AI tool (copilot/gemini)
+  # Map agent_type (from workflow YAML) to AI tool (copilot/gemini/codex)
   # Only list agents that differ from global defaults
   ai_tool_preferences:
     triage: copilot          # Triage agent - issue classification

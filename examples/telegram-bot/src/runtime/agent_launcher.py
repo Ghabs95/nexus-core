@@ -491,6 +491,8 @@ def invoke_copilot_agent(
     Returns:
         Tuple of (PID of launched process or None if failed, tool_used: str)
     """
+    pid = None
+    tool_name: str | None = None
     workflow_name = get_workflow_name(tier_name)
     workflow_path = _resolve_workflow_path(project_name)
     policy = _get_launch_policy_plugin()
@@ -586,49 +588,56 @@ def invoke_copilot_agent(
             env=agent_env
         )
         
-        logger.info(f"🚀 Agent launched with {tool_used.value} (PID: {pid})")
+        tool_name = tool_used.value
+        logger.info(f"🚀 Agent launched with {tool_name} (PID: {pid})")
         
         
-        # Save to launched agents tracker
+        # Save to launched agents tracker and emit audit, but never fail launch
+        # response if bookkeeping has an internal error.
         if issue_num != "unknown":
-            dynamic_exclusions = []
-            if _tool_is_rate_limited(orchestrator, "gemini"):
-                dynamic_exclusions.append("gemini")
+            try:
+                dynamic_exclusions = []
+                if _tool_is_rate_limited(orchestrator, "gemini"):
+                    dynamic_exclusions.append("gemini")
 
-            launched_agents = HostStateManager.load_launched_agents()
-            previous_entry = launched_agents.get(str(issue_num), {})
-            if not isinstance(previous_entry, dict):
-                previous_entry = {}
+                launched_agents = HostStateManager.load_launched_agents()
+                previous_entry = launched_agents.get(str(issue_num), {})
+                if not isinstance(previous_entry, dict):
+                    previous_entry = {}
 
-            entry = dict(previous_entry)
-            entry.update({
-                'timestamp': time.time(),
-                'pid': pid,
-                'tier': tier_name,
-                'mode': mode,
-                'tool': tool_used.value,
-                'agent_type': agent_type,
-                'exclude_tools': _merge_excluded_tools(
-                    previous_entry.get("exclude_tools", []),
-                    list(exclude_tools) if exclude_tools else [],
-                    dynamic_exclusions,
+                entry = dict(previous_entry)
+                entry.update({
+                    'timestamp': time.time(),
+                    'pid': pid,
+                    'tier': tier_name,
+                    'mode': mode,
+                    'tool': tool_name,
+                    'agent_type': agent_type,
+                    'exclude_tools': _merge_excluded_tools(
+                        previous_entry.get("exclude_tools", []),
+                        list(exclude_tools) if exclude_tools else [],
+                        dynamic_exclusions,
+                    )
+                })
+                launched_agents[str(issue_num)] = entry
+                HostStateManager.save_launched_agents(launched_agents)
+
+                record_agent_launch(issue_num, agent_type=agent_type, pid=pid)
+
+                AuditStore.audit_log(
+                    int(issue_num),
+                    "AGENT_LAUNCHED",
+                    f"Launched {tool_name} agent in {os.path.basename(agents_dir)} "
+                    f"(workflow: {workflow_name}/{tier_name}, mode: {mode}, PID: {pid})"
                 )
-            })
-            launched_agents[str(issue_num)] = entry
-            HostStateManager.save_launched_agents(launched_agents)
-            
-            # Record in LaunchGuard for dedup
-            record_agent_launch(issue_num, agent_type=agent_type, pid=pid)
-            
-            # Audit log
-            AuditStore.audit_log(
-                int(issue_num),
-                "AGENT_LAUNCHED",
-                f"Launched {tool_used.value} agent in {os.path.basename(agents_dir)} "
-                f"(workflow: {workflow_name}/{tier_name}, mode: {mode}, PID: {pid})"
-            )
-        
-        return pid, tool_used.value
+            except Exception as bookkeeping_exc:
+                logger.warning(
+                    "Agent launch bookkeeping failed for issue #%s after successful launch: %s",
+                    issue_num,
+                    bookkeeping_exc,
+                )
+
+        return pid, tool_name
         
     except ToolUnavailableError as e:
         logger.error(f"❌ All AI tools unavailable: {e}")
@@ -656,6 +665,14 @@ def invoke_copilot_agent(
         return None, None
     except Exception as e:
         logger.error(f"❌ Failed to launch agent: {e}")
+
+        if pid and tool_name:
+            logger.warning(
+                "Returning successful launch despite post-launch exception (PID: %s, tool: %s)",
+                pid,
+                tool_name,
+            )
+            return pid, tool_name
         
         issue_match = re.search(r"/issues/(\d+)", issue_url or "")
         issue_num = issue_match.group(1) if issue_match else "unknown"

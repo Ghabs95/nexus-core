@@ -552,9 +552,11 @@ def _get_orchestrator_config():
     """Get orchestrator config, loading AI_TOOL_PREFERENCES lazily."""
     if "value" not in _orchestrator_config_cache:
         _orchestrator_config_cache["value"] = {
+            "copilot_cli_path": os.getenv("COPILOT_CLI_PATH", "copilot"),
             "gemini_cli_path": os.getenv("GEMINI_CLI_PATH", "gemini"),
             "gemini_model": os.getenv("GEMINI_MODEL", "").strip(),
-            "copilot_cli_path": os.getenv("COPILOT_CLI_PATH", "copilot"),
+            "codex_cli_path": os.getenv("CODEX_CLI_PATH", "codex"),
+            "codex_model": os.getenv("CODEX_MODEL", "").strip(),
             "tool_preferences": AI_TOOL_PREFERENCES._ensure_loaded(),
             "fallback_enabled": os.getenv("AI_FALLBACK_ENABLED", "true").lower() == "true",
             "rate_limit_ttl": int(os.getenv("AI_RATE_LIMIT_TTL", "3600")),

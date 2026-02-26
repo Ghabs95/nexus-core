@@ -1,4 +1,4 @@
-"""Built-in plugin: AI runtime orchestration for Copilot CLI and Gemini CLI."""
+"""Built-in plugin: AI runtime orchestration for Copilot/Gemini/Codex CLIs."""
 
 import json
 import logging
@@ -20,6 +20,7 @@ class AIProvider(Enum):
 
     COPILOT = "copilot"
     GEMINI = "gemini"
+    CODEX = "codex"
 
 
 class ToolUnavailableError(Exception):
@@ -46,9 +47,11 @@ class AIOrchestrator:
 
     def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
+        self.copilot_cli_path = self.config.get("copilot_cli_path", "copilot")
         self.gemini_cli_path = self.config.get("gemini_cli_path", "gemini")
         self.gemini_model = str(self.config.get("gemini_model", "")).strip()
-        self.copilot_cli_path = self.config.get("copilot_cli_path", "copilot")
+        self.codex_cli_path = self.config.get("codex_cli_path", "codex")
+        self.codex_model = str(self.config.get("codex_model", "")).strip()
         self.tool_preferences = self.config.get("tool_preferences", {})
         self.fallback_enabled = self.config.get("fallback_enabled", True)
         self.rate_limit_ttl = self.config.get("rate_limit_ttl", 3600)
@@ -92,7 +95,12 @@ class AIOrchestrator:
             del self._rate_limits[tool.value]
 
         try:
-            path = self.gemini_cli_path if tool == AIProvider.GEMINI else self.copilot_cli_path
+            if tool == AIProvider.GEMINI:
+                path = self.gemini_cli_path
+            elif tool == AIProvider.CODEX:
+                path = self.codex_cli_path
+            else:
+                path = self.copilot_cli_path
             result = subprocess.run(
                 [path, "--version"],
                 capture_output=True,
@@ -118,8 +126,12 @@ class AIOrchestrator:
 
     def get_primary_tool(self, agent_name: str | None = None) -> AIProvider:
         if agent_name and agent_name in self.tool_preferences:
-            pref = self.tool_preferences[agent_name]
-            return AIProvider.COPILOT if pref == "copilot" else AIProvider.GEMINI
+            pref = str(self.tool_preferences[agent_name]).strip().lower()
+            if pref == AIProvider.GEMINI.value:
+                return AIProvider.GEMINI
+            if pref == AIProvider.CODEX.value:
+                return AIProvider.CODEX
+            return AIProvider.COPILOT
 
         return AIProvider.COPILOT
 
@@ -127,12 +139,17 @@ class AIOrchestrator:
         if not self.fallback_enabled:
             return None
 
-        fallback = AIProvider.GEMINI if primary == AIProvider.COPILOT else AIProvider.COPILOT
-        if self.check_tool_available(fallback):
-            logger.info("🔄 Fallback ready from %s → %s (will use only if primary fails)", primary.value, fallback.value)
-            return fallback
+        fallbacks = [tool for tool in AIProvider if tool != primary]
+        for fallback in fallbacks:
+            if self.check_tool_available(fallback):
+                logger.info(
+                    "🔄 Fallback ready from %s → %s (will use only if primary fails)",
+                    primary.value,
+                    fallback.value,
+                )
+                return fallback
 
-        logger.error("❌ Fallback %s unavailable", fallback.value)
+        logger.error("❌ No fallback providers available for %s", primary.value)
         return None
 
     def _get_tool_order(self, agent_name: str | None = None, use_gemini: bool = False) -> list:
@@ -165,6 +182,11 @@ class AIOrchestrator:
             )
         if tool == AIProvider.GEMINI:
             return self._invoke_gemini_agent(
+                agent_prompt, workspace_dir, agents_dir, base_dir,
+                issue_num=issue_num, log_subdir=log_subdir, env=env,
+            )
+        if tool == AIProvider.CODEX:
+            return self._invoke_codex(
                 agent_prompt, workspace_dir, agents_dir, base_dir,
                 issue_num=issue_num, log_subdir=log_subdir, env=env,
             )
@@ -425,6 +447,65 @@ class AIOrchestrator:
             except Exception:
                 pass
             logger.error("❌ Gemini launch failed: %s", exc)
+            raise
+
+    def _invoke_codex(
+        self,
+        agent_prompt: str,
+        workspace_dir: str,
+        agents_dir: str,
+        base_dir: str,
+        issue_num: str | None = None,
+        log_subdir: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> int | None:
+        if not self.check_tool_available(AIProvider.CODEX):
+            raise ToolUnavailableError("Codex CLI not available")
+
+        cmd = [
+            self.codex_cli_path,
+            "exec",
+        ]
+        if self.codex_model:
+            cmd.extend(["--model", self.codex_model])
+        cmd.append(agent_prompt)
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        log_dir = self.get_tasks_logs_dir(workspace_dir, log_subdir)
+        os.makedirs(log_dir, exist_ok=True)
+        log_suffix = f"{issue_num}_{timestamp}" if issue_num else timestamp
+        log_path = os.path.join(log_dir, f"codex_{log_suffix}.log")
+
+        logger.info("🤖 Launching Codex CLI agent")
+        logger.info("   Workspace: %s", workspace_dir)
+        logger.info("   Log: %s", log_path)
+
+        log_file = None
+        try:
+            log_file = open(log_path, "w", encoding="utf-8")
+
+            merged_env = {**os.environ}
+            if env:
+                merged_env.update(env)
+
+            process = subprocess.Popen(
+                cmd,
+                cwd=workspace_dir,
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                env=merged_env,
+            )
+            log_file.close()
+            logger.info("🚀 Codex launched (PID: %s)", process.pid)
+            return process.pid
+        except Exception as exc:
+            try:
+                if log_file:
+                    log_file.close()
+            except Exception:
+                pass
+            logger.error("❌ Codex launch failed: %s", exc)
             raise
 
     def transcribe_audio_cli(self, audio_file_path: str) -> str | None:
@@ -921,5 +1002,5 @@ def register_plugins(registry) -> None:
         name="ai-runtime-orchestrator",
         version="0.1.0",
         factory=lambda config: AIOrchestrator(config),
-        description="Copilot/Gemini orchestration with fallback and cooldown handling",
+        description="Copilot/Gemini/Codex orchestration with fallback and cooldown handling",
     )

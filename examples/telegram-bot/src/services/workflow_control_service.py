@@ -33,6 +33,50 @@ def prepare_continue_context(
     get_sop_tier: Callable[[str], tuple[str, Any, Any]],
 ) -> dict[str, Any]:
     """Build context for /continue and return either a terminal state or launch payload."""
+    def _extract_repo_from_text(text: str) -> str | None:
+        if not text:
+            return None
+        gh_match = re.search(r"https?://github\.com/([^/]+/[^/]+)/issues/\d+", text)
+        if gh_match:
+            return gh_match.group(1)
+        gl_match = re.search(r"https?://[^/]+/([^\s]+)/-/issues/\d+", text)
+        if gl_match:
+            return gl_match.group(1)
+        return None
+
+    def _repo_candidates(preferred_config: dict[str, Any] | None = None) -> list[str]:
+        candidates: list[str] = []
+
+        def _add_repo(value: str | None) -> None:
+            repo_value = str(value or "").strip()
+            if repo_value and repo_value not in candidates:
+                candidates.append(repo_value)
+
+        cfgs: list[dict[str, Any]] = []
+        if isinstance(preferred_config, dict):
+            cfgs.append(preferred_config)
+
+        project_cfg = project_config.get(project_key)
+        if isinstance(project_cfg, dict) and project_cfg not in cfgs:
+            cfgs.append(project_cfg)
+
+        for cfg in cfgs:
+            _add_repo(resolve_repo(cfg, default_repo))
+            repo_list = cfg.get("git_repos")
+            if isinstance(repo_list, list):
+                for repo_name in repo_list:
+                    _add_repo(str(repo_name or ""))
+
+        _add_repo(default_repo)
+        return candidates
+
+    def _load_issue(preferred_config: dict[str, Any] | None = None) -> tuple[dict[str, Any] | None, str | None]:
+        for candidate_repo in _repo_candidates(preferred_config):
+            issue_details = get_issue_details(issue_num, candidate_repo)
+            if issue_details:
+                return issue_details, candidate_repo
+        return None, None
+
     def _looks_like_agent_ref(token: str) -> bool:
         value = str(token or "").strip()
         if not value:
@@ -69,10 +113,16 @@ def prepare_continue_context(
     repo = None
 
     if not task_file:
-        repo = resolve_repo(project_config.get(project_key), default_repo)
-        details = get_issue_details(issue_num, repo)
+        details, repo = _load_issue()
         if not details:
-            return {"status": "error", "message": f"❌ Could not load issue #{issue_num}."}
+            checked = ", ".join(_repo_candidates())
+            return {
+                "status": "error",
+                "message": (
+                    f"❌ Could not load issue #{issue_num}.\n"
+                    f"Checked repos: {checked}"
+                ),
+            }
         body = details.get("body", "")
         match = re.search(r"Task File:\s*`([^`]+)`", body)
         task_file = match.group(1) if match else None
@@ -81,6 +131,7 @@ def prepare_continue_context(
     config: dict[str, Any] | None = None
     content = ""
     task_type = "feature"
+    local_issue_fallback = False
 
     if task_file and os.path.exists(task_file):
         project_name, config = resolve_project_config_from_task(task_file)
@@ -116,10 +167,16 @@ def prepare_continue_context(
         project_name = project_key
 
         if not details:
-            repo = resolve_repo(config, default_repo)
-            details = get_issue_details(issue_num, repo)
+            details, repo = _load_issue(config)
         if not details:
-            return {"status": "error", "message": f"❌ Could not load issue #{issue_num}."}
+            checked = ", ".join(_repo_candidates(config))
+            return {
+                "status": "error",
+                "message": (
+                    f"❌ Could not load issue #{issue_num}.\n"
+                    f"Checked repos: {checked}"
+                ),
+            }
 
         title = str(details.get("title") or "").strip()
         body = str(details.get("body") or "").strip()
@@ -145,11 +202,29 @@ def prepare_continue_context(
                         task_type = candidate
                         break
 
-    repo = resolve_repo(config, default_repo)
+    repo = repo or resolve_repo(config, default_repo)
     if not details:
-        details = get_issue_details(issue_num, repo)
+        details, repo = _load_issue(config)
         if not details:
-            return {"status": "error", "message": f"❌ Could not load issue #{issue_num}."}
+            repo_from_content = _extract_repo_from_text(content)
+            if repo_from_content:
+                repo = repo_from_content
+                details = {"state": "open", "labels": []}
+                local_issue_fallback = True
+                logger.warning(
+                    "Continue issue #%s: remote issue lookup failed; using local task context with repo=%s",
+                    issue_num,
+                    repo,
+                )
+            else:
+                checked = ", ".join(_repo_candidates(config))
+                return {
+                    "status": "error",
+                    "message": (
+                        f"❌ Could not load issue #{issue_num}.\n"
+                        f"Checked repos: {checked}"
+                    ),
+                }
 
     if details.get("state", "").lower() == "closed":
         return {"status": "error", "message": f"⚠️ Issue #{issue_num} is closed."}
@@ -243,7 +318,9 @@ def prepare_continue_context(
     if not agent_type and normalized_expected:
         agent_type = normalized_expected
 
-    label_tier = get_sop_tier_from_issue(issue_num, project_name or project_key)
+    label_tier = None
+    if not local_issue_fallback:
+        label_tier = get_sop_tier_from_issue(issue_num, project_name or project_key)
     if label_tier:
         tier_name = label_tier
     else:

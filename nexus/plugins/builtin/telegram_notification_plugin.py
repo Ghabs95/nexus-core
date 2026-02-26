@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Any
 from urllib import request
+from urllib.error import HTTPError
 
 from nexus.adapters.notifications.base import Message, NotificationChannel
 from nexus.core.models import Severity
@@ -50,12 +51,29 @@ class TelegramNotificationPlugin(NotificationChannel):
         payload: dict[str, Any] = {
             "chat_id": self.chat_id,
             "text": message,
-            "parse_mode": parse_mode or self.parse_mode,
         }
+        effective_parse_mode = parse_mode if parse_mode is not None else self.parse_mode
+        if effective_parse_mode:
+            payload["parse_mode"] = effective_parse_mode
         if reply_markup:
             payload["reply_markup"] = reply_markup
 
-        return bool(self._post("sendMessage", payload))
+        sent = bool(self._post("sendMessage", payload))
+        if sent:
+            return True
+
+        # Fallback: retry as plain text when markdown/html parsing fails.
+        plain_payload: dict[str, Any] = {
+            "chat_id": self.chat_id,
+            "text": message,
+        }
+        if reply_markup:
+            plain_payload["reply_markup"] = reply_markup
+
+        logger.warning(
+            "Telegram send_message_sync retrying without parse_mode after initial failure"
+        )
+        return bool(self._post("sendMessage", plain_payload))
 
     async def update_message(self, message_id: str, new_text: str) -> None:
         payload = {
@@ -107,6 +125,20 @@ class TelegramNotificationPlugin(NotificationChannel):
                 logger.warning("Telegram API returned non-ok for %s: %s", method, data)
                 return None
             return data
+        except HTTPError as exc:
+            body = ""
+            try:
+                body = exc.read().decode("utf-8")
+            except Exception:
+                body = ""
+            logger.error(
+                "Telegram API HTTP error for %s: status=%s reason=%s body=%s",
+                method,
+                getattr(exc, "code", "?"),
+                getattr(exc, "reason", ""),
+                body,
+            )
+            return None
         except Exception as exc:
             logger.error("Telegram API call failed for %s: %s", method, exc)
             return None

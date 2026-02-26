@@ -544,7 +544,7 @@ def _hands_free_routing_handler_deps() -> HandsFreeRoutingDeps:
 def _get_direct_issue_plugin(repo: str):
     """Return issue plugin for direct Telegram operations."""
     return get_profiled_plugin(
-        "github_telegram",
+        "git_telegram",
         overrides={
             "repo": repo,
         },

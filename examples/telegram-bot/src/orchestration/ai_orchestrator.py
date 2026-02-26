@@ -31,9 +31,11 @@ def get_orchestrator(config: Any | None = None) -> AIOrchestrator:
             overrides = dict(config.items())
         elif hasattr(config, "get"):
             keys = (
+                "copilot_cli_path",
                 "gemini_cli_path",
                 "gemini_model",
-                "copilot_cli_path",
+                "codex_cli_path",
+                "codex_model",
                 "tool_preferences",
                 "fallback_enabled",
                 "rate_limit_ttl",
