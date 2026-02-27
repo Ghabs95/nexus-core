@@ -77,8 +77,13 @@ def test_finalize_provider_helpers_delegate_to_git_platform():
 
 def test_cleanup_worktree_delegates_workspace_manager():
     with patch(
-        "nexus.core.workspace.WorkspaceManager.cleanup_worktree", return_value=True
+        "nexus.core.workspace.WorkspaceManager.cleanup_worktree_safe", return_value=True
     ) as mock_cleanup:
         ok = svc.cleanup_worktree(repo_dir="/tmp/repo", issue_number="42")
     assert ok is True
-    mock_cleanup.assert_called_once()
+    mock_cleanup.assert_called_once_with(
+        base_repo_path="/tmp/repo",
+        issue_number="42",
+        is_issue_agent_running=None,
+        require_clean=True,
+    )

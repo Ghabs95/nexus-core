@@ -4,6 +4,20 @@ import re
 from typing import Any
 
 
+def _extract_issue_numbers_from_text(text: str) -> list[str]:
+    if not text:
+        return []
+    # Preserve first-seen order while deduplicating.
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for match in re.findall(r"#(\d+)", str(text)):
+        if match in seen:
+            continue
+        seen.add(match)
+        ordered.append(match)
+    return ordered
+
+
 def handle_pull_request_event(
     *,
     event: dict[str, Any],
@@ -12,6 +26,7 @@ def handle_pull_request_event(
     notify_lifecycle,
     effective_review_mode,
     launch_next_agent,
+    cleanup_worktree_for_issue=None,
 ) -> dict[str, Any]:
     """Handle parsed pull_request event."""
     action = event.get("action")
@@ -27,9 +42,9 @@ def handle_pull_request_event(
         message = policy.build_pr_created_message(event)
         notify_lifecycle(message)
 
-        issue_match = re.search(r"#(\d+)", str(pr_title or ""))
-        if issue_match:
-            referenced_issue = issue_match.group(1)
+        issue_refs = _extract_issue_numbers_from_text(pr_title)
+        if issue_refs:
+            referenced_issue = issue_refs[0]
             logger.info(
                 "PR #%s references issue #%s — auto-queuing reviewer",
                 pr_number,
@@ -47,6 +62,20 @@ def handle_pull_request_event(
         return {"status": "pr_opened_notified", "pr": pr_number, "action": action}
 
     if action == "closed" and merged:
+        cleaned_issue_refs: list[str] = []
+        if callable(cleanup_worktree_for_issue):
+            for issue_ref in _extract_issue_numbers_from_text(pr_title):
+                try:
+                    if cleanup_worktree_for_issue(repo_name, issue_ref):
+                        cleaned_issue_refs.append(issue_ref)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed webhook PR-merge worktree cleanup for issue #%s in %s: %s",
+                        issue_ref,
+                        repo_name,
+                        exc,
+                    )
+
         review_mode = effective_review_mode(repo_name)
         should_notify = policy.should_notify_pr_merged(review_mode)
         if should_notify:
@@ -57,6 +86,7 @@ def handle_pull_request_event(
                 "pr": pr_number,
                 "action": action,
                 "review_mode": review_mode,
+                "cleaned_issue_refs": cleaned_issue_refs,
             }
 
         logger.info(
@@ -69,6 +99,7 @@ def handle_pull_request_event(
             "pr": pr_number,
             "action": action,
             "review_mode": review_mode,
+            "cleaned_issue_refs": cleaned_issue_refs,
         }
 
     return {"status": "logged", "pr": pr_number, "action": action}

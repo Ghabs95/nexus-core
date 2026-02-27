@@ -1,6 +1,7 @@
 """Tests for nexus.core.workspace — WorkspaceManager."""
 
 import os
+import time
 from unittest import mock
 
 import pytest
@@ -81,3 +82,81 @@ class TestProvisionWorktreeCustomBranch:
         worktree_call = mock_run.call_args_list[-1]
         cmd = worktree_call[0][0]
         assert cmd == ["git", "worktree", "add", "-b", "nexus/issue-42", os.path.join(base, ".nexus", "worktrees", "issue-42")]
+
+
+class TestCleanupWorktreeSafety:
+    @mock.patch("nexus.core.workspace.WorkspaceManager.cleanup_worktree", return_value=True)
+    def test_cleanup_worktree_safe_skips_when_agent_running(self, mock_cleanup, tmp_path):
+        issue_dir = tmp_path / ".nexus" / "worktrees" / "issue-42"
+        issue_dir.mkdir(parents=True)
+
+        ok = WorkspaceManager.cleanup_worktree_safe(
+            str(tmp_path),
+            "42",
+            is_issue_agent_running=lambda issue: issue == "42",
+            require_clean=True,
+        )
+
+        assert ok is False
+        mock_cleanup.assert_not_called()
+
+    @mock.patch("nexus.core.workspace.WorkspaceManager.cleanup_worktree", return_value=True)
+    @mock.patch("nexus.core.workspace.WorkspaceManager._is_worktree_clean_dir", return_value=False)
+    def test_cleanup_worktree_safe_skips_when_dirty(self, mock_clean, mock_cleanup, tmp_path):
+        issue_dir = tmp_path / ".nexus" / "worktrees" / "issue-42"
+        issue_dir.mkdir(parents=True)
+
+        ok = WorkspaceManager.cleanup_worktree_safe(
+            str(tmp_path),
+            "42",
+            is_issue_agent_running=lambda _issue: False,
+            require_clean=True,
+        )
+
+        assert ok is False
+        mock_cleanup.assert_not_called()
+
+    @mock.patch("nexus.core.workspace.WorkspaceManager.cleanup_worktree", return_value=True)
+    @mock.patch("nexus.core.workspace.WorkspaceManager._is_worktree_clean_dir", return_value=True)
+    def test_cleanup_worktree_safe_runs_when_idle_and_clean(self, mock_clean, mock_cleanup, tmp_path):
+        issue_dir = tmp_path / ".nexus" / "worktrees" / "issue-42"
+        issue_dir.mkdir(parents=True)
+
+        ok = WorkspaceManager.cleanup_worktree_safe(
+            str(tmp_path),
+            "42",
+            is_issue_agent_running=lambda _issue: False,
+            require_clean=True,
+        )
+
+        assert ok is True
+        mock_cleanup.assert_called_once_with(str(tmp_path), "42")
+
+
+class TestCleanupStaleWorktrees:
+    @mock.patch("nexus.core.workspace.WorkspaceManager.cleanup_worktree", return_value=True)
+    @mock.patch("nexus.core.workspace.WorkspaceManager._is_worktree_clean_dir", return_value=True)
+    def test_cleanup_stale_worktrees_removes_old_clean_idle(self, mock_clean, mock_cleanup, tmp_path):
+        root = tmp_path / ".nexus" / "worktrees"
+        old = root / "issue-11"
+        recent = root / "issue-12"
+        old.mkdir(parents=True)
+        recent.mkdir(parents=True)
+
+        now = int(time.time())
+        old_ts = now - (9 * 24 * 3600)
+        recent_ts = now - (2 * 3600)
+        os.utime(old, (old_ts, old_ts))
+        os.utime(recent, (recent_ts, recent_ts))
+
+        stats = WorkspaceManager.cleanup_stale_worktrees(
+            str(tmp_path),
+            max_age_hours=24,
+            is_issue_agent_running=lambda _issue: False,
+            require_clean=True,
+        )
+
+        assert stats["scanned"] == 2
+        assert stats["removed"] == 1
+        assert stats["skipped_recent"] == 1
+        mock_cleanup.assert_called_once_with(str(tmp_path), "11")

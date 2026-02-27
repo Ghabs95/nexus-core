@@ -98,13 +98,16 @@ def cleanup_worktree(
     *,
     repo_dir: str,
     issue_number: str,
+    is_issue_agent_running_fn=None,
 ) -> bool:
     from nexus.core.workspace import WorkspaceManager
 
     return bool(
-        WorkspaceManager.cleanup_worktree(
+        WorkspaceManager.cleanup_worktree_safe(
             base_repo_path=repo_dir,
             issue_number=str(issue_number),
+            is_issue_agent_running=is_issue_agent_running_fn,
+            require_clean=True,
         )
     )
 

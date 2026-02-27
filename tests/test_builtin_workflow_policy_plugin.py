@@ -116,5 +116,5 @@ def test_workflow_policy_finalize_workflow_reuses_existing_pr():
 
     assert result["pr_urls"] == ["https://github.com/org/repo/pull/50"]
     assert captured["created"] is False
-    assert captured["cleanup_called"] is False
+    assert captured["cleanup_called"] is True
     assert "https://github.com/org/repo/pull/50" in captured["closed_kwargs"]["comment"]

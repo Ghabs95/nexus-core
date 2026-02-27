@@ -1162,6 +1162,72 @@ def _resolve_worktree_base_repo(workspace_dir: str, issue_url: str) -> str:
     return base
 
 
+def _slugify_branch_component(text: str, max_len: int = 48) -> str:
+    value = str(text or "").strip().lower()
+    value = re.sub(r"['`]", "", value)
+    value = re.sub(r"[^a-z0-9]+", "-", value)
+    value = re.sub(r"-{2,}", "-", value).strip("-")
+    if not value:
+        return ""
+    return value[: max(8, int(max_len))].strip("-")
+
+
+def _extract_issue_title_from_task_content(task_content: str) -> str:
+    text = str(task_content or "")
+    patterns = [
+        r"(?im)^#\s*Issue\s*#\d+\s*:\s*(.+)$",
+        r"(?im)^\*\*Title:\*\*\s*(.+)$",
+        r"(?im)^Title:\s*(.+)$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return str(match.group(1) or "").strip()
+
+    for raw_line in text.splitlines():
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+        candidate = re.sub(r"^#+\s*", "", line).strip()
+        if candidate and not candidate.lower().startswith("issue:"):
+            return candidate
+    return ""
+
+
+def _extract_issue_type_from_task_content(task_content: str) -> str:
+    text = str(task_content or "")
+    match = re.search(r"(?im)^\*\*Type:\*\*\s*([A-Za-z0-9_-]+)\s*$", text)
+    if match:
+        return str(match.group(1) or "").strip().lower()
+    return ""
+
+
+def _branch_prefix_for_issue(*, issue_type: str, tier_name: str) -> str:
+    issue_type_norm = str(issue_type or "").strip().lower()
+    tier_norm = str(tier_name or "").strip().lower()
+    if tier_norm == "fast-track" or issue_type_norm in {"bug", "fix", "hotfix"}:
+        return "fix"
+    if issue_type_norm in {"doc", "docs", "documentation"}:
+        return "docs"
+    if issue_type_norm in {"chore", "support", "maintenance", "refactor"}:
+        return "chore"
+    return "feat"
+
+
+def _derive_issue_branch_name(*, issue_number: str, task_content: str, tier_name: str) -> str:
+    issue_num = str(issue_number or "").strip()
+    issue_type = _extract_issue_type_from_task_content(task_content)
+    prefix = _branch_prefix_for_issue(issue_type=issue_type, tier_name=tier_name)
+    title = _extract_issue_title_from_task_content(task_content)
+    slug = _slugify_branch_component(title, max_len=52)
+    if not slug:
+        return f"{prefix}/issue-{issue_num}"
+    suffix = f"issue-{issue_num}"
+    if slug.endswith(suffix):
+        return f"{prefix}/{slug}"
+    return f"{prefix}/{slug}-{suffix}"
+
+
 def _build_agent_search_dirs(agents_dir: str) -> list:
     """Build the ordered list of directories to search for agent YAML files.
 
@@ -1401,9 +1467,24 @@ def invoke_copilot_agent(
             except Exception as e:
                 logger.warning(f"Could not extract target branch: {e}")
 
+        branch_for_worktree = (
+            str(target_branch or "").strip()
+            or _derive_issue_branch_name(
+                issue_number=issue_num,
+                task_content=task_content,
+                tier_name=tier_name,
+            )
+        )
+        if issue_num != "unknown":
+            logger.info(
+                "Using worktree branch for issue #%s: %s",
+                issue_num,
+                branch_for_worktree,
+            )
+
         if issue_num != "unknown" and _is_git_repo(worktree_base_repo):
             isolated_workspace = WorkspaceManager.provision_worktree(
-                worktree_base_repo, issue_num, branch_name=target_branch
+                worktree_base_repo, issue_num, branch_name=branch_for_worktree
             )
         elif issue_num != "unknown":
             logger.warning(

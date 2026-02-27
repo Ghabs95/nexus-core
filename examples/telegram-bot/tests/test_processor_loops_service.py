@@ -24,6 +24,7 @@ def test_run_processor_loop_filesystem_and_periodic_checks():
         "comments": 0,
         "completed": 0,
         "mergeq": 0,
+        "stale": 0,
     }
     fake_time = _FakeTime()
 
@@ -40,6 +41,7 @@ def test_run_processor_loop_filesystem_and_periodic_checks():
             check_agent_comments=lambda: calls.__setitem__("comments", calls["comments"] + 1),
             check_completed_agents=lambda: calls.__setitem__("completed", calls["completed"] + 1),
             merge_queue_auto_merge_once=lambda: calls.__setitem__("mergeq", calls["mergeq"] + 1),
+            cleanup_stale_worktrees_once=lambda: calls.__setitem__("stale", calls["stale"] + 1),
             time_module=fake_time,
         )
     except RuntimeError as exc:
@@ -51,6 +53,7 @@ def test_run_processor_loop_filesystem_and_periodic_checks():
     assert calls["comments"] == 1
     assert calls["completed"] == 1
     assert calls["mergeq"] == 1
+    assert calls["stale"] == 1
 
 
 def test_run_processor_loop_postgres_path():
@@ -70,6 +73,7 @@ def test_run_processor_loop_postgres_path():
             check_agent_comments=lambda: None,
             check_completed_agents=lambda: None,
             merge_queue_auto_merge_once=lambda: None,
+            cleanup_stale_worktrees_once=lambda: None,
             time_module=fake_time,
         )
     except RuntimeError as exc:

@@ -40,6 +40,7 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from nexus.core.project.repo_utils import project_repos_from_config as _project_repos
+from nexus.core.workspace import WorkspaceManager
 
 from config import (
     BASE_DIR,
@@ -63,6 +64,7 @@ from integrations.notifications import (
     send_notification,
 )
 from orchestration.plugin_runtime import (
+    get_runtime_ops_plugin,
     get_webhook_policy_plugin,
     get_workflow_state_plugin,
 )
@@ -189,6 +191,59 @@ def _effective_review_mode(repo_name: str) -> str:
     return policy.resolve_review_mode(repo_name, PROJECT_CONFIG, default_mode="manual")
 
 
+def _resolve_git_dir_for_repo(repo_name: str) -> str | None:
+    project_key = _repo_to_project_key(repo_name)
+    project_cfg = PROJECT_CONFIG.get(project_key, {})
+    if not isinstance(project_cfg, dict):
+        return None
+
+    workspace_rel = str(project_cfg.get("workspace", "") or "").strip()
+    if not workspace_rel:
+        return None
+
+    workspace_abs = os.path.join(BASE_DIR, workspace_rel)
+    repo_basename = str(repo_name or "").strip().split("/")[-1]
+    if not repo_basename:
+        return None
+
+    # Either workspace is the repo root, or repo lives under workspace/{repo}.
+    if os.path.isdir(os.path.join(workspace_abs, ".git")):
+        if os.path.basename(workspace_abs.rstrip(os.sep)) == repo_basename:
+            return workspace_abs
+
+    candidate = os.path.join(workspace_abs, repo_basename)
+    if os.path.isdir(os.path.join(candidate, ".git")):
+        return candidate
+    return None
+
+
+def _is_issue_agent_running(issue_number: str) -> bool:
+    runtime_ops = get_runtime_ops_plugin(cache_key="runtime-ops:webhook")
+    if runtime_ops is None or not hasattr(runtime_ops, "is_issue_process_running"):
+        raise RuntimeError("runtime ops plugin is unavailable")
+    return bool(runtime_ops.is_issue_process_running(str(issue_number)))
+
+
+def _cleanup_worktree_for_issue(repo_name: str, issue_number: str) -> bool:
+    git_dir = _resolve_git_dir_for_repo(repo_name)
+    if not git_dir:
+        logger.info(
+            "Skipping webhook worktree cleanup for issue #%s: could not resolve git dir for %s",
+            issue_number,
+            repo_name,
+        )
+        return False
+
+    return bool(
+        WorkspaceManager.cleanup_worktree_safe(
+            base_repo_path=git_dir,
+            issue_number=str(issue_number),
+            is_issue_agent_running=_is_issue_agent_running,
+            require_clean=True,
+        )
+    )
+
+
 def _notify_lifecycle(message: str) -> bool:
     """Send lifecycle notification via abstract notifier, fallback to Telegram alert."""
     if send_notification(message):
@@ -286,6 +341,7 @@ def handle_issue_opened(payload, event):
         get_inbox_dir=get_inbox_dir,
         get_inbox_storage_backend=get_inbox_storage_backend,
         enqueue_task=enqueue_task,
+        cleanup_worktree_for_issue=_cleanup_worktree_for_issue,
     )
 
 
@@ -319,6 +375,7 @@ def handle_pull_request(payload, event):
         notify_lifecycle=_notify_lifecycle,
         effective_review_mode=_effective_review_mode,
         launch_next_agent=launch_next_agent,
+        cleanup_worktree_for_issue=_cleanup_worktree_for_issue,
     )
 
 

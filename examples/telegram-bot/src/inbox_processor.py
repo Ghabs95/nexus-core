@@ -47,6 +47,7 @@ from nexus.core.project.repo_utils import (
     project_repos_from_config as _project_repos_from_config,
 )
 from nexus.core.router import WorkflowRouter
+from nexus.core.workspace import WorkspaceManager
 from orchestration.ai_orchestrator import get_orchestrator
 from orchestration.nexus_core_helpers import (
     complete_step_for_issue,
@@ -55,6 +56,7 @@ from orchestration.nexus_core_helpers import (
     start_workflow,
 )
 from orchestration.plugin_runtime import (
+    get_runtime_ops_plugin,
     get_workflow_monitor_policy_plugin,
     get_workflow_policy_plugin,
     get_workflow_state_plugin,
@@ -285,6 +287,15 @@ _ORPHAN_RECOVERY_COOLDOWN_SECONDS = max(
     int(os.getenv("NEXUS_ORPHAN_RECOVERY_COOLDOWN_SECONDS", "180")),
 )
 _orphan_recovery_last_attempt = PROCESSOR_RUNTIME_STATE.orphan_recovery_last_attempt
+_STALE_WORKTREE_CLEANUP_INTERVAL_SECONDS = max(
+    300,
+    int(os.getenv("NEXUS_STALE_WORKTREE_CLEANUP_INTERVAL_SECONDS", "3600")),
+)
+_STALE_WORKTREE_MAX_AGE_HOURS = max(
+    1,
+    int(os.getenv("NEXUS_STALE_WORKTREE_MAX_AGE_HOURS", "168")),
+)
+_last_stale_worktree_cleanup_ts = 0.0
 from integrations.workflow_state_factory import get_workflow_state as _get_wf_state
 from integrations.workflow_state_factory import get_storage_backend as _get_storage_backend
 
@@ -576,6 +587,13 @@ def _workflow_policy_notify(message: str) -> None:
     emit_alert(message, severity="info", source="workflow_policy")
 
 
+def _is_issue_agent_running(issue_number: str) -> bool:
+    runtime_ops = get_runtime_ops_plugin(cache_key="runtime-ops:inbox")
+    if runtime_ops is None or not hasattr(runtime_ops, "is_issue_process_running"):
+        raise RuntimeError("runtime ops plugin is unavailable")
+    return bool(runtime_ops.is_issue_process_running(str(issue_number)))
+
+
 def _archive_closed_task_files(
     issue_num: str,
     project_name: str,
@@ -672,6 +690,7 @@ def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name:
         cleanup_worktree_fn=lambda **kwargs: _finalize_cleanup_worktree(
             repo_dir=kwargs["repo_dir"],
             issue_number=str(kwargs["issue_number"]),
+            is_issue_agent_running_fn=_is_issue_agent_running,
         ),
         close_issue_fn=lambda **kwargs: _finalize_close_issue(
             project_name=project_name,
@@ -803,6 +822,70 @@ def check_stuck_agents():
         clear_polling_failures=_clear_polling_failures,
         record_polling_failure=_record_polling_failure,
     )
+
+
+def _cleanup_stale_worktrees_once() -> None:
+    global _last_stale_worktree_cleanup_ts
+
+    now = time.time()
+    if now - _last_stale_worktree_cleanup_ts < _STALE_WORKTREE_CLEANUP_INTERVAL_SECONDS:
+        return
+    _last_stale_worktree_cleanup_ts = now
+
+    try:
+        runtime_ops = get_runtime_ops_plugin(cache_key="runtime-ops:stale-worktree-cleanup")
+    except Exception as exc:
+        logger.warning("Could not initialize runtime ops for stale worktree cleanup: %s", exc)
+        runtime_ops = None
+
+    def _is_running(issue_number: str) -> bool:
+        if runtime_ops is None or not hasattr(runtime_ops, "is_issue_process_running"):
+            return False
+        try:
+            return bool(runtime_ops.is_issue_process_running(str(issue_number)))
+        except Exception:
+            return False
+
+    aggregate = {
+        "scanned": 0,
+        "removed": 0,
+        "skipped_recent": 0,
+        "skipped_running": 0,
+        "skipped_dirty": 0,
+        "failed": 0,
+    }
+    processed_git_dirs: set[str] = set()
+
+    for project_name, _cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
+        resolved = _resolve_git_dirs(project_name)
+        if not resolved:
+            fallback_git_dir = _resolve_git_dir(project_name)
+            resolved = {project_name: fallback_git_dir} if fallback_git_dir else {}
+
+        for git_dir in set(resolved.values()):
+            if not git_dir or git_dir in processed_git_dirs:
+                continue
+            processed_git_dirs.add(git_dir)
+            stats = WorkspaceManager.cleanup_stale_worktrees(
+                base_repo_path=git_dir,
+                max_age_hours=_STALE_WORKTREE_MAX_AGE_HOURS,
+                is_issue_agent_running=_is_running,
+                require_clean=True,
+            )
+            for key in aggregate:
+                aggregate[key] += int(stats.get(key, 0))
+
+    if aggregate["scanned"] > 0:
+        logger.info(
+            "Stale worktree cleanup: scanned=%s removed=%s skipped_recent=%s "
+            "skipped_running=%s skipped_dirty=%s failed=%s",
+            aggregate["scanned"],
+            aggregate["removed"],
+            aggregate["skipped_recent"],
+            aggregate["skipped_running"],
+            aggregate["skipped_dirty"],
+            aggregate["failed"],
+        )
 
 
 def _recover_orphaned_running_agents(max_relaunches: int = 3) -> int:
@@ -1144,6 +1227,7 @@ def main():
         check_agent_comments=check_agent_comments,
         check_completed_agents=check_completed_agents,
         merge_queue_auto_merge_once=_merge_queue_auto_merge_once,
+        cleanup_stale_worktrees_once=_cleanup_stale_worktrees_once,
         drain_postgres_inbox_queue=_drain_postgres_inbox_queue,
         process_filesystem_inbox_once=_process_filesystem_inbox_once,
         run_processor_loop=_run_processor_loop,
