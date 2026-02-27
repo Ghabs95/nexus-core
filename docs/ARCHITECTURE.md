@@ -278,6 +278,15 @@ class NotificationChannel(ABC):
 - `EmailNotifier` - SMTP
 - `DiscordNotifier` - Discord webhooks
 
+### 5. ProcessOrchestrator
+**Why**: Provide a reusable, declarative execution loop for workflow lifecycles.
+
+**Responsibilities**:
+- Scan completion artifacts and drive transitions.
+- Monitor agent liveness and detect stuck/dead processes.
+- Execute auto-chaining and retry policies defined in YAML.
+- Implement the `OrchestrationRuntime` protocol for host applications.
+
 ---
 
 ## Configuration Evolution

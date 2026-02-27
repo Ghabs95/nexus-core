@@ -103,6 +103,34 @@ steps:
     agent_type: developer
 ```
 
+**Declarative Orchestration (v2)**: Control runtime behavior directly from YAML.
+
+The optional `orchestration` block allows you to declare how the workflow engine and host applications should manage the execution lifecycle.
+
+```yaml
+schema_version: "2.0"
+name: "Advanced Workflow"
+
+orchestration:
+  polling:
+    interval_seconds: 15
+    completion_glob: ".nexus/tasks/nexus/completions/completion_summary_*.json"
+    dedupe_cache_size: 500
+  timeouts:
+    default_agent_timeout_seconds: 3600
+    timeout_action: "retry" # options: retry | fail_step | alert_only
+  chaining:
+    enabled: true
+    require_completion_comment: true
+    block_on_closed_issue: true
+  retries:
+    max_retries_per_step: 2
+    backoff: "exponential" # options: constant | linear | exponential
+    initial_delay_seconds: 1.0
+  recovery:
+    stale_running_step_action: "reconcile" # options: reconcile | fail_workflow
+```
+
 ### Defining Custom Agents
 
 The Nexus Core framework allows for the definition of custom agent types through YAML configuration files. These agent definitions specify the agent's purpose, required tools, input/output contracts, and AI instructions, enabling flexible and extensible agent-driven workflows.
