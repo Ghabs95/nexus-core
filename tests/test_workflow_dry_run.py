@@ -110,6 +110,16 @@ class TestDryRunValidation:
         report = WorkflowDefinition.dry_run(_minimal_workflow())
         assert isinstance(report, DryRunReport)
 
+    def test_includes_resolved_orchestration_config(self):
+        report = WorkflowDefinition.dry_run(_minimal_workflow(timeout_seconds=333))
+        assert report.orchestration_config["default_agent_timeout_seconds"] == 333
+
+    def test_invalid_orchestration_enum_surfaces_error(self):
+        report = WorkflowDefinition.dry_run(
+            _minimal_workflow(orchestration={"retries": {"backoff": "random"}})
+        )
+        assert any("orchestration.retries.backoff" in e for e in report.errors)
+
 
 # ---------------------------------------------------------------------------
 # Simulation / predicted_flow
