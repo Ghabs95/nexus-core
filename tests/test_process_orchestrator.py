@@ -8,6 +8,7 @@ from nexus.core.models import (
     Agent,
     StepStatus,
     Workflow,
+    WorkflowOrchestrationConfig,
     WorkflowState,
     WorkflowStep,
 )
@@ -118,16 +119,23 @@ def _make_workflow(state: WorkflowState, active_agent: str | None = None) -> Wor
     return wf
 
 
-def _orchestrator(runtime: StubRuntime, complete_step_fn=None, stuck_threshold=60) -> ProcessOrchestrator:
+def _orchestrator(
+    runtime: StubRuntime,
+    complete_step_fn=None,
+    stuck_threshold=60,
+    orchestration: WorkflowOrchestrationConfig | None = None,
+) -> ProcessOrchestrator:
     if complete_step_fn is None:
         async def _noop(issue, agent, outputs, event_id=""):
             return None
         complete_step_fn = _noop
-    runtime._agent_timeout_seconds = stuck_threshold
+    if stuck_threshold is not None:
+        runtime._agent_timeout_seconds = stuck_threshold
     return ProcessOrchestrator(
         runtime=runtime,
         complete_step_fn=complete_step_fn,
         nexus_dir=".nexus",
+        orchestration=orchestration,
     )
 
 
@@ -220,6 +228,41 @@ class TestScanAndProcessCompletions:
         assert runtime.launched == []
         assert any("comment delivery failed" in alert for alert in runtime.alerts)
         assert "key-42" not in dedup_seen
+
+    def test_comment_post_failure_allows_autochain_when_not_required(self):
+        """When completion comments are optional, chain can continue after post failure."""
+        runtime = StubRuntime()
+        runtime._post_comment_success = False
+        orchestration = WorkflowOrchestrationConfig(require_completion_comment=False)
+
+        async def complete(issue, agent, outputs, event_id=""):
+            return None
+
+        orc = _orchestrator(runtime, complete, orchestration=orchestration)
+        det = self._fake_detection(next_agent="reviewer")
+
+        with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
+            orc.scan_and_process_completions("/base", set())
+
+        assert len(runtime.launched) == 1
+        assert runtime.launched[0]["agent_type"] == "reviewer"
+
+    def test_chaining_disabled_skips_launch(self):
+        """With orchestration chaining disabled, completions are posted but not launched."""
+        runtime = StubRuntime()
+        orchestration = WorkflowOrchestrationConfig(chaining_enabled=False)
+
+        async def complete(issue, agent, outputs, event_id=""):
+            return None
+
+        orc = _orchestrator(runtime, complete, orchestration=orchestration)
+        det = self._fake_detection(next_agent="architect")
+
+        with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
+            orc.scan_and_process_completions("/base", set())
+
+        assert len(runtime.posted_comments) == 1
+        assert runtime.launched == []
 
     def test_engine_path_completed_finalizes(self):
         """When engine workflow is COMPLETED, finalize is called, nothing is launched."""
@@ -569,6 +612,20 @@ class TestDetectDeadAgents:
         assert any("Crashed" in a for a in runtime.alerts)
         assert any(e["issue"] == "21" for e in runtime.launched)
 
+    def test_custom_liveness_threshold_triggers_retry_on_second_miss(self):
+        """liveness_miss_threshold from orchestration config should control dead-agent retries."""
+        runtime = StubRuntime(retry=True)
+        runtime.tracker = {"91": self._entry(pid=9191, age_seconds=10)}
+        orchestration = WorkflowOrchestrationConfig(liveness_miss_threshold=2)
+        orc = _orchestrator(runtime, stuck_threshold=3600, orchestration=orchestration)
+
+        with patch.object(runtime, "is_pid_alive", return_value=False):
+            orc.detect_dead_agents()
+            assert runtime.launched == []
+            orc.detect_dead_agents()
+
+        assert any(e["issue"] == "91" for e in runtime.launched)
+
     def test_stopped_workflow_skipped(self):
         """Agents in a STOPPED workflow must not be retried."""
         runtime = StubRuntime()
@@ -757,3 +814,37 @@ class TestCheckStuckAgents:
 
         assert runtime.alerts == []
         assert runtime.launched == []
+
+    def test_timeout_action_alert_only_skips_kill_and_retry(self, tmp_path):
+        """timeout_action=alert_only should emit alert only without kill/retry."""
+        runtime = StubRuntime(retry=True)
+        runtime.tracker = {
+            "81": {
+                "pid": 8181,
+                "timestamp": time.time() - 120,
+                "agent_type": "developer",
+                "tool": "copilot",
+            }
+        }
+        orchestration = WorkflowOrchestrationConfig(timeout_action="alert_only")
+        orc = _orchestrator(runtime, stuck_threshold=60, orchestration=orchestration)
+
+        log_file = tmp_path / "copilot_81_20260101.log"
+        log_file.write_text("stale")
+
+        with patch.object(runtime, "kill_process", return_value=True) as kill_mock:
+            orc._handle_timeout("81", str(log_file), pid=8181, timeout_seconds=60)
+
+        kill_mock.assert_not_called()
+        assert runtime.launched == []
+        assert any("alert_only" in alert for alert in runtime.alerts)
+
+
+class TestTimeoutResolution:
+    def test_orchestration_default_timeout_used_when_runtime_has_none(self):
+        runtime = StubRuntime()
+        runtime._agent_timeout_seconds = None  # type: ignore[assignment]
+        orchestration = WorkflowOrchestrationConfig(default_agent_timeout_seconds=222)
+        orc = _orchestrator(runtime, stuck_threshold=None, orchestration=orchestration)
+
+        assert orc._resolve_agent_timeout("42") == 222
