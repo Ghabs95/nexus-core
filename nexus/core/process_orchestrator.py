@@ -40,11 +40,9 @@ from nexus.core.completion import (
     build_completion_comment,
     scan_for_completions,
 )
+from nexus.core.models import WorkflowOrchestrationConfig
 
 logger = logging.getLogger(__name__)
-
-_DEAD_PID_LIVENESS_MISS_THRESHOLD = 3
-
 
 # ---------------------------------------------------------------------------
 # AgentRuntime — abstract interface to the host application
@@ -286,10 +284,12 @@ class ProcessOrchestrator:
         complete_step_fn: Callable[[str, str, dict], Any],
         *,
         nexus_dir: str = ".nexus",
+        orchestration: WorkflowOrchestrationConfig | None = None,
     ) -> None:
         self._runtime = runtime
         self._complete_step_fn = complete_step_fn
         self._nexus_dir = nexus_dir
+        self._orchestration = orchestration or WorkflowOrchestrationConfig()
         # Per-session set of (issue:pid) keys we've already alerted for.
         self._dead_agent_alerted: set[str] = set()
         # Consecutive dead-PID liveness misses per (issue, pid).
@@ -405,7 +405,7 @@ class ProcessOrchestrator:
                 logger.info(f"📋 Agent completed for issue #{issue_num} ({completed_agent})")
 
                 issue_open = self._runtime.is_issue_open(issue_num, repo)
-                if issue_open is False:
+                if issue_open is False and self._orchestration.block_on_closed_issue:
                     logger.info(
                         "Skipping auto-completion processing for closed issue #%s",
                         issue_num,
@@ -489,7 +489,7 @@ class ProcessOrchestrator:
                 comment_body = build_completion_comment(comment_summary)
 
                 issue_open = self._runtime.is_issue_open(issue_num, repo)
-                if issue_open is False:
+                if issue_open is False and self._orchestration.block_on_closed_issue:
                     logger.info(
                         "Skipping completion comment/chain for now-closed issue #%s",
                         issue_num,
@@ -497,22 +497,31 @@ class ProcessOrchestrator:
                     dedup_seen.add(comment_key)
                     continue
 
-                if not self._runtime.post_completion_comment(issue_num, repo, comment_body):
+                comment_posted = self._runtime.post_completion_comment(issue_num, repo, comment_body)
+                if not comment_posted:
                     issue_open_after_fail = self._runtime.is_issue_open(issue_num, repo)
-                    if issue_open_after_fail is False:
+                    if (
+                        issue_open_after_fail is False
+                        and self._orchestration.block_on_closed_issue
+                    ):
                         logger.info(
                             "Comment delivery skipped for closed issue #%s",
                             issue_num,
                         )
                         dedup_seen.add(comment_key)
                         continue
-                    self._runtime.send_alert(
-                        "⚠️ Completion detected but Git comment delivery failed; "
-                        f"auto-chain blocked for issue #{issue_num} ({completed_agent})."
-                    )
-                    continue
+                    if self._orchestration.require_completion_comment:
+                        self._runtime.send_alert(
+                            "⚠️ Completion detected but Git comment delivery failed; "
+                            f"auto-chain blocked for issue #{issue_num} ({completed_agent})."
+                        )
+                        continue
 
                 dedup_seen.add(comment_key)
+
+                if not self._orchestration.chaining_enabled:
+                    logger.info("Chaining disabled by orchestration config for issue #%s", issue_num)
+                    continue
 
                 # Send transition alert.
                 if build_transition_message:
@@ -658,7 +667,9 @@ class ProcessOrchestrator:
 
             timeout_seconds = self._resolve_agent_timeout(issue_num, agent_type)
             required_misses = (
-                1 if (now - launch_ts) >= timeout_seconds else _DEAD_PID_LIVENESS_MISS_THRESHOLD
+                1
+                if (now - launch_ts) >= timeout_seconds
+                else self._orchestration.liveness_miss_threshold
             )
 
             if miss_count < required_misses:
@@ -828,6 +839,13 @@ class ProcessOrchestrator:
             ),
         )
 
+        if self._orchestration.timeout_action == "alert_only":
+            self._runtime.send_alert(
+                f"⚠️ Agent timeout detected for issue #{issue_num} ({agent_type}); "
+                "timeout_action=alert_only so no retry/kill was attempted."
+            )
+            return
+
         if launch_ts > 0 and log_mtime + 5 < launch_ts:
             logger.info(
                 "Ignoring stale timeout log for issue #%s: log mtime predates current launch",
@@ -942,6 +960,8 @@ class ProcessOrchestrator:
         )
 
         will_retry = self._runtime.should_retry(issue_num, agent_type)
+        if self._orchestration.timeout_action == "fail_step":
+            will_retry = False
         self._runtime.notify_timeout(issue_num, agent_type, will_retry)
 
         if will_retry:
@@ -969,7 +989,7 @@ class ProcessOrchestrator:
 
         if isinstance(timeout, (int, float)) and int(timeout) > 0:
             return int(timeout)
-        return 3600
+        return self._orchestration.default_agent_timeout_seconds
 
 
 # ---------------------------------------------------------------------------
