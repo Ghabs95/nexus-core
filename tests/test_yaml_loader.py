@@ -3,6 +3,7 @@ import pytest
 
 from nexus.core.models import Workflow, WorkflowStep
 from nexus.core.yaml_loader import RETRY_BACKOFF_STRATEGIES, YamlWorkflowLoader
+from nexus.core.workflow_engine.workflow_definition_loader import validate_orchestration_config
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -162,6 +163,41 @@ class TestValidateDictErrors:
         errors = YamlWorkflowLoader.validate_dict(data)
         assert errors
 
+    def test_invalid_orchestration_enum_rejected(self):
+        data = _minimal_dict(
+            orchestration={
+                "timeouts": {"timeout_action": "explode"},
+            }
+        )
+        errors = YamlWorkflowLoader.validate_dict(data)
+        assert any("timeout_action" in e for e in errors)
+
+    def test_orchestration_string_false_values_parse_as_false(self):
+        data = _minimal_dict(
+            orchestration={
+                "chaining": {
+                    "enabled": "false",
+                    "require_completion_comment": "false",
+                    "block_on_closed_issue": "false",
+                }
+            }
+        )
+        wf = YamlWorkflowLoader.load_from_dict(data)
+        assert wf.orchestration.chaining_enabled is False
+        assert wf.orchestration.require_completion_comment is False
+        assert wf.orchestration.block_on_closed_issue is False
+
+    def test_orchestration_absolute_completion_glob_sibling_path_rejected(self):
+        data = _minimal_dict(
+            orchestration={
+                "polling": {
+                    "completion_glob": "/tmp/workspace-evil/.nexus/tasks/nexus/completions/*.json",
+                }
+            }
+        )
+        errors = validate_orchestration_config(data, workspace_root="/tmp/workspace")
+        assert any("must resolve inside workspace root" in error for error in errors)
+
 
 # ---------------------------------------------------------------------------
 # load_from_dict — integration with WorkflowDefinition
@@ -214,6 +250,44 @@ class TestLoadFromDict:
         }
         wf = YamlWorkflowLoader.load_from_dict(data, strict=False)
         assert isinstance(wf, Workflow)
+
+    def test_v1_timeout_seconds_maps_to_orchestration_default_timeout(self):
+        wf = YamlWorkflowLoader.load_from_dict(_minimal_dict(timeout_seconds=1234))
+        assert wf.schema_version == "1.0"
+        assert wf.orchestration.default_agent_timeout_seconds == 1234
+
+    def test_orchestration_v2_block_parses_into_workflow(self):
+        data = _minimal_dict(
+            schema_version="2.0",
+            orchestration={
+                "polling": {
+                    "interval_seconds": 21,
+                    "completion_glob": ".nexus/tasks/nexus/completions/completion_summary_*.json",
+                    "dedupe_cache_size": 50,
+                },
+                "timeouts": {
+                    "default_agent_timeout_seconds": 1800,
+                    "liveness_miss_threshold": 2,
+                    "timeout_action": "retry",
+                },
+                "chaining": {
+                    "enabled": False,
+                    "require_completion_comment": False,
+                    "block_on_closed_issue": False,
+                },
+                "retries": {
+                    "max_retries_per_step": 4,
+                    "backoff": "linear",
+                    "initial_delay_seconds": 2.5,
+                },
+                "recovery": {"stale_running_step_action": "reconcile"},
+            },
+        )
+        wf = YamlWorkflowLoader.load_from_dict(data)
+        assert wf.schema_version == "2.0"
+        assert wf.orchestration.interval_seconds == 21
+        assert wf.orchestration.backoff == "linear"
+        assert wf.orchestration.chaining_enabled is False
 
 
 # ---------------------------------------------------------------------------
