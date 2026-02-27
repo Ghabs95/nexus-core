@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import uuid
 from datetime import datetime
 from typing import Any
@@ -7,7 +8,13 @@ from typing import Any
 import redis
 from config import REDIS_URL, get_chat_agent_types, get_workflow_profile
 
+from nexus.core.prompt_budget import apply_prompt_budget
+
 logger = logging.getLogger(__name__)
+
+_CHAT_ENTRY_MAX_CHARS = int(os.getenv("AI_CHAT_ENTRY_MAX_CHARS", "800"))
+_CHAT_HISTORY_MAX_CHARS = int(os.getenv("AI_CHAT_HISTORY_MAX_CHARS", "4000"))
+_CONTEXT_SUMMARY_MAX_CHARS = int(os.getenv("AI_CONTEXT_SUMMARY_MAX_CHARS", "1200"))
 
 
 def _resolve_project_agent_types(project_key: str | None) -> list[str]:
@@ -301,7 +308,22 @@ def get_chat_history(user_id: int, limit: int = 10, chat_id: str = None) -> str:
                 history.append(f"{role.capitalize()}: {text}")
             except json.JSONDecodeError:
                 continue
-        return "\n".join(history)
+        joined = "\n".join(history)
+        budget = apply_prompt_budget(
+            joined,
+            max_chars=_CHAT_HISTORY_MAX_CHARS,
+            summary_max_chars=_CONTEXT_SUMMARY_MAX_CHARS,
+        )
+        if budget["summarized"] or budget["truncated"]:
+            logger.info(
+                "Chat history budget applied: user=%s original=%s final=%s summarized=%s truncated=%s",
+                user_id,
+                budget["original_chars"],
+                budget["final_chars"],
+                budget["summarized"],
+                budget["truncated"],
+            )
+        return str(budget["text"])
     except Exception as e:
         logger.error(f"Error retrieving chat history for {user_id}: {e}")
         return ""
@@ -317,7 +339,22 @@ def append_message(
             chat_id = get_active_chat(user_id)
 
         key = f"chat_history:{chat_id}"
-        message = json.dumps({"role": role, "text": text})
+        budget = apply_prompt_budget(
+            str(text or ""),
+            max_chars=_CHAT_ENTRY_MAX_CHARS,
+            summary_max_chars=min(_CONTEXT_SUMMARY_MAX_CHARS, 700),
+        )
+        if budget["summarized"] or budget["truncated"]:
+            logger.info(
+                "Chat message budget applied: user=%s role=%s original=%s final=%s summarized=%s truncated=%s",
+                user_id,
+                role,
+                budget["original_chars"],
+                budget["final_chars"],
+                budget["summarized"],
+                budget["truncated"],
+            )
+        message = json.dumps({"role": role, "text": budget["text"]})
 
         pipe = r.pipeline()
         pipe.rpush(key, message)

@@ -81,11 +81,14 @@ spec:
        - Test coverage
        - Consistency with project conventions (PEP 8, type hints, 100-char lines)
 
-    4. Verify full regression evidence before approving:
-       - Prefer CI status checks covering the full suite.
-       - If CI evidence is missing, run the full test suite yourself and record
-         the pass/fail counts. Do NOT paste raw test logs — only record the
-         summary line (e.g. "355 passed, 0 failed").
+    4. Run regression checks before approving:
+       - For Nexus Core, run `make premerge-core` and record the pass/fail summary.
+       - Keep Telegram example regression separate: if changes touch
+         `examples/telegram-bot/`, run `make premerge-telegram`.
+       - Prefer CI status checks as additional evidence, but do not approve without
+         executed regression evidence (local or CI) for the current head SHA.
+       - Do NOT paste raw test logs — only record the summary line
+         (e.g. "355 passed, 0 failed").
        - Do **not** approve while full regression is failing or not demonstrated.
 
     5. Post an inline review using the GitHub CLI:

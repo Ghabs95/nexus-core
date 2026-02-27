@@ -79,10 +79,19 @@ spec:
     ## If starting fresh (no existing PR)
 
     3. Implement the required changes based on the analysis
-    4. Run syntax/static validation command(s) appropriate to the stack
-       (examples: `python3 -m py_compile ...`, `pytest -q`, `npm run lint`, `flutter analyze`)
-    5. If validation fails, fix or mark blocked; do NOT report completion while failing
-    6. Write or update tests
+    4. For Nexus Core repositories, use the low-token local loop first:
+       - `make lint-file FILE=<changed_file.py>`
+       - `make type-file FILE=<changed_file.py>`
+       - Optional smoke check only when needed to unblock implementation:
+         `make test-file TEST=<impacted_test.py>`
+       Leave full regression execution to the reviewer agent.
+    5. Write or update tests for your code changes.
+    6. Run every test file you created or modified:
+       - Core tests: `make test-changed-core`
+       - Telegram example tests: `make test-changed-telegram`
+       - If auto-detection misses a test, run it explicitly with
+         `make test-file TEST=...` or `make test-example-file TEST=...`
+       If any of these fail, fix or mark blocked; do NOT report completion while failing.
     7. Commit with clear, descriptive messages
     8. Push the branch
     9. Open a pull request targeting the correct base branch with:
@@ -92,6 +101,8 @@ spec:
     10. Post a status comment on the issue with the PR link and validation evidence:
         - exact command(s) run
         - pass/fail result (and key output)
+        - list of created/updated test files that were executed
+        - mention that full regression is reviewer-owned
 
     Follow the project's coding conventions (PEP 8, type hints, 100-char lines).
     Keep changes minimal and focused on the identified issue.

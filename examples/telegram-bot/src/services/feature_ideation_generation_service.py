@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Callable
 
+from nexus.core.prompt_budget import apply_prompt_budget, prompt_prefix_fingerprint
 from utils.log_utils import log_feature_ideation_success, truncate_for_log
+
+_PROMPT_MAX_CHARS = int(os.getenv("AI_PROMPT_MAX_CHARS", "16000"))
+_CONTEXT_SUMMARY_MAX_CHARS = int(os.getenv("AI_CONTEXT_SUMMARY_MAX_CHARS", "1200"))
 
 
 def _extract_items_from_result(
@@ -67,10 +72,34 @@ def build_feature_suggestions(
     extract_json_payload: Callable[[str], Any],
 ) -> list[dict[str, Any]]:
     try:
+        persona_budget = apply_prompt_budget(
+            persona,
+            max_chars=_PROMPT_MAX_CHARS,
+            summary_max_chars=_CONTEXT_SUMMARY_MAX_CHARS,
+        )
+        text_budget = apply_prompt_budget(
+            text,
+            max_chars=min(_PROMPT_MAX_CHARS, 2500),
+            summary_max_chars=min(_CONTEXT_SUMMARY_MAX_CHARS, 900),
+        )
+        if logger:
+            logger.info(
+                "Feature ideation prompt budget: persona=%s->%s summarized=%s truncated=%s "
+                "text=%s->%s summarized=%s truncated=%s fp=%s",
+                persona_budget["original_chars"],
+                persona_budget["final_chars"],
+                persona_budget["summarized"],
+                persona_budget["truncated"],
+                text_budget["original_chars"],
+                text_budget["final_chars"],
+                text_budget["summarized"],
+                text_budget["truncated"],
+                prompt_prefix_fingerprint(str(persona_budget["text"])),
+            )
         result = orchestrator.run_text_to_speech_analysis(
-            text=text,
+            text=str(text_budget["text"]),
             task="chat",
-            persona=persona,
+            persona=str(persona_budget["text"]),
             project_name=project_key,
         )
         raw_text = result.get("text", "") if isinstance(result, dict) else ""

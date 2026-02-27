@@ -109,6 +109,8 @@ nexus:
         context_path: nexus-core/examples/telegram-bot/docs
         context_files:
           - AGENTS.md
+        feature_ideation_context_mode: index
+        feature_ideation_context_max_chars: 6000
       triage: { }
       compliance: { }
       writer: { }

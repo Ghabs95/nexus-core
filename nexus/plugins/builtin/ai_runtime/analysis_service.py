@@ -2,6 +2,8 @@ import json
 import re
 from typing import Any, Callable
 
+from nexus.core.prompt_budget import apply_prompt_budget
+
 
 def run_analysis_with_provider(
     *,
@@ -133,37 +135,50 @@ def parse_analysis_result(output: str, task: str, *, logger: Any) -> dict[str, A
 
 def build_analysis_prompt(text: str, task: str, **kwargs) -> str:
     """Build provider-agnostic analysis prompts for supported analysis tasks."""
+    prompt_max_chars = int(kwargs.get("prompt_max_chars", 16000) or 16000)
+    summary_max_chars = int(kwargs.get("summary_max_chars", 1200) or 1200)
+    text_budget = apply_prompt_budget(
+        text,
+        max_chars=min(prompt_max_chars, 6000),
+        summary_max_chars=summary_max_chars,
+    )
+    text_payload = text_budget["text"]
+
     if task == "classify":
         projects = kwargs.get("projects", [])
         types = kwargs.get("types", [])
-        return f"""Classify this task:
-Text: {text[:500]}
-
+        return f"""Classify this task.
 1. Map to project (one of: {", ".join(projects)}). Use key format.
 2. Classify type (one of: {", ".join(types)}).
 3. Generate concise task name (3-6 words, kebab-case).
 4. Return JSON: {{"project": "key", "type": "type_key", "task_name": "name"}}
 
-Return ONLY valid JSON."""
+Return ONLY valid JSON.
+
+Input:
+{text_payload}"""
 
     if task == "route":
-        return f"""Route this task to the best agent:
-{text[:500]}
-
+        return f"""Route this task to the best agent.
 1. Identify primary work type (coding, design, testing, ops, content).
 2. Suggest best agent.
 3. Rate confidence 0-100.
 4. Return JSON: {{"agent": "name", "type": "work_type", "confidence": 85}}
 
-Return ONLY valid JSON."""
+Return ONLY valid JSON.
+
+Input:
+{text_payload}"""
 
     if task == "generate_name":
         project = kwargs.get("project_name", "")
-        return f"""Generate a concise task name (3-6 words, kebab-case):
-{text[:300]}
+        return f"""Generate a concise task name (3-6 words, kebab-case).
 Project: {project}
 
-Return ONLY the name, no quotes."""
+Return ONLY the name, no quotes.
+
+Input:
+{text_payload}"""
 
     if task == "refine_description":
         return f"""Rewrite this task description to be clear, concise, and structured.
@@ -172,15 +187,11 @@ Preserve all concrete requirements, constraints, and details. Do not invent fact
 Return in plain text (no Markdown headers), using short paragraphs and bullet points if helpful.
 
 Input:
-{text.strip()}
+{text_payload.strip()}
 """
 
     if task == "detect_intent":
         return f"""Classify this user input for routing.
-
-Input:
-{text[:500]}
-
 Return ONLY valid JSON with this shape:
 {{
   "intent": "task" | "conversation",
@@ -197,13 +208,13 @@ Rules:
 - Set "feature_ideation" to false for implementation/status/history questions (including "what was already implemented").
 - Support multilingual input; do not assume English-only phrasing.
 
-Return ONLY valid JSON."""
+Return ONLY valid JSON.
+
+Input:
+{text_payload}"""
 
     if task == "detect_feature_ideation":
         return f"""Decide whether the user is asking for feature ideation/brainstorming.
-
-Input:
-{text[:500]}
 
 Return ONLY valid JSON:
 {{"feature_ideation": true|false, "confidence": 0.0-1.0, "reason": "short reason"}}
@@ -211,17 +222,24 @@ Return ONLY valid JSON:
 Set feature_ideation=true only if the user is asking for new feature proposals/ideas/roadmap items.
 Set feature_ideation=false for status/history/reporting questions (e.g., asking what was already implemented).
 Support multilingual user text; do not assume English-only phrasing.
-"""
+
+Input:
+{text_payload}"""
 
     if task == "chat":
         history = kwargs.get("history", "")
+        history_budget = apply_prompt_budget(
+            str(history or ""),
+            max_chars=3000,
+            summary_max_chars=min(summary_max_chars, 1000),
+        )
         persona = kwargs.get("persona", "You are a helpful AI assistant.")
         return f"""{persona}
 
 Recent Conversation History:
-{history}
+{history_budget["text"]}
 
 User Input:
-{text.strip()}"""
+{text_payload.strip()}"""
 
-    return text
+    return text_payload

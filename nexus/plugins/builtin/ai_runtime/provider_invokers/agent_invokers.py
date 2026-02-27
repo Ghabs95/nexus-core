@@ -59,6 +59,8 @@ def invoke_copilot_agent_cli(
     check_tool_available: Callable[[Any], bool],
     copilot_provider: Any,
     copilot_cli_path: str,
+    copilot_model: str,
+    copilot_supports_model: bool,
     get_tasks_logs_dir: Callable[[str, str | None], str],
     tool_unavailable_error: type[Exception],
     rate_limited_error: type[Exception],
@@ -86,6 +88,8 @@ def invoke_copilot_agent_cli(
         agents_dir,
         "--allow-all-tools",
     ]
+    if copilot_model and copilot_supports_model:
+        cmd.extend(["--model", copilot_model])
     log_path = _prepare_log_path(
         prefix="copilot",
         workspace_dir=workspace_dir,

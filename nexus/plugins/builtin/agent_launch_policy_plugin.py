@@ -1,10 +1,14 @@
 """Built-in plugin: Agent launch prompt composition policy."""
 
+import logging
 import os
 import re
 
 from nexus.core.completion import generate_completion_instructions
+from nexus.core.prompt_budget import prompt_prefix_fingerprint
 from nexus.core.workflow import WorkflowDefinition
+
+logger = logging.getLogger(__name__)
 
 
 class AgentLaunchPolicyPlugin:
@@ -39,11 +43,8 @@ class AgentLaunchPolicyPlugin:
 
         if continuation:
             if continuation_prompt and continuation_prompt.startswith("You are @"):
-                return (
+                prompt = (
                     f"{continuation_prompt}\n\n"
-                    f"Issue: {issue_url}\n"
-                    f"Tier: {tier_name}\n"
-                    f"Workflow Tier: {workflow_type}\n\n"
                     f"Review the previous work in the GitHub comments and task file, then complete your step.\n\n"
                     f"**GIT WORKFLOW (CRITICAL):**\n"
                     f"1. Check the issue body for **Target Branch** field (e.g., `feat/new-feature`)\n"
@@ -67,27 +68,41 @@ class AgentLaunchPolicyPlugin:
                     f"build/*, ci/*\n"
                     f"⚠️  Violating these rules can break production and cause team disruption\n\n"
                     f"{instructions}\n\n"
+                    f"Runtime context:\n"
+                    f"Issue: {issue_url}\n"
+                    f"Tier: {tier_name}\n"
+                    f"Workflow Tier: {workflow_type}\n\n"
                     f"Task context:\n{task_content}"
                 )
+                logger.debug(
+                    "Agent prompt built: chars=%s prefix_fp=%s mode=continuation",
+                    len(prompt),
+                    prompt_prefix_fingerprint(prompt),
+                )
+                return prompt
 
             base_prompt = continuation_prompt or "Please continue with the next step."
             merge_policy = self._get_merge_policy_block(agent_type)
-            return (
+            prompt = (
                 f"You are a {agent_type} agent. You previously started working on this task:\n\n"
-                f"Issue: {issue_url}\n"
-                f"Tier: {tier_name}\n"
-                f"Workflow Tier: {workflow_type}\n\n"
                 f"{base_prompt}\n\n"
                 f"{merge_policy}"
                 f"{instructions}\n\n"
+                f"Runtime context:\n"
+                f"Issue: {issue_url}\n"
+                f"Tier: {tier_name}\n"
+                f"Workflow Tier: {workflow_type}\n\n"
                 f"Task content:\n{task_content}"
             )
+            logger.debug(
+                "Agent prompt built: chars=%s prefix_fp=%s mode=continuation",
+                len(prompt),
+                prompt_prefix_fingerprint(prompt),
+            )
+            return prompt
 
-        return (
+        prompt = (
             f"You are a {agent_type} agent. A new task has arrived and a GitHub issue has been created.\n\n"
-            f"Issue: {issue_url}\n"
-            f"Tier: {tier_name}\n"
-            f"Workflow Tier: {workflow_type}\n\n"
             f"**YOUR JOB:** Analyze, triage, and route. DO NOT try to implement or invoke other agents.\n\n"
             f"REQUIRED ACTIONS:\n"
             f"1. Read the GitHub issue body and understand the task\n"
@@ -100,8 +115,18 @@ class AgentLaunchPolicyPlugin:
             f"❌ Use any 'invoke', 'task', or 'run tool' to start other agents\n"
             f"❌ Try to implement the feature yourself\n\n"
             f"{instructions}\n\n"
+            f"Runtime context:\n"
+            f"Issue: {issue_url}\n"
+            f"Tier: {tier_name}\n"
+            f"Workflow Tier: {workflow_type}\n\n"
             f"Task details:\n{task_content}"
         )
+        logger.debug(
+            "Agent prompt built: chars=%s prefix_fp=%s mode=initial",
+            len(prompt),
+            prompt_prefix_fingerprint(prompt),
+        )
+        return prompt
 
     @staticmethod
     def _get_merge_policy_block(agent_type: str) -> str:

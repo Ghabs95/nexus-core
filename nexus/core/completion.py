@@ -208,10 +208,23 @@ def generate_completion_instructions(
             f"Replace the `<placeholder>` values with real data from your analysis."
         )
 
-    return (
-        f"**WHEN YOU FINISH — TWO MANDATORY DELIVERABLES:**\n\n"
-        f"{workflow_steps_text}\n\n"
-        f"## Deliverable 1: Post a structured GitHub comment\n\n"
+    static_intro = (
+        "**WHEN YOU FINISH — TWO MANDATORY DELIVERABLES:**\n\n"
+        "Follow the workflow mapping above and produce both deliverables exactly once.\n"
+        "Do not invoke other agents. Keep your completion concise and concrete.\n\n"
+    )
+    runtime_context = (
+        f"Runtime context:\n"
+        f"- issue_number: {issue_number}\n"
+        f"- agent_type: {agent_type}\n"
+        f"- completion_backend: {completion_backend}\n\n"
+    )
+
+    output = (
+        static_intro
+        + f"{workflow_steps_text}\n\n"
+        + runtime_context
+        + f"## Deliverable 1: Post a structured GitHub comment\n\n"
         f"Use `gh issue comment {issue_number} --repo <REPO> --body '<comment>'` "
         f"to post a **structured** comment.\n"
         f"The comment MUST follow this format (adapt sections to your work):\n\n"
@@ -248,6 +261,13 @@ def generate_completion_instructions(
         f", **EXIT immediately**.\n"
         f"DO NOT attempt to invoke or launch any other agent."
     )
+    logger.debug(
+        "Completion instructions generated: chars=%s issue=%s agent=%s",
+        len(output),
+        issue_number,
+        agent_type,
+    )
+    return output
 
 
 # ---------------------------------------------------------------------------

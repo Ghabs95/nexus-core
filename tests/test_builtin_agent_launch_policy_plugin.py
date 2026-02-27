@@ -79,3 +79,27 @@ def test_merge_policy_not_injected_for_developer():
         nexus_dir=".nexus",
     )
     assert "MUST NOT run `gh pr merge`" not in prompt
+
+
+def test_prompt_prefix_is_stable_for_different_issue_context():
+    plugin = AgentLaunchPolicyPlugin()
+    p1 = plugin.build_agent_prompt(
+        issue_url="https://github.com/org/repo/issues/10",
+        tier_name="full",
+        task_content="Implement feature A",
+        agent_type="triage",
+        continuation=False,
+        workflow_path="",
+        nexus_dir=".nexus",
+    )
+    p2 = plugin.build_agent_prompt(
+        issue_url="https://github.com/org/repo/issues/11",
+        tier_name="full",
+        task_content="Implement feature B",
+        agent_type="triage",
+        continuation=False,
+        workflow_path="",
+        nexus_dir=".nexus",
+    )
+
+    assert p1[:220] == p2[:220]
