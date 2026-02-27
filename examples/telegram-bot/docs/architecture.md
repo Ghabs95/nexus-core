@@ -127,3 +127,21 @@ The system runs as Linux systemd services:
 | `nexus-health`  | Health check / metrics endpoint             |
 
 All services auto-restart on failure via `Restart=always`.
+
+## Identity Management (UNI)
+
+Nexus uses a platform-agnostic **Universal Nexus Identity (UNI)** system to track users across multiple chat platforms (Telegram, Discord, etc.).
+
+### Core Concepts
+
+- **Nexus ID:** A canonical UUID4 assigned to every unique user.
+- **Identities Map:** A mapping of platform-specific identifiers (e.g., `telegram:123456`, `discord:987654321`) to a single `Nexus ID`.
+- **Profile Synchronization:** User preferences, project tracking, and task history are keyed by the `Nexus ID`, allowing a user to maintain their context when switching platforms.
+
+### Account Linking
+
+Users can link multiple platform identities to their Nexus account. The `UserManager` prevents "identity hijacking" by rejecting re-binding attempts if a platform identity is already linked to a different `Nexus ID`.
+
+### Migration
+
+The system includes automatic migration for legacy `telegram_id` records. Upon first contact, legacy records are converted to the UNI format with a newly generated `Nexus ID`.
