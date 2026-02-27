@@ -229,6 +229,11 @@ class GitLabPlatform(GitPlatform):
             if detected:
                 current_branch = detected
 
+        long_lived = {"main", "master", "develop", "development", "dev", "HEAD"}
+        use_current_branch = bool(current_branch and current_branch not in long_lived)
+        if use_current_branch:
+            branch_name = current_branch
+
         try:
             # Stage + commit + push
             result = subprocess.run(
@@ -248,7 +253,8 @@ class GitLabPlatform(GitPlatform):
                 logger.info("No local changes detected — skipping MR creation")
                 return None
 
-            subprocess.run(["git", "checkout", "-B", branch_name], cwd=repo_dir, check=True)
+            if not use_current_branch:
+                subprocess.run(["git", "checkout", "-B", branch_name], cwd=repo_dir, check=True)
             subprocess.run(
                 ["git", "commit", "-m", f"nexus: {title} (closes #{issue_number})"],
                 cwd=repo_dir,

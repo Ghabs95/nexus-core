@@ -486,6 +486,54 @@ class TestGitLabPlatform:
         payload = mock_post.await_args.args[1]
         assert payload["description"].endswith("Closes mygroup/workflow-repo#42")
 
+    def test_create_pr_from_changes_reuses_current_feature_branch(self, tmp_path):
+        platform = self._make_platform()
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+
+        seen_commands: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            seen_commands.append(list(cmd))
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            if cmd[:3] == ["git", "status", "--porcelain"]:
+                result.stdout = " M file.py\n"
+            if cmd[:4] == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+                result.stdout = "feat/universal-nexus-identity-issue-86\n"
+            return result
+
+        mr_response = {
+            "id": 201,
+            "iid": 13,
+            "title": "UNI",
+            "state": "opened",
+            "source_branch": "feat/universal-nexus-identity-issue-86",
+            "target_branch": "main",
+            "web_url": "https://gitlab.com/mygroup/myproject/-/merge_requests/13",
+        }
+
+        with patch("subprocess.run", side_effect=fake_run), patch.object(
+            platform,
+            "_post",
+            new=AsyncMock(return_value=mr_response),
+        ) as mock_post:
+            pr = asyncio.run(
+                platform.create_pr_from_changes(
+                    repo_dir=str(repo_dir),
+                    issue_number="86",
+                    title="UNI",
+                    body="Automated change",
+                )
+            )
+
+        assert pr is not None
+        payload = mock_post.await_args.args[1]
+        assert payload["source_branch"] == "feat/universal-nexus-identity-issue-86"
+        assert ["git", "checkout", "-B", "nexus/issue-86"] not in seen_commands
+
 
 # ---------------------------------------------------------------------------
 # OpenAIProvider

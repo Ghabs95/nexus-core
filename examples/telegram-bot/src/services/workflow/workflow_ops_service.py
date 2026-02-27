@@ -267,15 +267,35 @@ async def fetch_workflow_state_snapshot(
         get_expected_running_agent_from_workflow,
     )
 
-    workflow_plugin = get_workflow_state_plugin(
-        **workflow_state_plugin_kwargs,
-        cache_key="workflow:state-engine:wfstate-probe",
-    )
-    expected_running = get_expected_running_agent_from_workflow(
-        issue_num=issue_num,
-        get_workflow_id=lambda n: _get_wf_state().get_workflow_id(n),
-        workflow_plugin=workflow_plugin,
-    )
+    expected_running = None
+    plugin_kwargs = dict(workflow_state_plugin_kwargs or {})
+    if plugin_kwargs.get("storage_dir"):
+        try:
+            workflow_plugin = get_workflow_state_plugin(
+                **plugin_kwargs,
+                cache_key="workflow:state-engine:wfstate-probe",
+            )
+            expected_running = get_expected_running_agent_from_workflow(
+                issue_num=issue_num,
+                get_workflow_id=lambda n: _get_wf_state().get_workflow_id(n),
+                workflow_plugin=workflow_plugin,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Could not resolve expected running agent from workflow engine for #%s: %s",
+                issue_num,
+                exc,
+            )
+
+    if not expected_running:
+        try:
+            from runtime.nexus_agent_runtime import (
+                get_expected_running_agent_from_workflow as legacy_probe,
+            )
+
+            expected_running = await _resolve_maybe_await(legacy_probe(issue_num))
+        except Exception:
+            expected_running = None
 
     # 3. Build snapshot
     caps = get_storage_capabilities()
