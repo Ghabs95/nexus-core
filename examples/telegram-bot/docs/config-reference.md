@@ -39,11 +39,12 @@ All configuration lives in environment variables (loaded from `.env`) and `confi
 
 ### Agent Runtime
 
-| Variable              | Required | Default   | Description                           |
-|-----------------------|----------|-----------|---------------------------------------|
-| `AGENT_RECENT_WINDOW` | ❌        | `120`     | Seconds to retain launched agent PIDs |
-| `AGENT_TIMEOUT`       | ❌        | `3600`    | Default agent timeout in seconds      |
-| `COPILOT_PROVIDER`    | ❌        | `copilot` | AI CLI provider binary name           |
+| Variable                        | Required | Default   | Description                           |
+|---------------------------------|----------|-----------|---------------------------------------|
+| `AGENT_RECENT_WINDOW`           | ❌        | `120`     | Seconds to retain launched agent PIDs |
+| `AGENT_TIMEOUT`                 | ❌        | `3600`    | Default agent timeout in seconds      |
+| `COPILOT_PROVIDER`              | ❌        | `copilot` | AI CLI provider binary name           |
+| `NEXUS_FULL_WORKFLOW_CONTEXT`   | ❌        | `false`   | Set `true` to inject full step schema |
 
 ## Project Config (`project_config.yaml`)
 

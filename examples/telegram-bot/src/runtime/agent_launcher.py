@@ -1702,10 +1702,19 @@ def launch_next_agent(
     workspace_abs = os.path.join(BASE_DIR, config["workspace"])
 
     # Create continuation prompt
-    continuation_prompt = (
-        f"You are {next_agent}. Previous step complete. Read recent issue comments for context, "
-        f"perform your task, and post a concise status update ending with: 'Ready for `@NextAgent`'"
-    )
+    if os.getenv("NEXUS_FULL_WORKFLOW_CONTEXT", "false").lower() == "true":
+        continuation_prompt = (
+            f"You are a {next_agent} agent. The previous workflow step is complete.\n\n"
+            f"Your task: Begin your step in the workflow.\n"
+            f"Read recent Git comments to understand what's been completed.\n"
+            f"Then perform your assigned work and post a status update.\n"
+            f"End with a completion marker like: 'Ready for `@NextAgent`'"
+        )
+    else:
+        continuation_prompt = (
+            f"You are {next_agent}. Previous step complete. Read recent issue comments for context, "
+            f"perform your task, and post a concise status update ending with: 'Ready for `@NextAgent`'"
+        )
 
     # Launch agent
     pid, tool_used = invoke_copilot_agent(
