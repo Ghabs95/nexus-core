@@ -134,3 +134,6 @@ automatic deployment at VM bootstrap time.
 
 The old `ghabs/nexus` repository should now be treated as a thin profile/wrapper layer (config + dependency
 declaration), while implementation/runtime logic lives here.
+
+### Additional Performance Flags
+- `NEXUS_FULL_WORKFLOW_CONTEXT=true` - By default, the workflow system uses a compact, token-saving prompt context for agents. Set this to `true` to inject the entire, verbose workflow step definitions instead.
