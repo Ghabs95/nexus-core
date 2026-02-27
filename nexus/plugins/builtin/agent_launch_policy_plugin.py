@@ -4,6 +4,7 @@ import os
 import re
 
 from nexus.core.completion import generate_completion_instructions
+from nexus.core.knowledge_alignment import KnowledgeAlignmentService
 from nexus.core.workflow import WorkflowDefinition
 
 
@@ -12,6 +13,7 @@ class AgentLaunchPolicyPlugin:
 
     def __init__(self, config: dict | None = None):
         self.config = config or {}
+        self._alignment_service = KnowledgeAlignmentService()
 
     def build_agent_prompt(
         self,
@@ -25,9 +27,16 @@ class AgentLaunchPolicyPlugin:
         workflow_path: str = "",
         nexus_dir: str = ".nexus",
         project_name: str = "",
+        repo_path: str = "",
     ) -> str:
         """Build launch prompt used by orchestrator agent invocation."""
         workflow_type = WorkflowDefinition.normalize_workflow_type(tier_name)
+        alignment_context = self._build_alignment_context(
+            task_content=task_content,
+            workflow_type=workflow_type,
+            repo_path=repo_path,
+        )
+        alignment_output_requirements = self._get_alignment_output_requirements(agent_type)
         instructions = self._get_comment_and_summary_instructions(
             issue_url=issue_url,
             agent_type=agent_type,
@@ -36,6 +45,8 @@ class AgentLaunchPolicyPlugin:
             nexus_dir=nexus_dir,
             project_name=project_name,
         )
+        if alignment_output_requirements:
+            instructions = f"{instructions}\n\n{alignment_output_requirements}"
 
         if continuation:
             if continuation_prompt and continuation_prompt.startswith("You are @"):
@@ -66,6 +77,7 @@ class AgentLaunchPolicyPlugin:
                     f"✅ Valid branch prefixes: feat/*, fix/*, hotfix/*, chore/*, refactor/*, docs/*, "
                     f"build/*, ci/*\n"
                     f"⚠️  Violating these rules can break production and cause team disruption\n\n"
+                    f"{alignment_context}"
                     f"{instructions}\n\n"
                     f"Task context:\n{task_content}"
                 )
@@ -78,6 +90,7 @@ class AgentLaunchPolicyPlugin:
                 f"Tier: {tier_name}\n"
                 f"Workflow Tier: {workflow_type}\n\n"
                 f"{base_prompt}\n\n"
+                f"{alignment_context}"
                 f"{merge_policy}"
                 f"{instructions}\n\n"
                 f"Task content:\n{task_content}"
@@ -88,6 +101,7 @@ class AgentLaunchPolicyPlugin:
             f"Issue: {issue_url}\n"
             f"Tier: {tier_name}\n"
             f"Workflow Tier: {workflow_type}\n\n"
+            f"{alignment_context}"
             f"**YOUR JOB:** Analyze, triage, and route. DO NOT try to implement or invoke other agents.\n\n"
             f"REQUIRED ACTIONS:\n"
             f"1. Read the GitHub issue body and understand the task\n"
@@ -101,6 +115,49 @@ class AgentLaunchPolicyPlugin:
             f"❌ Try to implement the feature yourself\n\n"
             f"{instructions}\n\n"
             f"Task details:\n{task_content}"
+        )
+
+    def _build_alignment_context(self, *, task_content: str, workflow_type: str, repo_path: str) -> str:
+        """Build repository-backed feature-alignment context block."""
+        root = str(repo_path or "").strip() or "."
+        try:
+            result = self._alignment_service.evaluate(
+                request_text=task_content,
+                workflow_type=workflow_type,
+                repo_path=root,
+                max_hits=3,
+            )
+        except Exception:
+            return (
+                "**Feature Alignment Report:**\n"
+                "- Alignment score: 0.00\n"
+                "- Matched artifacts: none\n"
+                "- Gaps: unavailable (indexing failed)\n"
+                "- Recommended actions: continue fail-open and document assumptions.\n\n"
+            )
+
+        matched = ", ".join(result.artifact_paths) if result.artifact_paths else "none"
+        gaps = ", ".join(result.gaps) if result.gaps else "none"
+        actions = " ".join(f"- {item}" for item in result.recommended_next_actions) or "- none"
+        return (
+            "**Feature Alignment Report:**\n"
+            f"- Alignment score: {result.alignment_score:.2f}\n"
+            f"- Alignment summary: {result.alignment_summary}\n"
+            f"- Matched artifacts: {matched}\n"
+            f"- Gaps: {gaps}\n"
+            f"- Recommended actions: {actions}\n\n"
+        )
+
+    @staticmethod
+    def _get_alignment_output_requirements(agent_type: str) -> str:
+        """Require designer step to emit machine-readable alignment outputs."""
+        if agent_type != "designer":
+            return ""
+        return (
+            "**Designer Output Contract (required for this feature):**\n"
+            "- Include `alignment_score` (0.0-1.0), `alignment_summary`, and `alignment_artifacts` "
+            "in both your structured issue comment findings and completion summary JSON.\n"
+            "- Keep values deterministic and tied to repository-native artifacts (docs/ADRs/README).\n"
         )
 
     @staticmethod

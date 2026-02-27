@@ -55,6 +55,9 @@ class CompletionSummary:
     next_agent: str = ""
     verdict: str = ""
     effort_breakdown: dict[str, str] = field(default_factory=dict)
+    alignment_score: float | None = None
+    alignment_summary: str = ""
+    alignment_artifacts: list[str] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -65,6 +68,14 @@ class CompletionSummary:
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "CompletionSummary":
         """Build a CompletionSummary from a raw JSON dict."""
+        alignment_score = data.get("alignment_score")
+        try:
+            if alignment_score is not None and alignment_score != "":
+                alignment_score = float(alignment_score)
+            else:
+                alignment_score = None
+        except (TypeError, ValueError):
+            alignment_score = None
         return CompletionSummary(
             status=data.get("status", "complete"),
             agent_type=data.get("agent_type", "unknown"),
@@ -73,6 +84,9 @@ class CompletionSummary:
             next_agent=data.get("next_agent", ""),
             verdict=data.get("verdict", ""),
             effort_breakdown=data.get("effort_breakdown", {}),
+            alignment_score=alignment_score,
+            alignment_summary=data.get("alignment_summary", ""),
+            alignment_artifacts=list(data.get("alignment_artifacts", []) or []),
             raw=data,
         )
 
@@ -89,6 +103,12 @@ class CompletionSummary:
             d["verdict"] = self.verdict
         if self.effort_breakdown:
             d["effort_breakdown"] = self.effort_breakdown
+        if self.alignment_score is not None:
+            d["alignment_score"] = self.alignment_score
+        if self.alignment_summary:
+            d["alignment_summary"] = self.alignment_summary
+        if self.alignment_artifacts:
+            d["alignment_artifacts"] = list(self.alignment_artifacts)
         return d
 
 

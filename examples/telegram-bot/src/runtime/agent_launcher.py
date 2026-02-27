@@ -1402,6 +1402,7 @@ def invoke_copilot_agent(
             workflow_path=workflow_path,
             nexus_dir=get_nexus_dir_name(),
             project_name=project_name,
+            repo_path=workspace_dir,
         )
     else:
         prompt = (

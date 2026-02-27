@@ -66,6 +66,20 @@ class TestCompletionSummary:
         assert restored.next_agent == original.next_agent
         assert restored.verdict == original.verdict
 
+    def test_alignment_fields_round_trip(self):
+        original = CompletionSummary(
+            status="complete",
+            agent_type="designer",
+            alignment_score=0.76,
+            alignment_summary="Strong alignment to ADR docs.",
+            alignment_artifacts=["docs/ADR-001.md", "README.md"],
+        )
+        d = original.to_dict()
+        restored = CompletionSummary.from_dict(d)
+        assert restored.alignment_score == 0.76
+        assert restored.alignment_summary == "Strong alignment to ADR docs."
+        assert restored.alignment_artifacts == ["docs/ADR-001.md", "README.md"]
+
 
 # ---------------------------------------------------------------------------
 # build_completion_comment
