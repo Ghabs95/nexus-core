@@ -1,6 +1,39 @@
+import os
+from pathlib import Path
 from typing import Any, Callable
 
-from nexus.core.models import Agent, WorkflowStep
+from nexus.core.models import Agent, WorkflowOrchestrationConfig, WorkflowStep
+
+ORCHESTRATION_TIMEOUT_ACTIONS = {"retry", "fail_step", "alert_only"}
+ORCHESTRATION_BACKOFFS = {"constant", "linear", "exponential"}
+ORCHESTRATION_STALE_ACTIONS = {"reconcile", "fail_workflow"}
+_TRUTHY_STRINGS = {"1", "true", "yes", "on"}
+_FALSY_STRINGS = {"0", "false", "no", "off"}
+
+
+def _parse_bool(value: Any, default: bool) -> bool:
+    """Parse booleans from YAML scalars without treating non-empty strings as truthy."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _TRUTHY_STRINGS:
+            return True
+        if normalized in _FALSY_STRINGS:
+            return False
+        return default
+    if isinstance(value, (int, float)):
+        return value != 0
+    return default
+
+
+def _is_path_within_root(path: Path, root: Path) -> bool:
+    """Return True when path resolves inside root (or equals root)."""
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 def parse_require_human_merge_approval(data: dict[str, Any]) -> bool:
@@ -127,6 +160,130 @@ def build_workflow_steps(
         )
 
     return steps
+
+
+def parse_orchestration_config(data: dict[str, Any]) -> WorkflowOrchestrationConfig:
+    """Parse workflow orchestration config with defaults and v1 fallback."""
+    orchestration = data.get("orchestration", {})
+    if not isinstance(orchestration, dict):
+        orchestration = {}
+
+    polling = orchestration.get("polling", {})
+    if not isinstance(polling, dict):
+        polling = {}
+
+    timeouts = orchestration.get("timeouts", {})
+    if not isinstance(timeouts, dict):
+        timeouts = {}
+
+    chaining = orchestration.get("chaining", {})
+    if not isinstance(chaining, dict):
+        chaining = {}
+
+    retries = orchestration.get("retries", {})
+    if not isinstance(retries, dict):
+        retries = {}
+
+    recovery = orchestration.get("recovery", {})
+    if not isinstance(recovery, dict):
+        recovery = {}
+
+    timeout_v1 = data.get("timeout_seconds")
+    default_timeout = (
+        int(timeout_v1)
+        if isinstance(timeout_v1, int) and timeout_v1 > 0
+        else int(timeouts.get("default_agent_timeout_seconds", 3600))
+    )
+
+    return WorkflowOrchestrationConfig(
+        interval_seconds=int(polling.get("interval_seconds", 15)),
+        completion_glob=str(
+            polling.get(
+                "completion_glob",
+                ".nexus/tasks/nexus/completions/completion_summary_*.json",
+            )
+        ),
+        dedupe_cache_size=int(polling.get("dedupe_cache_size", 500)),
+        default_agent_timeout_seconds=default_timeout,
+        liveness_miss_threshold=int(timeouts.get("liveness_miss_threshold", 3)),
+        timeout_action=str(timeouts.get("timeout_action", "retry")),
+        chaining_enabled=_parse_bool(chaining.get("enabled"), True),
+        require_completion_comment=_parse_bool(chaining.get("require_completion_comment"), True),
+        block_on_closed_issue=_parse_bool(chaining.get("block_on_closed_issue"), True),
+        max_retries_per_step=int(retries.get("max_retries_per_step", 2)),
+        backoff=str(retries.get("backoff", "exponential")),
+        initial_delay_seconds=float(retries.get("initial_delay_seconds", 1.0)),
+        stale_running_step_action=str(recovery.get("stale_running_step_action", "reconcile")),
+    )
+
+
+def validate_orchestration_config(
+    data: dict[str, Any], *, workspace_root: str | None = None
+) -> list[str]:
+    """Validate orchestration config contract and return error messages."""
+    errors: list[str] = []
+    try:
+        config = parse_orchestration_config(data)
+    except (TypeError, ValueError) as exc:
+        return [f"Invalid orchestration block values: {exc}"]
+
+    numeric_positive = (
+        ("polling.interval_seconds", config.interval_seconds),
+        ("polling.dedupe_cache_size", config.dedupe_cache_size),
+        ("timeouts.default_agent_timeout_seconds", config.default_agent_timeout_seconds),
+        ("timeouts.liveness_miss_threshold", config.liveness_miss_threshold),
+        ("retries.max_retries_per_step", config.max_retries_per_step),
+    )
+    for field_name, value in numeric_positive:
+        if value <= 0:
+            errors.append(f"orchestration.{field_name} must be a positive integer, got {value!r}")
+
+    if config.timeout_action not in ORCHESTRATION_TIMEOUT_ACTIONS:
+        errors.append(
+            "orchestration.timeouts.timeout_action must be one of "
+            f"{sorted(ORCHESTRATION_TIMEOUT_ACTIONS)}, got {config.timeout_action!r}"
+        )
+    if config.backoff not in ORCHESTRATION_BACKOFFS:
+        errors.append(
+            "orchestration.retries.backoff must be one of "
+            f"{sorted(ORCHESTRATION_BACKOFFS)}, got {config.backoff!r}"
+        )
+    if config.stale_running_step_action not in ORCHESTRATION_STALE_ACTIONS:
+        errors.append(
+            "orchestration.recovery.stale_running_step_action must be one of "
+            f"{sorted(ORCHESTRATION_STALE_ACTIONS)}, got {config.stale_running_step_action!r}"
+        )
+
+    if config.initial_delay_seconds < 0:
+        errors.append(
+            "orchestration.retries.initial_delay_seconds must be non-negative, "
+            f"got {config.initial_delay_seconds!r}"
+        )
+
+    root = Path(workspace_root or os.getcwd()).resolve()
+    completion_glob = config.completion_glob.strip()
+    if not completion_glob:
+        errors.append("orchestration.polling.completion_glob must not be empty")
+    else:
+        if os.path.isabs(completion_glob):
+            wildcard_index = len(completion_glob)
+            for marker in ("*", "?", "["):
+                pos = completion_glob.find(marker)
+                if pos != -1:
+                    wildcard_index = min(wildcard_index, pos)
+            base_path = Path(completion_glob[:wildcard_index] or completion_glob).resolve()
+            if not _is_path_within_root(base_path, root):
+                errors.append(
+                    "orchestration.polling.completion_glob must resolve inside workspace root"
+                )
+        else:
+            relative_base = Path(completion_glob.split("*", 1)[0])
+            if ".." in relative_base.parts:
+                errors.append(
+                    "orchestration.polling.completion_glob must not escape workspace root"
+                )
+
+    return errors
 
 
 def build_dry_run_report_fields(
