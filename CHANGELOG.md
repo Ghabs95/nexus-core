@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Feature Registry & Ideation Dedup (Telegram Bot)** — Added `FeatureRegistryService` to the Telegram bot to track implemented features per project and suppress duplicate ideation suggestions. Supports both filesystem and PostgreSQL backends via `NEXUS_STORAGE_BACKEND`. Includes manual operator commands (`/feature_done`, `/feature_list`, `/feature_forget`) and automatic ingestion from workflow completion summaries ([#88](https://github.com/Ghabs95/nexus-core/issues/88)).
 - **Slack Integration** — Added first-class Slack support via `SlackEventHandlerPlugin` (EventBus subscriber for 7 workflow lifecycle events, mrkdwn formatting) and `SlackInteractivePlugin` (Socket Mode via `slack-bolt`; no public URL required). Adds `SlackNotificationChannel` adapter. Requires `slack-bolt>=1.18` optional dependency (`pip install nexus-core[slack]`) ([#82](https://github.com/Ghabs95/nexus-core/issues/82)).
 - **Configurable Storage Adapters** — Introduced a unified configuration mechanism for storage backends (File and PostgreSQL) via `WorkflowStateEnginePlugin`. Users can now switch backends using the `storage_type` configuration key or the `NEXUS_STORAGE_TYPE` environment variable ([#65](https://github.com/Ghabs95/nexus-core/issues/65)).
 - **PostgreSQL Environment Variable Support** — Added `NEXUS_STORAGE_DSN` for secure PostgreSQL connection management, avoiding plaintext credentials in configuration files.

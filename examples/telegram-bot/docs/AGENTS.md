@@ -57,6 +57,8 @@ If conflicts exist between docs, resolve explicitly or surface them.
 | Host state (agents, issues) | `src/state_manager.py`                    |
 | Task routing                | `src/handlers/inbox_routing_handler.py`   |
 | Agent subprocess launch     | `src/runtime/agent_launcher.py`           |
+| Feature Registry service    | `src/services/feature_registry_service.py`|
+| Feature Registry handlers   | `src/handlers/feature_registry_command_handlers.py`|
 | Plugin wiring               | `src/orchestration/plugin_runtime.py`     |
 | Workflow helpers            | `src/orchestration/nexus_core_helpers.py` |
 | Project config              | `config/project_config.yaml`              |
