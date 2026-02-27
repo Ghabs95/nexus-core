@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
+import builtins
 from pathlib import Path
 
 from config import (
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 _instance: WorkflowStateStore | None = None
 _storage_backend_instance: StorageBackend | None = None
+_BUILTINS_STORAGE_BACKEND_KEY = "__nexus_storage_backend_instance"
 
 
 class _BroadcastingStore:
@@ -144,6 +146,14 @@ def get_storage_backend() -> StorageBackend:
     if _storage_backend_instance is not None:
         return _storage_backend_instance
 
+    # Cross-module singleton guard:
+    # in some host setups the same source can be imported under multiple module paths.
+    # Store the backend in builtins so duplicate imports still reuse one process instance.
+    existing = getattr(builtins, _BUILTINS_STORAGE_BACKEND_KEY, None)
+    if existing is not None:
+        _storage_backend_instance = existing
+        return _storage_backend_instance
+
     storage_type = str(NEXUS_STORAGE_BACKEND).strip().lower()
 
     if storage_type == "postgres":
@@ -155,10 +165,12 @@ def get_storage_backend() -> StorageBackend:
         _storage_backend_instance = PostgreSQLStorageBackend(
             connection_string=NEXUS_STORAGE_DSN,
         )
+        setattr(builtins, _BUILTINS_STORAGE_BACKEND_KEY, _storage_backend_instance)
         return _storage_backend_instance
 
     from nexus.adapters.storage.file import FileStorage
 
     logger.info("Using FileStorage for host state (base_path=%s)", NEXUS_CORE_STORAGE_DIR)
     _storage_backend_instance = FileStorage(base_path=Path(NEXUS_CORE_STORAGE_DIR))
+    setattr(builtins, _BUILTINS_STORAGE_BACKEND_KEY, _storage_backend_instance)
     return _storage_backend_instance

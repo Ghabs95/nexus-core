@@ -5,6 +5,7 @@ All external SDK/driver calls are mocked so the suite runs without optional
 extras installed.
 """
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -249,6 +250,34 @@ class TestGitHubPlatform:
         with patch.object(platform, "_run_gh_command", side_effect=RuntimeError("label already exists")):
             ok = asyncio.run(platform.ensure_label("bug", color="FF0000"))
         assert ok is True
+
+    def test_create_issue_falls_back_when_issue_create_json_is_unsupported(self):
+        platform = self._make_platform()
+        created_issue = {
+            "number": 123,
+            "title": "New issue",
+            "body": "Body",
+            "state": "OPEN",
+            "labels": [],
+            "createdAt": "2026-02-01T10:00:00Z",
+            "updatedAt": "2026-02-01T10:00:00Z",
+            "url": "https://github.com/owner/repo/issues/123",
+        }
+        side_effects = [
+            RuntimeError("GitHub CLI error: unknown flag: --json"),
+            "https://github.com/owner/repo/issues/123",
+            json.dumps(created_issue),
+        ]
+        with patch.object(platform, "_run_gh_command", side_effect=side_effects) as mock_run:
+            issue = asyncio.run(platform.create_issue("New issue", "Body", labels=["bug"]))
+
+        assert issue.number == 123
+        assert issue.url.endswith("/123")
+        create_args = mock_run.call_args_list[1].args[0]
+        assert create_args[:3] == ["issue", "create", "--title"]
+        assert "--json" not in create_args
+        view_args = mock_run.call_args_list[2].args[0]
+        assert view_args[:3] == ["issue", "view", "123"]
 
     def test_merge_pull_request_builds_expected_flags(self):
         platform = self._make_platform()

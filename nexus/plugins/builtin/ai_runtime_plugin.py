@@ -31,6 +31,7 @@ from nexus.plugins.builtin.ai_runtime.provider_invokers.agent_invokers import (
 )
 from nexus.plugins.builtin.ai_runtime.provider_invokers.analysis_invokers import (
     run_copilot_analysis_cli as run_copilot_analysis_cli_impl,
+    run_codex_analysis_cli as run_codex_analysis_cli_impl,
     run_gemini_analysis_cli as run_gemini_analysis_cli_impl,
 )
 from nexus.plugins.builtin.ai_runtime.provider_invokers.codex_invoker import (
@@ -115,7 +116,7 @@ class AIOrchestrator:
         )
         self.fallback_enabled = self.config.get("fallback_enabled", True)
         self.rate_limit_ttl = self.config.get("rate_limit_ttl", 3600)
-        self.max_retries = self.config.get("max_retries", 2)
+        self.max_retries = self.config.get("max_retries", 3)
         self.analysis_timeout = self.config.get("analysis_timeout", 120)
         self.refine_description_timeout = self.config.get("refine_description_timeout", 90)
         self.gemini_transcription_timeout = self.config.get("gemini_transcription_timeout", 60)
@@ -150,6 +151,7 @@ class AIOrchestrator:
             tool,
             gemini_provider=AIProvider.GEMINI,
             copilot_provider=AIProvider.COPILOT,
+            codex_provider=AIProvider.CODEX,
         )
 
     @staticmethod
@@ -387,8 +389,10 @@ class AIOrchestrator:
             tool=tool,
             gemini_provider=AIProvider.GEMINI,
             copilot_provider=AIProvider.COPILOT,
+            codex_provider=AIProvider.CODEX,
             run_gemini_cli_analysis=self._run_gemini_cli_analysis,
             run_copilot_analysis=self._run_copilot_analysis,
+            run_codex_analysis=self._run_codex_analysis,
             text=text,
             task=task,
             kwargs=kwargs,
@@ -550,6 +554,7 @@ class AIOrchestrator:
             copilot_cli_path=self.copilot_cli_path,
             get_tasks_logs_dir=self.get_tasks_logs_dir,
             tool_unavailable_error=ToolUnavailableError,
+            rate_limited_error=RateLimitedError,
             logger=logger,
             agent_prompt=agent_prompt,
             workspace_dir=workspace_dir,
@@ -691,6 +696,33 @@ class AIOrchestrator:
     ) -> dict[str, Any]:
         project_name = kwargs.get("project_name")
         tool_order = self._resolve_analysis_tool_order(task, project_name=project_name, text=text)
+        mapped_agent = self._resolve_analysis_mapped_agent(
+            task=task,
+            text=text,
+            project_name=project_name,
+        )
+        if tool_order:
+            preferred = tool_order[0]
+            preferred_name = str(getattr(preferred, "value", preferred))
+            fallback_names = [str(getattr(tool, "value", tool)) for tool in tool_order[1:]]
+            logger.info(
+                "🧭 Analysis provider order: task=%s project=%s mapped_agent=%s order=%s",
+                task,
+                project_name or "default",
+                mapped_agent or "unknown",
+                " -> ".join([preferred_name] + fallback_names),
+            )
+            if not self.check_tool_available(preferred):
+                fallback_display = ", ".join(fallback_names) if fallback_names else "none"
+                logger.warning(
+                    "⚠️ Preferred provider '%s' unavailable for task '%s' (project=%s); "
+                    "mapped_agent=%s; falling back to: %s",
+                    preferred_name,
+                    task,
+                    project_name or "default",
+                    mapped_agent or "unknown",
+                    fallback_display,
+                )
         return run_analysis_attempts_impl(
             tool_order=tool_order,
             text=text,
@@ -709,6 +741,69 @@ class AIOrchestrator:
             get_default_analysis_result=self._get_default_analysis_result,
             logger=logger,
         )
+
+    def _resolve_analysis_mapped_agent(
+        self,
+        *,
+        task: str,
+        text: str,
+        project_name: str | None,
+    ) -> str:
+        def _coerce_chat_agent_type(chat_config: Any) -> str:
+            if isinstance(chat_config, str):
+                return str(chat_config).strip()
+            if isinstance(chat_config, list):
+                for item in chat_config:
+                    if isinstance(item, str) and item.strip():
+                        return item.strip()
+                    if isinstance(item, Mapping):
+                        explicit = str(item.get("agent_type") or "").strip()
+                        if explicit:
+                            return explicit
+                        for key in item:
+                            normalized = str(key).strip()
+                            if normalized:
+                                return normalized
+            if isinstance(chat_config, Mapping):
+                explicit = str(chat_config.get("agent_type") or "").strip()
+                if explicit:
+                    return explicit
+                default_item = chat_config.get("default")
+                if isinstance(default_item, str) and default_item.strip():
+                    return default_item.strip()
+                if isinstance(default_item, Mapping):
+                    nested = str(default_item.get("agent_type") or "").strip()
+                    if nested:
+                        return nested
+                for key in chat_config:
+                    normalized = str(key).strip()
+                    if normalized and normalized not in {"default", "agent_type"}:
+                        return normalized
+            return ""
+
+        operation_agents = self._resolved_operation_agents(project_name)
+        if not isinstance(operation_agents, Mapping):
+            operation_agents = {}
+
+        task_key = str(task or "").strip().lower()
+        if task_key == "chat":
+            mapped_agent = _coerce_chat_agent_type(operation_agents.get(task_key))
+            if not mapped_agent:
+                mapped_agent = self._default_chat_agent_type(project_name)
+            if not mapped_agent:
+                mapped_agent = str(operation_agents.get("default") or "").strip()
+        else:
+            mapped_agent = str(
+                operation_agents.get(task_key) or operation_agents.get("default") or ""
+            ).strip()
+
+        mapped_agent = self._resolve_issue_override_agent(
+            task_key=task_key,
+            mapped_agent=mapped_agent,
+            text=text,
+            operation_agents=operation_agents,
+        )
+        return mapped_agent
 
     def _run_gemini_cli_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
         return run_gemini_analysis_cli_impl(
@@ -744,6 +839,27 @@ class AIOrchestrator:
             kwargs=kwargs,
         )
 
+    def _run_codex_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
+        timeout = (
+            self.refine_description_timeout
+            if task == "refine_description"
+            else self.analysis_timeout
+        )
+        return run_codex_analysis_cli_impl(
+            check_tool_available=self.check_tool_available,
+            codex_provider=AIProvider.CODEX,
+            codex_cli_path=self.codex_cli_path,
+            codex_model=self.codex_model,
+            build_analysis_prompt=self._build_analysis_prompt,
+            parse_analysis_result=self._parse_analysis_result,
+            tool_unavailable_error=ToolUnavailableError,
+            rate_limited_error=RateLimitedError,
+            text=text,
+            task=task,
+            timeout=timeout,
+            kwargs=kwargs,
+        )
+
     def _build_analysis_prompt(self, text: str, task: str, **kwargs) -> str:
         return build_analysis_prompt_impl(text, task, **kwargs)
 
@@ -773,6 +889,12 @@ class AIOrchestrator:
             return {"text": kwargs.get("text", "")}
         if task == "detect_intent":
             return {"intent": "task"}
+        if task == "detect_feature_ideation":
+            return {
+                "feature_ideation": False,
+                "confidence": 0.0,
+                "reason": "default-no-match",
+            }
         if task == "chat":
             return {"text": "I'm offline right now, how can I help you later?"}
         return {}

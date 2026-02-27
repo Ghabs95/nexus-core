@@ -156,6 +156,58 @@ def is_feature_ideation_request(text: str) -> bool:
     return any(trigger in candidate for trigger in triggers)
 
 
+def detect_feature_ideation_intent(
+    text: str,
+    *,
+    run_analysis: Callable[..., dict[str, Any]] | None = None,
+    logger: Any | None = None,
+    confidence_threshold: float = 0.65,
+) -> tuple[bool, float, str]:
+    """Detect feature-ideation intent with model-first classification."""
+    phrase_match = is_feature_ideation_request(text)
+    if not callable(run_analysis):
+        return (True, 0.55, "phrase_fallback_no_model") if phrase_match else (
+            False,
+            0.0,
+            "phrase_miss_no_model",
+        )
+
+    try:
+        result = run_analysis(text=text, task="detect_feature_ideation")
+    except Exception as exc:
+        if logger:
+            logger.warning("Feature ideation detector model fallback failed: %s", exc)
+        return (True, 0.55, "phrase_fallback_model_error") if phrase_match else (
+            False,
+            0.0,
+            "model_error",
+        )
+
+    if not isinstance(result, dict):
+        return False, 0.0, "model_non_dict"
+
+    parsed = dict(result)
+    if "feature_ideation" not in parsed:
+        reparsed = extract_json_dict(str(parsed.get("text", "")))
+        if reparsed:
+            parsed.update(reparsed)
+
+    raw_flag = parsed.get("feature_ideation")
+    if isinstance(raw_flag, bool):
+        is_ideation = raw_flag
+    else:
+        is_ideation = str(raw_flag).strip().lower() in {"1", "true", "yes"}
+
+    try:
+        confidence = float(parsed.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+
+    reason = str(parsed.get("reason", "")).strip() or "model_fallback"
+    return bool(is_ideation and confidence >= float(confidence_threshold)), confidence, reason
+
+
 def detect_feature_project(text: str, projects: dict[str, str] | None = None) -> str | None:
     candidate = (text or "").strip().lower()
     if not candidate:
@@ -646,6 +698,9 @@ async def handle_feature_ideation_request(
     deps: FeatureIdeationHandlerDeps | None = None,
     preferred_project_key: str | None = None,
     preferred_agent_type: str | None = None,
+    detected_feature_ideation: bool | None = None,
+    detection_confidence: float | None = None,
+    detection_reason: str | None = None,
     *,
     update: Any | None = None,
     context: Any | None = None,
@@ -658,7 +713,27 @@ async def handle_feature_ideation_request(
     if ctx is None or status_msg_id is None or text is None or deps is None:
         return False
 
-    if not is_feature_ideation_request(text):
+    if detected_feature_ideation is None:
+        feature_ideation, fi_confidence, fi_reason = detect_feature_ideation_intent(
+            text,
+            run_analysis=deps.orchestrator.run_text_to_speech_analysis,
+            logger=deps.logger,
+        )
+    else:
+        feature_ideation = bool(detected_feature_ideation)
+        try:
+            fi_confidence = float(detection_confidence if detection_confidence is not None else 0.0)
+        except (TypeError, ValueError):
+            fi_confidence = 0.0
+        fi_reason = str(detection_reason or "preclassified").strip() or "preclassified"
+
+    deps.logger.info(
+        "Feature ideation detection (entrypoint): matched=%s confidence=%.2f reason=%s",
+        feature_ideation,
+        fi_confidence,
+        fi_reason,
+    )
+    if not feature_ideation:
         return False
 
     project_key = detect_feature_project(text, deps.projects)

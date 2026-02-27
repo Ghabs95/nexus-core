@@ -156,7 +156,9 @@ async def check_tool_health(
     telegram_chat_id,
 ) -> None:
     unavailable: list[str] = []
+    checked: list[str] = []
     for tool in ai_providers:
+        checked.append(str(getattr(tool, "value", tool)))
         try:
             available = orchestrator.check_tool_available(tool)
             if not available:
@@ -182,7 +184,8 @@ async def check_tool_health(
             except Exception as exc:
                 logger.warning("Failed to send health alert to Telegram: %s", exc)
     else:
-        logger.info("✅ Tool health check passed: Copilot and Gemini are available")
+        provider_names = ", ".join(name.upper() for name in checked) if checked else "none"
+        logger.info("✅ Tool health check passed: %s available", provider_names)
 
 
 async def on_startup(

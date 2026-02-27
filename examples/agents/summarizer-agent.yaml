@@ -8,7 +8,7 @@ metadata:
 
 spec:
   agent_type: "finalizer"
-  timeout_seconds: 180
+  timeout_seconds: 300
   max_retries: 1
   
   purpose: |

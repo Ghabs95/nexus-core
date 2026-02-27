@@ -37,7 +37,7 @@ _PLUGIN_PROFILES: dict[str, dict[str, Any]] = {
         "config": {
             "fallback_enabled": True,
             "rate_limit_ttl": 3600,
-            "max_retries": 2,
+            "max_retries": 3,
             "analysis_timeout": 30,
             "refine_description_timeout": 90,
         },

@@ -188,14 +188,6 @@ async def test_save_task_selection_text_writes_file(tmp_path: Path):
     ctx = _Context({"project": "proj", "type": "bug"})
     ctx.bot = SimpleNamespace(delete_message=lambda **_k: None)
 
-    class _Orch:
-        def run_text_to_speech_analysis(self, *, text, task, project_name):
-            if task == "refine_description":
-                return {"text": "refined text"}
-            if task == "generate_name":
-                return {"text": "My Name"}
-            raise AssertionError(task)
-
     end = object()
 
     async def _transcribe_unused(*_a, **_k):
@@ -205,24 +197,77 @@ async def test_save_task_selection_text_writes_file(tmp_path: Path):
         update=update,
         context=ctx,
         logger=logging.getLogger("test"),
-        orchestrator=_Orch(),
+        orchestrator=object(),
         projects={"proj": "Project A"},
         types_map={"bug": "Bug"},
         project_config={"proj": {"workspace": "ws"}},
         base_dir=str(tmp_path),
+        get_inbox_storage_backend=lambda: "filesystem",
+        enqueue_task=lambda **_k: 0,
         get_inbox_dir=lambda root, project: str(tmp_path / "inbox" / project),
         transcribe_voice_message=_transcribe_unused,
         conversation_end=end,
     )
 
     assert out is end
-    assert msg.replies[-1][0] == "✅ Saved to `proj`."
+    assert "✅ Saved to inbox" in msg.replies[-1][0]
+    assert "Project: proj" in msg.replies[-1][0]
+    assert "File: bug_321.md" in msg.replies[-1][0]
     content = (tmp_path / "inbox" / "proj" / "bug_321.md").read_text()
     assert "# Bug" in content
     assert "**Project:** Project A" in content
-    assert "**Task Name:** My Name" in content
-    assert "refined text" in content
+    assert "**Task Name:**" not in content
+    assert "raw text" in content
     assert "**Raw Input:**\nraw text" in content
+
+
+@pytest.mark.asyncio
+async def test_save_task_selection_postgres_queues_task(tmp_path: Path):
+    msg = _MsgObj(text="raw text", message_id=456)
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=7),
+        message=msg,
+        effective_chat=SimpleNamespace(id=99),
+    )
+    ctx = _Context({"project": "proj", "type": "bug"})
+    ctx.bot = SimpleNamespace(delete_message=lambda **_k: None)
+    captured = {}
+
+    end = object()
+
+    async def _transcribe_unused(*_a, **_k):
+        return None
+
+    def _enqueue_task(**kwargs):
+        captured.update(kwargs)
+        return 77
+
+    out = await handle_save_task_selection(
+        update=update,
+        context=ctx,
+        logger=logging.getLogger("test"),
+        orchestrator=object(),
+        projects={"proj": "Project A"},
+        types_map={"bug": "Bug"},
+        project_config={"proj": {"workspace": "ws"}},
+        base_dir=str(tmp_path),
+        get_inbox_storage_backend=lambda: "postgres",
+        enqueue_task=_enqueue_task,
+        get_inbox_dir=lambda root, project: str(tmp_path / "inbox" / project),
+        transcribe_voice_message=_transcribe_unused,
+        conversation_end=end,
+    )
+
+    assert out is end
+    assert captured["project_key"] == "proj"
+    assert captured["workspace"] == "ws"
+    assert captured["filename"] == "bug_456.md"
+    assert "# Bug" in captured["markdown_content"]
+    assert "raw text" in captured["markdown_content"]
+    assert "✅ Queued to inbox" in msg.replies[-1][0]
+    assert "Project: proj" in msg.replies[-1][0]
+    assert "Queue ID: 77" in msg.replies[-1][0]
+    assert not (tmp_path / "inbox" / "proj" / "bug_456.md").exists()
 
 
 @pytest.mark.asyncio
@@ -256,6 +301,8 @@ async def test_save_task_selection_failed_transcription_returns_end():
         types_map={"bug": "Bug"},
         project_config={},
         base_dir="/tmp",
+        get_inbox_storage_backend=lambda: "filesystem",
+        enqueue_task=lambda **_k: 0,
         get_inbox_dir=lambda root, project: f"/tmp/{project}",
         transcribe_voice_message=_transcribe_none,
         conversation_end=end,

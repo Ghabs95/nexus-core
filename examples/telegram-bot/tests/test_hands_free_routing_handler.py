@@ -133,3 +133,27 @@ def test_explicit_task_request_still_routes_task(monkeypatch):
 
     assert called["task"] is True
     assert context.bot.edits[-1]["text"] == "✅ Routed to `nexus`"
+
+
+def test_build_chat_persona_strategy_mode_blocks_premature_execution_artifacts():
+    persona = routing._build_chat_persona(
+        _deps(),
+        user_id=777,
+        routed_agent_type="designer",
+        detected_intent="strategy",
+        routing_reason="intent=strategy",
+        user_text="I was thinking about adding a feature to improve planning",
+    )
+    assert "do not ask for issue numbers, PR links" in persona
+
+
+def test_build_chat_persona_allows_execution_artifacts_on_explicit_execution_request():
+    persona = routing._build_chat_persona(
+        _deps(),
+        user_id=777,
+        routed_agent_type="designer",
+        detected_intent="strategy",
+        routing_reason="intent=strategy",
+        user_text="implement this and create task now",
+    )
+    assert "Execution details (issue/PR/branch/commit) are allowed" in persona

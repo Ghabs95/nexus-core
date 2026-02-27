@@ -2,6 +2,40 @@ from collections.abc import Mapping
 from typing import Any, Callable
 
 
+def _coerce_chat_agent_type(chat_config: Any) -> str:
+    """Resolve chat config payload into a concrete agent_type string."""
+    if isinstance(chat_config, str):
+        return str(chat_config).strip()
+    if isinstance(chat_config, list):
+        for item in chat_config:
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+            if isinstance(item, dict):
+                explicit = str(item.get("agent_type") or "").strip()
+                if explicit:
+                    return explicit
+                for key in item:
+                    normalized = str(key).strip()
+                    if normalized:
+                        return normalized
+    if isinstance(chat_config, Mapping):
+        explicit = str(chat_config.get("agent_type") or "").strip()
+        if explicit:
+            return explicit
+        default_item = chat_config.get("default")
+        if isinstance(default_item, str) and default_item.strip():
+            return default_item.strip()
+        if isinstance(default_item, Mapping):
+            nested = str(default_item.get("agent_type") or "").strip()
+            if nested:
+                return nested
+        for key in chat_config:
+            normalized = str(key).strip()
+            if normalized and normalized not in {"default", "agent_type"}:
+                return normalized
+    return ""
+
+
 def fallback_order_from_preferences(
     *,
     resolved_tool_preferences: Mapping[str, Any],
@@ -38,7 +72,7 @@ def resolve_analysis_tool_order(
     task_key = str(task or "").strip().lower()
     mapped_agent = ""
     if task_key == "chat":
-        mapped_agent = str(operation_agents.get(task_key) or "").strip()
+        mapped_agent = _coerce_chat_agent_type(operation_agents.get(task_key))
         if not mapped_agent:
             mapped_agent = default_chat_agent_type
         if not mapped_agent:

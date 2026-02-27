@@ -35,6 +35,7 @@ If conflicts exist between docs, resolve explicitly or surface them.
     - Plugin system → `docs/plugin-system.md`
     - Env vars and endpoints → `docs/config-reference.md`
     - Framework vs integration → `docs/framework-integration.md`
+    - Live visualizer updates ADR → `ADR-083-Live-Visualizer-Updates.md`
 3. Understand the framework boundary (nexus-core ≠ telegram-bot integration).
 4. Make atomic, scoped changes.
 5. Summarize exactly what changed and why.

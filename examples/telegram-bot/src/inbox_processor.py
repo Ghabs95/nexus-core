@@ -54,6 +54,7 @@ from orchestration.plugin_runtime import (
     get_workflow_state_plugin,
 )
 from runtime.agent_launcher import (
+    clear_launch_guard,
     invoke_copilot_agent,
     is_recent_launch,
 )
@@ -671,6 +672,43 @@ def _recover_orphaned_running_agents(max_relaunches: int = 3) -> int:
         orphan_recovery_cooldown_seconds=_ORPHAN_RECOVERY_COOLDOWN_SECONDS,
         resolve_project_for_issue=_resolve_project_for_issue,
         resolve_repo_for_issue=_resolve_repo_for_issue,
+        reconcile_closed_or_missing_issue=_reconcile_closed_or_missing_issue,
+    )
+
+
+def _reconcile_closed_or_missing_issue(issue_num: str, repo_name: str, workflow_id: str) -> None:
+    """Clear stale local runtime/workflow state when remote issue is closed or missing."""
+    issue_key = str(issue_num)
+
+    launched = HostStateManager.load_launched_agents(recent_only=False)
+    launched_keys_removed = [
+        key
+        for key, value in launched.items()
+        if key == issue_key
+        or key.startswith(f"{issue_key}_")
+        or (isinstance(value, dict) and str(value.get("issue", "")) == issue_key)
+    ]
+    for key in launched_keys_removed:
+        launched.pop(key, None)
+    HostStateManager.save_launched_agents(launched)
+
+    tracked = HostStateManager.load_tracked_issues()
+    tracked_removed = tracked.pop(issue_key, None) is not None
+    HostStateManager.save_tracked_issues(tracked)
+
+    _get_wf_state().remove_mapping(issue_key)
+    _get_wf_state().clear_pending_approval(issue_key)
+    cleared_guards = clear_launch_guard(issue_key)
+
+    logger.info(
+        "Reconciled closed/missing issue #%s (%s): workflow_id=%s mapping_cleared=true "
+        "launched_keys_removed=%s tracked_removed=%s launch_guards_cleared=%s",
+        issue_key,
+        repo_name,
+        workflow_id or "unknown",
+        len(launched_keys_removed),
+        tracked_removed,
+        cleared_guards,
     )
 
 

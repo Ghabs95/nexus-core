@@ -89,13 +89,29 @@ class GitHubPlatform(GitPlatform):
         if labels:
             args.extend(["--label", ",".join(labels)])
 
-        args.append("--json")
-        args.append("number,title,body,state,labels,createdAt,updatedAt,url")
+        fields = "number,title,body,state,labels,createdAt,updatedAt,url"
+        json_args = [*args, "--json", fields]
 
-        output = self._run_gh_command(args)
-        data = json.loads(output)
+        try:
+            output = self._run_gh_command(json_args)
+            data = json.loads(output)
+            return self._parse_issue(data)
+        except RuntimeError as exc:
+            if "unknown flag: --json" not in str(exc):
+                raise
+            logger.warning(
+                "gh issue create does not support --json in this environment; falling back to create+view"
+            )
 
-        return self._parse_issue(data)
+        create_output = self._run_gh_command(args)
+        issue_ref = str(create_output or "").strip().splitlines()[-1].strip()
+        if not issue_ref:
+            raise RuntimeError("Issue created but no issue reference returned by gh")
+
+        issue_id = issue_ref.rstrip("/").split("/")[-1] if "github.com/" in issue_ref else issue_ref
+        view_output = self._run_gh_command(["issue", "view", str(issue_id), "--json", fields])
+        view_data = json.loads(view_output)
+        return self._parse_issue(view_data)
 
     async def get_issue(self, issue_id: str) -> Issue | None:
         """Get issue by ID or number."""

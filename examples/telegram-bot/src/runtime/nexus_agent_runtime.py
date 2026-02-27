@@ -34,6 +34,22 @@ _STEP_COMPLETE_HEADER_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _READY_FOR_RE = re.compile(r"\bready\s+for\b", re.IGNORECASE)
+_ISSUE_OPEN_ERROR_LOG_COOLDOWN_SECONDS = 300
+_last_issue_open_error_log_at: dict[tuple[str, str], float] = {}
+
+
+def _extract_http_status_code(exc: Exception) -> int | None:
+    """Best-effort extraction of HTTP status from provider exceptions."""
+    for attr in ("status_code", "status", "http_status"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int):
+            return value
+    response = getattr(exc, "response", None)
+    if response is not None:
+        code = getattr(response, "status_code", None)
+        if isinstance(code, int):
+            return code
+    return None
 
 
 def _run_coro_sync(coro_factory: Callable[[], Coroutine[Any, Any, object]]) -> object | None:
@@ -535,7 +551,7 @@ class NexusAgentRuntime(AgentRuntime):
             if not platform:
                 return None
 
-            details = platform.get_issue(str(issue_number), ["state"])
+            details = _run_coro_sync(lambda: platform.get_issue(str(issue_number)))
             if not details:
                 return False
 
@@ -549,17 +565,40 @@ class NexusAgentRuntime(AgentRuntime):
                 return False
             if state_value == "open":
                 return True
+            logger.warning(
+                "is_issue_open returned unexpected state for issue #%s in %s: raw_state=%r",
+                issue_number,
+                repo,
+                state_value,
+            )
             return None
         except Exception as exc:
             error_text = str(exc).lower()
             if "404" in error_text or "not found" in error_text:
                 return False
-            logger.debug(
-                "is_issue_open check failed for #%s in %s: %s",
-                issue_number,
-                repo,
-                exc,
-            )
+            status_code = _extract_http_status_code(exc)
+            key = (str(issue_number), str(repo))
+            now = time.time()
+            last_log_at = _last_issue_open_error_log_at.get(key, 0.0)
+            if (now - last_log_at) >= _ISSUE_OPEN_ERROR_LOG_COOLDOWN_SECONDS:
+                _last_issue_open_error_log_at[key] = now
+                logger.warning(
+                    "is_issue_open check failed for issue #%s in %s: %s(%s) status=%s. "
+                    "Likely causes: missing/expired token, missing repo permission, API rate limit, or network failure.",
+                    issue_number,
+                    repo,
+                    type(exc).__name__,
+                    str(exc),
+                    status_code if status_code is not None else "unknown",
+                )
+            else:
+                logger.debug(
+                    "is_issue_open check failed for issue #%s in %s (suppressed): %s(%s)",
+                    issue_number,
+                    repo,
+                    type(exc).__name__,
+                    exc,
+                )
             return None
 
     def audit_log(self, issue_number: str, event: str, details: str = "") -> None:

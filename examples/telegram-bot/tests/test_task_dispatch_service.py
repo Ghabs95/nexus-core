@@ -118,3 +118,11 @@ def test_handle_new_task_happy_path_smoke(tmp_path):
     assert captured["rename_called"] is True
     assert pid_tool["pid"] == 1234
     assert (active_dir / "feature_77.md").exists()
+    emit_alert.assert_called_once()
+    msg = emit_alert.call_args.args[0]
+    kwargs = emit_alert.call_args.kwargs
+    assert "Issue #77 created and workflow started" in msg
+    assert "Workflow: wf-1" in msg
+    assert kwargs["severity"] == "info"
+    assert kwargs["issue_number"] == "77"
+    assert kwargs["project_key"] == "proj-a"

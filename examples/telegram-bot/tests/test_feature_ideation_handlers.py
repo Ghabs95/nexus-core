@@ -36,6 +36,71 @@ def test_detect_feature_project_falls_back_to_project_keys(monkeypatch):
     assert detected == "sampleco"
 
 
+def test_detect_feature_ideation_intent_phrase_match_still_uses_model():
+    called = {"count": 0}
+
+    def _run_analysis(**_kwargs):
+        called["count"] += 1
+        return {
+            "feature_ideation": False,
+            "confidence": 0.99,
+            "reason": "meta-discussion, not ideation",
+        }
+
+    matched, confidence, reason = handlers.detect_feature_ideation_intent(
+        "Which new feature should I add?",
+        run_analysis=_run_analysis,
+    )
+    assert called["count"] == 1
+    assert matched is False
+    assert confidence == 0.99
+    assert "meta-discussion" in reason
+
+
+def test_detect_feature_ideation_intent_model_fallback_for_non_english():
+    def _run_analysis(**_kwargs):
+        return {
+            "feature_ideation": True,
+            "confidence": 0.82,
+            "reason": "user asks for new feature proposals",
+        }
+
+    matched, confidence, reason = handlers.detect_feature_ideation_intent(
+        "Quale funzionalità nuova dovrei aggiungere?",
+        run_analysis=_run_analysis,
+    )
+    assert matched is True
+    assert confidence == 0.82
+    assert "feature proposals" in reason
+
+
+def test_detect_feature_ideation_intent_model_rejects_status_question():
+    def _run_analysis(**_kwargs):
+        return {
+            "feature_ideation": False,
+            "confidence": 0.92,
+            "reason": "status question",
+        }
+
+    matched, confidence, reason = handlers.detect_feature_ideation_intent(
+        "Which is the last feature implemented?",
+        run_analysis=_run_analysis,
+    )
+    assert matched is False
+    assert confidence == 0.92
+    assert reason == "status question"
+
+
+def test_detect_feature_ideation_intent_phrase_fallback_when_model_errors():
+    matched, confidence, reason = handlers.detect_feature_ideation_intent(
+        "Which new feature should I add?",
+        run_analysis=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    assert matched is True
+    assert confidence == 0.55
+    assert reason == "phrase_fallback_model_error"
+
+
 class _CaptureOrchestrator:
     def __init__(self):
         self.persona = ""
@@ -816,6 +881,9 @@ def test_handle_feature_ideation_request_prompts_count_first(tmp_path):
             deps=deps,
             preferred_project_key=None,
             preferred_agent_type="business",
+            detected_feature_ideation=True,
+            detection_confidence=0.92,
+            detection_reason="test_preclassified",
         )
     )
 

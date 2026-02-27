@@ -3,6 +3,24 @@
 from typing import Any
 
 
+def _infer_event_type_from_payload(payload: dict[str, Any]) -> str | None:
+    """Best-effort event type inference when GitHub event header is missing."""
+    if not isinstance(payload, dict) or not payload:
+        return None
+
+    if "comment" in payload and "issue" in payload:
+        return "issue_comment"
+    if "pull_request" in payload and "review" in payload:
+        return "pull_request_review"
+    if "pull_request" in payload:
+        return "pull_request"
+    if "issue" in payload:
+        return "issues"
+    if "zen" in payload or "hook_id" in payload:
+        return "ping"
+    return None
+
+
 def process_webhook_request(
     *,
     payload_body: bytes,
@@ -25,8 +43,16 @@ def process_webhook_request(
 
     event_type = headers.get("X-GitHub-Event")
     if not event_type:
-        logger.error("❌ No X-GitHub-Event header")
-        return {"error": "No event type"}, 400
+        inferred_event_type = _infer_event_type_from_payload(payload_json or {})
+        if inferred_event_type:
+            logger.warning(
+                "⚠️ Missing X-GitHub-Event header; inferred event type: %s",
+                inferred_event_type,
+            )
+            event_type = inferred_event_type
+        else:
+            logger.error("❌ No X-GitHub-Event header and could not infer event type")
+            return {"error": "No event type"}, 400
 
     payload = payload_json or {}
     delivery_id = headers.get("X-GitHub-Delivery")

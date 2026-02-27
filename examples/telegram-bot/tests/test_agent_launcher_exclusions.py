@@ -81,3 +81,22 @@ def test_tool_unavailable_persists_gemini_exclusion(monkeypatch):
     assert pid is None
     assert tool is None
     assert state["55"]["exclude_tools"] == ["gemini"]
+
+
+def test_log_indicates_copilot_quota_failure_detects_session_summary():
+    from runtime import agent_launcher
+
+    text = (
+        "402 You have no quota\n\n"
+        "Total usage est: 0 Premium requests\n"
+        "API time spent: 0s\n"
+        "Total session time: 4s\n"
+    )
+    assert agent_launcher._log_indicates_copilot_quota_failure(text) is True
+
+
+def test_log_indicates_copilot_quota_failure_false_without_summary():
+    from runtime import agent_launcher
+
+    text = "402 You have no quota"
+    assert agent_launcher._log_indicates_copilot_quota_failure(text) is False

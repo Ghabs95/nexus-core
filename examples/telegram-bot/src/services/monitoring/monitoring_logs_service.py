@@ -54,6 +54,7 @@ async def handle_logs(ctx: Any, deps: Any) -> None:
             [Button(label=deps.get_project_label(pk), callback_data=f"pickmonitor:logs:{pk}")]
             for pk in deps.iter_project_keys()
         ]
+        buttons.append([Button(label="❌ Close", callback_data="flow:close")])
         await ctx.reply_text("Please select a project to view logs:", buttons=buttons)
         return
 
@@ -77,21 +78,33 @@ async def handle_logs(ctx: Any, deps: Any) -> None:
 
     issue_logs = deps.find_issue_log_files(issue_num, task_file=task_file)
     if issue_logs:
-        issue_logs.sort(key=lambda path: os.path.getmtime(path))
+        # Show newest logs first for operator clarity.
+        issue_logs.sort(key=lambda path: os.path.getmtime(path), reverse=True)
         timeline += "\n"
         for log_file in issue_logs:
             size = os.path.getsize(log_file)
             mtime = time.strftime("%H:%M:%S", time.localtime(os.path.getmtime(log_file)))
             timeline += f"• `{os.path.basename(log_file)}` ({size}B, {mtime})\n"
 
-        non_empty = [lf for lf in reversed(issue_logs) if os.path.getsize(lf) > 0]
-        latest = non_empty[0] if non_empty else issue_logs[-1]
+        latest = issue_logs[0]
         try:
             with open(latest, encoding="utf-8") as handle:
                 lines = handle.readlines()[-200:]
             timeline += f"\n**{os.path.basename(latest)}** (last 200 lines):\n"
             for line in lines:
                 timeline += f"{line.rstrip()}\n"
+            if not lines:
+                non_empty = [lf for lf in issue_logs if os.path.getsize(lf) > 0]
+                if non_empty:
+                    fallback = non_empty[0]
+                    with open(fallback, encoding="utf-8") as handle:
+                        fallback_lines = handle.readlines()[-200:]
+                    timeline += (
+                        f"\n(ℹ️ Latest log is currently empty; showing most recent non-empty: "
+                        f"`{os.path.basename(fallback)}`)\n"
+                    )
+                    for line in fallback_lines:
+                        timeline += f"{line.rstrip()}\n"
         except Exception as exc:
             deps.logger.error(f"Error reading log file: {exc}", exc_info=True)
             timeline += f"\n❌ Failed to read {os.path.basename(latest)}: {exc}\n"
@@ -127,6 +140,7 @@ async def handle_logsfull(ctx: Any, deps: Any) -> None:
             [Button(label=deps.get_project_label(pk), callback_data=f"pickmonitor:logsfull:{pk}")]
             for pk in deps.iter_project_keys()
         ]
+        buttons.append([Button(label="❌ Close", callback_data="flow:close")])
         await ctx.reply_text("Please select a project to view full logs:", buttons=buttons)
         return
 
@@ -189,6 +203,7 @@ async def handle_tail(ctx: Any, deps: Any) -> None:
             [Button(label=deps.get_project_label(pk), callback_data=f"pickmonitor:tail:{pk}")]
             for pk in deps.iter_project_keys()
         ]
+        buttons.append([Button(label="❌ Close", callback_data="flow:close")])
         await ctx.reply_text("Please select a project to tail logs:", buttons=buttons)
         return
 
@@ -226,12 +241,17 @@ async def handle_tail(ctx: Any, deps: Any) -> None:
     def _read_tail_lines() -> list[str]:
         issue_logs = deps.find_issue_log_files(issue_num, task_file=task_file)
         if issue_logs:
-            issue_logs.sort(key=os.path.getmtime)
-            non_empty = [lf for lf in reversed(issue_logs) if os.path.getsize(lf) > 0]
-            latest = non_empty[0] if non_empty else issue_logs[-1]
+            issue_logs.sort(key=os.path.getmtime, reverse=True)
+            latest = issue_logs[0]
             try:
                 with open(latest, encoding="utf-8") as handle:
                     tail_lines = handle.readlines()[-max_lines:]
+                if not tail_lines:
+                    non_empty = [lf for lf in issue_logs if os.path.getsize(lf) > 0]
+                    if non_empty:
+                        latest = non_empty[0]
+                        with open(latest, encoding="utf-8") as handle:
+                            tail_lines = handle.readlines()[-max_lines:]
                 return [f"[{os.path.basename(latest)}] {line.rstrip()}" for line in tail_lines]
             except Exception as exc:
                 deps.logger.error(f"Error reading log file: {exc}", exc_info=True)

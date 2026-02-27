@@ -12,8 +12,16 @@ if TYPE_CHECKING:
     from interactive_context import InteractiveContext
 
 from nexus.adapters.notifications.base import Button
-from nexus.core.chat_agents_schema import get_default_project_chat_agent_type
+from nexus.core.chat_agents_schema import (
+    get_default_project_chat_agent_type,
+    get_project_chat_agent_config,
+)
 
+from handlers.agent_context_utils import (
+    load_agent_prompt_from_definition,
+    load_role_context,
+    resolve_project_root,
+)
 from handlers.common_routing import (
     parse_intent_result,
     route_task_with_context,
@@ -22,8 +30,8 @@ from handlers.common_routing import (
 from handlers.feature_ideation_handlers import (
     FEATURE_STATE_KEY,
     handle_feature_ideation_request,
-    is_feature_ideation_request,
 )
+from orchestration.telegram_update_bridge import _clip_telegram_text, _normalize_telegram_markdown
 
 
 @dataclass
@@ -41,6 +49,8 @@ class HandsFreeRoutingDeps:
     save_resolved_task: Callable[[dict, str, str], Awaitable[dict[str, Any]]]
     task_confirmation_mode: str
     feature_ideation_deps: Any = None
+    base_dir: str = ""
+    project_config: dict[str, Any] | None = None
 
 
 def _legacy_reply_markup(buttons: list[list[Button]] | None) -> Any | None:
@@ -83,10 +93,12 @@ def _coerce_legacy_ctx(update: Any, context: Any, status_msg: Any, text: str | N
 
         async def reply_text(self, text: str, buttons: list[list[Button]] | None = None) -> str:
             message_id = str(getattr(status_msg, "message_id", ""))
+            rendered_text = _clip_telegram_text(_normalize_telegram_markdown(text, "Markdown"))
             await getattr(context, "bot").edit_message_text(
                 chat_id=getattr(getattr(update, "effective_chat", None), "id", None),
                 message_id=message_id,
-                text=text,
+                text=rendered_text,
+                parse_mode="Markdown",
                 reply_markup=_legacy_reply_markup(buttons),
             )
             return message_id
@@ -98,10 +110,12 @@ def _coerce_legacy_ctx(update: Any, context: Any, status_msg: Any, text: str | N
             text: str,
             buttons: list[list[Button]] | None = None,
         ) -> None:
+            rendered_text = _clip_telegram_text(_normalize_telegram_markdown(text, "Markdown"))
             await getattr(context, "bot").edit_message_text(
                 chat_id=getattr(getattr(update, "effective_chat", None), "id", None),
                 message_id=message_id,
-                text=text,
+                text=rendered_text,
+                parse_mode="Markdown",
                 reply_markup=_legacy_reply_markup(buttons),
             )
 
@@ -257,8 +271,8 @@ def _build_chat_persona(
     routed_agent_type: str,
     detected_intent: str,
     routing_reason: str,
+    user_text: str,
 ) -> str:
-    base_persona = deps.ai_persona or "You are a helpful AI assistant."
     chat_data = deps.get_chat(user_id) or {}
     metadata = chat_data.get("metadata") or {}
 
@@ -266,9 +280,36 @@ def _build_chat_persona(
     project_label = deps.projects.get(project_key, project_key or "Not set")
     chat_mode = str(metadata.get("chat_mode", "strategy"))
     primary_agent_type = _resolve_primary_agent_type(metadata) or "unknown"
+    project_cfg = {}
+    if isinstance(getattr(deps, "project_config", None), dict) and project_key:
+        candidate = deps.project_config.get(project_key)
+        if isinstance(candidate, dict):
+            project_cfg = candidate
+
+    project_root = ""
+    agent_prompt = ""
+    role_context = ""
+    if project_key and project_cfg:
+        try:
+            project_root = resolve_project_root(str(getattr(deps, "base_dir", "") or ""), project_key, project_cfg)
+            agent_prompt = load_agent_prompt_from_definition(
+                base_dir=str(getattr(deps, "base_dir", "") or ""),
+                project_root=project_root,
+                project_cfg=project_cfg,
+                routed_agent_type=routed_agent_type,
+            )
+            agent_cfg = get_project_chat_agent_config(project_cfg, routed_agent_type)
+            role_context = load_role_context(project_root=project_root, agent_cfg=agent_cfg)
+        except Exception as exc:
+            deps.logger.warning(
+                "Could not load chat role context for project=%s agent_type=%s: %s",
+                project_key,
+                routed_agent_type,
+                exc,
+            )
 
     context_block = (
-        "\n\nActive Chat Context:\n"
+        "Active Chat Context:\n"
         f"- Project: {project_label} ({project_key or 'none'})\n"
         f"- Chat mode: {chat_mode}\n"
         f"- Primary agent_type: {primary_agent_type}\n"
@@ -280,7 +321,27 @@ def _build_chat_persona(
         "- Keep recommendations scoped to the active project context.\n"
         "- If context is missing, ask a short clarification before making assumptions."
     )
-    return f"{base_persona}{context_block}"
+    execution_requested = _looks_like_explicit_task_request(user_text)
+    if chat_mode != "execution" and not execution_requested:
+        context_block += (
+            "\n- Strategy mode: do not ask for issue numbers, PR links, branch names, or commit artifacts "
+            "unless the user explicitly asks to implement/execute."
+            "\n- For feature ideation, provide a complete proposal first (solution, acceptance criteria, risks/tradeoffs)."
+        )
+    else:
+        context_block += (
+            "\n- Execution details (issue/PR/branch/commit) are allowed only when implementation is explicitly requested."
+        )
+    sections: list[str] = []
+    if agent_prompt:
+        sections.append(
+            "Use this dedicated agent definition as your operating role and voice "
+            f"for `{routed_agent_type}`:\n{agent_prompt}"
+        )
+    sections.append(context_block)
+    if role_context:
+        sections.append(role_context.strip())
+    return "\n\n".join(part for part in sections if part)
 
 
 def _has_active_feature_ideation(ctx: InteractiveContext) -> bool:
@@ -301,10 +362,14 @@ def _looks_like_explicit_task_request(text: str) -> bool:
         "create a task",
         "make this a task",
         "route this",
+        "execute this",
+        "execute it",
         "open issue",
         "file issue",
         "implement this",
         "implement it",
+        "build this",
+        "ship this",
         "go with option",
         "use option",
     )
@@ -359,18 +424,6 @@ async def route_hands_free_text(
     if await resolve_pending_project_selection(ctx, deps):
         return
 
-    # Bug 2 Fix: Check for feature ideation request first
-    if is_feature_ideation_request(text):
-        deps.logger.info("Feature ideation request detected in hands-free text: %s", text[:50])
-        status_msg = await ctx.reply_text("🧠 *Thinking about features...*")
-        await handle_feature_ideation_request(
-            ctx=ctx,
-            status_msg_id=status_msg,
-            text=text,
-            deps=deps.feature_ideation_deps,
-        )
-        return
-
     force_conversation = _has_active_feature_ideation(
         ctx
     ) and not _looks_like_explicit_task_request(text)
@@ -379,12 +432,46 @@ async def route_hands_free_text(
             "Active feature ideation detected; routing follow-up as conversation: %s",
             text[:50],
         )
-        intent_result = {"intent": "conversation"}
+        intent_result = {
+            "intent": "conversation",
+            "feature_ideation": False,
+            "confidence": 0.0,
+            "reason": "active_feature_ideation_followup",
+        }
     else:
         deps.logger.info("Detecting intent for: %s...", text[:50])
         intent_result = parse_intent_result(deps.orchestrator, text, deps.extract_json_dict)
 
     intent = intent_result.get("intent", "task")
+    raw_feature_ideation = intent_result.get("feature_ideation")
+    feature_ideation = raw_feature_ideation if isinstance(raw_feature_ideation, bool) else (
+        str(raw_feature_ideation).strip().lower() in {"1", "true", "yes"}
+    )
+    try:
+        fi_confidence = float(intent_result.get("feature_ideation_confidence", 0.0))
+    except (TypeError, ValueError):
+        fi_confidence = 0.0
+    fi_reason = str(intent_result.get("feature_ideation_reason", "")).strip() or "not_provided"
+    deps.logger.info(
+        "Feature ideation detection: matched=%s confidence=%.2f reason=%s",
+        feature_ideation,
+        fi_confidence,
+        fi_reason,
+    )
+    if feature_ideation:
+        deps.logger.info("Feature ideation request detected in hands-free text: %s", text[:50])
+        status_msg = await ctx.reply_text("🧠 *Thinking about features...*")
+        await handle_feature_ideation_request(
+            ctx=ctx,
+            status_msg_id=status_msg,
+            text=text,
+            deps=deps.feature_ideation_deps,
+            detected_feature_ideation=True,
+            detection_confidence=fi_confidence,
+            detection_reason=fi_reason,
+        )
+        return
+
     is_voice = (
         str(getattr(ctx.raw_event, "voice", False)) == "True"
         or getattr(getattr(ctx.raw_event, "message", None), "voice", None) is not None
@@ -412,6 +499,7 @@ async def route_hands_free_text(
             routed_agent_type,
             detected_intent,
             routing_reason,
+            text,
         )
 
         reply_text = run_conversation_turn(
@@ -434,7 +522,9 @@ async def route_hands_free_text(
     if confirmation_mode not in {"off", "always", "smart"}:
         confirmation_mode = "smart"
 
-    confidence = intent_result.get("confidence") if isinstance(intent_result, dict) else None
+    confidence = None
+    if isinstance(intent_result, dict):
+        confidence = intent_result.get("intent_confidence", intent_result.get("confidence"))
     try:
         confidence_value = float(confidence) if confidence is not None else None
     except (TypeError, ValueError):

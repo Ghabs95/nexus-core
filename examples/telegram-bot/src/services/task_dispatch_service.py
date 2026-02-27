@@ -307,6 +307,7 @@ def handle_new_task(
     )
 
     issue_num = ""
+    workflow_id = ""
     if issue_url:
         issue_num = issue_url.split("/")[-1]
         if new_filepath:
@@ -362,6 +363,30 @@ def handle_new_task(
                         f.write(f"**Workflow ID:** {workflow_id}\n")
                 except Exception as exc:
                     logger.error("Failed to append workflow ID: %s", exc)
+
+        if workflow_id:
+            emit_alert(
+                (
+                    f"✅ Issue #{issue_num} created and workflow started for project '{project_name}'.\n"
+                    f"Workflow: {workflow_id}\n"
+                    f"Issue: {issue_url}"
+                ),
+                severity="info",
+                source="inbox_processor",
+                issue_number=str(issue_num),
+                project_key=str(project_name),
+            )
+        else:
+            emit_alert(
+                (
+                    f"✅ Issue #{issue_num} created for project '{project_name}'.\n"
+                    f"Issue: {issue_url}"
+                ),
+                severity="info",
+                source="inbox_processor",
+                issue_number=str(issue_num),
+                project_key=str(project_name),
+            )
 
     agents_dir_val = config["agents_dir"]
     if agents_dir_val is not None and issue_url:

@@ -175,8 +175,23 @@ async def reconcile_issue_from_signals(
         await workflow_plugin.pause_workflow(issue_num, reason="Reconciled via Telegram")
 
     completion_path: str | None = None
+    completion_seeded = False
+    selected_signal: dict[str, str] | None = None
     if applied:
         selected_signal = applied[-1]
+    elif signals:
+        # DB drift fallback: keep /continue resumable even when workflow rows are missing
+        # but structured issue comments still provide latest handoff information.
+        selected_signal = signals[-1]
+        completion_seeded = True
+        logger.warning(
+            "Reconcile issue #%s: no workflow transitions applied; seeding completion from latest signal %s -> %s",
+            issue_num,
+            selected_signal.get("completed_agent"),
+            selected_signal.get("next_agent"),
+        )
+
+    if selected_signal:
         if not get_storage_capabilities().local_completions:
             completion_path = await _save_completion_to_storage(issue_num, selected_signal)
         else:
@@ -200,6 +215,7 @@ async def reconcile_issue_from_signals(
         "ok": True,
         "signals_scanned": len(signals),
         "signals_applied": len(applied),
+        "completion_seeded": completion_seeded,
         "completion_file": os.path.basename(completion_path) if completion_path else "(unchanged)",
         "workflow_state": state_text,
         "workflow_step": step_text,

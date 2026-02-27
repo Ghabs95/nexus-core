@@ -392,7 +392,7 @@ def _get_orchestrator_config():
             "chat_agent_types_resolver": get_chat_agent_types,
             "fallback_enabled": os.getenv("AI_FALLBACK_ENABLED", "true").lower() == "true",
             "rate_limit_ttl": int(os.getenv("AI_RATE_LIMIT_TTL", "3600")),
-            "max_retries": int(os.getenv("AI_MAX_RETRIES", "2")),
+            "max_retries": int(os.getenv("AI_MAX_RETRIES", "3")),
             "analysis_timeout": _get_int_env("AI_ANALYSIS_TIMEOUT", 120),
             "transcription_primary": os.getenv("TRANSCRIPTION_PRIMARY", "gemini").strip().lower(),
             "gemini_transcription_timeout": _get_int_env("GEMINI_TRANSCRIPTION_TIMEOUT", 60),

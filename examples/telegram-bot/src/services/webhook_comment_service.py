@@ -4,6 +4,35 @@ import re
 from typing import Any
 
 
+def _resolve_supported_agent_author(author: str) -> str | None:
+    """Resolve comment author to canonical agent label when supported."""
+    normalized = str(author or "").strip().lower()
+    if not normalized:
+        return None
+
+    # Match current and likely bot account variants used by Copilot/Codex/Gemini.
+    if "copilot" in normalized:
+        return "copilot"
+    if "codex" in normalized:
+        return "codex"
+    if "gemini" in normalized:
+        return "gemini"
+    return None
+
+
+def _extract_next_agent(comment_body: str) -> str | None:
+    """Extract handoff target from comment text.
+
+    When multiple mentions exist, prefer the last one because manual handoff
+    comments often include quoted context with earlier @mentions.
+    """
+    mentions = re.findall(r"@([A-Za-z][A-Za-z0-9_-]{0,63})", str(comment_body or ""))
+    if not mentions:
+        return None
+
+    return mentions[-1].lower()
+
+
 def handle_issue_comment_event(
     *,
     event: dict[str, Any],
@@ -19,15 +48,13 @@ def handle_issue_comment_event(
     comment_body = event.get("comment_body", "")
     issue_number = event.get("issue_number", "")
     comment_author = event.get("comment_author", "")
+    repo_name = str(event.get("repo", "") or "").strip()
     issue = event.get("issue", {})
 
     logger.info("📝 Issue comment: #%s by %s (action: %s)", issue_number, comment_author, action)
 
     if action != "created":
         return {"status": "ignored", "reason": f"action is {action}, not created"}
-
-    if comment_author != "copilot":
-        return {"status": "ignored", "reason": "not from copilot"}
 
     event_key = f"comment_{comment_id}"
     if event_key in processed_events:
@@ -44,8 +71,25 @@ def handle_issue_comment_event(
     is_completion = any(
         re.search(pattern, str(comment_body or ""), re.IGNORECASE) for pattern in completion_markers
     )
-    next_agent_match = re.search(r"@(\w+)", str(comment_body or ""))
-    next_agent = next_agent_match.group(1) if next_agent_match else None
+    mentions = re.findall(r"@([A-Za-z][A-Za-z0-9_-]{0,63})", str(comment_body or ""))
+    next_agent = _extract_next_agent(comment_body)
+    completed_agent = _resolve_supported_agent_author(comment_author)
+    manual_issue_author = str((issue.get("user") or {}).get("login") or "").strip()
+
+    if completed_agent is None:
+        # Manual override: allow explicit @agent handoff by the issue author.
+        if not (next_agent and manual_issue_author and comment_author == manual_issue_author):
+            return {
+                "status": "ignored",
+                "reason": f"not from supported AI agent ({comment_author})",
+            }
+        logger.info(
+            "⚠️ Manual chain override accepted for issue #%s by issue author %s -> @%s (mentions=%s)",
+            issue_number,
+            comment_author,
+            next_agent,
+            mentions,
+        )
 
     if is_completion and not next_agent:
         logger.info("✅ Workflow completion detected for issue #%s", issue_number)
@@ -60,7 +104,8 @@ def handle_issue_comment_event(
             pid, _ = launch_next_agent(
                 issue_number=issue_number,
                 next_agent=next_agent,
-                trigger_source="webhook",
+                trigger_source=(completed_agent or f"manual-{comment_author}"),
+                repo_override=repo_name or None,
             )
             if pid:
                 processed_events.add(event_key)

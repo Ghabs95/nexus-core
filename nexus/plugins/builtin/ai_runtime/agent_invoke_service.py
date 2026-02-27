@@ -50,6 +50,13 @@ def invoke_agent_with_fallback(
                 return pid, tool
             tried.append(f"{tool_value}(no-pid)")
         except rate_limited_error_type as exc:
+            remaining = [getattr(t, "value", str(t)) for t in candidates if t != tool]
+            logger.warning(
+                "⏸️  %s rate-limited/quota: %s. Falling back to: %s",
+                tool_value,
+                exc,
+                ", ".join(remaining) if remaining else "none",
+            )
             record_rate_limit_with_context(tool, exc, "invoke_agent")
             tried.append(f"{tool_value}(rate-limited)")
         except Exception as exc:

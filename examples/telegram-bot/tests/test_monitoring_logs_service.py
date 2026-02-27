@@ -61,6 +61,8 @@ async def test_logs_prompts_for_project_without_args():
     ctx = _Ctx()
     await handle_logs(ctx, _deps())
     assert "Please select a project to view logs" in ctx.replies[-1][0]
+    buttons = ctx.replies[-1][1]["buttons"]
+    assert any(getattr(btn, "label", "") == "❌ Close" for row in buttons for btn in row)
 
 
 @pytest.mark.asyncio
@@ -68,6 +70,17 @@ async def test_logsfull_prompts_for_project_without_args():
     ctx = _Ctx()
     await handle_logsfull(ctx, _deps())
     assert "Please select a project to view full logs" in ctx.replies[-1][0]
+    buttons = ctx.replies[-1][1]["buttons"]
+    assert any(getattr(btn, "label", "") == "❌ Close" for row in buttons for btn in row)
+
+
+@pytest.mark.asyncio
+async def test_tail_prompts_with_close_when_no_args():
+    ctx = _Ctx()
+    await handle_tail(ctx, _deps())
+    assert "Please select a project to tail logs" in ctx.replies[-1][0]
+    buttons = ctx.replies[-1][1]["buttons"]
+    assert any(getattr(btn, "label", "") == "❌ Close" for row in buttons for btn in row)
 
 
 @pytest.mark.asyncio

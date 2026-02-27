@@ -45,6 +45,7 @@ def recover_orphaned_running_agents(
     orphan_recovery_cooldown_seconds: float,
     resolve_project_for_issue: Callable[..., str | None],
     resolve_repo_for_issue: Callable[..., str],
+    reconcile_closed_or_missing_issue: Callable[[str, str, str], None] | None = None,
 ) -> int:
     """Relaunch missing processes for workflows still marked RUNNING."""
     if runtime is None:
@@ -118,6 +119,16 @@ def recover_orphaned_running_agents(
                 repo_name,
                 status_label,
             )
+            if issue_open is False and callable(reconcile_closed_or_missing_issue):
+                try:
+                    reconcile_closed_or_missing_issue(issue_num, repo_name, workflow_id)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed closed/missing issue reconciliation for issue #%s in %s: %s",
+                        issue_num,
+                        repo_name,
+                        exc,
+                    )
             orphan_recovery_last_attempt.pop(issue_num, None)
             continue
 

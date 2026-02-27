@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 
 from audit_store import AuditStore
@@ -24,6 +25,7 @@ from config import (
     get_repos,
     get_nexus_dir_name,
     get_project_platform,
+    get_tasks_logs_dir,
 )
 from integrations.notifications import notify_agent_completed, emit_alert
 from orchestration.ai_orchestrator import get_orchestrator
@@ -99,7 +101,7 @@ def _completed_agent_from_trigger(trigger_source: str) -> str | None:
     if not source:
         return None
     if source.lower().startswith("manual-"):
-        return None
+        return "manual"
     normalized = source.lower()
     if normalized in _NON_AGENT_TRIGGER_SOURCES:
         return None
@@ -110,6 +112,8 @@ def _completed_agent_from_trigger(trigger_source: str) -> str | None:
 
 def _get_git_platform_client(repo: str, project_name: str | None = None):
     """Return cached abstract git platform adapter for repository."""
+    from orchestration.nexus_core_helpers import get_git_platform
+
     cache_key = f"{project_name or ''}:{repo}"
     if cache_key in _git_platform_cache:
         return _git_platform_cache[cache_key]
@@ -140,7 +144,7 @@ def _resolve_project_from_repo(repo_name: str) -> str:
     return ""
 
 
-def _load_issue_body_from_project_repo(issue_number: str):
+def _load_issue_body_from_project_repo(issue_number: str, preferred_repo: str | None = None):
     """Load issue body from the repo that matches task-file/project boundaries.
 
     Returns:
@@ -154,6 +158,12 @@ def _load_issue_body_from_project_repo(issue_number: str):
             pair = (project_key, repo_name)
             if pair not in candidate_repos:
                 candidate_repos.append(pair)
+
+    preferred = str(preferred_repo or "").strip()
+    if preferred:
+        preferred_pairs = [pair for pair in candidate_repos if pair[1] == preferred]
+        other_pairs = [pair for pair in candidate_repos if pair[1] != preferred]
+        candidate_repos = preferred_pairs + other_pairs
 
     for project_key, repo_name in candidate_repos:
         platform = _get_git_platform_client(repo_name, project_name=project_key)
@@ -250,6 +260,763 @@ def _persist_issue_excluded_tools(issue_num: str, tools: list[str]) -> None:
     entry["exclude_tools"] = _merge_excluded_tools(previous_entry.get("exclude_tools", []), merged)
     launched_agents[str(issue_num)] = entry
     HostStateManager.save_launched_agents(launched_agents)
+
+
+def _read_tail(path: str, max_chars: int = 4000) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            data = handle.read()
+        if len(data) <= max_chars:
+            return data
+        return data[-max_chars:]
+    except Exception:
+        return ""
+
+
+def _log_indicates_copilot_quota_failure(log_text: str) -> bool:
+    text = str(log_text or "").lower()
+    if not text:
+        return False
+    quota_markers = ("402", "429", "quota", "rate limit", "ratelimit", "too many requests", "status: 429", "statustext: \'too many requests\'")
+    summary_markers = ("total session time", "total usage est", "api time spent")
+    return any(marker in text for marker in quota_markers) and any(
+        marker in text for marker in summary_markers
+    )
+
+
+def _log_indicates_gemini_quota_failure(log_text: str) -> bool:
+    text = str(log_text or "").lower()
+    if not text:
+        return False
+    quota_markers = (
+        "retryablequotaerror",
+        "exhausted your capacity",
+        "quota will reset",
+        "status: 429",
+        "status 429",
+        "too many requests",
+        "no capacity available",
+    )
+    loop_markers = ("retrying after", "attempt 1 failed", "attempt 2 failed")
+    return any(marker in text for marker in quota_markers) and any(
+        marker in text for marker in loop_markers
+    )
+
+
+def _log_indicates_codex_quota_failure(log_text: str) -> bool:
+    text = str(log_text or "").lower()
+    if not text:
+        return False
+    quota_markers = (
+        "429",
+        "too many requests",
+        "rate limit",
+        "ratelimit",
+        "quota",
+        "insufficient_quota",
+        "retryablequotaerror",
+        "exhausted your capacity",
+    )
+    loop_markers = ("retrying after", "attempt 1 failed", "attempt 2 failed", "retry")
+    return any(marker in text for marker in quota_markers) and any(
+        marker in text for marker in loop_markers
+    )
+
+
+def _find_latest_copilot_log(workspace_dir: str, project_key: str | None, issue_num: str) -> str:
+    project = str(project_key or "nexus")
+    log_dir = get_tasks_logs_dir(workspace_dir, project)
+    pattern = os.path.join(log_dir, f"copilot_{issue_num}_*.log")
+    candidates = glob.glob(pattern)
+    if not candidates:
+        return ""
+    return max(candidates, key=os.path.getmtime)
+
+
+def _find_latest_gemini_log(workspace_dir: str, project_key: str | None, issue_num: str) -> str:
+    project = str(project_key or "nexus")
+    log_dir = get_tasks_logs_dir(workspace_dir, project)
+    pattern = os.path.join(log_dir, f"gemini_{issue_num}_*.log")
+    candidates = glob.glob(pattern)
+    if not candidates:
+        return ""
+    return max(candidates, key=os.path.getmtime)
+
+
+def _find_latest_codex_log(workspace_dir: str, project_key: str | None, issue_num: str) -> str:
+    project = str(project_key or "nexus")
+    log_dir = get_tasks_logs_dir(workspace_dir, project)
+    pattern = os.path.join(log_dir, f"codex_{issue_num}_*.log")
+    candidates = glob.glob(pattern)
+    if not candidates:
+        return ""
+    return max(candidates, key=os.path.getmtime)
+
+
+def _start_copilot_post_exit_watchdog(
+    *,
+    issue_num: str,
+    pid: int,
+    agent_type: str,
+    prompt: str,
+    workspace_dir: str,
+    agents_dir: str,
+    base_dir: str,
+    log_subdir: str | None,
+    agent_env: dict[str, str] | None,
+    orchestrator,
+    exclude_tools: list[str] | None,
+    tier_name: str,
+    mode: str,
+    workflow_name: str,
+) -> None:
+    def _worker() -> None:
+        logger.info(
+            "Copilot watchdog started for issue #%s (pid=%s, agent=%s)",
+            issue_num,
+            pid,
+            agent_type,
+        )
+        deadline = time.time() + 300
+        while time.time() < deadline:
+            launched = HostStateManager.load_launched_agents(recent_only=False)
+            current = launched.get(str(issue_num), {})
+            if not isinstance(current, dict):
+                return
+            current_pid = int(current.get("pid", 0) or 0)
+            current_tool = str(current.get("tool", "")).strip().lower()
+            if current_pid != int(pid) or current_tool != "copilot":
+                return
+
+            log_path = _find_latest_copilot_log(workspace_dir, log_subdir, issue_num)
+            if log_path:
+                tail = _read_tail(log_path)
+                if _log_indicates_copilot_quota_failure(tail):
+                    logger.warning(
+                        "Copilot watchdog detected quota/rate-limit for issue #%s (pid=%s).",
+                        issue_num,
+                        pid,
+                    )
+                    merged_exclusions = _merge_excluded_tools(exclude_tools or [], ["copilot"])
+                    logger.info(
+                        "Copilot watchdog fallback-started for issue #%s with exclusions=%s",
+                        issue_num,
+                        merged_exclusions,
+                    )
+                    _persist_issue_excluded_tools(issue_num, ["copilot"])
+                    logger.warning(
+                        "Copilot post-exit quota detected for issue #%s (pid=%s). Auto-fallback with exclusions=%s",
+                        issue_num,
+                        pid,
+                        merged_exclusions,
+                    )
+                    emit_alert(
+                        (
+                            f"⚠️ Copilot quota detected after launch for issue #{issue_num}. "
+                            "Auto-switching to fallback provider."
+                        ),
+                        severity="warning",
+                        source="agent_launcher",
+                        issue_number=str(issue_num),
+                        project_key=str(log_subdir or "nexus"),
+                    )
+                    try:
+                        logger.info(
+                            "Copilot watchdog invoking fallback chain for issue #%s (exclude=%s)",
+                            issue_num,
+                            merged_exclusions,
+                        )
+                        pid_new, tool_new = orchestrator.invoke_agent(
+                            agent_prompt=prompt,
+                            workspace_dir=workspace_dir,
+                            agents_dir=agents_dir,
+                            base_dir=base_dir,
+                            issue_url=f"https://github.com/{get_repo(str(log_subdir or 'nexus'))}/issues/{issue_num}",
+                            agent_name=agent_type,
+                            use_gemini=False,
+                            exclude_tools=merged_exclusions,
+                            log_subdir=log_subdir,
+                            env=agent_env,
+                        )
+                        if pid_new:
+                            new_tool = str(getattr(tool_new, "value", tool_new))
+                            launched_agents = HostStateManager.load_launched_agents(
+                                recent_only=False
+                            )
+                            prev = launched_agents.get(str(issue_num), {})
+                            if not isinstance(prev, dict):
+                                prev = {}
+                            launched_agents[str(issue_num)] = {
+                                **prev,
+                                "timestamp": time.time(),
+                                "pid": pid_new,
+                                "tier": tier_name,
+                                "mode": mode,
+                                "tool": new_tool,
+                                "agent_type": agent_type,
+                                "exclude_tools": _merge_excluded_tools(
+                                    prev.get("exclude_tools", []), merged_exclusions
+                                ),
+                            }
+                            HostStateManager.save_launched_agents(launched_agents)
+                            record_agent_launch(issue_num, agent_type=agent_type, pid=pid_new)
+                            AuditStore.audit_log(
+                                int(issue_num),
+                                "AGENT_LAUNCHED",
+                                f"Auto-fallback launched {new_tool} after Copilot quota (workflow: {workflow_name}/{tier_name}, mode: {mode}, PID: {pid_new})",
+                            )
+                            logger.info(
+                                "✅ Auto-fallback launch succeeded for issue #%s with %s (PID: %s)",
+                                issue_num,
+                                new_tool,
+                                pid_new,
+                            )
+                            _attach_post_launch_watchdog(
+                                tool_name=new_tool,
+                                issue_num=str(issue_num),
+                                pid=int(pid_new),
+                                agent_type=str(agent_type),
+                                prompt=str(prompt),
+                                workspace_dir=str(workspace_dir),
+                                agents_dir=str(agents_dir),
+                                base_dir=str(base_dir),
+                                log_subdir=str(log_subdir or "nexus"),
+                                agent_env=agent_env,
+                                orchestrator=orchestrator,
+                                exclude_tools=merged_exclusions,
+                                tier_name=str(tier_name),
+                                mode=str(mode),
+                                workflow_name=str(workflow_name),
+                            )
+                        else:
+                            logger.error(
+                                "Auto-fallback launch returned no PID for issue #%s after Copilot quota",
+                                issue_num,
+                            )
+                            emit_alert(
+                                (
+                                    f"❌ No AI providers available after Copilot quota on issue #{issue_num}. "
+                                    "All fallback providers are unavailable or rate-limited."
+                                ),
+                                severity="error",
+                                source="agent_launcher",
+                                issue_number=str(issue_num),
+                                project_key=str(log_subdir or "nexus"),
+                            )
+                            AuditStore.audit_log(
+                                int(issue_num),
+                                "AGENT_LAUNCH_FAILED",
+                                "No fallback providers available after Copilot quota watchdog trigger",
+                            )
+                    except ToolUnavailableError as exc:
+                        logger.error(
+                            "Copilot watchdog fallback exhausted providers for issue #%s: %s",
+                            issue_num,
+                            exc,
+                        )
+                        emit_alert(
+                            (
+                                f"❌ No AI providers available for issue #{issue_num} "
+                                f"after Copilot quota: {exc}"
+                            ),
+                            severity="error",
+                            source="agent_launcher",
+                            issue_number=str(issue_num),
+                            project_key=str(log_subdir or "nexus"),
+                        )
+                        AuditStore.audit_log(
+                            int(issue_num),
+                            "AGENT_LAUNCH_FAILED",
+                            f"Fallback exhausted after Copilot quota: {exc}",
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "Auto-fallback launch failed for issue #%s after Copilot quota: %s",
+                            issue_num,
+                            exc,
+                            exc_info=True,
+                        )
+                    return
+
+            # Stop early if process no longer exists and no quota markers were detected.
+            try:
+                os.kill(int(pid), 0)
+            except Exception:
+                return
+            time.sleep(2)
+
+    threading.Thread(
+        target=_worker,
+        name=f"copilot-watchdog-{issue_num}",
+        daemon=True,
+    ).start()
+
+
+def _start_gemini_quota_watchdog(
+    *,
+    issue_num: str,
+    pid: int,
+    agent_type: str,
+    prompt: str,
+    workspace_dir: str,
+    agents_dir: str,
+    base_dir: str,
+    log_subdir: str | None,
+    agent_env: dict[str, str] | None,
+    orchestrator,
+    exclude_tools: list[str] | None,
+    tier_name: str,
+    mode: str,
+    workflow_name: str,
+) -> None:
+    def _worker() -> None:
+        def _on_quota_detected(*, reason: str, terminate_pid: bool) -> None:
+            logger.warning(
+                "Gemini watchdog detected quota/rate-limit for issue #%s (pid=%s, reason=%s).",
+                issue_num,
+                pid,
+                reason,
+            )
+            if terminate_pid:
+                try:
+                    os.kill(int(pid), 15)
+                    logger.info(
+                        "Gemini watchdog terminated pid=%s for issue #%s",
+                        pid,
+                        issue_num,
+                    )
+                except Exception:
+                    pass
+
+            merged_exclusions = _merge_excluded_tools(exclude_tools or [], ["gemini"])
+            _persist_issue_excluded_tools(issue_num, ["gemini"])
+            logger.warning(
+                "Gemini quota loop detected for issue #%s (pid=%s). Auto-fallback with exclusions=%s",
+                issue_num,
+                pid,
+                merged_exclusions,
+            )
+            emit_alert(
+                (
+                    f"⚠️ Gemini quota detected after launch for issue #{issue_num}. "
+                    "Auto-switching to fallback provider."
+                ),
+                severity="warning",
+                source="agent_launcher",
+                issue_number=str(issue_num),
+                project_key=str(log_subdir or "nexus"),
+            )
+            try:
+                logger.info(
+                    "Gemini watchdog invoking fallback chain for issue #%s (exclude=%s)",
+                    issue_num,
+                    merged_exclusions,
+                )
+                pid_new, tool_new = orchestrator.invoke_agent(
+                    agent_prompt=prompt,
+                    workspace_dir=workspace_dir,
+                    agents_dir=agents_dir,
+                    base_dir=base_dir,
+                    issue_url=f"https://github.com/{get_repo(str(log_subdir or 'nexus'))}/issues/{issue_num}",
+                    agent_name=agent_type,
+                    use_gemini=False,
+                    exclude_tools=merged_exclusions,
+                    log_subdir=log_subdir,
+                    env=agent_env,
+                )
+                if pid_new:
+                    new_tool = str(getattr(tool_new, "value", tool_new))
+                    launched_agents = HostStateManager.load_launched_agents(recent_only=False)
+                    prev = launched_agents.get(str(issue_num), {})
+                    if not isinstance(prev, dict):
+                        prev = {}
+                    launched_agents[str(issue_num)] = {
+                        **prev,
+                        "timestamp": time.time(),
+                        "pid": pid_new,
+                        "tier": tier_name,
+                        "mode": mode,
+                        "tool": new_tool,
+                        "agent_type": agent_type,
+                        "exclude_tools": _merge_excluded_tools(
+                            prev.get("exclude_tools", []), merged_exclusions
+                        ),
+                    }
+                    HostStateManager.save_launched_agents(launched_agents)
+                    record_agent_launch(issue_num, agent_type=agent_type, pid=pid_new)
+                    AuditStore.audit_log(
+                        int(issue_num),
+                        "AGENT_LAUNCHED",
+                        f"Auto-fallback launched {new_tool} after Gemini quota (workflow: {workflow_name}/{tier_name}, mode: {mode}, PID: {pid_new})",
+                    )
+                    logger.info(
+                        "✅ Auto-fallback launch succeeded for issue #%s with %s (PID: %s)",
+                        issue_num,
+                        new_tool,
+                        pid_new,
+                    )
+                    _attach_post_launch_watchdog(
+                        tool_name=new_tool,
+                        issue_num=str(issue_num),
+                        pid=int(pid_new),
+                        agent_type=str(agent_type),
+                        prompt=str(prompt),
+                        workspace_dir=str(workspace_dir),
+                        agents_dir=str(agents_dir),
+                        base_dir=str(base_dir),
+                        log_subdir=str(log_subdir or "nexus"),
+                        agent_env=agent_env,
+                        orchestrator=orchestrator,
+                        exclude_tools=merged_exclusions,
+                        tier_name=str(tier_name),
+                        mode=str(mode),
+                        workflow_name=str(workflow_name),
+                    )
+                else:
+                    logger.error(
+                        "Auto-fallback launch returned no PID for issue #%s after Gemini quota",
+                        issue_num,
+                    )
+                    emit_alert(
+                        (
+                            f"❌ No AI providers available after Gemini quota on issue #{issue_num}. "
+                            "All fallback providers are unavailable or rate-limited."
+                        ),
+                        severity="error",
+                        source="agent_launcher",
+                        issue_number=str(issue_num),
+                        project_key=str(log_subdir or "nexus"),
+                    )
+                    AuditStore.audit_log(
+                        int(issue_num),
+                        "AGENT_LAUNCH_FAILED",
+                        "No fallback providers available after Gemini quota watchdog trigger",
+                    )
+            except ToolUnavailableError as exc:
+                logger.error(
+                    "Gemini watchdog fallback exhausted providers for issue #%s: %s",
+                    issue_num,
+                    exc,
+                )
+                emit_alert(
+                    (
+                        f"❌ No AI providers available for issue #{issue_num} "
+                        f"after Gemini quota: {exc}"
+                    ),
+                    severity="error",
+                    source="agent_launcher",
+                    issue_number=str(issue_num),
+                    project_key=str(log_subdir or "nexus"),
+                )
+                AuditStore.audit_log(
+                    int(issue_num),
+                    "AGENT_LAUNCH_FAILED",
+                    f"Fallback exhausted after Gemini quota: {exc}",
+                )
+            except Exception as exc:
+                logger.error(
+                    "Auto-fallback launch failed for issue #%s after Gemini quota: %s",
+                    issue_num,
+                    exc,
+                    exc_info=True,
+                )
+
+        logger.info(
+            "Gemini watchdog started for issue #%s (pid=%s, agent=%s)",
+            issue_num,
+            pid,
+            agent_type,
+        )
+        deadline = time.time() + 300
+        while time.time() < deadline:
+            launched = HostStateManager.load_launched_agents(recent_only=False)
+            current = launched.get(str(issue_num), {})
+            if not isinstance(current, dict):
+                return
+            current_pid = int(current.get("pid", 0) or 0)
+            current_tool = str(current.get("tool", "")).strip().lower()
+            if current_pid != int(pid) or current_tool != "gemini":
+                return
+
+            log_path = _find_latest_gemini_log(workspace_dir, log_subdir, issue_num)
+            if log_path:
+                tail = _read_tail(log_path)
+                if _log_indicates_gemini_quota_failure(tail):
+                    _on_quota_detected(reason="log-loop", terminate_pid=True)
+                    return
+
+            try:
+                os.kill(int(pid), 0)
+            except Exception:
+                if log_path:
+                    tail = _read_tail(log_path)
+                    if _log_indicates_gemini_quota_failure(tail):
+                        _on_quota_detected(reason="post-exit-log", terminate_pid=False)
+                return
+            time.sleep(2)
+
+    threading.Thread(
+        target=_worker,
+        name=f"gemini-watchdog-{issue_num}",
+        daemon=True,
+    ).start()
+
+
+def _start_codex_quota_watchdog(
+    *,
+    issue_num: str,
+    pid: int,
+    agent_type: str,
+    prompt: str,
+    workspace_dir: str,
+    agents_dir: str,
+    base_dir: str,
+    log_subdir: str | None,
+    agent_env: dict[str, str] | None,
+    orchestrator,
+    exclude_tools: list[str] | None,
+    tier_name: str,
+    mode: str,
+    workflow_name: str,
+) -> None:
+    def _worker() -> None:
+        logger.info(
+            "Codex watchdog started for issue #%s (pid=%s, agent=%s)",
+            issue_num,
+            pid,
+            agent_type,
+        )
+        deadline = time.time() + 300
+        while time.time() < deadline:
+            launched = HostStateManager.load_launched_agents(recent_only=False)
+            current = launched.get(str(issue_num), {})
+            if not isinstance(current, dict):
+                return
+            current_pid = int(current.get("pid", 0) or 0)
+            current_tool = str(current.get("tool", "")).strip().lower()
+            if current_pid != int(pid) or current_tool != "codex":
+                return
+
+            log_path = _find_latest_codex_log(workspace_dir, log_subdir, issue_num)
+            if log_path:
+                tail = _read_tail(log_path)
+                if _log_indicates_codex_quota_failure(tail):
+                    logger.warning(
+                        "Codex watchdog detected quota/rate-limit for issue #%s (pid=%s).",
+                        issue_num,
+                        pid,
+                    )
+                    try:
+                        os.kill(int(pid), 15)
+                        logger.info(
+                            "Codex watchdog terminated pid=%s for issue #%s",
+                            pid,
+                            issue_num,
+                        )
+                    except Exception:
+                        pass
+                    merged_exclusions = _merge_excluded_tools(exclude_tools or [], ["codex"])
+                    _persist_issue_excluded_tools(issue_num, ["codex"])
+                    logger.warning(
+                        "Codex quota loop detected for issue #%s (pid=%s). Auto-fallback with exclusions=%s",
+                        issue_num,
+                        pid,
+                        merged_exclusions,
+                    )
+                    emit_alert(
+                        (
+                            f"⚠️ Codex quota detected after launch for issue #{issue_num}. "
+                            "Auto-switching to fallback provider."
+                        ),
+                        severity="warning",
+                        source="agent_launcher",
+                        issue_number=str(issue_num),
+                        project_key=str(log_subdir or "nexus"),
+                    )
+                    try:
+                        logger.info(
+                            "Codex watchdog invoking fallback chain for issue #%s (exclude=%s)",
+                            issue_num,
+                            merged_exclusions,
+                        )
+                        pid_new, tool_new = orchestrator.invoke_agent(
+                            agent_prompt=prompt,
+                            workspace_dir=workspace_dir,
+                            agents_dir=agents_dir,
+                            base_dir=base_dir,
+                            issue_url=f"https://github.com/{get_repo(str(log_subdir or 'nexus'))}/issues/{issue_num}",
+                            agent_name=agent_type,
+                            use_gemini=False,
+                            exclude_tools=merged_exclusions,
+                            log_subdir=log_subdir,
+                            env=agent_env,
+                        )
+                        if pid_new:
+                            new_tool = str(getattr(tool_new, "value", tool_new))
+                            launched_agents = HostStateManager.load_launched_agents(
+                                recent_only=False
+                            )
+                            prev = launched_agents.get(str(issue_num), {})
+                            if not isinstance(prev, dict):
+                                prev = {}
+                            launched_agents[str(issue_num)] = {
+                                **prev,
+                                "timestamp": time.time(),
+                                "pid": pid_new,
+                                "tier": tier_name,
+                                "mode": mode,
+                                "tool": new_tool,
+                                "agent_type": agent_type,
+                                "exclude_tools": _merge_excluded_tools(
+                                    prev.get("exclude_tools", []), merged_exclusions
+                                ),
+                            }
+                            HostStateManager.save_launched_agents(launched_agents)
+                            record_agent_launch(issue_num, agent_type=agent_type, pid=pid_new)
+                            AuditStore.audit_log(
+                                int(issue_num),
+                                "AGENT_LAUNCHED",
+                                f"Auto-fallback launched {new_tool} after Codex quota (workflow: {workflow_name}/{tier_name}, mode: {mode}, PID: {pid_new})",
+                            )
+                            logger.info(
+                                "✅ Auto-fallback launch succeeded for issue #%s with %s (PID: %s)",
+                                issue_num,
+                                new_tool,
+                                pid_new,
+                            )
+                        else:
+                            logger.error(
+                                "Auto-fallback launch returned no PID for issue #%s after Codex quota",
+                                issue_num,
+                            )
+                            emit_alert(
+                                (
+                                    f"❌ No AI providers available after Codex quota on issue #{issue_num}. "
+                                    "All fallback providers are unavailable or rate-limited."
+                                ),
+                                severity="error",
+                                source="agent_launcher",
+                                issue_number=str(issue_num),
+                                project_key=str(log_subdir or "nexus"),
+                            )
+                            AuditStore.audit_log(
+                                int(issue_num),
+                                "AGENT_LAUNCH_FAILED",
+                                "No fallback providers available after Codex quota watchdog trigger",
+                            )
+                    except ToolUnavailableError as exc:
+                        logger.error(
+                            "Codex watchdog fallback exhausted providers for issue #%s: %s",
+                            issue_num,
+                            exc,
+                        )
+                        emit_alert(
+                            (
+                                f"❌ No AI providers available for issue #{issue_num} "
+                                f"after Codex quota: {exc}"
+                            ),
+                            severity="error",
+                            source="agent_launcher",
+                            issue_number=str(issue_num),
+                            project_key=str(log_subdir or "nexus"),
+                        )
+                        AuditStore.audit_log(
+                            int(issue_num),
+                            "AGENT_LAUNCH_FAILED",
+                            f"Fallback exhausted after Codex quota: {exc}",
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "Auto-fallback launch failed for issue #%s after Codex quota: %s",
+                            issue_num,
+                            exc,
+                            exc_info=True,
+                        )
+                    return
+
+            try:
+                os.kill(int(pid), 0)
+            except Exception:
+                return
+            time.sleep(2)
+
+    threading.Thread(
+        target=_worker,
+        name=f"codex-watchdog-{issue_num}",
+        daemon=True,
+    ).start()
+
+
+def _attach_post_launch_watchdog(
+    *,
+    tool_name: str,
+    issue_num: str,
+    pid: int,
+    agent_type: str,
+    prompt: str,
+    workspace_dir: str,
+    agents_dir: str,
+    base_dir: str,
+    log_subdir: str | None,
+    agent_env: dict[str, str] | None,
+    orchestrator,
+    exclude_tools: list[str] | None,
+    tier_name: str,
+    mode: str,
+    workflow_name: str,
+) -> None:
+    normalized_tool = str(tool_name or "").strip().lower()
+    if normalized_tool == "copilot":
+        _start_copilot_post_exit_watchdog(
+            issue_num=issue_num,
+            pid=pid,
+            agent_type=agent_type,
+            prompt=prompt,
+            workspace_dir=workspace_dir,
+            agents_dir=agents_dir,
+            base_dir=base_dir,
+            log_subdir=log_subdir,
+            agent_env=agent_env,
+            orchestrator=orchestrator,
+            exclude_tools=exclude_tools,
+            tier_name=tier_name,
+            mode=mode,
+            workflow_name=workflow_name,
+        )
+    elif normalized_tool == "gemini":
+        _start_gemini_quota_watchdog(
+            issue_num=issue_num,
+            pid=pid,
+            agent_type=agent_type,
+            prompt=prompt,
+            workspace_dir=workspace_dir,
+            agents_dir=agents_dir,
+            base_dir=base_dir,
+            log_subdir=log_subdir,
+            agent_env=agent_env,
+            orchestrator=orchestrator,
+            exclude_tools=exclude_tools,
+            tier_name=tier_name,
+            mode=mode,
+            workflow_name=workflow_name,
+        )
+    elif normalized_tool == "codex":
+        _start_codex_quota_watchdog(
+            issue_num=issue_num,
+            pid=pid,
+            agent_type=agent_type,
+            prompt=prompt,
+            workspace_dir=workspace_dir,
+            agents_dir=agents_dir,
+            base_dir=base_dir,
+            log_subdir=log_subdir,
+            agent_env=agent_env,
+            orchestrator=orchestrator,
+            exclude_tools=exclude_tools,
+            tier_name=tier_name,
+            mode=mode,
+            workflow_name=workflow_name,
+        )
 
 
 def _pgrep_and_logfile_guard(issue_id: str, agent_type: str) -> bool:
@@ -606,7 +1373,15 @@ def invoke_copilot_agent(
         target_branch = None
         if issue_url and issue_num != "unknown":
             try:
-                body, _, _ = _load_issue_body_from_project_repo(issue_num)
+                repo_match = re.search(
+                    r"https?://[^/]+/([^/]+/[^/]+)/issues/\d+",
+                    str(issue_url or ""),
+                )
+                preferred_repo = repo_match.group(1) if repo_match else None
+                body, _, _ = _load_issue_body_from_project_repo(
+                    issue_num,
+                    preferred_repo=preferred_repo,
+                )
                 if body:
                     branch_match = re.search(r"Target Branch:\s*`([^`]+)`", body)
                     if branch_match:
@@ -682,6 +1457,24 @@ def invoke_copilot_agent(
                     f"Launched {tool_name} agent in {os.path.basename(agents_dir)} "
                     f"(workflow: {workflow_name}/{tier_name}, mode: {mode}, PID: {pid})",
                 )
+
+                _attach_post_launch_watchdog(
+                    tool_name=str(tool_name),
+                    issue_num=str(issue_num),
+                    pid=int(pid),
+                    agent_type=str(agent_type),
+                    prompt=str(prompt),
+                    workspace_dir=str(isolated_workspace),
+                    agents_dir=str(agents_dir),
+                    base_dir=str(BASE_DIR),
+                    log_subdir=str(log_subdir or project_name or "nexus"),
+                    agent_env=agent_env,
+                    orchestrator=orchestrator,
+                    exclude_tools=list(exclude_tools) if exclude_tools else [],
+                    tier_name=str(tier_name),
+                    mode=str(mode),
+                    workflow_name=str(workflow_name),
+                )
             except Exception as bookkeeping_exc:
                 logger.warning(
                     "Agent launch bookkeeping failed for issue #%s after successful launch: %s",
@@ -732,7 +1525,13 @@ def invoke_copilot_agent(
         return None, None
 
 
-def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclude_tools=None):
+def launch_next_agent(
+    issue_number,
+    next_agent,
+    trigger_source="unknown",
+    exclude_tools=None,
+    repo_override: str | None = None,
+):
     """
     Launch the next agent in the workflow chain.
 
@@ -743,6 +1542,7 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
         next_agent: Name of the agent to launch (e.g., "Atlas", "Architect")
         trigger_source: Where the trigger came from ("github_webhook", "log_file", "github_comment")
         exclude_tools: List of tool names to exclude from this launch attempt.
+        repo_override: Preferred repository full_name for resolving issue metadata.
 
     Returns:
         ``(pid, tool_name)`` on success.
@@ -761,7 +1561,10 @@ def launch_next_agent(issue_number, next_agent, trigger_source="unknown", exclud
 
     # Get issue details from the repo matching this issue's task-file project
     try:
-        body, resolved_repo, resolved_task_file = _load_issue_body_from_project_repo(issue_number)
+        body, resolved_repo, resolved_task_file = _load_issue_body_from_project_repo(
+            issue_number,
+            preferred_repo=repo_override,
+        )
         if not body:
             logger.error(
                 f"Failed to resolve issue #{issue_number} from configured project repositories"

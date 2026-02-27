@@ -627,6 +627,17 @@ def _get_inbox_queue_overview(limit: int) -> dict[str, Any]:
     return get_queue_overview(limit=limit)
 
 
+def _enqueue_inbox_task(*, project_key: str, workspace: str, filename: str, markdown_content: str) -> int:
+    from integrations.inbox_queue import enqueue_task
+
+    return enqueue_task(
+        project_key=project_key,
+        workspace=workspace,
+        filename=filename,
+        markdown_content=markdown_content,
+    )
+
+
 def _ops_handler_deps() -> OpsHandlerDeps:
     return _svc_build_ops_handler_deps(
         logger=logger,
@@ -715,6 +726,8 @@ def _hands_free_routing_handler_deps() -> HandsFreeRoutingDeps:
         normalize_project_key=_normalize_project_key,
         save_resolved_task=save_resolved_task,
         task_confirmation_mode=TASK_CONFIRMATION_MODE,
+        base_dir=BASE_DIR,
+        project_config=PROJECT_CONFIG,
     )
 
 
@@ -1331,7 +1344,7 @@ async def _check_tool_health(application):
     await _svc_check_tool_health(
         application=application,
         orchestrator=orchestrator,
-        ai_providers=[AIProvider.COPILOT, AIProvider.GEMINI],
+        ai_providers=[AIProvider.COPILOT, AIProvider.GEMINI, AIProvider.CODEX],
         logger=logger,
         telegram_chat_id=TELEGRAM_CHAT_ID,
     )
@@ -1435,6 +1448,8 @@ async def save_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         types_map=TYPES,
         project_config=PROJECT_CONFIG,
         base_dir=BASE_DIR,
+        get_inbox_storage_backend=get_inbox_storage_backend,
+        enqueue_task=_enqueue_inbox_task,
         get_inbox_dir=get_inbox_dir,
         transcribe_voice_message=_transcribe_voice_message,
         conversation_end=ConversationHandler.END,

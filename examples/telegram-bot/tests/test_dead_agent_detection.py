@@ -474,6 +474,46 @@ class TestNexusAgentRuntimePostCompletionComment:
         assert result is False
 
 
+class TestNexusAgentRuntimeIsIssueOpen:
+    def test_calls_platform_get_issue_with_single_argument(self):
+        from nexus.adapters.git.base import Issue
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        mock_platform = MagicMock()
+        mock_platform.get_issue = AsyncMock(
+            return_value=Issue(
+                id="83",
+                number=83,
+                title="x",
+                body="",
+                state="open",
+                labels=[],
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+                url="https://github.com/owner/repo/issues/83",
+            )
+        )
+
+        with patch("orchestration.nexus_core_helpers.get_git_platform", return_value=mock_platform):
+            result = runtime.is_issue_open("83", "owner/repo")
+
+        mock_platform.get_issue.assert_awaited_once_with("83")
+        assert result is True
+
+    def test_returns_false_when_issue_missing(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        mock_platform = MagicMock()
+        mock_platform.get_issue = AsyncMock(return_value=None)
+
+        with patch("orchestration.nexus_core_helpers.get_git_platform", return_value=mock_platform):
+            result = runtime.is_issue_open("83", "owner/repo")
+
+        assert result is False
+
+
 # ---------------------------------------------------------------------------
 # check_stuck_agents delegation smoke test
 # ---------------------------------------------------------------------------

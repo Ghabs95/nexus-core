@@ -353,26 +353,73 @@ async def _maybe_reset_continue_workflow_position(
 async def _launch_continue_agent(
     ctx: Any, deps: Any, *, issue_num: Any, continue_ctx: dict[str, Any]
 ) -> None:
+    async def _finalize_progress_message(message_id: Any, text: str) -> None:
+        try:
+            await ctx.edit_message_text(
+                message_id=message_id,
+                text=text,
+                parse_mode=None,
+            )
+            return
+        except Exception as exc:
+            deps.logger.warning(
+                "Failed to edit continue progress message for issue #%s (message_id=%s): %s",
+                issue_num,
+                message_id,
+                exc,
+            )
+
+        # Fallback for Telegram edge-cases: remove transient message and send final output.
+        try:
+            tg_ctx = getattr(ctx, "telegram_context", None)
+            bot = getattr(tg_ctx, "bot", None)
+            chat_id = getattr(ctx, "chat_id", None)
+            msg_id = int(str(message_id)) if str(message_id).isdigit() else message_id
+            if bot and chat_id and msg_id:
+                await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception as exc:
+            deps.logger.debug(
+                "Continue progress fallback delete failed for issue #%s: %s",
+                issue_num,
+                exc,
+            )
+
+        await ctx.reply_text(text, parse_mode=None)
+
     resume_info = f" (after {continue_ctx['resumed_from']})" if continue_ctx["resumed_from"] else ""
     msg_id = await ctx.reply_text(
         f"⏩ Continuing issue #{issue_num} with `{continue_ctx['agent_type']}`{resume_info}..."
     )
-    pid, tool_used = deps.invoke_copilot_agent(
-        agents_dir=continue_ctx["agents_abs"],
-        workspace_dir=continue_ctx["workspace_abs"],
-        issue_url=continue_ctx["issue_url"],
-        tier_name=continue_ctx["tier_name"],
-        task_content=continue_ctx["content"],
-        continuation=True,
-        continuation_prompt=continue_ctx["continuation_prompt"],
-        log_subdir=continue_ctx["log_subdir"],
-        agent_type=continue_ctx["agent_type"],
-        project_name=continue_ctx["log_subdir"],
-    )
+    try:
+        pid, tool_used = deps.invoke_copilot_agent(
+            agents_dir=continue_ctx["agents_abs"],
+            workspace_dir=continue_ctx["workspace_abs"],
+            issue_url=continue_ctx["issue_url"],
+            tier_name=continue_ctx["tier_name"],
+            task_content=continue_ctx["content"],
+            continuation=True,
+            continuation_prompt=continue_ctx["continuation_prompt"],
+            log_subdir=continue_ctx["log_subdir"],
+            agent_type=continue_ctx["agent_type"],
+            project_name=continue_ctx["log_subdir"],
+        )
+    except Exception as exc:
+        deps.logger.error(
+            "Failed to continue issue #%s with %s: %s",
+            issue_num,
+            continue_ctx.get("agent_type"),
+            exc,
+            exc_info=True,
+        )
+        await _finalize_progress_message(
+            msg_id,
+            f"❌ Failed to continue agent for issue #{issue_num}: {exc}",
+        )
+        return
     if pid:
-        await ctx.edit_message_text(
-            message_id=msg_id,
-            text=(
+        await _finalize_progress_message(
+            msg_id,
+            (
                 f"✅ Agent continued for issue #{issue_num}. PID: {pid} (Tool: {tool_used})\n\n"
                 f"Prompt: {continue_ctx['continuation_prompt']}\n\n"
                 "ℹ️ **Note:** The agent will first check if the workflow has already progressed.\n"
@@ -382,8 +429,9 @@ async def _launch_continue_agent(
             ),
         )
         return
-    await ctx.edit_message_text(
-        message_id=msg_id, text=f"❌ Failed to continue agent for issue #{issue_num}."
+    await _finalize_progress_message(
+        msg_id,
+        f"❌ Failed to continue agent for issue #{issue_num}.",
     )
 
 
@@ -397,6 +445,49 @@ async def handle_continue(ctx: Any, deps: Any, *, finalize_workflow: Callable[..
         return
 
     continue_ctx = _prepare_continue_context(issue_num, project_key, rest, deps)
+    should_try_reconcile = (
+        str(continue_ctx.get("status") or "") == "ready"
+        and not continue_ctx.get("forced_agent_override")
+        and str(continue_ctx.get("agent_type") or "").strip().lower() == "triage"
+        and not str(continue_ctx.get("resumed_from") or "").strip()
+    )
+    if should_try_reconcile:
+        repo = deps.project_repo(project_key)
+        deps.logger.info(
+            "Continue issue #%s: detected reset-like triage fallback; trying remote reconciliation",
+            issue_num,
+        )
+        try:
+            reconcile_result = await deps.reconcile_issue_from_signals(
+                issue_num=str(issue_num),
+                project_key=project_key,
+                repo=repo,
+                get_issue_plugin=deps.get_direct_issue_plugin,
+                extract_structured_completion_signals=deps.extract_structured_completion_signals,
+                workflow_state_plugin_kwargs=deps.workflow_state_plugin_kwargs,
+                write_local_completion_from_signal=deps.write_local_completion_from_signal,
+            )
+            applied = int((reconcile_result or {}).get("signals_applied") or 0)
+            seeded = bool((reconcile_result or {}).get("completion_seeded"))
+            if bool((reconcile_result or {}).get("ok")) and (applied > 0 or seeded):
+                if applied > 0:
+                    await ctx.reply_text(
+                        f"🔄 Reconciled issue #{issue_num} from remote signals ({applied} step(s)); "
+                        "resuming from recovered workflow state..."
+                    )
+                else:
+                    await ctx.reply_text(
+                        f"🔄 Reconciled issue #{issue_num} from remote signals (seeded latest handoff); "
+                        "resuming from recovered workflow state..."
+                    )
+                continue_ctx = _prepare_continue_context(issue_num, project_key, rest, deps)
+        except Exception as exc:
+            deps.logger.warning(
+                "Continue issue #%s: reconcile-before-continue failed: %s",
+                issue_num,
+                exc,
+            )
+
     if await _handle_continue_status_outcome(
         ctx,
         deps,

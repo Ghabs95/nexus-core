@@ -470,6 +470,9 @@ def test_copilot_agent_invoker_success(monkeypatch, tmp_path):
     class _Proc:
         pid = 9876
 
+        def poll(self):
+            return None
+
     def _fake_popen(cmd, cwd, stdin, stdout, stderr, env):
         captured["cmd"] = cmd
         captured["cwd"] = cwd
@@ -484,6 +487,7 @@ def test_copilot_agent_invoker_success(monkeypatch, tmp_path):
         copilot_cli_path="copilot",
         get_tasks_logs_dir=lambda workspace, subdir: str(tmp_path / "logs"),
         tool_unavailable_error=RuntimeError,
+        rate_limited_error=RuntimeError,
         logger=_Logger(),
         agent_prompt="run agent",
         workspace_dir=str(tmp_path / "repo"),
@@ -496,6 +500,55 @@ def test_copilot_agent_invoker_success(monkeypatch, tmp_path):
     assert "--allow-all-tools" in captured["cmd"]
     assert str(captured["stdout_name"]).endswith("copilot_10_20260101_120000.log")
     assert isinstance(captured["env"], dict) and captured["env"]["X"] == "1"
+
+
+def test_copilot_agent_invoker_immediate_exit_rate_limit(monkeypatch, tmp_path):
+    import nexus.plugins.builtin.ai_runtime.provider_invokers.agent_invokers as agent_mod
+
+    class _Logger:
+        def info(self, *args, **kwargs):
+            pass
+
+        def error(self, *args, **kwargs):
+            pass
+
+    class _RateLimited(Exception):
+        pass
+
+    monkeypatch.setattr(agent_mod.time, "strftime", lambda fmt: "20260101_120000")
+
+    class _Proc:
+        pid = 456
+
+        def poll(self):
+            return 1
+
+    def _fake_popen(cmd, cwd, stdin, stdout, stderr, env):
+        stdout.write("Copilot error: 402 You have no quota\n")
+        stdout.flush()
+        return _Proc()
+
+    monkeypatch.setattr(agent_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(agent_mod.time, "sleep", lambda seconds: None)
+
+    try:
+        invoke_copilot_agent_cli(
+            check_tool_available=lambda provider: True,
+            copilot_provider=AIProvider.COPILOT,
+            copilot_cli_path="copilot",
+            get_tasks_logs_dir=lambda workspace, subdir: str(tmp_path / "logs"),
+            tool_unavailable_error=RuntimeError,
+            rate_limited_error=_RateLimited,
+            logger=_Logger(),
+            agent_prompt="run agent",
+            workspace_dir=str(tmp_path / "repo"),
+            agents_dir=str(tmp_path / "repo" / "agents"),
+            base_dir=str(tmp_path),
+            issue_num="12",
+        )
+        assert False, "expected rate-limited immediate-exit error"
+    except _RateLimited as exc:
+        assert "rate limit" in str(exc).lower() or "quota" in str(exc).lower()
 
 
 def test_gemini_agent_invoker_immediate_exit_rate_limit(monkeypatch, tmp_path):

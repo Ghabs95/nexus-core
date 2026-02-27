@@ -14,9 +14,18 @@ def parse_provider(candidate: Any, provider_enum: type[Enum]) -> Enum | None:
     return None
 
 
-def supports_analysis(tool: Any, *, gemini_provider: Any, copilot_provider: Any) -> bool:
+def supports_analysis(
+    tool: Any,
+    *,
+    gemini_provider: Any,
+    copilot_provider: Any,
+    codex_provider: Any | None = None,
+) -> bool:
     """Return whether the provider supports analysis tasks."""
-    return tool in {gemini_provider, copilot_provider}
+    supported = {gemini_provider, copilot_provider}
+    if codex_provider is not None:
+        supported.add(codex_provider)
+    return tool in supported
 
 
 def unique_tools(order: Iterable[Any]) -> list[Any]:

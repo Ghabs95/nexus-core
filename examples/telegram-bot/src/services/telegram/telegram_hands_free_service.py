@@ -162,16 +162,6 @@ async def handle_hands_free_message(
             preferred_project_key = active_chat_metadata.get("project_key")
             preferred_agent_type = active_chat_metadata.get("primary_agent_type")
 
-        if await handle_feature_ideation_request(
-            build_ctx(update, context),
-            str(getattr(status_msg, "message_id", "")),
-            text,
-            feature_ideation_deps_factory(),
-            preferred_project_key=preferred_project_key,
-            preferred_agent_type=preferred_agent_type,
-        ):
-            return
-
         await route_hands_free_text(
             update, context, status_msg, text, hands_free_routing_deps_factory()
         )

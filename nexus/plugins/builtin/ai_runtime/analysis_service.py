@@ -8,8 +8,10 @@ def run_analysis_with_provider(
     tool: Any,
     gemini_provider: Any,
     copilot_provider: Any,
+    codex_provider: Any | None = None,
     run_gemini_cli_analysis: Callable[..., dict[str, Any]],
     run_copilot_analysis: Callable[..., dict[str, Any]],
+    run_codex_analysis: Callable[..., dict[str, Any]] | None = None,
     text: str,
     task: str,
     kwargs: dict[str, Any],
@@ -20,6 +22,8 @@ def run_analysis_with_provider(
         return run_gemini_cli_analysis(text, task, **kwargs)
     if tool == copilot_provider:
         return run_copilot_analysis(text, task, **kwargs)
+    if codex_provider is not None and tool == codex_provider and callable(run_codex_analysis):
+        return run_codex_analysis(text, task, **kwargs)
     raise tool_unavailable_error(f"{getattr(tool, 'value', tool)} does not support analysis tasks")
 
 
@@ -41,6 +45,11 @@ def run_analysis_attempts(
         try:
             result = invoke_provider(tool, text, task, kwargs)
             if result:
+                logger.info(
+                    "🧠 Analysis reply provider: task=%s provider=%s",
+                    task,
+                    getattr(tool, "value", tool),
+                )
                 if index > 0:
                     logger.info("✅ Fallback analysis succeeded with %s", tool.value)
                 return result
@@ -65,12 +74,21 @@ def strip_cli_tool_output(text: str) -> str:
     skip_until_blank = False
     for line in lines:
         stripped = line.lstrip()
-        if stripped.startswith("●"):
+        # Legacy tool transcript blocks (Copilot/Gemini) and newer Codex transcript
+        # entries share the same "header + indented detail lines + blank separator"
+        # shape, so strip them uniformly.
+        if (
+            stripped.startswith("●")
+            or stripped.startswith("✗ ")
+            or stripped.startswith("✓ ")
+        ):
             skip_until_blank = True
             continue
         if skip_until_blank and stripped.startswith("$"):
             continue
         if skip_until_blank and stripped.startswith("└"):
+            continue
+        if skip_until_blank and (line.startswith("  ") or line.startswith("\t")):
             continue
         if not stripped:
             skip_until_blank = False
@@ -162,14 +180,42 @@ Input:
 """
 
     if task == "detect_intent":
-        return f"""Is the following input a concrete software task (feature, bug, chore) that should be sent to the developer inbox, or is it a conversational question / brainstorming idea meant to be answered directly by an AI advisor?
+        return f"""Classify this user input for routing.
 
 Input:
 {text[:500]}
 
-Return JSON: {{"intent": "conversation"}} or {{"intent": "task"}}
+Return ONLY valid JSON with this shape:
+{{
+  "intent": "task" | "conversation",
+  "intent_confidence": 0.0-1.0,
+  "feature_ideation": true | false,
+  "feature_ideation_confidence": 0.0-1.0,
+  "feature_ideation_reason": "short reason"
+}}
+
+Rules:
+- Set "intent" to "task" for concrete implementation requests (feature, bug, chore) that should go to developer inbox.
+- Set "intent" to "conversation" for advisory questions, brainstorming, analysis, or discussion.
+- Set "feature_ideation" to true only when the user explicitly asks for new feature ideas/proposals/roadmap suggestions.
+- Set "feature_ideation" to false for implementation/status/history questions (including "what was already implemented").
+- Support multilingual input; do not assume English-only phrasing.
 
 Return ONLY valid JSON."""
+
+    if task == "detect_feature_ideation":
+        return f"""Decide whether the user is asking for feature ideation/brainstorming.
+
+Input:
+{text[:500]}
+
+Return ONLY valid JSON:
+{{"feature_ideation": true|false, "confidence": 0.0-1.0, "reason": "short reason"}}
+
+Set feature_ideation=true only if the user is asking for new feature proposals/ideas/roadmap items.
+Set feature_ideation=false for status/history/reporting questions (e.g., asking what was already implemented).
+Support multilingual user text; do not assume English-only phrasing.
+"""
 
     if task == "chat":
         history = kwargs.get("history", "")

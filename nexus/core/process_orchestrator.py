@@ -621,7 +621,7 @@ class ProcessOrchestrator:
             if not timed_out:
                 continue
 
-            self._handle_timeout(issue_num, log_file, pid)
+            self._handle_timeout(issue_num, log_file, pid, timeout_seconds)
 
         # Always follow up with dead-process detection.
         self.detect_dead_agents()
@@ -790,6 +790,7 @@ class ProcessOrchestrator:
         issue_num: str,
         log_file: str,
         pid: int | None,
+        timeout_seconds: int = 3600,
     ) -> None:
         """Kill a timed-out agent and trigger a retry if allowed."""
         state = self._runtime.get_workflow_state(str(issue_num))
@@ -810,6 +811,22 @@ class ProcessOrchestrator:
         crashed_tool = agent_data.get("tool", "")
         log_mtime = os.path.getmtime(log_file)
         age = time.time() - log_mtime
+        logger.warning(
+            "Step timeout detected: issue #%s agent=%s inactivity=%.0fs threshold=%ss log=%s",
+            issue_num,
+            agent_type,
+            age,
+            timeout_seconds,
+            log_file,
+        )
+        self._runtime.audit_log(
+            issue_num,
+            "STEP_TIMEOUT",
+            (
+                f"agent={agent_type} inactivity={age:.0f}s "
+                f"threshold={timeout_seconds}s log={log_file}"
+            ),
+        )
 
         if launch_ts > 0 and log_mtime + 5 < launch_ts:
             logger.info(

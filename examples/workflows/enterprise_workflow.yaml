@@ -14,7 +14,7 @@ workflow_types:
   shortened: "shortened"
   fast-track: "fast-track"
 
-timeout_seconds: 7200
+timeout_seconds: 10800
 
 # ==========================================================================
 # FULL WORKFLOW — Full Delivery

@@ -53,6 +53,8 @@ async def test_handle_status_prompts_when_no_args():
     deps = _deps()
     await handle_status(ctx, deps)
     assert "Please select a project" in ctx.calls[-1][0]
+    buttons = ctx.calls[-1][1]["buttons"]
+    assert any(getattr(btn, "label", "") == "❌ Close" for row in buttons for btn in row)
 
 
 @pytest.mark.asyncio
@@ -71,3 +73,5 @@ async def test_handle_active_prompts_when_no_args():
     deps = _deps()
     await handle_active(ctx, deps)
     assert "Please select a project to view its active tasks" in ctx.calls[-1][0]
+    buttons = ctx.calls[-1][1]["buttons"]
+    assert any(getattr(btn, "label", "") == "❌ Close" for row in buttons for btn in row)

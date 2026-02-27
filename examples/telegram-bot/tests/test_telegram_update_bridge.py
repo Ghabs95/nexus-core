@@ -2,6 +2,8 @@ import types
 
 import pytest
 from orchestration.telegram_update_bridge import (
+    _clip_telegram_text,
+    _normalize_telegram_markdown,
     build_telegram_interactive_ctx,
     buttons_to_reply_markup,
 )
@@ -64,3 +66,27 @@ async def test_build_telegram_interactive_ctx_reply_text_uses_message():
     assert message_id == "123"
     assert captured["text"] == "hi"
     assert captured["kwargs"]["reply_markup"] == "markup"
+
+
+def test_normalize_telegram_markdown_converts_gfm_bold_and_heading():
+    text = "## Title\n\nUse **bold** text."
+    normalized = _normalize_telegram_markdown(text, "Markdown")
+    assert normalized == "*Title*\n\nUse *bold* text."
+
+
+def test_normalize_telegram_markdown_flattens_gfm_table():
+    text = (
+        "| Dimension | Nexus | OpenClaw |\n"
+        "|---|---|---|\n"
+        "| Primary purpose | Dev-ops command center | Personal AI assistant |\n"
+    )
+    normalized = _normalize_telegram_markdown(text, "Markdown")
+    assert "Dimension: Primary purpose" in normalized
+    assert "Nexus: Dev-ops command center" in normalized
+    assert "OpenClaw: Personal AI assistant" in normalized
+
+
+def test_clip_telegram_text_truncates_long_messages():
+    clipped = _clip_telegram_text("x" * 5000, limit=50)
+    assert len(clipped) <= 50
+    assert clipped.endswith("[truncated]")

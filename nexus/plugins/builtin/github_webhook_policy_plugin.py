@@ -58,6 +58,7 @@ class GithubWebhookPolicyPlugin:
         """Return normalized issue_comment event data."""
         comment = payload.get("comment", {}) or {}
         issue = payload.get("issue", {}) or {}
+        repository = payload.get("repository", {}) or {}
 
         return {
             "action": payload.get("action"),
@@ -66,6 +67,7 @@ class GithubWebhookPolicyPlugin:
             "comment_author": (comment.get("user", {}) or {}).get("login", ""),
             "issue_number": str(issue.get("number", "")),
             "issue": issue,
+            "repo": repository.get("full_name", "unknown"),
         }
 
     def parse_pull_request_review_event(self, payload: dict[str, Any]) -> dict[str, Any]:

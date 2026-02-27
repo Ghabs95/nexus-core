@@ -57,6 +57,12 @@ def parse_intent_result(
 
     if "intent" not in intent_result:
         intent_result["intent"] = "task"
+    if "feature_ideation" not in intent_result:
+        intent_result["feature_ideation"] = False
+    if "feature_ideation_confidence" not in intent_result:
+        intent_result["feature_ideation_confidence"] = 0.0
+    if "feature_ideation_reason" not in intent_result:
+        intent_result["feature_ideation_reason"] = "not_provided"
     return intent_result
 
 
@@ -83,7 +89,21 @@ def run_conversation_turn(
 
     reply_text = "I'm offline right now, how can I help later?"
     if isinstance(chat_result, dict):
-        reply_text = chat_result.get("text", reply_text)
+        candidate = chat_result.get("text")
+        if isinstance(candidate, str) and candidate.strip():
+            reply_text = candidate
+        else:
+            for key in ("response", "output", "content", "message"):
+                alt = chat_result.get(key)
+                if isinstance(alt, str) and alt.strip():
+                    reply_text = alt
+                    break
+            else:
+                # Last-resort extraction: first non-empty string field.
+                for value in chat_result.values():
+                    if isinstance(value, str) and value.strip():
+                        reply_text = value
+                        break
 
     append_message(user_id, "assistant", reply_text)
     return reply_text

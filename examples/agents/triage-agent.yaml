@@ -13,7 +13,7 @@ spec:
   agent_type: "triage"
   
   # Agent behavior configuration
-  timeout_seconds: 300
+  timeout_seconds: 600
   max_retries: 3
   
   # What this agent does

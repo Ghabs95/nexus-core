@@ -29,6 +29,7 @@ except ImportError:
     _SA_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+_SEEN_CONNECTION_LOGS: set[str] = set()
 
 
 def _require_sqlalchemy() -> None:
@@ -185,7 +186,12 @@ class PostgreSQLStorageBackend(StorageBackend):
         )
         # Create tables if they don't exist
         _Base.metadata.create_all(self._engine)
-        logger.info("PostgreSQLStorageBackend connected (%s)", dsn.split("@")[-1])
+        dsn_label = dsn.split("@")[-1]
+        if dsn_label not in _SEEN_CONNECTION_LOGS:
+            logger.info("PostgreSQLStorageBackend connected (%s)", dsn_label)
+            _SEEN_CONNECTION_LOGS.add(dsn_label)
+        else:
+            logger.debug("PostgreSQLStorageBackend reused (%s)", dsn_label)
 
     # ------------------------------------------------------------------
     # StorageBackend interface

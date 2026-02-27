@@ -80,6 +80,8 @@ async def handle_save_task_selection(
     types_map: dict[str, str],
     project_config: dict[str, dict],
     base_dir: str,
+    get_inbox_storage_backend: Callable[[], str],
+    enqueue_task: Callable[..., int],
     get_inbox_dir: Callable[[str, str], str],
     transcribe_voice_message: Callable[[str, Any], Awaitable[str | None]],
     conversation_end: Any,
@@ -109,46 +111,50 @@ async def handle_save_task_selection(
         await update.message.reply_text("⚠️ Transcription failed. Please try again.")
         return conversation_end
 
+    # /new capture should be lightweight: store/queue raw user text.
+    # Refinement and name generation are handled once in the processor path.
     refined_text = text
-    try:
-        logger.info("Refining description with orchestrator (len=%s)", len(text))
-        refine_result = orchestrator.run_text_to_speech_analysis(
-            text=text, task="refine_description", project_name=projects.get(project)
-        )
-        candidate = str(refine_result.get("text", "")).strip()
-        if candidate:
-            refined_text = candidate
-    except Exception as exc:
-        logger.warning("Failed to refine description: %s", exc)
-
     task_name = ""
-    try:
-        logger.info("Generating task name with orchestrator (len=%s)", len(refined_text))
-        name_result = orchestrator.run_text_to_speech_analysis(
-            text=refined_text[:300], task="generate_name", project_name=projects.get(project)
-        )
-        task_name = str(name_result.get("text", "")).strip().strip("\"`'")
-    except Exception as exc:
-        logger.warning("Failed to generate task name: %s", exc)
 
     workspace = project
     if project in project_config:
         workspace = project_config[project].get("workspace", project)
 
-    target_dir = get_inbox_dir(os.path.join(base_dir, workspace), project)
-    os.makedirs(target_dir, exist_ok=True)
     filename = f"{task_type}_{update.message.message_id}.md"
-    file_path = os.path.join(target_dir, filename)
+    task_name_line = f"**Task Name:** {task_name}\n" if task_name else ""
+    markdown_content = (
+        f"# {types_map[task_type]}\n**Project:** {projects[project]}\n**Type:** {task_type}\n"
+        f"{task_name_line}**Status:** Pending\n\n"
+        f"{refined_text}\n\n"
+        f"---\n"
+        f"**Raw Input:**\n{text}"
+    )
 
-    with open(file_path, "w") as f:
-        task_name_line = f"**Task Name:** {task_name}\n" if task_name else ""
-        f.write(
-            f"# {types_map[task_type]}\n**Project:** {projects[project]}\n**Type:** {task_type}\n"
-            f"{task_name_line}**Status:** Pending\n\n"
-            f"{refined_text}\n\n"
-            f"---\n"
-            f"**Raw Input:**\n{text}"
+    inbox_backend = str(get_inbox_storage_backend() or "").strip().lower()
+    if inbox_backend == "postgres":
+        queue_id = enqueue_task(
+            project_key=str(project),
+            workspace=str(workspace),
+            filename=filename,
+            markdown_content=markdown_content,
         )
+        await update.message.reply_text(
+            "✅ Queued to inbox\n"
+            f"Project: {project}\n"
+            f"Queue ID: {queue_id}\n\n"
+            "Issue number is assigned later by the processor when it creates the remote issue."
+        )
+    else:
+        target_dir = get_inbox_dir(os.path.join(base_dir, workspace), project)
+        os.makedirs(target_dir, exist_ok=True)
+        file_path = os.path.join(target_dir, filename)
+        with open(file_path, "w") as f:
+            f.write(markdown_content)
 
-    await update.message.reply_text(f"✅ Saved to `{project}`.")
+        await update.message.reply_text(
+            "✅ Saved to inbox\n"
+            f"Project: {project}\n"
+            f"File: {filename}\n\n"
+            "Issue number is assigned later by the processor when it creates the remote issue."
+        )
     return conversation_end

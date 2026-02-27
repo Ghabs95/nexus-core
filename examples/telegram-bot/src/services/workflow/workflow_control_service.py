@@ -325,16 +325,12 @@ def prepare_continue_context(
     else:
         latest_completion = _read_latest_completion_from_storage(str(issue_num))
         if latest_completion:
-            if latest_completion.get("is_workflow_done") or latest_completion.get("status") in {
-                "done",
-                "complete",
-                "completed",
-            }:
-                workflow_already_done = True
-                resumed_from = latest_completion.get("agent_type") or resumed_from
-            else:
-                normalized = normalize_agent_reference(latest_completion.get("next_agent"))
-                if normalized and normalized.lower() not in {
+            status = str(latest_completion.get("status") or "").strip().lower()
+            normalized = normalize_agent_reference(latest_completion.get("next_agent"))
+            has_next_agent = bool(
+                normalized
+                and normalized.lower()
+                not in {
                     "none",
                     "n/a",
                     "null",
@@ -343,9 +339,18 @@ def prepare_continue_context(
                     "finish",
                     "complete",
                     "",
-                }:
-                    agent_type = normalized
-                    resumed_from = latest_completion.get("agent_type") or resumed_from
+                }
+            )
+            terminal_statuses = {"done", "workflow_done", "workflow_complete", "closed"}
+
+            if latest_completion.get("is_workflow_done") or (
+                status in terminal_statuses and not has_next_agent
+            ):
+                workflow_already_done = True
+                resumed_from = latest_completion.get("agent_type") or resumed_from
+            elif has_next_agent:
+                agent_type = normalized
+                resumed_from = latest_completion.get("agent_type") or resumed_from
 
     if forced_agent:
         agent_type = normalize_agent_reference(forced_agent) or forced_agent

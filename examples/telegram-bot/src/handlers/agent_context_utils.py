@@ -31,7 +31,19 @@ def resolve_path(project_root: str, raw_path: str) -> str:
         return ""
     if os.path.isabs(candidate):
         return candidate
-    return os.path.join(project_root, candidate)
+    primary = os.path.normpath(os.path.join(project_root, candidate))
+    if os.path.exists(primary):
+        return primary
+
+    # Some configs store paths relative to BASE_DIR (e.g. "ghabs/...") while the
+    # resolver receives a project_root (e.g. ".../ghabs"). Try the parent root too.
+    parent_root = os.path.dirname(os.path.normpath(project_root))
+    if parent_root and parent_root != project_root:
+        fallback = os.path.normpath(os.path.join(parent_root, candidate))
+        if os.path.exists(fallback):
+            return fallback
+
+    return primary
 
 
 def normalize_paths(value: Any) -> list[str]:
@@ -61,7 +73,9 @@ def extract_referenced_paths_from_markdown(agents_text: str) -> list[str]:
 
 
 def collect_context_candidate_files(
-    context_root: str, seed_files: list[str] | None = None
+    context_root: str,
+    seed_files: list[str] | None = None,
+    search_root: str | None = None,
 ) -> list[str]:
     candidates: list[str] = []
     seed_markdown_files: list[str] = []
@@ -84,6 +98,35 @@ def collect_context_candidate_files(
                     count += 1
                 if count >= max_files:
                     return
+
+    def _append_by_basename(filename: str) -> None:
+        if not filename or "/" in filename or "\\" in filename:
+            return
+        roots: list[str] = []
+        for root in [context_root, search_root]:
+            normalized = str(root or "").strip()
+            if normalized and os.path.isdir(normalized) and normalized not in roots:
+                roots.append(normalized)
+
+        matches: list[str] = []
+        for root in roots:
+            for walk_root, _dirs, files in os.walk(root):
+                if filename not in files:
+                    continue
+                full = os.path.join(walk_root, filename)
+                if os.path.isfile(full) and full not in matches:
+                    matches.append(full)
+
+        if not matches:
+            return
+
+        def _score(path: str) -> tuple[int, int, str]:
+            normalized = path.replace("\\", "/").lower()
+            docs_bonus = 0 if "/docs/" in normalized else 1
+            rel_len = len(os.path.relpath(path, search_root or context_root))
+            return (docs_bonus, rel_len, normalized)
+
+        _append_file(sorted(matches, key=_score)[0])
 
     seed = seed_files if isinstance(seed_files, list) and seed_files else []
 
@@ -113,6 +156,8 @@ def collect_context_candidate_files(
                 _append_file(resolved)
             elif os.path.isdir(resolved):
                 _append_from_dir(resolved)
+            else:
+                _append_by_basename(rel)
 
     return candidates
 
@@ -219,7 +264,11 @@ def load_role_context(
             continue
         resolved_context_roots.append(context_root)
 
-        for file_path in collect_context_candidate_files(context_root, seed_files=context_files):
+        for file_path in collect_context_candidate_files(
+            context_root,
+            seed_files=context_files,
+            search_root=project_root,
+        ):
             try:
                 with open(file_path, encoding="utf-8") as handle:
                     content = handle.read().strip()

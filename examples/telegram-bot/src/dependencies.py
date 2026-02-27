@@ -17,6 +17,8 @@ from config import (
     AI_PERSONA,
     BASE_DIR,
     NEXUS_CORE_STORAGE_DIR,
+    NEXUS_STORAGE_DSN,
+    NEXUS_WORKFLOW_BACKEND,
     ORCHESTRATOR_CONFIG,
     PROJECT_CONFIG,
     TELEGRAM_ALLOWED_USER_IDS,
@@ -105,6 +107,12 @@ user_manager = get_user_manager()
 DEFAULT_REPO = get_default_repo()
 _WORKFLOW_STATE_PLUGIN_KWARGS = {
     "storage_dir": NEXUS_CORE_STORAGE_DIR,
+    "storage_type": "postgres" if NEXUS_WORKFLOW_BACKEND == "postgres" else "file",
+    "storage_config": (
+        {"connection_string": NEXUS_STORAGE_DSN}
+        if NEXUS_WORKFLOW_BACKEND == "postgres" and NEXUS_STORAGE_DSN
+        else {}
+    ),
     "issue_to_workflow_id": lambda n: get_workflow_state().get_workflow_id(n),
     "clear_pending_approval": lambda n: get_workflow_state().clear_pending_approval(n),
     "audit_log": AuditStore.audit_log,

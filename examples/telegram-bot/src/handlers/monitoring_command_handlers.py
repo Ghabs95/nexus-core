@@ -103,7 +103,7 @@ async def tailstop_handler(
         deps.active_tail_sessions.pop(session_key, None)
         if active_task and not active_task.done():
             active_task.cancel()
-        await deps.active_tail_tasks.pop(session_key, None)
+        deps.active_tail_tasks.pop(session_key, None)
         await ctx.reply_text("⏹️ Stopped live tail session.")
     else:
         await ctx.reply_text("ℹ️ No active live tail session to stop.")
@@ -121,6 +121,7 @@ async def fuse_handler(ctx: InteractiveContext, deps: MonitoringHandlersDeps) ->
             [Button(label=deps.get_project_label(pk), callback_data=f"pickmonitor:fuse:{pk}")]
             for pk in deps.iter_project_keys()
         ]
+        buttons.append([Button(label="❌ Close", callback_data="flow:close")])
         await ctx.reply_text("Please select a project to view fuse status:", buttons=buttons)
         return
 

@@ -12,7 +12,7 @@ version: "0.1.0"
 # 7. Summarizer Agent - final summary
 
 workflow_type: "full"  # fast-track | shortened | full
-timeout_seconds: 3600
+timeout_seconds: 10800
 
 steps:
   - id: "triage"

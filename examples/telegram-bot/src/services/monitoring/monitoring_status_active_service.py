@@ -35,6 +35,7 @@ async def handle_status(ctx: Any, deps: Any) -> None:
             for pk in deps.iter_project_keys()
         ]
         buttons.append([Button(label="All Projects", callback_data="pickmonitor:status:all")])
+        buttons.append([Button(label="❌ Close", callback_data="flow:close")])
         await ctx.reply_text("Please select a project to view its status:", buttons=buttons)
         return
 
@@ -197,6 +198,7 @@ async def handle_active(ctx: Any, deps: Any) -> None:
             for pk in deps.iter_project_keys()
         ]
         buttons.append([Button(label="All Projects", callback_data="pickmonitor:active:all")])
+        buttons.append([Button(label="❌ Close", callback_data="flow:close")])
         await ctx.reply_text("Please select a project to view its active tasks:", buttons=buttons)
         return
 

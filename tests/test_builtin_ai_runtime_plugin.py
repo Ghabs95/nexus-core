@@ -327,6 +327,21 @@ class TestStripCliToolOutput:
         text = '{"project": "nexus", "type": "feature"}'
         assert AIOrchestrator._strip_cli_tool_output(text) == text
 
+    def test_codex_transcript_blocks_are_stripped(self):
+        text = (
+            "✗ Grep \"OpenClaw\" (/home/ubuntu/git/ghabs)\n"
+            "  └ Permission denied and could not request permission from user\n"
+            "\n"
+            "✗ List repos and markdown files\n"
+            "  $ find /home/ubuntu/git/ghabs -maxdepth 3 -name \"*.md\"\n"
+            "  Permission denied and could not request permission from user\n"
+            "\n"
+            "Based on the codebase and OpenClaw's public profile, here's a comparison."
+        )
+        assert AIOrchestrator._strip_cli_tool_output(text) == (
+            "Based on the codebase and OpenClaw's public profile, here's a comparison."
+        )
+
 
 class TestParseAnalysisResult:
     def test_parses_fenced_json_result(self):
