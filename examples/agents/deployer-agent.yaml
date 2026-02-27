@@ -93,5 +93,8 @@ spec:
     3. Post `🚀 Deployment ready. PR requires human review before merge.` on the issue
     4. Do NOT run any merge command
 
+    Keep all issue comments concise — do NOT paste full command output or logs,
+    only post the summary result and a one-line evidence reference.
+
   validation:
     required_outputs: [ "deployment_status" ]

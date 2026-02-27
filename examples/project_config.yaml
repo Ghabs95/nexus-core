@@ -51,8 +51,11 @@ issue_triage:
     "critical": "escalation"        # Critical → escalation agent
     # "enhancement": "design"       # Features → design agent (optional)
 
-# Global AI tool preferences: which AI tool to use for each AGENT TYPE
-# Options: copilot (GitHub Copilot), gemini (Google Gemini), codex (OpenAI Codex CLI)
+# Global AI tool preferences: which AI tool (and optionally model) to use
+# for each AGENT TYPE.
+# Options: copilot, gemini, codex
+# Model override syntax: tool["model-name"] (e.g., copilot["gpt-4o-mini"])
+# When no model is specified, the tool's default model is used.
 #
 # IMPORTANT: This maps AGENT TYPES (system roles) to AI tools, not individual agents
 # - Agent types are defined in agent YAML files with `agent_type` field
@@ -71,14 +74,16 @@ ai_tool_preferences:
   # - workflow YAML (assigns work to agent types)
   # - task assignment (looks for agents with matching system_type)
   
-  triage: copilot          # Issue classification and analysis
-  designer: copilot        # Design and architecture proposals
-  debug: copilot           # Root cause analysis
-  reviewer: copilot        # PR reviews and code quality
-  developer: copilot       # Code implementation
-  docs: gemini             # Documentation updates (faster)
-  summarizer: gemini       # Workflow summaries (faster)
-  escalation: copilot      # High-priority escalation to senior agent
+  triage: copilot["gpt-4o-mini"]          # Lightweight classification task
+  designer: copilot                       # Architecture — needs full reasoning
+  debug: copilot                          # Root cause analysis
+  reviewer: copilot                       # PR reviews and code quality
+  developer: copilot                      # Code implementation
+  compliance: copilot["gpt-4o-mini"]      # Checklist-style security review
+  deployer: copilot["gpt-4o-mini"]        # Mostly mechanical CLI steps
+  docs: gemini["gemini-2.0-flash"]        # Documentation updates (fast + cheap)
+  summarizer: gemini["gemini-2.0-flash"]  # Workflow summaries (fast + cheap)
+  escalation: copilot                     # High-priority escalation
 
 # Global operation task -> agent type mapping.
 # These are non-agent orchestration tasks (classification, naming, refinement);

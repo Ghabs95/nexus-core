@@ -104,6 +104,7 @@ class OpenAIProvider(AIProvider):
     async def execute_agent(self, context: ExecutionContext) -> AgentResult:
         """Send the prompt to the Chat Completions API and return the reply."""
         start = time.time()
+        model = context.model_override or self._model
         messages = [
             {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": context.prompt},
@@ -113,11 +114,14 @@ class OpenAIProvider(AIProvider):
             messages[1]["content"] = f"Issue: {context.issue_url}\n\n{context.prompt}"
 
         try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=messages,
-                timeout=context.timeout or self._timeout,
-            )
+            create_kwargs: dict = {
+                "model": model,
+                "messages": messages,
+                "timeout": context.timeout or self._timeout,
+            }
+            if context.max_tokens is not None:
+                create_kwargs["max_tokens"] = context.max_tokens
+            response = await self._client.chat.completions.create(**create_kwargs)
             elapsed = time.time() - start
             output = response.choices[0].message.content or ""
             return AgentResult(

@@ -95,6 +95,8 @@ spec:
 
     Follow the project's coding conventions (PEP 8, type hints, 100-char lines).
     Keep changes minimal and focused on the identified issue.
+    Keep issue comments concise — do NOT paste full command output or logs,
+    only post the summary result and a one-line evidence reference.
 
   validation:
     required_outputs: [ "branch_name", "implementation_summary" ]

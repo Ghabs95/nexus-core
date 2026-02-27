@@ -83,7 +83,9 @@ spec:
 
     4. Verify full regression evidence before approving:
        - Prefer CI status checks covering the full suite.
-       - If CI evidence is missing, request full-suite test output from the author.
+       - If CI evidence is missing, run the full test suite yourself and record
+         the pass/fail counts. Do NOT paste raw test logs — only record the
+         summary line (e.g. "355 passed, 0 failed").
        - Do **not** approve while full regression is failing or not demonstrated.
 
     5. Post an inline review using the GitHub CLI:
@@ -114,7 +116,9 @@ spec:
            --body "<summary of required changes>"
          ```
 
-    7. Post a summary comment on the issue with your decision and include full regression evidence (CI link or test summary).
+    7. Post a **concise** summary comment on the issue with your decision.
+       Include a one-line regression summary (e.g. "Full regression: 355 passed, 0 failed")
+       but do NOT paste raw test output or logs — keep the comment short and actionable.
 
     ## Completion summary
 

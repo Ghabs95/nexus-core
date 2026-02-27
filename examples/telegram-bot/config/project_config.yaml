@@ -3,7 +3,7 @@ workflow_definition_path: nexus-core/examples/workflows/enterprise_workflow.yaml
 
 # Shared agent YAML definitions (org-level agents used across all projects)
 # Searched as fallback when agent_type is not found in project-specific agents_dir
-shared_agents_dir: agents/nxs-agents
+shared_agents_dir: nexus-core/examples/agents
 
 # VCS-agnostic inbox/tasks directory (can be .nexus, .gitlab, .gitea, etc.)
 # Relative to project workspace root
@@ -52,8 +52,11 @@ issue_triage:
     "urgent": "escalation"        # Urgent → escalation agent (senior review)
     "critical": "escalation"      # Critical → escalation agent
 
-# Global AI tool preferences (which AI tool each AGENT TYPE uses)
-# Maps AGENT TYPES (not individual agents) to AI providers
+# Global AI tool preferences: which AI tool (and optionally model) to use
+# for each AGENT TYPE.
+# Valid providers: copilot, gemini, codex
+# Model override syntax: tool["model-name"] (e.g., copilot["gpt-4o-mini"])
+# When no model is specified, the tool's default model is used.
 #
 # Architecture:
 # 1. Agent YAML files define: spec.agent_type (e.g., "triage", "debug", "escalation")
@@ -66,16 +69,16 @@ issue_triage:
 #     agent_type: "triage"       # This agent handles type: triage
 #     provider_preference: null  # Will use value from ai_tool_preferences
 ai_tool_preferences:
-  triage: copilot            # Generic intake and routing
-  developer: copilot         # Generic code implementation
-  reviewer: copilot          # Generic code/quality review
-  compliance: copilot        # Generic security/privacy checks
-  deployer: copilot          # Generic deployment and ops
-  debug: copilot             # Generic root-cause analysis
-  designer: gemini           # Generic UX/UI and product design
-  docs: gemini               # Generic docs and summaries
-  writer: gemini             # Generic close-loop writing
-  finalizer: gemini          # Generic rejected/closure handling
+  triage: copilot["gpt-4o-mini"]        # Lightweight classification task
+  designer: gemini                      # UX/UI and product design
+  debug: copilot                        # Root-cause analysis
+  developer: codex                      # Code implementation
+  reviewer: copilot                     # Code/quality review
+  compliance: copilot["gpt-4o-mini"]    # Checklist-style security review
+  deployer: copilot["gpt-4o-mini"]      # Mechanical deployment steps
+  docs: gemini["gemini-2.0-flash"]      # Docs and summaries (fast + cheap)
+  writer: gemini["gemini-2.0-flash"]    # Close-loop writing (fast + cheap)
+  finalizer: gemini["gemini-2.0-flash"] # Rejected/closure handling (fast + cheap)
 
 # Global operation task -> agent type mapping.
 # Provider is selected through ai_tool_preferences for that agent type.
@@ -113,12 +116,12 @@ nexus:
   workflow_definition_path: nexus/nexus-core/examples/workflows/enterprise_workflow.yaml
   # AI tool preferences for enterprise workflow agent types
   ai_tool_preferences:
-    triage: copilot          # Triage agent - issue classification
-    designer: copilot        # Design agent - architecture proposals
-    debug: copilot           # Debug agent - root cause analysis
-    developer: copilot       # Develop agent - code implementation
-    reviewer: copilot        # Review agent - PR reviews
-    compliance: copilot      # Compliance agent - security/privacy review
-    deployer: copilot        # Deploy agent - merge & release
-    writer: gemini           # Write agent - docs & close (faster)
-    finalizer: gemini        # Finalize agent - rejected issue close (faster)
+    triage: copilot["gpt-4o-mini"]        # Lightweight classification
+    designer: copilot                     # Architecture proposals
+    debug: copilot                        # Root cause analysis
+    developer: codex                      # Code implementation
+    reviewer: copilot                     # PR reviews
+    compliance: copilot["gpt-4o-mini"]    # Security/privacy review
+    deployer: copilot["gpt-4o-mini"]      # Merge & release
+    writer: gemini["gemini-2.0-flash"]    # Docs & close (fast + cheap)
+    finalizer: gemini["gemini-2.0-flash"] # Rejected issue close (fast + cheap)

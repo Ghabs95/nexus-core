@@ -56,6 +56,8 @@ spec:
     - Logging of sensitive data
 
     Approve if compliant, or block with specific issues listed.
+    Keep your review comment concise — list only actionable findings,
+    do NOT paste raw scan output or logs.
 
   validation:
     required_outputs: [ "compliance_status" ]

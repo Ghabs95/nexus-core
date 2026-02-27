@@ -22,6 +22,8 @@ class ExecutionContext:
     metadata: dict[str, Any] = None
     timeout: int = 600
     tool_restrictions: list | None = None  # Commands/tools to block (e.g., ["gh pr merge"])
+    model_override: str | None = None  # Override the provider's default model (e.g., "gpt-4o-mini")
+    max_tokens: int | None = None  # Cap output tokens for cost control
 
 
 class AIProvider(ABC):
