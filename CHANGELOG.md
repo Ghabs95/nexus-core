@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Universal Nexus Identity (UNI)** — Refactored `UserManager` to use a platform-agnostic identity system. Users are now assigned a unique `nexus_id` (UUID4) and can link multiple platform identities (Telegram, Discord, etc.) to a single profile. This enables seamless profile synchronization and task history tracking across all supported chat platforms ([#86](https://github.com/Ghabs95/nexus-core/issues/86)).
+- **UNI Account Linking Safety** — `UserManager.link_identity` now prevents "identity hijacking" by rejecting re-binding attempts if a platform identity is already linked to a different `nexus_id`.
+- **UNI Migration Logic** — Added automatic migration for legacy `telegram_id`-keyed user data to the new UNI format, ensuring no loss of tracking history during the transition.
 - **Slack Integration** — Added first-class Slack support via `SlackEventHandlerPlugin` (EventBus subscriber for 7 workflow lifecycle events, mrkdwn formatting) and `SlackInteractivePlugin` (Socket Mode via `slack-bolt`; no public URL required). Adds `SlackNotificationChannel` adapter. Requires `slack-bolt>=1.18` optional dependency (`pip install nexus-core[slack]`) ([#82](https://github.com/Ghabs95/nexus-core/issues/82)).
 - **Configurable Storage Adapters** — Introduced a unified configuration mechanism for storage backends (File and PostgreSQL) via `WorkflowStateEnginePlugin`. Users can now switch backends using the `storage_type` configuration key or the `NEXUS_STORAGE_TYPE` environment variable ([#65](https://github.com/Ghabs95/nexus-core/issues/65)).
 - **PostgreSQL Environment Variable Support** — Added `NEXUS_STORAGE_DSN` for secure PostgreSQL connection management, avoiding plaintext credentials in configuration files.

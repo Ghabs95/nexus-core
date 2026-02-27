@@ -72,6 +72,7 @@ require_human_merge_approval: always  # always | workflow-based | never
 |------------------------|-----------------|-------------------------------------|
 | `launched_agents.json` | `.nexus/state/` | Active agent PIDs with timestamps   |
 | `tracked_issues.json`  | `.nexus/state/` | User-subscribed issue notifications |
+| `user_tracking.json`   | `.nexus/state/` | UNI profiles and identity mappings  |
 | `audit.log`            | `logs/`         | Append-only event log               |
 | `workflow_state.json`  | `.nexus/state/` | Pause/resume/stop state per issue   |
 
