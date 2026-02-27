@@ -80,10 +80,24 @@ from services.webhook_http_service import process_webhook_request as _process_we
 
 # Configure logging
 os.makedirs(LOGS_DIR, exist_ok=True)
+
+
+def _build_webhook_logging_handlers() -> list[logging.Handler]:
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        handlers.insert(0, logging.FileHandler(os.path.join(LOGS_DIR, "webhook.log")))
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "File logging unavailable for webhook server (%s); using stream handler only.",
+            exc,
+        )
+    return handlers
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler(os.path.join(LOGS_DIR, "webhook.log")), logging.StreamHandler()],
+    handlers=_build_webhook_logging_handlers(),
 )
 logger = logging.getLogger(__name__)
 

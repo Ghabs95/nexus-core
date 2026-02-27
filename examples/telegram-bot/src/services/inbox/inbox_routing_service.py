@@ -3,6 +3,23 @@ import os
 from typing import Any, Callable
 
 
+def _write_inbox_markdown_file(
+    *,
+    base_dir: str,
+    workspace: str,
+    project: str,
+    filename: str,
+    markdown_content: str,
+    get_inbox_dir: Callable[[str, str], str],
+) -> str:
+    target_dir = get_inbox_dir(os.path.join(base_dir, str(workspace)), str(project))
+    os.makedirs(target_dir, exist_ok=True)
+    target_file = os.path.join(target_dir, filename)
+    with open(target_file, "w", encoding="utf-8") as f:
+        f.write(markdown_content)
+    return target_file
+
+
 def process_inbox_task_request(
     *,
     text: str,
@@ -138,6 +155,21 @@ def process_inbox_task_request(
                 markdown_content=markdown_content,
             )
             logger.info("✅ Postgres inbox task queued: id=%s project=%s", queue_id, project)
+            try:
+                _write_inbox_markdown_file(
+                    base_dir=base_dir,
+                    workspace=str(workspace),
+                    project=str(project),
+                    filename=filename,
+                    markdown_content=markdown_content,
+                    get_inbox_dir=get_inbox_dir,
+                )
+            except Exception as mirror_exc:
+                logger.debug(
+                    "Postgres inbox mirror write skipped for %s: %s",
+                    filename,
+                    mirror_exc,
+                )
         except Exception as exc:
             logger.error("Failed to enqueue Postgres inbox task: %s", exc)
             return {
@@ -145,10 +177,14 @@ def process_inbox_task_request(
                 "message": f"⚠️ Failed to queue task in Postgres inbox: {exc}",
             }
     else:
-        target_dir = get_inbox_dir(os.path.join(base_dir, str(workspace)), str(project))
-        os.makedirs(target_dir, exist_ok=True)
-        with open(os.path.join(target_dir, filename), "w") as f:
-            f.write(markdown_content)
+        _write_inbox_markdown_file(
+            base_dir=base_dir,
+            workspace=str(workspace),
+            project=str(project),
+            filename=filename,
+            markdown_content=markdown_content,
+            get_inbox_dir=get_inbox_dir,
+        )
 
     return {
         "success": True,
@@ -211,6 +247,21 @@ def save_resolved_inbox_task_request(
                 filename=filename,
                 markdown_content=markdown_content,
             )
+            try:
+                _write_inbox_markdown_file(
+                    base_dir=base_dir,
+                    workspace=str(workspace),
+                    project=str(project),
+                    filename=filename,
+                    markdown_content=markdown_content,
+                    get_inbox_dir=get_inbox_dir,
+                )
+            except Exception as mirror_exc:
+                logger.debug(
+                    "Postgres resolved-task mirror write skipped for %s: %s",
+                    filename,
+                    mirror_exc,
+                )
         except Exception as exc:
             logger.error("Failed to enqueue resolved Postgres inbox task: %s", exc)
             return {
@@ -218,10 +269,14 @@ def save_resolved_inbox_task_request(
                 "message": f"⚠️ Failed to queue task in Postgres inbox: {exc}",
             }
     else:
-        target_dir = get_inbox_dir(os.path.join(base_dir, workspace), str(project))
-        os.makedirs(target_dir, exist_ok=True)
-        with open(os.path.join(target_dir, filename), "w") as f:
-            f.write(markdown_content)
+        _write_inbox_markdown_file(
+            base_dir=base_dir,
+            workspace=str(workspace),
+            project=str(project),
+            filename=filename,
+            markdown_content=markdown_content,
+            get_inbox_dir=get_inbox_dir,
+        )
 
     return {
         "success": True,

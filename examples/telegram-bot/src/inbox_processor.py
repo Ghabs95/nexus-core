@@ -1,8 +1,10 @@
+import asyncio
 import glob
 import logging
 import os
 import re
 import time
+from typing import Any
 
 # Nexus Core framework imports — orchestration handled by ProcessOrchestrator
 # Import centralized configuration
@@ -10,7 +12,11 @@ from config import (
     BASE_DIR,
     INBOX_PROCESSOR_LOG_FILE,
     NEXUS_CORE_STORAGE_DIR,
+    NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY,
+    NEXUS_FEATURE_REGISTRY_ENABLED,
+    NEXUS_FEATURE_REGISTRY_MAX_ITEMS_PER_PROJECT,
     NEXUS_STORAGE_BACKEND,
+    NEXUS_STORAGE_DSN,
     NEXUS_STATE_DIR,
     ORCHESTRATOR_CONFIG,
     PROJECT_CONFIG,
@@ -189,7 +195,7 @@ from services.startup_recovery_service import (
     reconcile_completion_signals_on_startup as _startup_reconcile_completion_signals,
 )
 from services.task_archive_service import (
-    archive_closed_task_files as _archive_closed_task_files,
+    archive_closed_task_files as _svc_archive_closed_task_files,
 )
 from services.task_context_service import (
     load_task_context as _load_task_context,
@@ -224,6 +230,7 @@ from services.workflow.workflow_unmapped_recovery_service import (
 from services.workflow_signal_sync import (
     normalize_agent_reference as _normalize_agent_reference,
 )
+from services.feature_registry_service import FeatureRegistryService
 from state_manager import HostStateManager
 
 _STEP_COMPLETE_COMMENT_RE = re.compile(
@@ -333,18 +340,47 @@ def get_completion_replay_window_seconds() -> int:
     return _svc_get_completion_replay_window_seconds(getenv=os.getenv, default_seconds=1800)
 
 
+def _build_inbox_logging_handlers() -> list[logging.Handler]:
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    log_dir = os.path.dirname(INBOX_PROCESSOR_LOG_FILE)
+    try:
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        handlers.append(logging.FileHandler(INBOX_PROCESSOR_LOG_FILE))
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "File logging unavailable for inbox processor (%s); using stream handler only.",
+            exc,
+        )
+    return handlers
+
+
 # Logging — force=True overrides the root handler set by config.py at import time
-os.makedirs(os.path.dirname(INBOX_PROCESSOR_LOG_FILE), exist_ok=True)
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
     force=True,
-    handlers=[logging.StreamHandler(), logging.FileHandler(INBOX_PROCESSOR_LOG_FILE)],
+    handlers=_build_inbox_logging_handlers(),
 )
 logger = logging.getLogger("InboxProcessor")
 
 failed_task_lookups = load_failed_lookups()
 completion_comments = load_completion_comments()
+feature_registry_service: FeatureRegistryService | None = None
+
+
+def _get_feature_registry_service() -> FeatureRegistryService:
+    global feature_registry_service
+    if feature_registry_service is None:
+        feature_registry_service = FeatureRegistryService(
+            enabled=NEXUS_FEATURE_REGISTRY_ENABLED,
+            backend=NEXUS_STORAGE_BACKEND,
+            state_dir=NEXUS_STATE_DIR,
+            postgres_dsn=NEXUS_STORAGE_DSN,
+            max_items_per_project=NEXUS_FEATURE_REGISTRY_MAX_ITEMS_PER_PROJECT,
+            dedup_similarity=NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY,
+        )
+    return feature_registry_service
 
 
 def _record_polling_failure(scope: str, error: Exception) -> None:
@@ -540,6 +576,72 @@ def _workflow_policy_notify(message: str) -> None:
     emit_alert(message, severity="info", source="workflow_policy")
 
 
+def _archive_closed_task_files(
+    issue_num: str,
+    project_name: str,
+    *,
+    project_config: dict[str, Any] | None = None,
+    base_dir: str | None = None,
+    get_tasks_active_dir=None,
+    get_tasks_closed_dir=None,
+    logger_override=None,
+) -> int:
+    """Backward-compatible wrapper around task archival service.
+
+    Supports legacy positional calls used in tests and older integrations.
+    """
+    return _svc_archive_closed_task_files(
+        issue_num=str(issue_num),
+        project_name=str(project_name),
+        project_config=project_config if isinstance(project_config, dict) else PROJECT_CONFIG,
+        base_dir=str(base_dir or BASE_DIR),
+        get_tasks_active_dir=get_tasks_active_dir
+        or globals()["get_tasks_active_dir"],
+        get_tasks_closed_dir=get_tasks_closed_dir
+        or globals()["get_tasks_closed_dir"],
+        logger=logger_override or logger,
+    )
+
+
+def _verify_workflow_terminal_before_finalize_local(
+    *,
+    workflow_plugin,
+    issue_num: str,
+    project_name: str,
+    alert_source: str = "inbox_processor",
+) -> bool:
+    """Emit guardrail alert via this module's notification bridge."""
+    allowed = _verify_workflow_terminal_before_finalize(
+        workflow_plugin=workflow_plugin,
+        issue_num=issue_num,
+        project_name=project_name,
+        alert_source=alert_source,
+    )
+    if not allowed:
+        try:
+            status = None
+            if workflow_plugin and hasattr(workflow_plugin, "get_workflow_status"):
+                status = asyncio.run(workflow_plugin.get_workflow_status(str(issue_num)))
+            state = str((status or {}).get("state", "unknown")).strip().lower() or "unknown"
+            emit_alert(
+                "⚠️ Finalization blocked for "
+                f"issue #{issue_num}: workflow state is `{state}` (expected terminal).",
+                severity="warning",
+                source=alert_source,
+                issue_number=str(issue_num),
+                project_key=project_name,
+            )
+        except Exception:
+            emit_alert(
+                f"⚠️ Finalization blocked for issue #{issue_num}: workflow is non-terminal.",
+                severity="warning",
+                source=alert_source,
+                issue_number=str(issue_num),
+                project_key=project_name,
+            )
+    return allowed
+
+
 def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name: str) -> None:
     _svc_finalize_workflow(
         issue_num=str(issue_num),
@@ -549,7 +651,7 @@ def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name:
         logger=logger,
         get_workflow_state_plugin=get_workflow_state_plugin,
         workflow_state_plugin_kwargs=_WORKFLOW_STATE_PLUGIN_KWARGS,
-        verify_workflow_terminal_before_finalize_fn=_verify_workflow_terminal_before_finalize,
+        verify_workflow_terminal_before_finalize_fn=_verify_workflow_terminal_before_finalize_local,
         get_workflow_policy_plugin=get_workflow_policy_plugin,
         resolve_git_dir=_resolve_git_dir,
         resolve_git_dirs=_resolve_git_dirs,
@@ -610,6 +712,50 @@ def _get_completion_store() -> CompletionStore:
     )
 
 
+def _ingest_feature_registry_from_completions(
+    detected_completions: list[Any], dedup: set[str]
+) -> None:
+    service = _get_feature_registry_service()
+    if not service.is_enabled():
+        return
+
+    for completion in detected_completions:
+        dedup_key = str(getattr(completion, "dedup_key", "") or "")
+        if dedup_key and dedup_key in dedup:
+            continue
+
+        issue_number = str(getattr(completion, "issue_number", "") or "").strip()
+        if not issue_number:
+            continue
+
+        try:
+            project_key = _resolve_project_for_issue(issue_number) or get_default_project()
+            summary = getattr(completion, "summary", None)
+            payload = dict(getattr(summary, "raw", {}) or {})
+            payload.setdefault("status", str(getattr(summary, "status", "complete") or "complete"))
+            payload.setdefault("summary", str(getattr(summary, "summary", "") or ""))
+            payload.setdefault("key_findings", list(getattr(summary, "key_findings", []) or []))
+
+            saved = service.ingest_completion(
+                project_key=project_key,
+                issue_number=issue_number,
+                payload=payload,
+            )
+            if saved:
+                logger.info(
+                    "Feature registry upserted from completion issue=%s project=%s feature=%s",
+                    issue_number,
+                    project_key,
+                    saved.get("canonical_title"),
+                )
+        except Exception as exc:
+            logger.warning(
+                "Feature registry ingestion failed for issue #%s: %s",
+                issue_number,
+                exc,
+            )
+
+
 def _post_completion_comments_from_logs() -> None:
     _svc_post_completion_comments_from_logs(
         base_dir=BASE_DIR,
@@ -622,6 +768,7 @@ def _post_completion_comments_from_logs() -> None:
         get_completion_store=_get_completion_store,
         resolve_project=_resolve_project_from_path,
         resolve_repo=lambda proj, issue: _resolve_repo_strict(proj, issue),
+        ingest_detected_completions=_ingest_feature_registry_from_completions,
     )
 
 

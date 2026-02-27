@@ -40,8 +40,12 @@ from config import (
     AI_PERSONA,
     BASE_DIR,
     LOGS_DIR,
+    NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY,
+    NEXUS_FEATURE_REGISTRY_ENABLED,
+    NEXUS_FEATURE_REGISTRY_MAX_ITEMS_PER_PROJECT,
     NEXUS_CORE_STORAGE_DIR,
     NEXUS_STORAGE_DSN,
+    NEXUS_STORAGE_BACKEND,
     NEXUS_WORKFLOW_BACKEND,
     ORCHESTRATOR_CONFIG,
     PROJECT_CONFIG,
@@ -103,6 +107,12 @@ from handlers.feature_ideation_handlers import (
 )
 from handlers.feature_ideation_handlers import (
     feature_callback_handler as core_feature_callback_handler,
+)
+from handlers.feature_registry_command_handlers import (
+    FeatureRegistryCommandDeps,
+    feature_done_handler as core_feature_done_handler,
+    feature_forget_handler as core_feature_forget_handler,
+    feature_list_handler as core_feature_list_handler,
 )
 from handlers.hands_free_routing_handler import (
     HandsFreeRoutingDeps,
@@ -457,6 +467,7 @@ from services.workflow_signal_sync import (
     read_latest_local_completion,
     write_local_completion_from_signal,
 )
+from services.feature_registry_service import FeatureRegistryService
 from state_manager import HostStateManager
 from user_manager import get_user_manager
 from utils.task_utils import find_task_file_by_issue
@@ -486,6 +497,15 @@ rate_limiter = get_rate_limiter()
 
 # Initialize user manager
 user_manager = get_user_manager()
+
+feature_registry_service = FeatureRegistryService(
+    enabled=NEXUS_FEATURE_REGISTRY_ENABLED,
+    backend=NEXUS_STORAGE_BACKEND,
+    state_dir=os.path.join(BASE_DIR, get_nexus_dir_name(), "state"),
+    postgres_dsn=NEXUS_STORAGE_DSN,
+    max_items_per_project=NEXUS_FEATURE_REGISTRY_MAX_ITEMS_PER_PROJECT,
+    dedup_similarity=NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY,
+)
 
 DEFAULT_REPO = get_default_repo()
 from integrations.workflow_state_factory import get_workflow_state as _get_wf_state
@@ -704,6 +724,19 @@ def _feature_ideation_handler_deps() -> FeatureIdeationHandlerDeps:
         base_dir=BASE_DIR,
         project_config=PROJECT_CONFIG,
         process_inbox_task=process_inbox_task,
+        feature_registry_service=feature_registry_service,
+        dedup_similarity=NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY,
+    )
+
+
+def _feature_registry_command_deps() -> FeatureRegistryCommandDeps:
+    return FeatureRegistryCommandDeps(
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        iter_project_keys=_iter_project_keys,
+        normalize_project_key=_normalize_project_key,
+        get_project_label=_get_project_label,
+        feature_registry=feature_registry_service,
     )
 
 
@@ -1087,6 +1120,9 @@ def _command_handler_map():
         tracked_handler=tracked_handler,
         untrack_handler=untrack_handler,
         agents_handler=agents_handler,
+        feature_done_handler=feature_done_handler,
+        feature_list_handler=feature_list_handler,
+        feature_forget_handler=feature_forget_handler,
     )
 
 
@@ -1712,6 +1748,27 @@ async def direct_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await ops_direct_handler(_build_telegram_interactive_ctx(update, context), _ops_handler_deps())
 
 
+async def feature_done_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mark a feature as implemented for a project."""
+    await core_feature_done_handler(
+        _build_telegram_interactive_ctx(update, context), _feature_registry_command_deps()
+    )
+
+
+async def feature_list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List implemented features for a project."""
+    await core_feature_list_handler(
+        _build_telegram_interactive_ctx(update, context), _feature_registry_command_deps()
+    )
+
+
+async def feature_forget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Forget a previously implemented feature by id or title."""
+    await core_feature_forget_handler(
+        _build_telegram_interactive_ctx(update, context), _feature_registry_command_deps()
+    )
+
+
 async def comments_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """View recent comments on an issue."""
     await issue_comments_handler(
@@ -1846,6 +1903,9 @@ if __name__ == "__main__":
             "assign_handler": assign_handler,
             "implement_handler": implement_handler,
             "prepare_handler": prepare_handler,
+            "feature_done_handler": feature_done_handler,
+            "feature_list_handler": feature_list_handler,
+            "feature_forget_handler": feature_forget_handler,
             "chat_menu_handler": chat_menu_handler,
             "chat_agents_handler": chat_agents_handler,
             "chat_callback_handler": chat_callback_handler,

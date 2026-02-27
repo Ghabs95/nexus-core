@@ -115,6 +115,7 @@ Agent Starts → Posts to GitHub
 | **Inbox Routing**  | `handlers/inbox_routing_handler.py` | Route tasks to projects                          |
 | **Config**         | `config.py`                         | All env vars, project config, storage backends   |
 | **Agent Launcher** | `runtime/agent_launcher.py`         | Subprocess management for AI agents              |
+| **Feature Registry**| `services/feature_registry_service.py`| Dedup ideation and track implemented features     |
 
 ## Services
 

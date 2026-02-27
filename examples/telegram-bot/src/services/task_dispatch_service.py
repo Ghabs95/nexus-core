@@ -13,6 +13,14 @@ def _local_task_files_enabled() -> bool:
     return get_storage_capabilities().local_task_files
 
 
+def _should_use_local_task_file(filepath: str) -> bool:
+    """Use local file operations for filesystem mode or explicit local paths."""
+    if _local_task_files_enabled():
+        return True
+    candidate = str(filepath or "").strip()
+    return bool(candidate) and "://" not in candidate
+
+
 def handle_webhook_task(
     *,
     filepath: str,
@@ -77,7 +85,7 @@ def handle_webhook_task(
         reroute_project = resolve_project_for_repo(issue_repo)
         if reroute_project and reroute_project != project_name:
             rerouted_path = None
-            if _local_task_files_enabled() and filepath and "://" not in str(filepath):
+            if _should_use_local_task_file(filepath):
                 rerouted_path = reroute_webhook_task_to_project(filepath, reroute_project)
             message = (
                 f"⚠️ Re-routed webhook task for issue #{issue_number}: "
@@ -121,7 +129,7 @@ def handle_webhook_task(
         logger.info(
             "⏭️ Skipping webhook launch for issue #%s — agent recently launched", issue_number
         )
-        if _local_task_files_enabled():
+        if _should_use_local_task_file(filepath):
             active_dir = get_tasks_active_dir(project_root, project_name)
             os.makedirs(active_dir, exist_ok=True)
             new_filepath = os.path.join(active_dir, os.path.basename(filepath))
@@ -129,7 +137,7 @@ def handle_webhook_task(
         return True
 
     new_filepath = ""
-    if _local_task_files_enabled():
+    if _should_use_local_task_file(filepath):
         active_dir = get_tasks_active_dir(project_root, project_name)
         os.makedirs(active_dir, exist_ok=True)
         new_filepath = os.path.join(active_dir, os.path.basename(filepath))
@@ -259,7 +267,7 @@ def handle_new_task(
     sop_checklist = workflow_checklist or sop_template or render_fallback_checklist(tier_name)
 
     new_filepath = ""
-    if _local_task_files_enabled():
+    if _should_use_local_task_file(filepath):
         active_dir = get_tasks_active_dir(project_root, project_name)
         os.makedirs(active_dir, exist_ok=True)
         new_filepath = os.path.join(active_dir, os.path.basename(filepath))

@@ -44,6 +44,9 @@ TELEGRAM_COMMANDS: set[str] = {
     "assign",
     "implement",
     "prepare",
+    "feature_done",
+    "feature_list",
+    "feature_forget",
 }
 
 
