@@ -21,6 +21,7 @@ import yaml
 
 from nexus.core.models import Workflow
 from nexus.core.workflow import WorkflowDefinition
+from nexus.core.workflow_engine.workflow_definition_loader import validate_orchestration_config
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +236,8 @@ class YamlWorkflowLoader:
         if not isinstance(data, dict):
             errors.append(f"Workflow definition must be a mapping, got {type(data).__name__}")
             return errors, warnings
+
+        errors.extend(validate_orchestration_config(data))
 
         # Must have at least a name or id
         if not data.get("name") and not data.get("id"):

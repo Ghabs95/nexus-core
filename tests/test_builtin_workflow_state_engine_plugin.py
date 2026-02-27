@@ -1,5 +1,6 @@
 """Tests for built-in workflow state engine adapter plugin."""
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -320,6 +321,7 @@ def test_build_storage_postgres_requires_dsn_or_config():
     """Postgres storage raises ValueError when no connection_string/env is given."""
     import pytest
 
+    os.environ.pop("NEXUS_STORAGE_DSN", None)
     plugin = WorkflowStateEnginePlugin({"storage_type": "postgres"})
     with pytest.raises(ValueError, match="connection_string"):
         plugin._build_storage()

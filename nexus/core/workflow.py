@@ -44,9 +44,11 @@ from nexus.core.workflow_engine.workflow_definition_loader import (
     build_dry_run_report_fields,
     build_prompt_context_text,
     build_workflow_steps,
+    parse_orchestration_config,
     parse_require_human_merge_approval,
     resolve_workflow_steps_list,
     resolve_next_agent_types_from_steps,
+    validate_orchestration_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -595,6 +597,12 @@ class WorkflowDefinition:
             raise ValueError("Workflow definition must include a non-empty steps list")
 
         require_human_merge_approval = parse_require_human_merge_approval(data)
+        orchestration_validation_errors = validate_orchestration_config(data)
+        if orchestration_validation_errors:
+            raise ValueError(
+                "Workflow definition contains invalid orchestration config:\n"
+                + "\n".join(f"  - {e}" for e in orchestration_validation_errors)
+            )
         steps = build_workflow_steps(
             data=data,
             steps_data=steps_data,
@@ -613,6 +621,8 @@ class WorkflowDefinition:
             steps=steps,
             metadata=workflow_metadata,
             require_human_merge_approval=require_human_merge_approval,
+            schema_version=str(data.get("schema_version", "1.0")),
+            orchestration=parse_orchestration_config(data),
         )
 
         # Apply workflow-level approval gates to all steps
@@ -790,7 +800,17 @@ class WorkflowDefinition:
             workflow_type=workflow_type,
             resolve_steps=WorkflowDefinition._resolve_steps,
         )
-        return DryRunReport(errors=errors, predicted_flow=predicted_flow)
+        orchestration_config: dict[str, Any] = {}
+        if isinstance(data, dict):
+            orchestration_errors = validate_orchestration_config(data)
+            errors.extend(orchestration_errors)
+            if not orchestration_errors:
+                orchestration_config = parse_orchestration_config(data).to_dict()
+        return DryRunReport(
+            errors=errors,
+            predicted_flow=predicted_flow,
+            orchestration_config=orchestration_config,
+        )
 
     @staticmethod
     def _slugify(text: str) -> str:

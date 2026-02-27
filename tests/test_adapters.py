@@ -719,3 +719,27 @@ class TestPostgreSQLStorageBackend:
         assert restored.id == "serde-test"
         assert len(restored.steps) == 1
         assert restored.steps[0].agent.name == "triage"
+
+    def test_workflow_serde_parses_string_false_orchestration_bools(self):
+        from nexus.adapters.storage._workflow_serde import dict_to_workflow
+
+        payload = {
+            "id": "serde-bools",
+            "name": "Serde Bools",
+            "version": "1.0",
+            "state": "pending",
+            "current_step": 0,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "metadata": {},
+            "steps": [],
+            "orchestration": {
+                "chaining_enabled": "false",
+                "require_completion_comment": "false",
+                "block_on_closed_issue": "false",
+            },
+        }
+        wf = dict_to_workflow(payload)
+        assert wf.orchestration.chaining_enabled is False
+        assert wf.orchestration.require_completion_comment is False
+        assert wf.orchestration.block_on_closed_issue is False

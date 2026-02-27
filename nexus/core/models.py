@@ -148,6 +148,43 @@ class WorkflowStep:
 
 
 @dataclass
+class WorkflowOrchestrationConfig:
+    """Workflow-level orchestration runtime settings parsed from YAML."""
+
+    interval_seconds: int = 15
+    completion_glob: str = ".nexus/tasks/nexus/completions/completion_summary_*.json"
+    dedupe_cache_size: int = 500
+    default_agent_timeout_seconds: int = 3600
+    liveness_miss_threshold: int = 3
+    timeout_action: str = "retry"
+    chaining_enabled: bool = True
+    require_completion_comment: bool = True
+    block_on_closed_issue: bool = True
+    max_retries_per_step: int = 2
+    backoff: str = "exponential"
+    initial_delay_seconds: float = 1.0
+    stale_running_step_action: str = "reconcile"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize orchestration config into a JSON-safe mapping."""
+        return {
+            "interval_seconds": self.interval_seconds,
+            "completion_glob": self.completion_glob,
+            "dedupe_cache_size": self.dedupe_cache_size,
+            "default_agent_timeout_seconds": self.default_agent_timeout_seconds,
+            "liveness_miss_threshold": self.liveness_miss_threshold,
+            "timeout_action": self.timeout_action,
+            "chaining_enabled": self.chaining_enabled,
+            "require_completion_comment": self.require_completion_comment,
+            "block_on_closed_issue": self.block_on_closed_issue,
+            "max_retries_per_step": self.max_retries_per_step,
+            "backoff": self.backoff,
+            "initial_delay_seconds": self.initial_delay_seconds,
+            "stale_running_step_action": self.stale_running_step_action,
+        }
+
+
+@dataclass
 class Workflow:
     """Complete workflow definition and state."""
 
@@ -163,6 +200,10 @@ class Workflow:
     completed_at: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     require_human_merge_approval: bool = True  # Workflow-level PR merge approval policy
+    schema_version: str = "1.0"
+    orchestration: WorkflowOrchestrationConfig = field(
+        default_factory=WorkflowOrchestrationConfig
+    )
 
     def get_step(self, step_num: int) -> WorkflowStep | None:
         """Get step by number."""
@@ -272,6 +313,7 @@ class DryRunReport:
 
     errors: list[str] = field(default_factory=list)
     predicted_flow: list[str] = field(default_factory=list)
+    orchestration_config: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_valid(self) -> bool:
