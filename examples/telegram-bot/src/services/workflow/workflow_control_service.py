@@ -15,6 +15,7 @@ from config import NEXUS_STORAGE_BACKEND
 from integrations.workflow_state_factory import get_storage_backend
 
 from nexus.adapters.git.utils import build_issue_url, resolve_repo
+from nexus.core.completion import budget_completion_payload
 from nexus.core.prompt_budget import apply_prompt_budget
 
 logger = logging.getLogger(__name__)
@@ -61,15 +62,16 @@ def _read_latest_completion_from_storage(issue_num: str) -> dict[str, Any] | Non
     payload = _run_coro_sync(_load)
     if not isinstance(payload, dict):
         return None
+    normalized = budget_completion_payload(payload)
 
     return {
-        "agent_type": str(payload.get("agent_type") or payload.get("_agent_type") or "")
+        "agent_type": str(normalized.get("agent_type") or normalized.get("_agent_type") or "")
         .strip()
         .lower(),
-        "next_agent": str(payload.get("next_agent") or "").strip().lower(),
-        "status": str(payload.get("status") or "").strip().lower(),
-        "is_workflow_done": bool(payload.get("is_workflow_done", False)),
-        "summary": payload,
+        "next_agent": str(normalized.get("next_agent") or "").strip().lower(),
+        "status": str(normalized.get("status") or "").strip().lower(),
+        "is_workflow_done": bool(normalized.get("is_workflow_done", False)),
+        "summary": normalized,
     }
 
 

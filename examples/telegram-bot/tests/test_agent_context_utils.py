@@ -53,3 +53,25 @@ def test_load_role_context_full_mode_applies_budget(tmp_path):
 
     assert len(out) <= 500
     assert "docs/LONG.md" in out
+
+
+def test_load_role_context_defaults_to_index_mode(tmp_path):
+    project_root = tmp_path / "workspace"
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "AGENTS.md").write_text("# Guide\nContext default should be retrieval-first.", encoding="utf-8")
+
+    agent_cfg = {
+        "context_path": "docs",
+        "context_files": ["AGENTS.md"],
+    }
+    out = load_role_context(
+        project_root=str(project_root),
+        agent_cfg=agent_cfg,
+        max_chars=260,
+        query="retrieval context",
+        summary_max_chars=120,
+    )
+
+    assert "Context index (retrieval mode)" in out
+    assert "docs/AGENTS.md" in out

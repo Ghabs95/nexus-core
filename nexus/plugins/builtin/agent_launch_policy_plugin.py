@@ -5,7 +5,7 @@ import os
 import re
 
 from nexus.core.completion import generate_completion_instructions
-from nexus.core.prompt_budget import prompt_prefix_fingerprint
+from nexus.core.prompt_budget import apply_prompt_budget, prompt_prefix_fingerprint
 from nexus.core.workflow import WorkflowDefinition
 
 logger = logging.getLogger(__name__)
@@ -16,6 +16,16 @@ class AgentLaunchPolicyPlugin:
 
     def __init__(self, config: dict | None = None):
         self.config = config or {}
+        self.prompt_max_chars = int(
+            self.config.get("ai_prompt_max_chars")
+            or os.getenv("AI_PROMPT_MAX_CHARS", "16000")
+            or 16000
+        )
+        self.summary_max_chars = int(
+            self.config.get("ai_context_summary_max_chars")
+            or os.getenv("AI_CONTEXT_SUMMARY_MAX_CHARS", "1200")
+            or 1200
+        )
 
     def build_agent_prompt(
         self,
@@ -32,6 +42,21 @@ class AgentLaunchPolicyPlugin:
     ) -> str:
         """Build launch prompt used by orchestrator agent invocation."""
         workflow_type = WorkflowDefinition.normalize_workflow_type(tier_name)
+        task_budget = apply_prompt_budget(
+            task_content or "",
+            max_chars=min(self.prompt_max_chars, 7000),
+            summary_max_chars=self.summary_max_chars,
+        )
+        task_payload = str(task_budget["text"])
+        continuation_payload = continuation_prompt
+        if continuation_prompt:
+            continuation_budget = apply_prompt_budget(
+                continuation_prompt,
+                max_chars=min(self.prompt_max_chars, 3000),
+                summary_max_chars=min(self.summary_max_chars, 800),
+            )
+            continuation_payload = str(continuation_budget["text"])
+
         instructions = self._get_comment_and_summary_instructions(
             issue_url=issue_url,
             agent_type=agent_type,
@@ -42,10 +67,10 @@ class AgentLaunchPolicyPlugin:
         )
 
         if continuation:
-            if continuation_prompt and continuation_prompt.startswith("You are @"):
+            if continuation_payload and continuation_payload.startswith("You are @"):
                 prompt = (
-                    f"{continuation_prompt}\n\n"
-                    f"Review the previous work in the GitHub comments and task file, then complete your step.\n\n"
+                    f"{continuation_payload}\n\n"
+                    f"Review the previous work in issue comments and task file, then complete your step.\n\n"
                     f"**GIT WORKFLOW (CRITICAL):**\n"
                     f"1. Check the issue body for **Target Branch** field (e.g., `feat/new-feature`)\n"
                     f"2. Identify the correct sub-repo within the workspace "
@@ -57,7 +82,7 @@ class AgentLaunchPolicyPlugin:
                     f"`git checkout main && git pull && git checkout -b <branch-name>`\n"
                     f"4. Make your changes and commit with descriptive messages\n"
                     f"5. Push the branch: `git push -u origin <branch-name>`\n"
-                    f"6. Include branch name in your GitHub comment "
+                    f"6. Include branch name in your issue comment "
                     f"(e.g., 'Pushed to feat/new-feature in backend-service')\n\n"
                     f"⛔ **GIT SAFETY RULES (STRICT):**\n"
                     f"❌ NEVER push to protected branches: `main`, `develop`, `master`, `test`, `staging`, "
@@ -72,7 +97,7 @@ class AgentLaunchPolicyPlugin:
                     f"Issue: {issue_url}\n"
                     f"Tier: {tier_name}\n"
                     f"Workflow Tier: {workflow_type}\n\n"
-                    f"Task context:\n{task_content}"
+                    f"Task context:\n{task_payload}"
                 )
                 logger.debug(
                     "Agent prompt built: chars=%s prefix_fp=%s mode=continuation",
@@ -81,7 +106,7 @@ class AgentLaunchPolicyPlugin:
                 )
                 return prompt
 
-            base_prompt = continuation_prompt or "Please continue with the next step."
+            base_prompt = continuation_payload or "Please continue with the next step."
             merge_policy = self._get_merge_policy_block(agent_type)
             prompt = (
                 f"You are a {agent_type} agent. You previously started working on this task:\n\n"
@@ -92,7 +117,7 @@ class AgentLaunchPolicyPlugin:
                 f"Issue: {issue_url}\n"
                 f"Tier: {tier_name}\n"
                 f"Workflow Tier: {workflow_type}\n\n"
-                f"Task content:\n{task_content}"
+                f"Task content:\n{task_payload}"
             )
             logger.debug(
                 "Agent prompt built: chars=%s prefix_fp=%s mode=continuation",
@@ -101,26 +126,44 @@ class AgentLaunchPolicyPlugin:
             )
             return prompt
 
-        prompt = (
-            f"You are a {agent_type} agent. A new task has arrived and a GitHub issue has been created.\n\n"
-            f"**YOUR JOB:** Analyze, triage, and route. DO NOT try to implement or invoke other agents.\n\n"
-            f"REQUIRED ACTIONS:\n"
-            f"1. Read the GitHub issue body and understand the task\n"
-            f"2. Analyze the codebase to assess scope and complexity\n"
-            f"3. Identify which sub-repo(s) are affected\n"
-            f"4. Determine severity (Critical/High/Medium/Low)\n"
-            f"5. Determine which agent type should handle it next\n\n"
-            f"**DO NOT:**\n"
-            f"❌ Read other agent configuration files\n"
-            f"❌ Use any 'invoke', 'task', or 'run tool' to start other agents\n"
-            f"❌ Try to implement the feature yourself\n\n"
-            f"{instructions}\n\n"
-            f"Runtime context:\n"
-            f"Issue: {issue_url}\n"
-            f"Tier: {tier_name}\n"
-            f"Workflow Tier: {workflow_type}\n\n"
-            f"Task details:\n{task_content}"
-        )
+        normalized_agent = str(agent_type or "").strip().lower()
+        if normalized_agent == "triage":
+            prompt = (
+                f"You are a {agent_type} agent. A new task has arrived and an issue has been created.\n\n"
+                f"**YOUR JOB:** Execute the `{agent_type}` workflow step for this issue.\n\n"
+                f"REQUIRED ACTIONS:\n"
+                f"1. Read the issue body and understand the task\n"
+                f"2. Perform triage work (classification, severity, routing) according to the agent definition\n"
+                f"3. Record outcomes and route to the correct next agent via completion output\n\n"
+                f"**DO NOT:**\n"
+                f"❌ Implement code changes during triage\n"
+                f"❌ Invoke, launch, or chain other agents directly\n\n"
+                f"{instructions}\n\n"
+                f"Runtime context:\n"
+                f"Issue: {issue_url}\n"
+                f"Tier: {tier_name}\n"
+                f"Workflow Tier: {workflow_type}\n\n"
+                f"Task details:\n{task_payload}"
+            )
+        else:
+            prompt = (
+                f"You are a {agent_type} agent. A new task has arrived and an issue has been created.\n\n"
+                f"**YOUR JOB:** Execute the `{agent_type}` workflow step for this issue.\n\n"
+                f"REQUIRED ACTIONS:\n"
+                f"1. Read the issue body and understand the task\n"
+                f"2. Perform your role-specific work for this step\n"
+                f"3. Keep changes focused and evidence-based\n"
+                f"4. Record outcomes and route to the correct next agent via completion output\n\n"
+                f"**DO NOT:**\n"
+                f"❌ Invoke, launch, or chain other agents directly\n"
+                f"❌ Edit unrelated files or expand scope beyond this step\n\n"
+                f"{instructions}\n\n"
+                f"Runtime context:\n"
+                f"Issue: {issue_url}\n"
+                f"Tier: {tier_name}\n"
+                f"Workflow Tier: {workflow_type}\n\n"
+                f"Task details:\n{task_payload}"
+            )
         logger.debug(
             "Agent prompt built: chars=%s prefix_fp=%s mode=initial",
             len(prompt),
@@ -135,18 +178,17 @@ class AgentLaunchPolicyPlugin:
             return ""
         return (
             "**⚠️ PR CREATION (REQUIRED if no PR exists):**\n"
-            "First check whether a PR already exists for the issue branch:\n"
-            "  `gh pr list --repo <REPO> --head <branch> --state open`\n"
-            "If none is found, CREATE the PR — this is always allowed:\n"
-            '  `gh pr create --title "<title>" --body "<body>" --base <base> --head <branch> --repo <REPO>`\n'
+            "First check whether a PR/MR already exists for the issue branch using the project's "
+            "Git platform tooling.\n"
+            "If none is found, CREATE the PR/MR — this is always allowed.\n"
             "For the title: derive it from the issue title using conventional commits format\n"
             '(e.g. "feat: add retry logic" or "fix: handle nil pointer" — NOT "fix: resolve #N").\n\n'
             "**⛔ PR MERGE POLICY (applies ONLY to merging, not creation):**\n"
             "This project enforces `merge_queue.review_mode: manual`.\n"
-            "You MUST NOT run `gh pr merge` or any merge command.\n"
+            "You MUST NOT run merge commands automatically.\n"
             "Instead:\n"
-            "1. Ensure the PR exists (create it if missing)\n"
-            "2. Verify the PR is ready (CI green, reviews approved)\n"
+            "1. Ensure the PR/MR exists (create it if missing)\n"
+            "2. Verify the PR/MR is ready (CI green, reviews approved)\n"
             "3. Post this comment on the issue:\n"
             "   `🚀 Deployment ready. PR requires human review before merge.`\n"
             "4. Do NOT merge. A human will merge after review.\n\n"
@@ -181,7 +223,7 @@ class AgentLaunchPolicyPlugin:
         nexus_dir: str,
         project_name: str = "",
     ) -> str:
-        """Return instructions for GitHub completion comment and summary file."""
+        """Return instructions for issue completion comment and summary file."""
         issue_match = re.search(r"/issues/(\d+)", issue_url or "")
         issue_num = issue_match.group(1) if issue_match else "UNKNOWN"
 

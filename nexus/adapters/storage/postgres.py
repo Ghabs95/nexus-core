@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from nexus.adapters.storage.base import StorageBackend
+from nexus.core.completion import budget_completion_payload
 from nexus.core.models import AuditEvent, Workflow, WorkflowState
 
 try:
@@ -378,7 +379,7 @@ class PostgreSQLStorageBackend(StorageBackend):
     def _sync_save_completion(
         self, issue_number: str, agent_type: str, data: dict[str, Any]
     ) -> str:
-        payload = dict(data or {})
+        payload = budget_completion_payload(data)
         status = str(payload.get("status") or "complete")
         payload["status"] = status
         payload.setdefault("issue_number", str(issue_number))
@@ -425,12 +426,16 @@ class PostgreSQLStorageBackend(StorageBackend):
                     payload = json.loads(row.data)
                 except Exception:
                     payload = {}
+                payload = budget_completion_payload(payload)
                 issue_number = str(row.issue_number or "").strip()
                 agent_type = str(row.agent_type or "").strip()
                 status = str(row.status or "complete").strip() or "complete"
                 payload["issue_number"] = issue_number
                 payload.setdefault("_issue_number", issue_number)
-                payload["agent_type"] = str(payload.get("agent_type") or agent_type).strip()
+                payload_agent = str(payload.get("agent_type") or "").strip()
+                if not payload_agent or payload_agent == "unknown":
+                    payload_agent = agent_type
+                payload["agent_type"] = payload_agent
                 payload.setdefault("_agent_type", agent_type)
                 payload["status"] = str(payload.get("status") or status).strip() or "complete"
                 payload["_db_id"] = row.id

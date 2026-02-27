@@ -111,7 +111,7 @@ class OpenAIProvider(AIProvider):
         ]
         # Attach issue URL as additional context when provided
         if context.issue_url:
-            messages[1]["content"] = f"Issue: {context.issue_url}\n\n{context.prompt}"
+            messages[1]["content"] = f"{context.prompt}\n\nIssue: {context.issue_url}"
 
         try:
             create_kwargs: dict = {

@@ -6,6 +6,7 @@ import os
 from nexus.core.completion import (
     CompletionSummary,
     DetectedCompletion,
+    budget_completion_payload,
     build_completion_comment,
     generate_completion_instructions,
     scan_for_completions,
@@ -66,6 +67,31 @@ class TestCompletionSummary:
         assert restored.agent_type == original.agent_type
         assert restored.next_agent == original.next_agent
         assert restored.verdict == original.verdict
+
+    def test_from_dict_budgets_verbose_payload_fields(self):
+        huge_line = "tool output " * 400
+        data = {
+            "status": "complete",
+            "agent_type": "debug",
+            "summary": huge_line,
+            "key_findings": [f"finding {idx} " + huge_line for idx in range(20)],
+            "next_agent": "reviewer",
+        }
+        s = CompletionSummary.from_dict(data)
+        assert len(s.summary) <= 900
+        assert len(s.key_findings) <= 9
+        assert "omitted for budget" in s.key_findings[-1]
+
+    def test_budget_completion_payload_trims_extra_large_string_fields(self):
+        payload = budget_completion_payload(
+            {
+                "status": "complete",
+                "agent_type": "developer",
+                "summary": "ok",
+                "huge_debug_blob": "x" * 5000,
+            }
+        )
+        assert len(payload["huge_debug_blob"]) <= 1200
 
 
 # ---------------------------------------------------------------------------

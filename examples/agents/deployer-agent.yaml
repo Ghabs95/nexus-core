@@ -57,19 +57,18 @@ spec:
     PR: {implementation_pr_url}
 
     **STEP 1 — ENSURE A PR EXISTS (always required):**
-    Check whether a PR already exists for this issue/branch:
-      `gh pr list --repo <REPO> --head <branch-name> --state open`
-    If no open PR is found, create one:
-      `gh pr create --title "<title>" --body "<body>" --base <base-branch> --head <branch-name> --repo <REPO>`
+    Check whether a PR/MR already exists for this issue/branch using the
+    project's Git platform tooling.
+    If no open review request exists, create one on the same platform.
     For the title: derive it from the issue title using conventional commits format
     (e.g. "feat: add retry logic for failed steps" — NOT "fix: resolve #N").
-    PR creation is ALWAYS allowed regardless of merge policy.
+    PR/MR creation is ALWAYS allowed regardless of merge policy.
 
     **STEP 2 — MERGE POLICY (CRITICAL — separate from PR creation):**
     - Check the project's `require_human_merge_approval` setting in project_config.yaml
     - If set to `always`: DO NOT merge. Post a comment:
       `🚀 Deployment ready. PR requires human review before merge.`
-      Then wait — do NOT run `gh pr merge`.
+      Then wait — do NOT run any merge command.
     - If set to `workflow-based`: Check the workflow step's approval_gates
     - If set to `never`: Proceed with merge (squash merge preferred)
     - When in doubt, DO NOT merge. Request human approval.

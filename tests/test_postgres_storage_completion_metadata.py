@@ -89,3 +89,44 @@ def test_sync_list_completions_includes_issue_and_agent_metadata(
     assert row["agent_type"] == "designer"
     assert row["_agent_type"] == "designer"
     assert row["status"] == "complete"
+
+
+def test_sync_list_completions_applies_completion_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_payload = {
+        "status": "complete",
+        "summary": "verbose output " * 1000,
+        "key_findings": [f"finding {idx}" for idx in range(20)],
+        "next_agent": "developer",
+    }
+    rows = [
+        type(
+            "_Row",
+            (),
+            {
+                "id": 8,
+                "issue_number": "99",
+                "agent_type": "reviewer",
+                "status": "complete",
+                "data": json.dumps(raw_payload),
+                "dedup_key": "99:reviewer:complete",
+                "created_at": datetime.now(tz=UTC),
+            },
+        )()
+    ]
+
+    backend = PostgreSQLStorageBackend.__new__(PostgreSQLStorageBackend)
+    backend._engine = object()
+
+    monkeypatch.setattr(
+        "nexus.adapters.storage.postgres.Session",
+        lambda _engine: _FakeSession(rows),
+    )
+
+    hydrated = backend._sync_list_completions(None)
+    assert len(hydrated) == 1
+
+    row = hydrated[0]
+    assert len(row["summary"]) <= 900
+    assert len(row["key_findings"]) <= 9

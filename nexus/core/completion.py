@@ -15,7 +15,18 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from nexus.core.prompt_budget import apply_prompt_budget
+
 logger = logging.getLogger(__name__)
+
+_COMPLETION_SUMMARY_MAX_CHARS = int(os.getenv("AI_COMPLETION_SUMMARY_MAX_CHARS", "900"))
+_COMPLETION_FINDING_MAX_CHARS = int(os.getenv("AI_COMPLETION_FINDING_MAX_CHARS", "260"))
+_COMPLETION_FINDINGS_MAX_ITEMS = int(os.getenv("AI_COMPLETION_FINDINGS_MAX_ITEMS", "8"))
+_COMPLETION_VERDICT_MAX_CHARS = int(os.getenv("AI_COMPLETION_VERDICT_MAX_CHARS", "280"))
+_COMPLETION_EFFORT_MAX_ITEMS = int(os.getenv("AI_COMPLETION_EFFORT_MAX_ITEMS", "12"))
+_COMPLETION_EFFORT_VALUE_MAX_CHARS = int(os.getenv("AI_COMPLETION_EFFORT_VALUE_MAX_CHARS", "180"))
+_COMPLETION_EXTRA_STRING_MAX_CHARS = int(os.getenv("AI_COMPLETION_EXTRA_STRING_MAX_CHARS", "1200"))
+_CONTEXT_SUMMARY_MAX_CHARS = int(os.getenv("AI_CONTEXT_SUMMARY_MAX_CHARS", "1200"))
 
 # Values that indicate "no next agent" / workflow is done
 _TERMINAL_VALUES = frozenset(
@@ -31,6 +42,115 @@ _TERMINAL_VALUES = frozenset(
         "",
     }
 )
+
+
+def _budget_text_field(value: Any, *, max_chars: int, summary_cap: int) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    budget = apply_prompt_budget(
+        text,
+        max_chars=max_chars,
+        summary_max_chars=min(summary_cap, max_chars),
+    )
+    return str(budget["text"]).strip()
+
+
+def _budget_token_field(value: Any, *, max_chars: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    if not text:
+        return ""
+    return text[:max_chars].strip()
+
+
+def _normalize_findings(value: Any) -> list[str]:
+    findings: list[str] = []
+    if isinstance(value, list):
+        source_items = value
+    elif value is None:
+        source_items = []
+    else:
+        source_items = [value]
+
+    for item in source_items:
+        finding = _budget_text_field(
+            item,
+            max_chars=_COMPLETION_FINDING_MAX_CHARS,
+            summary_cap=min(_CONTEXT_SUMMARY_MAX_CHARS, 180),
+        )
+        if finding:
+            findings.append(finding)
+
+    if len(findings) > _COMPLETION_FINDINGS_MAX_ITEMS:
+        omitted = len(findings) - _COMPLETION_FINDINGS_MAX_ITEMS
+        findings = findings[: _COMPLETION_FINDINGS_MAX_ITEMS]
+        findings.append(f"... {omitted} additional finding(s) omitted for budget.")
+    return findings
+
+
+def _normalize_effort_breakdown(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, str] = {}
+    for idx, (task, effort) in enumerate(value.items()):
+        if idx >= _COMPLETION_EFFORT_MAX_ITEMS:
+            break
+        key = _budget_text_field(
+            _budget_token_field(task, max_chars=80),
+            max_chars=80,
+            summary_cap=80,
+        )
+        effort_text = _budget_text_field(
+            effort,
+            max_chars=_COMPLETION_EFFORT_VALUE_MAX_CHARS,
+            summary_cap=min(_CONTEXT_SUMMARY_MAX_CHARS, 160),
+        )
+        if key and effort_text:
+            normalized[key] = effort_text
+    return normalized
+
+
+def budget_completion_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize + budget completion payload fields for compact handoff storage."""
+    payload = dict(data or {})
+    payload["status"] = _budget_token_field(payload.get("status", "complete"), max_chars=32)
+    payload["agent_type"] = _budget_token_field(payload.get("agent_type", "unknown"), max_chars=80)
+    payload["summary"] = _budget_text_field(
+        payload.get("summary", ""),
+        max_chars=_COMPLETION_SUMMARY_MAX_CHARS,
+        summary_cap=min(_CONTEXT_SUMMARY_MAX_CHARS, 700),
+    )
+    payload["key_findings"] = _normalize_findings(payload.get("key_findings", []))
+    payload["next_agent"] = _budget_token_field(payload.get("next_agent", ""), max_chars=80)
+    payload["verdict"] = _budget_text_field(
+        payload.get("verdict", ""),
+        max_chars=_COMPLETION_VERDICT_MAX_CHARS,
+        summary_cap=min(_CONTEXT_SUMMARY_MAX_CHARS, 220),
+    )
+    payload["effort_breakdown"] = _normalize_effort_breakdown(payload.get("effort_breakdown", {}))
+
+    for key in list(payload.keys()):
+        if key in {
+            "status",
+            "agent_type",
+            "summary",
+            "key_findings",
+            "next_agent",
+            "verdict",
+            "effort_breakdown",
+        }:
+            continue
+        value = payload.get(key)
+        if isinstance(value, str) and len(value) > _COMPLETION_EXTRA_STRING_MAX_CHARS:
+            payload[key] = _budget_text_field(
+                value,
+                max_chars=_COMPLETION_EXTRA_STRING_MAX_CHARS,
+                summary_cap=min(_CONTEXT_SUMMARY_MAX_CHARS, 700),
+            )
+
+    payload["status"] = payload["status"] or "complete"
+    payload["agent_type"] = payload["agent_type"] or "unknown"
+    return payload
 
 
 @dataclass
@@ -65,30 +185,35 @@ class CompletionSummary:
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "CompletionSummary":
         """Build a CompletionSummary from a raw JSON dict."""
+        payload = budget_completion_payload(data)
         return CompletionSummary(
-            status=data.get("status", "complete"),
-            agent_type=data.get("agent_type", "unknown"),
-            summary=data.get("summary", ""),
-            key_findings=data.get("key_findings", []),
-            next_agent=data.get("next_agent", ""),
-            verdict=data.get("verdict", ""),
-            effort_breakdown=data.get("effort_breakdown", {}),
-            raw=data,
+            status=str(payload.get("status", "complete")),
+            agent_type=str(payload.get("agent_type", "unknown")),
+            summary=str(payload.get("summary", "")),
+            key_findings=_normalize_findings(payload.get("key_findings", [])),
+            next_agent=str(payload.get("next_agent", "")),
+            verdict=str(payload.get("verdict", "")),
+            effort_breakdown=_normalize_effort_breakdown(payload.get("effort_breakdown", {})),
+            raw=payload,
         )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize back to a plain dict."""
-        d: dict[str, Any] = {
+        d: dict[str, Any] = budget_completion_payload(
+            {
             "status": self.status,
             "agent_type": self.agent_type,
             "summary": self.summary,
             "key_findings": self.key_findings,
             "next_agent": self.next_agent,
-        }
-        if self.verdict:
-            d["verdict"] = self.verdict
-        if self.effort_breakdown:
-            d["effort_breakdown"] = self.effort_breakdown
+            "verdict": self.verdict,
+            "effort_breakdown": self.effort_breakdown,
+            }
+        )
+        if not d.get("verdict"):
+            d.pop("verdict", None)
+        if not d.get("effort_breakdown"):
+            d.pop("effort_breakdown", None)
         return d
 
 
@@ -105,22 +230,34 @@ def build_completion_comment(completion: CompletionSummary) -> str:
     sections: list[str] = []
     sections.append("### ✅ Agent Completed")
 
-    if completion.summary:
-        sections.append(f"**Summary:** {completion.summary}")
+    summary_text = _budget_text_field(
+        completion.summary,
+        max_chars=_COMPLETION_SUMMARY_MAX_CHARS,
+        summary_cap=min(_CONTEXT_SUMMARY_MAX_CHARS, 700),
+    )
+    if summary_text:
+        sections.append(f"**Summary:** {summary_text}")
 
     if completion.status and completion.status != "complete":
         sections.append(f"**Status:** {completion.status}")
 
-    if completion.key_findings:
-        items = "\n".join(f"- {f}" for f in completion.key_findings)
+    findings = _normalize_findings(completion.key_findings)
+    if findings:
+        items = "\n".join(f"- {f}" for f in findings)
         sections.append(f"**Key Findings:**\n{items}")
 
-    if completion.effort_breakdown:
-        items = "\n".join(f"- {t}: {e}" for t, e in completion.effort_breakdown.items())
+    effort_breakdown = _normalize_effort_breakdown(completion.effort_breakdown)
+    if effort_breakdown:
+        items = "\n".join(f"- {t}: {e}" for t, e in effort_breakdown.items())
         sections.append(f"**Effort Breakdown:**\n{items}")
 
-    if completion.verdict:
-        sections.append(f"**Verdict:** {completion.verdict}")
+    verdict = _budget_text_field(
+        completion.verdict,
+        max_chars=_COMPLETION_VERDICT_MAX_CHARS,
+        summary_cap=min(_CONTEXT_SUMMARY_MAX_CHARS, 220),
+    )
+    if verdict:
+        sections.append(f"**Verdict:** {verdict}")
 
     if completion.next_agent and not completion.is_workflow_done:
         display_name = completion.next_agent.title()
@@ -151,7 +288,7 @@ def generate_completion_instructions(
     them.
 
     Args:
-        issue_number: GitHub issue number being worked on.
+        issue_number: Issue number being worked on.
         agent_type: The agent_type running this step.
         workflow_steps_text: Pre-formatted workflow steps text for context.
         nexus_dir: Name of the .nexus directory (default ".nexus").
@@ -224,9 +361,9 @@ def generate_completion_instructions(
         static_intro
         + f"{workflow_steps_text}\n\n"
         + runtime_context
-        + f"## Deliverable 1: Post a structured GitHub comment\n\n"
-        f"Use `gh issue comment {issue_number} --repo <REPO> --body '<comment>'` "
-        f"to post a **structured** comment.\n"
+        + f"## Deliverable 1: Post a structured issue comment\n\n"
+        f"Use your project's Git platform tooling (CLI/API/integration) to post a "
+        f"**structured** comment on issue #{issue_number}.\n"
         f"The comment MUST follow this format (adapt sections to your work):\n\n"
         f"```\n"
         f"## 🔍 <Step Name> Complete — <agent_type>\n\n"

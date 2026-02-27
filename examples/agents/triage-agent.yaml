@@ -2,7 +2,7 @@ apiVersion: "nexus-core/v1"
 kind: "Agent"
 metadata:
   name: "Triage"
-  description: "Analyzes GitHub issues and classifies them by type and priority"
+  description: "Analyzes git-platform issues and classifies them by type and priority"
   author: "Nexus Core Team"
   version: "0.1.0"
 
@@ -18,7 +18,7 @@ spec:
   
   # What this agent does
   purpose: |
-    Reads new GitHub issues, analyzes title/description, and:
+    Reads new issues, analyzes title/description, and:
     1. Classifies as: bug | feature | documentation | support
     2. Assigns priority: p0-critical | p1-high | p2-medium | p3-low
     3. Suggests appropriate labels and assignee
@@ -35,9 +35,9 @@ spec:
   inputs:
     issue_url:
       type: string
-      description: "GitHub issue URL"
+      description: "Issue URL"
       required: true
-      example: "https://github.com/Ghabs95/nexus-core/issues/42"
+      example: "https://git.example.com/org/repo/issues/42"
   
   # Output contract
   outputs:
@@ -52,7 +52,7 @@ spec:
     suggested_labels:
       type: array
       items: string
-      description: "Recommended GitHub labels"
+      description: "Recommended labels"
       example: [ "bug", "adapters/ai", "high-priority" ]
     reasoning:
       type: string
@@ -63,7 +63,7 @@ spec:
   
   # The AI prompt to use
   ai_instructions: |
-    Analyze this GitHub issue for the Nexus Core framework.
+    Analyze this issue for the Nexus Core framework.
     
     Issue Title: {issue_title}
     Issue Body: {issue_body}
@@ -97,7 +97,7 @@ spec:
   # Example run for testing
   example:
     input:
-      issue_url: "https://github.com/Ghabs95/nexus-core/issues/15"
+      issue_url: "https://git.example.com/org/repo/issues/15"
     expected_output:
       classification: "feature"
       priority: "p2-medium"

@@ -255,9 +255,9 @@ def load_role_context(
     if isinstance(configured_max, int) and configured_max > 0:
         max_chars = min(max_chars, configured_max)
 
-    resolved_mode = str(mode or agent_cfg.get("context_mode") or "full").strip().lower()
+    resolved_mode = str(mode or agent_cfg.get("context_mode") or "index").strip().lower()
     if resolved_mode not in {"full", "index"}:
-        resolved_mode = "full"
+        resolved_mode = "index"
 
     context_paths = normalize_paths(agent_cfg.get("context_path"))
     if not context_paths:

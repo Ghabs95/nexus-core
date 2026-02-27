@@ -92,10 +92,10 @@ spec:
   
   example:
     input:
-      issue_url: "https://github.com/Ghabs95/nexus-core/issues/28"
+      issue_url: "https://git.example.com/org/repo/issues/28"
       scope: "large"
     expected_output:
-      design_pr_url: "https://github.com/Ghabs95/nexus-core/pull/47"
+      design_pr_url: "https://git.example.com/org/repo/pulls/47"
       estimated_effort: "3-5 days"
       next_steps:
         - "Implement storage adapter interface"

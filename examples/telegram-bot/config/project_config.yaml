@@ -70,10 +70,10 @@ issue_triage:
 #     provider_preference: null  # Will use value from ai_tool_preferences
 ai_tool_preferences:
   triage: copilot["gpt-4o-mini"]        # Lightweight classification task
-  designer: gemini                      # UX/UI and product design
-  debug: copilot                        # Root-cause analysis
+  designer: gemini["gemini-2.0-flash"]  # UX/UI and product design (fast + cheap)
+  debug: copilot["gpt-4o-mini"]         # Root-cause analysis
   developer: codex                      # Code implementation
-  reviewer: copilot                     # Code/quality review
+  reviewer: copilot["gpt-4o-mini"]      # Code/quality review
   compliance: copilot["gpt-4o-mini"]    # Checklist-style security review
   deployer: copilot["gpt-4o-mini"]      # Mechanical deployment steps
   docs: gemini["gemini-2.0-flash"]      # Docs and summaries (fast + cheap)
@@ -119,10 +119,10 @@ nexus:
   # AI tool preferences for enterprise workflow agent types
   ai_tool_preferences:
     triage: copilot["gpt-4o-mini"]        # Lightweight classification
-    designer: copilot                     # Architecture proposals
-    debug: copilot                        # Root cause analysis
+    designer: gemini["gemini-2.0-flash"]  # Architecture proposals (fast + cheap)
+    debug: copilot["gpt-4o-mini"]         # Root cause analysis
     developer: codex                      # Code implementation
-    reviewer: copilot                     # PR reviews
+    reviewer: copilot["gpt-4o-mini"]      # PR reviews
     compliance: copilot["gpt-4o-mini"]    # Security/privacy review
     deployer: copilot["gpt-4o-mini"]      # Merge & release
     writer: gemini["gemini-2.0-flash"]    # Docs & close (fast + cheap)

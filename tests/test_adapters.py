@@ -488,6 +488,38 @@ class TestOpenAIProvider:
         finally:
             cleanup()
 
+    def test_execute_agent_appends_issue_context_after_prompt(self):
+        from nexus.adapters.ai.base import ExecutionContext
+
+        provider, mock_client, cleanup = self._make_provider()
+        try:
+            mock_choice = MagicMock()
+            mock_choice.message.content = "ok"
+            mock_choice.finish_reason = "stop"
+            mock_response = MagicMock()
+            mock_response.choices = [mock_choice]
+            mock_response.model = "gpt-4o"
+            mock_response.usage.prompt_tokens = 10
+            mock_response.usage.completion_tokens = 2
+            mock_response.usage.total_tokens = 12
+            mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+            ctx = ExecutionContext(
+                agent_name="triage",
+                prompt="Analyze this issue",
+                workspace=Path("/tmp"),
+                issue_url="https://github.com/org/repo/issues/42",
+            )
+            result = asyncio.run(provider.execute_agent(ctx))
+            assert result.success is True
+
+            payload = mock_client.chat.completions.create.await_args.kwargs
+            user_message = payload["messages"][1]["content"]
+            assert user_message.startswith("Analyze this issue")
+            assert user_message.endswith("Issue: https://github.com/org/repo/issues/42")
+        finally:
+            cleanup()
+
     def test_execute_agent_rate_limit(self):
         import nexus.adapters.ai.openai_provider as _mod
         from nexus.adapters.ai.base import ExecutionContext

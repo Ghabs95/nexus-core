@@ -14,7 +14,7 @@ spec:
   purpose: |
     After a debug agent identifies root cause or a design agent creates a proposal,
     this agent implements the actual code changes:
-    1. Reads the previous agent's analysis from GitHub comments
+    1. Reads the previous agent's analysis from issue comments
     2. Creates a feature/fix branch from develop (or main for hotfixes)
     3. Implements the required code changes
     4. Runs syntax/static validation before declaring completion
@@ -35,7 +35,7 @@ spec:
   inputs:
     issue_url:
       type: string
-      description: "URL to the GitHub issue being worked on"
+      description: "URL to the issue being worked on"
       required: true
     previous_analysis:
       type: string
@@ -65,13 +65,9 @@ spec:
 
     ## Before writing any code
 
-    Check whether there is already an open PR for this issue and whether it has
-    pending review comments requesting changes:
-    ```
-    gh pr list --repo <owner>/<repo> --state open --search "<issue_number>"
-    gh pr view <pr_number> --repo <owner>/<repo> --json reviews,comments
-    gh api repos/<owner>/<repo>/pulls/<pr_number>/comments
-    ```
+    Check whether there is already an open review request (PR/MR) for this issue
+    and whether it has pending review comments requesting changes, using the
+    project's Git platform tooling.
     If a reviewer has requested changes, **address those comments first** before
     adding any new functionality. Push directly to the existing branch — do not
     open a new PR.

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.completion import (
     CompletionSummary,
     DetectedCompletion,
+    budget_completion_payload,
     scan_for_completions,
 )
 
@@ -66,7 +67,11 @@ class CompletionStore:
                 raise RuntimeError("CompletionStore requires a StorageBackend for postgres mode")
             import asyncio
 
-            return asyncio.run(self._storage.save_completion(issue_number, agent_type, data))
+            return asyncio.run(
+                self._storage.save_completion(
+                    issue_number, agent_type, budget_completion_payload(data)
+                )
+            )
 
         # Filesystem: write JSON file (same as legacy)
         return self._save_to_filesystem(issue_number, agent_type, data)
@@ -105,11 +110,12 @@ class CompletionStore:
         import os
 
         # Find or create the completions directory
+        normalized = budget_completion_payload(data)
         completions_dir = os.path.join(
             self._base_dir,
             self._nexus_dir,
             "tasks",
-            data.get("_project", ""),
+            normalized.get("_project", ""),
             "completions",
         )
         os.makedirs(completions_dir, exist_ok=True)
@@ -118,7 +124,7 @@ class CompletionStore:
             f"completion_summary_{issue_number}.json",
         )
         with open(path, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2)
+            json.dump(normalized, fh, indent=2)
 
         dedup_key = f"{issue_number}:{agent_type}:{os.path.basename(path)}"
         logger.info("Saved filesystem completion: %s", path)
