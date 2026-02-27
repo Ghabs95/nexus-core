@@ -320,9 +320,16 @@ def test_build_storage_postgres_requires_dsn_or_config():
     """Postgres storage raises ValueError when no connection_string/env is given."""
     import pytest
 
+    # Ensure host environment does not satisfy Postgres config implicitly.
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.delenv("NEXUS_STORAGE_DSN", raising=False)
+
     plugin = WorkflowStateEnginePlugin({"storage_type": "postgres"})
-    with pytest.raises(ValueError, match="connection_string"):
-        plugin._build_storage()
+    try:
+        with pytest.raises(ValueError, match="connection_string"):
+            plugin._build_storage()
+    finally:
+        monkeypatch.undo()
 
 
 def test_build_storage_postgres_env_dsn(monkeypatch):

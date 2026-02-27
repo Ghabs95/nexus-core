@@ -226,11 +226,31 @@ class HostStateManager:
         return None
 
     @staticmethod
-    def register_launched_agent(issue_num: str, agent_name: str, pid: int) -> None:
+    def _launched_agent_key(issue_num: str, agent_name: str, nexus_id: str | None = None) -> str:
+        """Build launched-agent key with optional UNI identity scope."""
+        if nexus_id:
+            return f"{issue_num}_{agent_name}_{nexus_id}"
+        return f"{issue_num}_{agent_name}"
+
+    @staticmethod
+    def _legacy_launched_agent_key(issue_num: str, agent_name: str) -> str:
+        """Build backwards-compatible launched-agent key."""
+        return f"{issue_num}_{agent_name}"
+
+    @staticmethod
+    def register_launched_agent(
+        issue_num: str, agent_name: str, pid: int, nexus_id: str | None = None
+    ) -> None:
         """Register a newly launched agent."""
         data = HostStateManager.load_launched_agents()
-        key = f"{issue_num}_{agent_name}"
-        data[key] = {"issue": issue_num, "agent": agent_name, "pid": pid, "timestamp": time.time()}
+        key = HostStateManager._launched_agent_key(issue_num, agent_name, nexus_id=nexus_id)
+        data[key] = {
+            "issue": issue_num,
+            "agent": agent_name,
+            "pid": pid,
+            "nexus_id": nexus_id,
+            "timestamp": time.time(),
+        }
         HostStateManager.save_launched_agents(data)
         logger.info(f"Registered launched agent: {agent_name} (PID: {pid}) for issue #{issue_num}")
         HostStateManager.emit_transition(
@@ -239,16 +259,21 @@ class HostStateManager:
                 "issue": issue_num,
                 "agent": agent_name,
                 "pid": pid,
+                "nexus_id": nexus_id,
                 "timestamp": data[key]["timestamp"],
             },
         )
 
     @staticmethod
-    def was_recently_launched(issue_num: str, agent_name: str) -> bool:
+    def was_recently_launched(issue_num: str, agent_name: str, nexus_id: str | None = None) -> bool:
         """Check if agent was recently launched (within 2-minute window)."""
         data = HostStateManager.load_launched_agents()
-        key = f"{issue_num}_{agent_name}"
-        return key in data
+        key = HostStateManager._launched_agent_key(issue_num, agent_name, nexus_id=nexus_id)
+        if key in data:
+            return True
+        # Legacy fallback for pre-UNI keys.
+        legacy_key = HostStateManager._legacy_launched_agent_key(issue_num, agent_name)
+        return legacy_key in data
 
     @staticmethod
     def load_tracked_issues() -> dict[str, dict]:

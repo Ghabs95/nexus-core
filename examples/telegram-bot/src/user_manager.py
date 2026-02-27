@@ -9,6 +9,7 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from config import NEXUS_STATE_DIR
 
@@ -31,12 +32,24 @@ class UserProject:
 class User:
     """Represents a Nexus user."""
 
-    telegram_id: int
+    nexus_id: str
+    identities: dict[str, str]  # platform -> platform_user_id
     username: str | None
     first_name: str | None
     projects: dict[str, UserProject]  # project_name -> UserProject
     created_at: str  # ISO format timestamp
     last_seen: str  # ISO format timestamp
+
+    @property
+    def telegram_id(self) -> int | None:
+        """Compatibility accessor for legacy Telegram-specific callers/tests."""
+        value = self.identities.get("telegram")
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            return None
 
 
 class UserManager:
@@ -50,8 +63,21 @@ class UserManager:
             data_file: Path to user data JSON file
         """
         self.data_file = data_file
-        self.users: dict[int, User] = {}
+        self.users: dict[str, User] = {}
+        self.identity_map: dict[str, str] = {}
         self.load_users()
+
+    @staticmethod
+    def _identity_key(platform: str, platform_user_id: str) -> str:
+        return f"{platform.lower().strip()}:{str(platform_user_id).strip()}"
+
+    def _index_identity(self, nexus_id: str, platform: str, platform_user_id: str) -> None:
+        platform_key = platform.lower().strip()
+        platform_value = str(platform_user_id).strip()
+        if not platform_key or not platform_value:
+            return
+        self.users[nexus_id].identities[platform_key] = platform_value
+        self.identity_map[self._identity_key(platform_key, platform_value)] = nexus_id
 
     def load_users(self) -> None:
         """Load user data from file."""
@@ -60,26 +86,61 @@ class UserManager:
                 with open(self.data_file) as f:
                     data = json.load(f)
 
-                for user_id_str, user_data in data.items():
-                    user_id = int(user_id_str)
-
-                    # Convert projects dict
-                    projects = {}
-                    for proj_name, proj_data in user_data.get("projects", {}).items():
-                        projects[proj_name] = UserProject(
-                            project_name=proj_data["project_name"],
-                            tracked_issues=proj_data["tracked_issues"],
-                            last_activity=proj_data["last_activity"],
+                users_blob = data.get("users")
+                if isinstance(users_blob, dict):
+                    for nexus_id, user_data in users_blob.items():
+                        projects = {}
+                        for proj_name, proj_data in user_data.get("projects", {}).items():
+                            projects[proj_name] = UserProject(
+                                project_name=proj_data["project_name"],
+                                tracked_issues=proj_data["tracked_issues"],
+                                last_activity=proj_data["last_activity"],
+                            )
+                        user = User(
+                            nexus_id=nexus_id,
+                            identities={
+                                str(k): str(v)
+                                for k, v in (user_data.get("identities") or {}).items()
+                                if k and v is not None
+                            },
+                            username=user_data.get("username"),
+                            first_name=user_data.get("first_name"),
+                            projects=projects,
+                            created_at=user_data["created_at"],
+                            last_seen=user_data["last_seen"],
                         )
+                        self.users[nexus_id] = user
+                        for platform, platform_user_id in user.identities.items():
+                            self.identity_map[self._identity_key(platform, platform_user_id)] = nexus_id
 
-                    self.users[user_id] = User(
-                        telegram_id=user_data["telegram_id"],
-                        username=user_data.get("username"),
-                        first_name=user_data.get("first_name"),
-                        projects=projects,
-                        created_at=user_data["created_at"],
-                        last_seen=user_data["last_seen"],
-                    )
+                    # Reconcile optional persisted map with in-memory derived values.
+                    persisted_map = data.get("identity_map") or {}
+                    if isinstance(persisted_map, dict):
+                        for identity_key, nexus_id in persisted_map.items():
+                            if nexus_id in self.users:
+                                self.identity_map[str(identity_key)] = str(nexus_id)
+                else:
+                    # Legacy format migration (top-level keyed by telegram_id).
+                    for user_id_str, user_data in data.items():
+                        telegram_id = str(user_data.get("telegram_id", user_id_str)).strip()
+                        projects = {}
+                        for proj_name, proj_data in user_data.get("projects", {}).items():
+                            projects[proj_name] = UserProject(
+                                project_name=proj_data["project_name"],
+                                tracked_issues=proj_data["tracked_issues"],
+                                last_activity=proj_data["last_activity"],
+                            )
+                        nexus_id = str(uuid4())
+                        self.users[nexus_id] = User(
+                            nexus_id=nexus_id,
+                            identities={"telegram": telegram_id},
+                            username=user_data.get("username"),
+                            first_name=user_data.get("first_name"),
+                            projects=projects,
+                            created_at=user_data["created_at"],
+                            last_seen=user_data["last_seen"],
+                        )
+                        self.identity_map[self._identity_key("telegram", telegram_id)] = nexus_id
 
                 logger.info(f"Loaded {len(self.users)} users from {self.data_file}")
             else:
@@ -93,20 +154,22 @@ class UserManager:
         """Save user data to file."""
         try:
             # Convert to JSON-serializable format
-            data = {}
-            for user_id, user in self.users.items():
+            users_blob: dict[str, dict] = {}
+            for nexus_id, user in self.users.items():
                 projects_dict = {}
                 for proj_name, proj in user.projects.items():
                     projects_dict[proj_name] = asdict(proj)
 
-                data[str(user_id)] = {
-                    "telegram_id": user.telegram_id,
+                users_blob[nexus_id] = {
+                    "nexus_id": user.nexus_id,
+                    "identities": user.identities,
                     "username": user.username,
                     "first_name": user.first_name,
                     "projects": projects_dict,
                     "created_at": user.created_at,
                     "last_seen": user.last_seen,
                 }
+            data = {"users": users_blob, "identity_map": self.identity_map}
 
             # Ensure directory exists
             self.data_file.parent.mkdir(parents=True, exist_ok=True)
@@ -120,11 +183,79 @@ class UserManager:
         except Exception as e:
             logger.error(f"Error saving user data: {e}")
 
+    def resolve_nexus_id(self, platform: str, platform_user_id: str | int) -> str | None:
+        """Resolve canonical nexus_id for a platform identity."""
+        return self.identity_map.get(self._identity_key(platform, str(platform_user_id)))
+
+    def get_user_by_nexus_id(self, nexus_id: str) -> User | None:
+        """Return user by canonical nexus_id."""
+        return self.users.get(str(nexus_id))
+
+    def link_identity(self, nexus_id: str, platform: str, platform_user_id: str) -> None:
+        """Link an additional platform identity to an existing nexus user."""
+        nexus_key = str(nexus_id)
+        if nexus_key not in self.users:
+            raise KeyError(f"Unknown nexus_id: {nexus_id}")
+        identity_key = self._identity_key(platform, str(platform_user_id))
+        existing_nexus_id = self.identity_map.get(identity_key)
+        if existing_nexus_id and existing_nexus_id != nexus_key:
+            raise ValueError(
+                f"Identity '{identity_key}' is already linked to nexus_id={existing_nexus_id}"
+            )
+        self._index_identity(nexus_key, platform, str(platform_user_id))
+        self.users[nexus_key].last_seen = datetime.now().isoformat()
+        self.save_users()
+
+    def get_or_create_user_by_identity(
+        self,
+        platform: str,
+        platform_user_id: str | int,
+        username: str | None = None,
+        first_name: str | None = None,
+    ) -> User:
+        """Get existing user by platform identity or create a new UNI user."""
+        platform_key = str(platform).lower().strip()
+        identity_value = str(platform_user_id).strip()
+        now = datetime.now().isoformat()
+        identity_key = self._identity_key(platform_key, identity_value)
+        nexus_id = self.identity_map.get(identity_key)
+
+        if nexus_id and nexus_id in self.users:
+            user = self.users[nexus_id]
+            user.last_seen = now
+            if username:
+                user.username = username
+            if first_name:
+                user.first_name = first_name
+            self._index_identity(user.nexus_id, platform_key, identity_value)
+            self.save_users()
+            return user
+
+        user = User(
+            nexus_id=str(uuid4()),
+            identities={platform_key: identity_value},
+            username=username,
+            first_name=first_name,
+            projects={},
+            created_at=now,
+            last_seen=now,
+        )
+        self.users[user.nexus_id] = user
+        self.identity_map[identity_key] = user.nexus_id
+        self.save_users()
+        logger.info(
+            "Created new UNI user: nexus_id=%s via %s identity %s",
+            user.nexus_id,
+            platform_key,
+            identity_value,
+        )
+        return user
+
     def get_or_create_user(
         self, telegram_id: int, username: str | None = None, first_name: str | None = None
     ) -> User:
         """
-        Get existing user or create new one.
+        Get existing user or create new one (legacy Telegram compatibility).
 
         Args:
             telegram_id: Telegram user ID
@@ -134,31 +265,28 @@ class UserManager:
         Returns:
             User object
         """
-        now = datetime.now().isoformat()
+        return self.get_or_create_user_by_identity("telegram", str(telegram_id), username, first_name)
 
-        if telegram_id in self.users:
-            # Update user info
-            user = self.users[telegram_id]
-            user.last_seen = now
-            if username:
-                user.username = username
-            if first_name:
-                user.first_name = first_name
-        else:
-            # Create new user
-            user = User(
-                telegram_id=telegram_id,
-                username=username,
-                first_name=first_name,
-                projects={},
-                created_at=now,
-                last_seen=now,
+    def track_issue_by_nexus_id(self, nexus_id: str, project: str, issue_number: str) -> None:
+        """Track an issue for a canonical UNI user."""
+        user = self.get_user_by_nexus_id(nexus_id)
+        if not user:
+            raise KeyError(f"Unknown nexus_id: {nexus_id}")
+
+        if project not in user.projects:
+            user.projects[project] = UserProject(
+                project_name=project,
+                tracked_issues=[],
+                last_activity=datetime.now().isoformat(),
             )
-            self.users[telegram_id] = user
-            logger.info(f"Created new user: {telegram_id} (@{username})")
 
-        self.save_users()
-        return user
+        project_data = user.projects[project]
+        if issue_number not in project_data.tracked_issues:
+            project_data.tracked_issues.append(issue_number)
+            project_data.last_activity = datetime.now().isoformat()
+            user.last_seen = datetime.now().isoformat()
+            logger.info("User %s now tracking %s#%s", user.nexus_id, project, issue_number)
+            self.save_users()
 
     def track_issue(
         self,
@@ -179,20 +307,24 @@ class UserManager:
             first_name: User's first name
         """
         user = self.get_or_create_user(telegram_id, username, first_name)
+        self.track_issue_by_nexus_id(user.nexus_id, project, issue_number)
 
-        # Get or create project tracking
-        if project not in user.projects:
-            user.projects[project] = UserProject(
-                project_name=project, tracked_issues=[], last_activity=datetime.now().isoformat()
-            )
+    def untrack_issue_by_nexus_id(self, nexus_id: str, project: str, issue_number: str) -> bool:
+        """Stop tracking an issue for a canonical UNI user."""
+        user = self.get_user_by_nexus_id(nexus_id)
+        if not user or project not in user.projects:
+            return False
 
-        # Add issue if not already tracked
         project_data = user.projects[project]
-        if issue_number not in project_data.tracked_issues:
-            project_data.tracked_issues.append(issue_number)
+        if issue_number in project_data.tracked_issues:
+            project_data.tracked_issues.remove(issue_number)
             project_data.last_activity = datetime.now().isoformat()
-            logger.info(f"User {telegram_id} now tracking {project}#{issue_number}")
+            user.last_seen = datetime.now().isoformat()
+            logger.info("User %s stopped tracking %s#%s", user.nexus_id, project, issue_number)
             self.save_users()
+            return True
+
+        return False
 
     def untrack_issue(self, telegram_id: int, project: str, issue_number: str) -> bool:
         """
@@ -206,23 +338,29 @@ class UserManager:
         Returns:
             True if issue was untracked, False if it wasn't being tracked
         """
-        if telegram_id not in self.users:
+        nexus_id = self.resolve_nexus_id("telegram", telegram_id)
+        if not nexus_id:
             return False
+        return self.untrack_issue_by_nexus_id(nexus_id, project, issue_number)
 
-        user = self.users[telegram_id]
+    def get_user_tracked_issues_by_nexus_id(
+        self, nexus_id: str, project: str | None = None
+    ) -> dict[str, list[str]]:
+        """Get all tracked issues for a canonical UNI user."""
+        user = self.get_user_by_nexus_id(nexus_id)
+        if not user:
+            return {}
 
-        if project not in user.projects:
-            return False
+        if project:
+            if project in user.projects:
+                return {project: user.projects[project].tracked_issues}
+            return {}
 
-        project_data = user.projects[project]
-        if issue_number in project_data.tracked_issues:
-            project_data.tracked_issues.remove(issue_number)
-            project_data.last_activity = datetime.now().isoformat()
-            logger.info(f"User {telegram_id} stopped tracking {project}#{issue_number}")
-            self.save_users()
-            return True
-
-        return False
+        result = {}
+        for proj_name, proj_data in user.projects.items():
+            if proj_data.tracked_issues:
+                result[proj_name] = proj_data.tracked_issues
+        return result
 
     def get_user_tracked_issues(
         self, telegram_id: int, project: str | None = None
@@ -237,26 +375,12 @@ class UserManager:
         Returns:
             Dict mapping project names to lists of issue numbers
         """
-        if telegram_id not in self.users:
+        nexus_id = self.resolve_nexus_id("telegram", telegram_id)
+        if not nexus_id:
             return {}
+        return self.get_user_tracked_issues_by_nexus_id(nexus_id, project)
 
-        user = self.users[telegram_id]
-
-        if project:
-            # Return specific project
-            if project in user.projects:
-                return {project: user.projects[project].tracked_issues}
-            return {}
-
-        # Return all projects
-        result = {}
-        for proj_name, proj_data in user.projects.items():
-            if proj_data.tracked_issues:
-                result[proj_name] = proj_data.tracked_issues
-
-        return result
-
-    def get_issue_trackers(self, project: str, issue_number: str) -> list[int]:
+    def get_issue_tracker_nexus_ids(self, project: str, issue_number: str) -> list[str]:
         """
         Get all users tracking a specific issue.
 
@@ -265,16 +389,44 @@ class UserManager:
             issue_number: Git issue number
 
         Returns:
-            List of Telegram user IDs
+            List of canonical nexus IDs
         """
-        trackers = []
+        trackers: list[str] = []
 
-        for user_id, user in self.users.items():
+        for nexus_id, user in self.users.items():
             if project in user.projects:
                 if issue_number in user.projects[project].tracked_issues:
-                    trackers.append(user_id)
+                    trackers.append(nexus_id)
 
         return trackers
+
+    def get_issue_trackers(self, project: str, issue_number: str) -> list[int]:
+        """Compatibility helper returning Telegram IDs for issue trackers."""
+        telegram_ids: list[int] = []
+        for nexus_id in self.get_issue_tracker_nexus_ids(project, issue_number):
+            telegram_id = self.users[nexus_id].telegram_id
+            if telegram_id is not None:
+                telegram_ids.append(telegram_id)
+        return telegram_ids
+
+    def get_user_stats_by_nexus_id(self, nexus_id: str) -> dict:
+        """Get statistics for a canonical UNI user."""
+        user = self.get_user_by_nexus_id(nexus_id)
+        if not user:
+            return {"exists": False}
+
+        total_issues = sum(len(proj.tracked_issues) for proj in user.projects.values())
+        return {
+            "exists": True,
+            "nexus_id": user.nexus_id,
+            "identities": user.identities,
+            "username": user.username,
+            "first_name": user.first_name,
+            "projects": list(user.projects.keys()),
+            "total_tracked_issues": total_issues,
+            "created_at": user.created_at,
+            "last_seen": user.last_seen,
+        }
 
     def get_user_stats(self, telegram_id: int) -> dict:
         """
@@ -286,22 +438,13 @@ class UserManager:
         Returns:
             Dict with user statistics
         """
-        if telegram_id not in self.users:
+        nexus_id = self.resolve_nexus_id("telegram", telegram_id)
+        if not nexus_id:
             return {"exists": False}
-
-        user = self.users[telegram_id]
-
-        total_issues = sum(len(proj.tracked_issues) for proj in user.projects.values())
-
-        return {
-            "exists": True,
-            "username": user.username,
-            "first_name": user.first_name,
-            "projects": list(user.projects.keys()),
-            "total_tracked_issues": total_issues,
-            "created_at": user.created_at,
-            "last_seen": user.last_seen,
-        }
+        stats = self.get_user_stats_by_nexus_id(nexus_id)
+        stats.pop("identities", None)
+        stats.pop("nexus_id", None)
+        return stats
 
     def get_all_users_stats(self) -> dict:
         """
