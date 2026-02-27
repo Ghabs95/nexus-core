@@ -301,7 +301,7 @@ def test_build_storage_file_env_var(tmp_path, monkeypatch):
     from nexus.adapters.storage.file import FileStorage
 
     monkeypatch.setenv("NEXUS_STORAGE_DIR", str(tmp_path))
-    monkeypatch.delenv("NEXUS_STORAGE_TYPE", raising=False)
+    monkeypatch.delenv("NEXUS_STORAGE_BACKEND", raising=False)
     plugin = WorkflowStateEnginePlugin({})
     storage = plugin._build_storage()
     assert isinstance(storage, FileStorage)
@@ -332,7 +332,7 @@ def test_build_storage_postgres_env_dsn(monkeypatch):
     from nexus.adapters.storage.postgres import PostgreSQLStorageBackend
 
     fake_dsn = "postgresql+psycopg2://user:pass@localhost/testdb"
-    monkeypatch.setenv("NEXUS_STORAGE_TYPE", "postgres")
+    monkeypatch.setenv("NEXUS_STORAGE_BACKEND", "postgres")
     monkeypatch.setenv("NEXUS_STORAGE_DSN", fake_dsn)
 
     # Patch the constructor to avoid a real DB connection.

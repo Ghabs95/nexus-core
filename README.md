@@ -328,7 +328,7 @@ DATABASE_URL=postgresql://user:pass@localhost/nexus
 GITHUB_TOKEN=ghp_your_token
 
 # Storage Configuration (Alternative to YAML)
-NEXUS_STORAGE_TYPE=postgres
+NEXUS_STORAGE_BACKEND=postgres
 NEXUS_STORAGE_DSN=postgresql://user:pass@localhost/nexus
 NEXUS_STORAGE_DIR=./data
 

@@ -15,7 +15,7 @@ from nexus.core.workflow import WorkflowDefinition, WorkflowEngine
 
 logger = logging.getLogger(__name__)
 
-_STORAGE_TYPE_ENV = "NEXUS_STORAGE_TYPE"
+_STORAGE_TYPE_ENV = "NEXUS_STORAGE_BACKEND"
 _STORAGE_DSN_ENV = "NEXUS_STORAGE_DSN"
 _STORAGE_DIR_ENV = "NEXUS_STORAGE_DIR"
 
@@ -31,7 +31,7 @@ class WorkflowStateEnginePlugin:
        :class:`~nexus.core.workflow.WorkflowEngine` directly (highest priority).
     2. ``storage`` config key — a pre-built :class:`~nexus.adapters.storage.base.StorageBackend`
        instance.
-    3. ``storage_type`` config key (or ``NEXUS_STORAGE_TYPE`` env var):
+    3. ``storage_type`` config key (or ``NEXUS_STORAGE_BACKEND`` env var):
 
        * ``"file"`` (default) — JSON file storage.  Requires either
          ``storage_dir`` config key or ``NEXUS_STORAGE_DIR`` env var.
@@ -52,7 +52,7 @@ class WorkflowStateEnginePlugin:
 
     Example — Postgres via environment variables::
 
-        NEXUS_STORAGE_TYPE=postgres
+        NEXUS_STORAGE_BACKEND=postgres
         NEXUS_STORAGE_DSN=postgresql+psycopg2://user:pass@host/db
     """
 
