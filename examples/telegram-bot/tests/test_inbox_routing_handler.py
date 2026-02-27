@@ -3,6 +3,13 @@ import pytest
 from handlers import inbox_routing_handler as routing
 
 
+@pytest.fixture(autouse=True)
+def _force_file_inbox_backend(monkeypatch):
+    """Prevent tests from writing into a live Postgres inbox queue."""
+    monkeypatch.setattr(routing, "get_inbox_storage_backend", lambda: "file")
+    monkeypatch.setattr(routing, "enqueue_task", lambda **_kwargs: 0)
+
+
 class _FakeOrchestrator:
     def __init__(self, payload):
         self.payload = payload

@@ -62,7 +62,11 @@ from integrations.notifications import (
     emit_alert,
     send_notification,
 )
-from orchestration.plugin_runtime import get_webhook_policy_plugin
+from orchestration.plugin_runtime import (
+    get_webhook_policy_plugin,
+    get_workflow_state_plugin,
+)
+from orchestration.nexus_core_helpers import get_workflow_definition_path
 from runtime.agent_launcher import launch_next_agent
 from services.webhook_issue_service import handle_issue_opened_event as _handle_issue_opened_event
 from services.webhook_comment_service import (
@@ -178,6 +182,56 @@ def _notify_lifecycle(message: str) -> bool:
     return emit_alert(message, severity="info", source="webhook_server")
 
 
+def _get_runtime_workflow_plugin():
+    """Build workflow-state plugin for webhook-triggered manual resets."""
+    from integrations.workflow_state_factory import get_workflow_state
+
+    workflow_state = get_workflow_state()
+    return get_workflow_state_plugin(
+        storage_dir=NEXUS_CORE_STORAGE_DIR,
+        storage_type=("postgres" if NEXUS_WORKFLOW_BACKEND == "postgres" else "file"),
+        storage_config=(
+            {"connection_string": NEXUS_STORAGE_DSN}
+            if NEXUS_WORKFLOW_BACKEND == "postgres" and NEXUS_STORAGE_DSN
+            else {}
+        ),
+        issue_to_workflow_id=lambda n: workflow_state.get_workflow_id(n),
+        issue_to_workflow_map_setter=lambda n, w: workflow_state.map_issue(n, w),
+        workflow_definition_path_resolver=get_workflow_definition_path,
+        clear_pending_approval=lambda n: workflow_state.clear_pending_approval(n),
+        cache_key="workflow:state-engine:webhook-runtime",
+    )
+
+
+def _reset_workflow_to_agent(issue_number: str, agent_ref: str) -> bool:
+    """Realign workflow RUNNING step before manual webhook-driven launch."""
+    try:
+        workflow_plugin = _get_runtime_workflow_plugin()
+    except Exception as exc:
+        logger.warning(
+            "Could not initialize workflow plugin for manual override reset issue #%s -> %s: %s",
+            issue_number,
+            agent_ref,
+            exc,
+        )
+        return False
+
+    try:
+        return bool(
+            asyncio.run(
+                workflow_plugin.reset_to_agent_for_issue(str(issue_number), str(agent_ref))
+            )
+        )
+    except Exception as exc:
+        logger.warning(
+            "Manual override reset failed for issue #%s -> %s: %s",
+            issue_number,
+            agent_ref,
+            exc,
+        )
+        return False
+
+
 def verify_signature(payload_body, signature_header):
     """Verify Git webhook signature."""
     policy = _get_webhook_policy()
@@ -237,6 +291,7 @@ def handle_issue_comment(payload, event):
         processed_events=processed_events,
         launch_next_agent=launch_next_agent,
         check_and_notify_pr=check_and_notify_pr,
+        reset_workflow_to_agent=_reset_workflow_to_agent,
     )
 
 

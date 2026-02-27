@@ -229,6 +229,7 @@ from nexus.core.completion import scan_for_completions
 from nexus.core.utils.logging_filters import install_secret_redaction
 from nexus.plugins.builtin.ai_runtime_plugin import AIProvider
 from orchestration.ai_orchestrator import get_orchestrator
+from orchestration.nexus_core_helpers import get_workflow_definition_path
 from orchestration.plugin_runtime import (
     get_profiled_plugin,
     get_runtime_ops_plugin,
@@ -498,6 +499,8 @@ _WORKFLOW_STATE_PLUGIN_KWARGS = {
         else {}
     ),
     "issue_to_workflow_id": lambda n: _get_wf_state().get_workflow_id(n),
+    "issue_to_workflow_map_setter": lambda n, w: _get_wf_state().map_issue(n, w),
+    "workflow_definition_path_resolver": get_workflow_definition_path,
     "clear_pending_approval": lambda n: _get_wf_state().clear_pending_approval(n),
     "audit_log": AuditStore.audit_log,
 }

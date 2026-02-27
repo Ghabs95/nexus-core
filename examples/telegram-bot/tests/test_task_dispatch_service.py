@@ -61,10 +61,11 @@ def test_handle_new_task_happy_path_smoke(tmp_path):
 
     workflow_plugin.create_workflow_for_issue = _create_workflow_for_issue
 
-    captured = {"create_issue_called": False, "rename_called": False}
+    captured = {"create_issue_called": False, "rename_called": False, "create_issue_kwargs": None}
 
     def _create_issue(**kwargs):
         captured["create_issue_called"] = True
+        captured["create_issue_kwargs"] = kwargs
         return "https://github.com/acme/repo/issues/77"
 
     def _rename_task_file_and_sync_issue_body(**kwargs):
@@ -115,6 +116,7 @@ def test_handle_new_task_happy_path_smoke(tmp_path):
     )
 
     assert captured["create_issue_called"] is True
+    assert captured["create_issue_kwargs"]["dedupe_key"] == "feature_123.md"
     assert captured["rename_called"] is True
     assert pid_tool["pid"] == 1234
     assert (active_dir / "feature_77.md").exists()

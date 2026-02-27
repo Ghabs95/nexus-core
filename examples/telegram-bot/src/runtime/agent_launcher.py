@@ -89,6 +89,7 @@ _NON_AGENT_TRIGGER_SOURCES = {
     "pr_opened",
     "completion-scan",
     "orchestrator",
+    "orphan-recovery",
     "dead-agent-retry",
     "orphan-timeout-retry",
     "timeout-retry",
@@ -166,7 +167,17 @@ def _load_issue_body_from_project_repo(issue_number: str, preferred_repo: str | 
         candidate_repos = preferred_pairs + other_pairs
 
     for project_key, repo_name in candidate_repos:
-        platform = _get_git_platform_client(repo_name, project_name=project_key)
+        try:
+            platform = _get_git_platform_client(repo_name, project_name=project_key)
+        except Exception as exc:
+            logger.warning(
+                "Skipping issue probe for issue #%s in %s (%s): %s",
+                issue_number,
+                repo_name,
+                project_key,
+                exc,
+            )
+            continue
         if not platform:
             continue
 

@@ -41,6 +41,7 @@ def handle_issue_comment_event(
     processed_events: set[str],
     launch_next_agent,
     check_and_notify_pr,
+    reset_workflow_to_agent=None,
 ) -> dict[str, Any]:
     """Handle parsed issue_comment event."""
     action = event.get("action")
@@ -90,6 +91,29 @@ def handle_issue_comment_event(
             next_agent,
             mentions,
         )
+        if callable(reset_workflow_to_agent):
+            try:
+                reset_ok = bool(reset_workflow_to_agent(issue_number, next_agent))
+            except Exception as exc:
+                logger.warning(
+                    "⚠️ Manual override reset failed for issue #%s -> @%s: %s",
+                    issue_number,
+                    next_agent,
+                    exc,
+                )
+            else:
+                if reset_ok:
+                    logger.info(
+                        "🧭 Manual override reset workflow for issue #%s to @%s",
+                        issue_number,
+                        next_agent,
+                    )
+                else:
+                    logger.warning(
+                        "⚠️ Manual override could not reset workflow for issue #%s to @%s",
+                        issue_number,
+                        next_agent,
+                    )
 
     if is_completion and not next_agent:
         logger.info("✅ Workflow completion detected for issue #%s", issue_number)

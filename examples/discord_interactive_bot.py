@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 async def main():
-    bot_token = os.environ.get("DISCORD_BOT_TOKEN", "fake.discord.token.here")
+    bot_token = os.environ.get("DISCORD_TOKEN", "fake.discord.token.here")
 
     registry = AdapterRegistry()
     config = {

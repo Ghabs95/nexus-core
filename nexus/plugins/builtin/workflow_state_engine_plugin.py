@@ -246,6 +246,71 @@ class WorkflowStateEnginePlugin:
 
         return self.config.get("workflow_definition_path")
 
+    @staticmethod
+    def _infer_project_and_tier_from_workflow_id(
+        workflow_id: str, issue_number: str
+    ) -> tuple[str | None, str | None]:
+        """Infer ``(project_name, tier_name)`` from workflow id format ``project-<issue>-<tier>``."""
+        issue_key = str(issue_number or "").strip()
+        parts = [part for part in str(workflow_id or "").strip().split("-") if part]
+        if not issue_key or len(parts) < 3:
+            return None, None
+
+        try:
+            issue_idx = parts.index(issue_key)
+        except ValueError:
+            return None, None
+
+        project_name = "-".join(parts[:issue_idx]).strip()
+        tier_name = "-".join(parts[issue_idx + 1 :]).strip()
+        if not project_name or not tier_name:
+            return None, None
+        return project_name, tier_name
+
+    async def _recover_missing_workflow(
+        self, issue_number: str, workflow_id: str, engine: WorkflowEngine
+    ) -> Any | None:
+        """Best-effort recovery when mapping exists but workflow row is missing."""
+        project_name, tier_name = self._infer_project_and_tier_from_workflow_id(
+            workflow_id, issue_number
+        )
+        if not project_name or not tier_name:
+            logger.warning(
+                "Could not infer project/tier from missing workflow id '%s' (issue #%s)",
+                workflow_id,
+                issue_number,
+            )
+            return None
+
+        logger.warning(
+            "Missing workflow row for issue #%s (%s). Attempting recovery from workflow definition.",
+            issue_number,
+            workflow_id,
+        )
+
+        created_id = await self.create_workflow_for_issue(
+            issue_number=str(issue_number),
+            issue_title=f"issue-{issue_number}",
+            project_name=project_name,
+            tier_name=tier_name,
+            task_type=str(self.config.get("default_task_type", "feature")),
+            description=f"Recovered workflow for issue #{issue_number}",
+        )
+        if not created_id:
+            return None
+
+        try:
+            await engine.start_workflow(created_id)
+        except Exception as exc:
+            logger.debug(
+                "Recovery start_workflow skipped for issue #%s (%s): %s",
+                issue_number,
+                created_id,
+                exc,
+            )
+
+        return await engine.get_workflow(workflow_id)
+
     def _resolve_issue_url(self, issue_number: str) -> str | None:
         resolver = self.config.get("issue_url_resolver")
         if callable(resolver):
@@ -611,12 +676,14 @@ class WorkflowStateEnginePlugin:
         engine = self._get_engine()
         workflow = await engine.get_workflow(workflow_id)
         if not workflow:
-            logger.warning(
-                "reset_to_agent_for_issue: workflow %s not found (issue #%s)",
-                workflow_id,
-                issue_number,
-            )
-            return False
+            workflow = await self._recover_missing_workflow(issue_number, workflow_id, engine)
+            if not workflow:
+                logger.warning(
+                    "reset_to_agent_for_issue: workflow %s not found (issue #%s)",
+                    workflow_id,
+                    issue_number,
+                )
+                return False
 
         target_step = self._match_step_by_ref(workflow, agent_ref)
         if not target_step:

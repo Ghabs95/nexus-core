@@ -106,16 +106,30 @@ def test_agent_launcher_resolves_issue_body_from_matching_project_repo(monkeypat
     import runtime.agent_launcher as agent_launcher
 
     class PluginA:
-        def get_issue(self, issue_number, fields):
-            return {
-                "body": "**Task File:** `/tmp/base/workspace-b/.nexus/tasks/project-b/active/issue_43.md`"
-            }
+        async def get_issue(self, issue_number):
+            return type(
+                "Issue",
+                (),
+                {
+                    "body": (
+                        "**Task File:** "
+                        "`/tmp/base/workspace-b/.nexus/tasks/project-b/active/issue_43.md`"
+                    )
+                },
+            )()
 
     class PluginB:
-        def get_issue(self, issue_number, fields):
-            return {
-                "body": "**Task File:** `/tmp/base/workspace-b/.nexus/tasks/project-b/active/issue_43.md`"
-            }
+        async def get_issue(self, issue_number):
+            return type(
+                "Issue",
+                (),
+                {
+                    "body": (
+                        "**Task File:** "
+                        "`/tmp/base/workspace-b/.nexus/tasks/project-b/active/issue_43.md`"
+                    )
+                },
+            )()
 
     plugins = {
         "org/repo-a": PluginA(),
@@ -139,7 +153,11 @@ def test_agent_launcher_resolves_issue_body_from_matching_project_repo(monkeypat
             },
         },
     )
-    monkeypatch.setattr(agent_launcher, "_get_issue_plugin", lambda repo: plugins.get(repo))
+    monkeypatch.setattr(
+        agent_launcher,
+        "_get_git_platform_client",
+        lambda repo, project_name=None: plugins.get(repo),
+    )
 
     body, repo, task_file = agent_launcher._load_issue_body_from_project_repo("43")
 
@@ -161,7 +179,7 @@ def test_launch_next_agent_uses_issue_body_for_shared_active_task_file(monkeypat
     monkeypatch.setattr(
         agent_launcher,
         "_load_issue_body_from_project_repo",
-        lambda issue_number: (
+        lambda issue_number, preferred_repo=None: (
             issue_body,
             "org/repo-b",
             "/tmp/base/.nexus/tasks/nexus/active/task_feature-pick.md",
@@ -240,6 +258,57 @@ def test_resolve_project_for_repo_matches_gitlab_secondary_repo(monkeypatch):
     )
 
     assert inbox_processor._resolve_project_for_repo("sampleco/mobile-app") == "sampleco"
+
+
+def test_issue_body_resolution_skips_project_probe_failures(monkeypatch):
+    import runtime.agent_launcher as agent_launcher
+
+    class _Issue:
+        def __init__(self, body: str):
+            self.body = body
+
+    class _Platform:
+        async def get_issue(self, issue_number: str):
+            return _Issue(body=f"Nexus issue body for {issue_number}")
+
+    monkeypatch.setattr(agent_launcher, "PROJECT_CONFIG", {
+        "project_alpha": {
+            "workspace": "project_alpha",
+            "git_platform": "gitlab",
+            "git_repo": "project_alpha/workflows",
+        },
+        "nexus": {
+            "workspace": "ghabs",
+            "git_platform": "github",
+            "git_repo": "Ghabs95/nexus-core",
+        },
+    })
+    monkeypatch.setattr(
+        agent_launcher,
+        "_iter_project_configs",
+        lambda cfg, _get_repos: list(cfg.items()),
+    )
+    monkeypatch.setattr(
+        agent_launcher,
+        "_project_repos",
+        lambda _project_key, cfg, _get_repos: [cfg.get("git_repo")] if cfg.get("git_repo") else [],
+    )
+    monkeypatch.setattr(agent_launcher, "_db_only_task_mode", lambda: True)
+    monkeypatch.setattr(agent_launcher, "get_repos", lambda _project: [])
+
+    def _fake_client(repo_name: str, project_name: str | None = None):
+        if project_name == "project_alpha":
+            raise ValueError("GITLAB_TOKEN is required for gitlab projects")
+        return _Platform()
+
+    monkeypatch.setattr(agent_launcher, "_get_git_platform_client", _fake_client)
+    monkeypatch.setattr(agent_launcher, "_run_coro_sync", lambda coro_factory: __import__("asyncio").run(coro_factory()))
+
+    body, repo, task_file = agent_launcher._load_issue_body_from_project_repo("88")
+
+    assert "Nexus issue body" in body
+    assert repo == "Ghabs95/nexus-core"
+    assert task_file == ""
 
 
 @patch("webhook_server._notify_lifecycle", return_value=True)

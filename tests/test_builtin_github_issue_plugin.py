@@ -89,3 +89,19 @@ def test_builtin_plugin_issue_ops(monkeypatch):
     assert commands[5][1] is True
     assert commands[6][0][:3] == ["gh", "issue", "list"]
     assert commands[6][1] is True
+
+
+def test_builtin_plugin_ensure_label_returns_true_when_label_exists(monkeypatch):
+    plugin = GitHubIssueCLIPlugin({"repo": "owner/repo", "max_attempts": 2, "timeout": 30})
+
+    class _ExistsResult:
+        returncode = 1
+        stdout = ""
+        stderr = 'label with name "agent:requested" already exists'
+
+    def _fake_run(cmd, check, timeout, capture_output, text):
+        return _ExistsResult()
+
+    monkeypatch.setattr("nexus.plugins.builtin.github_issue_plugin.subprocess.run", _fake_run)
+
+    assert plugin.ensure_label("agent:requested", "E6E6FA", "Requested") is True

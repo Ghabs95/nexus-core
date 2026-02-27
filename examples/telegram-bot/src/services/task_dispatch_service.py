@@ -281,6 +281,9 @@ def handle_new_task(
     )
     issue_title = f"[{project_name}] {prefix}/{slug}"
     branch_name = f"{prefix}/{slug}"
+    dedupe_key = os.path.basename(str(filepath or "")).strip()
+    if not dedupe_key:
+        dedupe_key = None
 
     task_file_line = f"\n**Task File:** `{new_filepath}`" if new_filepath else ""
     issue_body = f"""## Task
@@ -304,6 +307,7 @@ def handle_new_task(
         workflow_label=workflow_label,
         task_type=task_type,
         repo_key=repo_key,
+        dedupe_key=dedupe_key,
     )
 
     issue_num = ""

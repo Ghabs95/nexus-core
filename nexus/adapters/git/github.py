@@ -50,8 +50,9 @@ class GitHubPlatform(GitPlatform):
             )
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:
-            logger.error(f"gh command failed: {e.stderr}")
-            raise RuntimeError(f"GitHub CLI error: {e.stderr}")
+            stderr = (e.stderr or "").strip()
+            logger.error(f"gh command failed: {stderr}")
+            raise RuntimeError(f"GitHub CLI error: {stderr}")
         except subprocess.TimeoutExpired:
             logger.error(f"gh command timed out after {timeout}s")
             raise RuntimeError("GitHub CLI command timed out")
@@ -90,19 +91,6 @@ class GitHubPlatform(GitPlatform):
             args.extend(["--label", ",".join(labels)])
 
         fields = "number,title,body,state,labels,createdAt,updatedAt,url"
-        json_args = [*args, "--json", fields]
-
-        try:
-            output = self._run_gh_command(json_args)
-            data = json.loads(output)
-            return self._parse_issue(data)
-        except RuntimeError as exc:
-            if "unknown flag: --json" not in str(exc):
-                raise
-            logger.warning(
-                "gh issue create does not support --json in this environment; falling back to create+view"
-            )
-
         create_output = self._run_gh_command(args)
         issue_ref = str(create_output or "").strip().splitlines()[-1].strip()
         if not issue_ref:
@@ -292,7 +280,8 @@ class GitHubPlatform(GitPlatform):
         description: str = "",
     ) -> bool:
         """Ensure a GitHub label exists via gh CLI."""
-        args = [
+        cmd = [
+            "gh",
             "label",
             "create",
             str(name),
@@ -300,15 +289,33 @@ class GitHubPlatform(GitPlatform):
             str(color),
             "--description",
             str(description or ""),
+            "--repo",
+            self.repo,
         ]
+        env = None
+        if self.token:
+            import os
+
+            env = os.environ.copy()
+            env["GITHUB_TOKEN"] = self.token
         try:
-            self._run_gh_command(args, timeout=20)
-            return True
-        except RuntimeError as exc:
-            msg = str(exc).lower()
-            if "already exists" in msg:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+                env=env,
+            )
+            if result.returncode == 0:
                 return True
-            logger.warning("Failed to ensure GitHub label %s: %s", name, exc)
+            stderr = (result.stderr or "").strip()
+            if "already exists" in stderr.lower():
+                return True
+            logger.warning("Failed to ensure GitHub label %s: %s", name, stderr or result.stdout)
+            return False
+        except subprocess.TimeoutExpired:
+            logger.warning("Timed out ensuring GitHub label %s", name)
             return False
 
     async def create_pr_from_changes(

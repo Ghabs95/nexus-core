@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+import os
 from typing import Any
 
 from config import NEXUS_STORAGE_DSN
@@ -22,6 +23,10 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+_DEDUP_WINDOW_SECONDS = max(0, int(os.getenv("NEXUS_INBOX_DEDUPE_WINDOW_SECONDS", "900")))
+_DONE_DEDUP_WINDOW_SECONDS = max(
+    0, int(os.getenv("NEXUS_INBOX_DONE_DEDUPE_WINDOW_SECONDS", "86400"))
+)
 
 
 def _require_sqlalchemy() -> None:
@@ -112,14 +117,83 @@ def enqueue_task(
 ) -> int:
     """Insert a task into postgres inbox queue and return row id."""
     engine = _get_engine()
+    normalized_project = str(project_key)
+    normalized_workspace = str(workspace)
+    normalized_filename = str(filename)
+    normalized_content = str(markdown_content)
+    now = datetime.now(tz=UTC)
     with Session(engine) as session:
+        existing = (
+            session.query(_InboxTaskRow)
+            .filter(_InboxTaskRow.project_key == normalized_project)
+            .filter(_InboxTaskRow.workspace == normalized_workspace)
+            .filter(_InboxTaskRow.filename == normalized_filename)
+            .order_by(_InboxTaskRow.id.desc())
+            .first()
+        )
+        if existing:
+            status = str(existing.status or "").lower()
+            if status in {"pending", "processing"}:
+                logger.warning(
+                    "Duplicate inbox enqueue suppressed: id=%s project=%s workspace=%s filename=%s status=%s",
+                    existing.id,
+                    normalized_project,
+                    normalized_workspace,
+                    normalized_filename,
+                    existing.status,
+                )
+                return int(existing.id)
+            if status == "done" and _DONE_DEDUP_WINDOW_SECONDS > 0:
+                done_cutoff = now - timedelta(seconds=_DONE_DEDUP_WINDOW_SECONDS)
+                reference_time = existing.processed_at or existing.created_at
+                if isinstance(reference_time, datetime):
+                    if reference_time.tzinfo is None:
+                        reference_time = reference_time.replace(tzinfo=UTC)
+                    if reference_time >= done_cutoff:
+                        logger.warning(
+                            "Duplicate done-task enqueue suppressed: id=%s project=%s workspace=%s filename=%s age_window=%ss",
+                            existing.id,
+                            normalized_project,
+                            normalized_workspace,
+                            normalized_filename,
+                            _DONE_DEDUP_WINDOW_SECONDS,
+                        )
+                        return int(existing.id)
+
+        if _DEDUP_WINDOW_SECONDS > 0:
+            dedupe_cutoff = now - timedelta(seconds=_DEDUP_WINDOW_SECONDS)
+            exact_existing = (
+                session.query(_InboxTaskRow)
+                .filter(_InboxTaskRow.project_key == normalized_project)
+                .filter(_InboxTaskRow.workspace == normalized_workspace)
+                .filter(_InboxTaskRow.filename == normalized_filename)
+                .filter(_InboxTaskRow.markdown_content == normalized_content)
+                .filter(_InboxTaskRow.created_at >= dedupe_cutoff)
+                .order_by(_InboxTaskRow.id.desc())
+                .first()
+            )
+            if exact_existing and str(exact_existing.status or "").lower() in {
+                "pending",
+                "processing",
+                "done",
+            }:
+                logger.warning(
+                    "Duplicate inbox enqueue suppressed (exact match): id=%s project=%s workspace=%s filename=%s status=%s",
+                    exact_existing.id,
+                    normalized_project,
+                    normalized_workspace,
+                    normalized_filename,
+                    exact_existing.status,
+                )
+                return int(exact_existing.id)
+
         row = _InboxTaskRow(
-            project_key=str(project_key),
-            workspace=str(workspace),
-            filename=str(filename),
-            markdown_content=str(markdown_content),
+            project_key=normalized_project,
+            workspace=normalized_workspace,
+            filename=normalized_filename,
+            markdown_content=normalized_content,
             status="pending",
-            created_at=datetime.now(tz=UTC),
+            created_at=now,
         )
         session.add(row)
         session.commit()
@@ -132,13 +206,16 @@ def claim_pending_tasks(*, limit: int, worker_id: str) -> list[InboxQueueTask]:
     engine = _get_engine()
     claimed: list[InboxQueueTask] = []
     now = datetime.now(tz=UTC)
+    claim_limit = max(1, int(limit))
+    # Scan a wider window so we can suppress duplicate rows and still return up to claim_limit tasks.
+    scan_limit = max(claim_limit, claim_limit * 5)
 
     with Session(engine) as session:
         query = (
             session.query(_InboxTaskRow)
             .filter(_InboxTaskRow.status == "pending")
             .order_by(_InboxTaskRow.id.asc())
-            .limit(max(1, int(limit)))
+            .limit(scan_limit)
             .with_for_update(skip_locked=True)
         )
         rows = query.all()
@@ -147,6 +224,38 @@ def claim_pending_tasks(*, limit: int, worker_id: str) -> list[InboxQueueTask]:
             return []
 
         for row in rows:
+            prior_nonfailed = (
+                session.query(_InboxTaskRow.id, _InboxTaskRow.status)
+                .filter(_InboxTaskRow.project_key == row.project_key)
+                .filter(_InboxTaskRow.workspace == row.workspace)
+                .filter(_InboxTaskRow.filename == row.filename)
+                .filter(_InboxTaskRow.id < row.id)
+                .filter(_InboxTaskRow.status.in_(("pending", "processing", "done")))
+                .order_by(_InboxTaskRow.id.asc())
+                .first()
+            )
+            if prior_nonfailed:
+                prior_id, prior_status = prior_nonfailed
+                row.status = "done"
+                row.processed_at = now
+                row.error = (
+                    "Duplicate queue row suppressed; "
+                    f"prior row id={int(prior_id)} status={str(prior_status)}"
+                )[:2000]
+                logger.warning(
+                    "Duplicate pending inbox row suppressed at claim time: "
+                    "id=%s duplicate_of=%s project=%s workspace=%s filename=%s",
+                    row.id,
+                    prior_id,
+                    row.project_key,
+                    row.workspace,
+                    row.filename,
+                )
+                continue
+
+            if len(claimed) >= claim_limit:
+                continue
+
             row.status = "processing"
             row.claimed_by = worker_id
             row.claimed_at = now

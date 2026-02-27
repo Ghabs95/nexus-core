@@ -195,6 +195,7 @@ class NexusAgentRuntime(AgentRuntime):
         *,
         trigger_source: str = "orchestrator",
         exclude_tools: list[str] | None = None,
+        repo_override: str | None = None,
     ) -> tuple[int | None, str | None]:
         state = self.get_workflow_state(str(issue_number))
         if state in {"COMPLETED", "FAILED", "CANCELLED"}:
@@ -213,6 +214,7 @@ class NexusAgentRuntime(AgentRuntime):
             next_agent=agent_type,
             trigger_source=trigger_source,
             exclude_tools=exclude_tools,
+            repo_override=repo_override,
         )
 
     def load_launched_agents(self, recent_only: bool = True) -> dict[str, dict]:

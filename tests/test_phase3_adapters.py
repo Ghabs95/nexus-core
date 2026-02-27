@@ -7,7 +7,7 @@ extras installed.
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -236,22 +236,29 @@ class TestGitHubPlatform:
 
     def test_ensure_label_returns_true_on_success(self):
         platform = self._make_platform()
-        with patch.object(platform, "_run_gh_command", return_value="") as mock_run:
+        with patch("nexus.adapters.git.github.subprocess.run") as mock_run:
+            mock_run.return_value = Mock(returncode=0, stderr="", stdout="")
             ok = asyncio.run(platform.ensure_label("bug", color="FF0000", description="Bug label"))
         assert ok is True
         mock_run.assert_called_once()
-        args = mock_run.call_args.args[0]
-        assert args[:3] == ["label", "create", "bug"]
-        assert "--color" in args
-        assert "--description" in args
+        cmd = mock_run.call_args.args[0]
+        assert cmd[:4] == ["gh", "label", "create", "bug"]
+        assert "--repo" in cmd
+        assert "--color" in cmd
+        assert "--description" in cmd
 
     def test_ensure_label_returns_true_when_already_exists(self):
         platform = self._make_platform()
-        with patch.object(platform, "_run_gh_command", side_effect=RuntimeError("label already exists")):
+        with patch("nexus.adapters.git.github.subprocess.run") as mock_run:
+            mock_run.return_value = Mock(
+                returncode=1,
+                stderr='label with name "bug" already exists; use `--force` to update',
+                stdout="",
+            )
             ok = asyncio.run(platform.ensure_label("bug", color="FF0000"))
         assert ok is True
 
-    def test_create_issue_falls_back_when_issue_create_json_is_unsupported(self):
+    def test_create_issue_uses_create_then_view_json(self):
         platform = self._make_platform()
         created_issue = {
             "number": 123,
@@ -263,20 +270,16 @@ class TestGitHubPlatform:
             "updatedAt": "2026-02-01T10:00:00Z",
             "url": "https://github.com/owner/repo/issues/123",
         }
-        side_effects = [
-            RuntimeError("GitHub CLI error: unknown flag: --json"),
-            "https://github.com/owner/repo/issues/123",
-            json.dumps(created_issue),
-        ]
+        side_effects = ["https://github.com/owner/repo/issues/123", json.dumps(created_issue)]
         with patch.object(platform, "_run_gh_command", side_effect=side_effects) as mock_run:
             issue = asyncio.run(platform.create_issue("New issue", "Body", labels=["bug"]))
 
         assert issue.number == 123
         assert issue.url.endswith("/123")
-        create_args = mock_run.call_args_list[1].args[0]
+        create_args = mock_run.call_args_list[0].args[0]
         assert create_args[:3] == ["issue", "create", "--title"]
         assert "--json" not in create_args
-        view_args = mock_run.call_args_list[2].args[0]
+        view_args = mock_run.call_args_list[1].args[0]
         assert view_args[:3] == ["issue", "view", "123"]
 
     def test_merge_pull_request_builds_expected_flags(self):

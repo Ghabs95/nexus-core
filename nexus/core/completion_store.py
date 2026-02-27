@@ -138,7 +138,12 @@ class CompletionStore:
             results.append(
                 DetectedCompletion(
                     file_path=f"db://{row.get('_db_id', 'unknown')}",
-                    issue_number=str(row.get("issue_number", row.get("_issue_number", ""))),
+                    issue_number=str(
+                        row.get("issue_number")
+                        or row.get("_issue_number")
+                        or row.get("issue_num")
+                        or ""
+                    ),
                     summary=summary,
                 )
             )

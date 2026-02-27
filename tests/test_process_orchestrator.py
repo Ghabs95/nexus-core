@@ -757,3 +757,4 @@ class TestCheckStuckAgents:
 
         assert runtime.alerts == []
         assert runtime.launched == []
+        assert not any(event == "STEP_TIMEOUT" for _, event, _ in runtime.audit_events)

@@ -22,7 +22,16 @@ def invoke_codex_cli(
     if not check_tool_available(codex_provider):
         raise tool_unavailable_error("Codex CLI not available")
 
-    cmd = [codex_cli_path, "exec"]
+    # Force writable workspace + network permission so Codex can post issue comments
+    # and write completion summaries during workflow handoff.
+    cmd = [
+        codex_cli_path,
+        "exec",
+        "--sandbox",
+        "workspace-write",
+        "-c",
+        'sandbox_permissions=["network-access"]',
+    ]
     if codex_model:
         cmd.extend(["--model", codex_model])
     cmd.append(agent_prompt)
@@ -43,6 +52,9 @@ def invoke_codex_cli(
         merged_env = {**os.environ}
         if env:
             merged_env.update(env)
+        # Ensure inherited host sandbox flags don't force-disable network for
+        # Codex child commands (e.g., gh issue comment/view).
+        merged_env.pop("CODEX_SANDBOX_NETWORK_DISABLED", None)
         process = subprocess.Popen(
             cmd,
             cwd=workspace_dir,

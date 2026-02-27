@@ -449,6 +449,55 @@ async def test_reset_to_agent_for_issue_rewinds_completed_workflow():
     assert str(status["current_agent"]).lower() == "developer"
 
 
+@pytest.mark.asyncio
+async def test_reset_to_agent_for_issue_recovers_missing_workflow_from_mapping(tmp_path):
+    """When mapping exists but workflow row is missing, reset should recover then rewind."""
+    workflow_yaml = tmp_path / "workflow.yaml"
+    workflow_yaml.write_text(
+        "\n".join(
+            [
+                "name: Demo Flow",
+                "full_workflow:",
+                "  steps:",
+                "    - name: triage",
+                "      agent_type: triage",
+                "    - name: develop",
+                "      agent_type: developer",
+                "    - name: review",
+                "      agent_type: reviewer",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    storage = InMemoryStorage()
+    engine = WorkflowEngine(storage=storage)
+    issue_map = {"88": "nexus-88-full"}
+
+    plugin = WorkflowStateEnginePlugin(
+        {
+            "engine_factory": lambda: engine,
+            "issue_to_workflow_id": lambda n: issue_map.get(str(n)),
+            "issue_to_workflow_map_setter": lambda n, w: issue_map.__setitem__(str(n), str(w)),
+            "workflow_definition_path_resolver": (
+                lambda project: str(workflow_yaml) if str(project) == "nexus" else None
+            ),
+            "default_task_type": "feature",
+        }
+    )
+
+    assert await engine.get_workflow("nexus-88-full") is None
+
+    rewound = await plugin.reset_to_agent_for_issue("88", "developer")
+    assert rewound is True
+
+    status = await plugin.get_workflow_status("88")
+    assert status is not None
+    assert status["state"] == WorkflowState.RUNNING.value
+    assert str(status["current_step_name"]).lower() == "develop"
+    assert str(status["current_agent"]).lower() in {"develop", "developer"}
+
+
 # ---------------------------------------------------------------------------
 # Idempotency ledger tests
 # ---------------------------------------------------------------------------

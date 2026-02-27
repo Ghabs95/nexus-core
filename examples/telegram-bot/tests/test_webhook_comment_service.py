@@ -68,3 +68,55 @@ def test_comment_service_chains_next_agent():
     assert result["status"] == "agent_launched"
     assert result["next_agent"] == "reviewer"
     assert "comment_3" in processed
+
+
+def test_manual_override_resets_workflow_before_launch():
+    processed = set()
+    reset_calls = []
+    launch_calls = []
+
+    result = handle_issue_comment_event(
+        event={
+            "action": "created",
+            "comment_id": 4,
+            "comment_body": "Please continue with @Designer",
+            "issue_number": "88",
+            "comment_author": "Ghabs95",
+            "issue": {"user": {"login": "Ghabs95"}},
+        },
+        logger=MagicMock(),
+        policy=_Policy(),
+        processed_events=processed,
+        launch_next_agent=lambda **kwargs: (launch_calls.append(kwargs), (2222, "codex"))[1],
+        check_and_notify_pr=lambda issue, project: None,
+        reset_workflow_to_agent=lambda issue, agent: reset_calls.append((issue, agent)) or True,
+    )
+
+    assert result["status"] == "agent_launched"
+    assert result["next_agent"] == "designer"
+    assert reset_calls == [("88", "designer")]
+    assert launch_calls and launch_calls[0]["next_agent"] == "designer"
+
+
+def test_manual_override_launches_even_when_reset_fails():
+    processed = set()
+
+    result = handle_issue_comment_event(
+        event={
+            "action": "created",
+            "comment_id": 5,
+            "comment_body": "handoff @Developer",
+            "issue_number": "88",
+            "comment_author": "Ghabs95",
+            "issue": {"user": {"login": "Ghabs95"}},
+        },
+        logger=MagicMock(),
+        policy=_Policy(),
+        processed_events=processed,
+        launch_next_agent=lambda **kwargs: (3333, "codex"),
+        check_and_notify_pr=lambda issue, project: None,
+        reset_workflow_to_agent=lambda issue, agent: False,
+    )
+
+    assert result["status"] == "agent_launched"
+    assert result["next_agent"] == "developer"

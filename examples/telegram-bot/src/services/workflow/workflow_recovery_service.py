@@ -136,11 +136,24 @@ def recover_orphaned_running_agents(
             continue
 
         orphan_recovery_last_attempt[issue_num] = now
-        pid, tool = runtime.launch_agent(
-            issue_num,
-            expected_agent,
-            trigger_source="orphan-recovery",
-        )
+        launch_kwargs = {
+            "trigger_source": "orphan-recovery",
+            "repo_override": repo_name,
+        }
+        try:
+            pid, tool = runtime.launch_agent(
+                issue_num,
+                expected_agent,
+                **launch_kwargs,
+            )
+        except TypeError:
+            # Backward-compatible fallback for runtimes that don't yet accept repo_override.
+            launch_kwargs.pop("repo_override", None)
+            pid, tool = runtime.launch_agent(
+                issue_num,
+                expected_agent,
+                **launch_kwargs,
+            )
         if pid:
             recovered += 1
             logger.warning(

@@ -1,4 +1,5 @@
 import types
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,6 +9,11 @@ from services import issue_lifecycle_service as svc
 class _FakePlatform:
     def __init__(self):
         self.calls = []
+        self.open_issues = []
+
+    async def list_open_issues(self, limit=100, labels=None):
+        self.calls.append(("list_open_issues", limit, labels))
+        return list(self.open_issues)
 
     async def create_issue(self, title, body, labels=None):
         self.calls.append(("create_issue", title, body, labels))
@@ -43,6 +49,78 @@ def test_create_issue_fallbacks_without_labels_and_reapplies_labels():
     assert create_calls[1][3] is None
     assert any(c[0] == "ensure_label" for c in platform.calls)
     assert any(c[0] == "update_issue" and c[1] == "12" for c in platform.calls)
+
+
+def test_create_issue_reuses_recent_duplicate_issue():
+    platform = _FakePlatform()
+    platform.open_issues = [
+        types.SimpleNamespace(
+            number=77,
+            title="Title",
+            labels=["project:proj-a", "type:feature", "workflow:full"],
+            created_at=datetime.now(tz=UTC) - timedelta(minutes=30),
+            url="https://github.com/acme/repo/issues/77",
+        )
+    ]
+
+    with patch.object(svc, "get_git_platform", return_value=platform):
+        url = svc.create_issue(
+            title="Title",
+            body="Body",
+            project="proj-a",
+            workflow_label="workflow:full",
+            task_type="feature",
+            repo_key="acme/repo",
+        )
+
+    assert url.endswith("/77")
+    assert not any(c[0] == "create_issue" for c in platform.calls)
+
+
+def test_create_issue_reuses_recent_duplicate_issue_by_dedupe_key():
+    platform = _FakePlatform()
+    platform.open_issues = [
+        types.SimpleNamespace(
+            number=88,
+            title="Completely different title",
+            labels=["project:proj-a"],
+            created_at=datetime.now(tz=UTC) - timedelta(minutes=10),
+            body="blah\n<!-- nexus-inbox-source: task_123.md -->\n",
+            url="https://github.com/acme/repo/issues/88",
+        )
+    ]
+
+    with patch.object(svc, "get_git_platform", return_value=platform):
+        url = svc.create_issue(
+            title="New unique title",
+            body="Body",
+            project="proj-a",
+            workflow_label="workflow:full",
+            task_type="feature",
+            repo_key="acme/repo",
+            dedupe_key="task_123.md",
+        )
+
+    assert url.endswith("/88")
+    assert not any(c[0] == "create_issue" for c in platform.calls)
+
+
+def test_create_issue_appends_source_marker_to_body():
+    platform = _FakePlatform()
+    with patch.object(svc, "get_git_platform", return_value=platform):
+        svc.create_issue(
+            title="Title",
+            body="Body",
+            project="proj-a",
+            workflow_label="workflow:full",
+            task_type="feature",
+            repo_key="acme/repo",
+            dedupe_key="task_123.md",
+        )
+
+    create_calls = [c for c in platform.calls if c[0] == "create_issue"]
+    assert create_calls
+    assert "nexus-inbox-source: task_123.md" in create_calls[0][2]
 
 
 def test_rename_task_file_and_sync_issue_body_updates_remote_body(tmp_path):

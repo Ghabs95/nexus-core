@@ -811,22 +811,6 @@ class ProcessOrchestrator:
         crashed_tool = agent_data.get("tool", "")
         log_mtime = os.path.getmtime(log_file)
         age = time.time() - log_mtime
-        logger.warning(
-            "Step timeout detected: issue #%s agent=%s inactivity=%.0fs threshold=%ss log=%s",
-            issue_num,
-            agent_type,
-            age,
-            timeout_seconds,
-            log_file,
-        )
-        self._runtime.audit_log(
-            issue_num,
-            "STEP_TIMEOUT",
-            (
-                f"agent={agent_type} inactivity={age:.0f}s "
-                f"threshold={timeout_seconds}s log={log_file}"
-            ),
-        )
 
         if launch_ts > 0 and log_mtime + 5 < launch_ts:
             logger.info(
@@ -835,10 +819,23 @@ class ProcessOrchestrator:
             )
             return
 
+        expected_agent = None
         if not isinstance(agent_type, str) or not agent_type.strip() or agent_type == "unknown":
             expected_agent = self._runtime.get_expected_running_agent(str(issue_num))
             if expected_agent:
                 agent_type = expected_agent
+
+        # Ignore stale log-only timeouts for inactive issues with no live pid
+        # and no RUNNING workflow step. This prevents timeout noise for old logs.
+        if (
+            not effective_pid
+            and (not isinstance(agent_type, str) or not agent_type.strip() or agent_type == "unknown")
+        ):
+            logger.debug(
+                "Skipping stale timeout for issue #%s: no live pid or expected RUNNING agent",
+                issue_num,
+            )
+            return
 
         if (
             isinstance(agent_type, str)
@@ -860,6 +857,23 @@ class ProcessOrchestrator:
             self._runtime.save_launched_agents(launched)
             return
 
+        logger.warning(
+            "Step timeout detected: issue #%s agent=%s inactivity=%.0fs threshold=%ss log=%s",
+            issue_num,
+            agent_type,
+            age,
+            timeout_seconds,
+            log_file,
+        )
+        self._runtime.audit_log(
+            issue_num,
+            "STEP_TIMEOUT",
+            (
+                f"agent={agent_type} inactivity={age:.0f}s "
+                f"threshold={timeout_seconds}s log={log_file}"
+            ),
+        )
+
         # True orphan: workflow expects a RUNNING step but there is no tracker/runtime PID.
         # If we have a dead PID from the tracker, let detect_dead_agents() handle it.
         # If the dead PID came only from check_log_timeout() (no tracker entry),
@@ -870,7 +884,8 @@ class ProcessOrchestrator:
             effective_pid = None
 
         if not effective_pid:
-            expected_agent = self._runtime.get_expected_running_agent(str(issue_num))
+            if not expected_agent:
+                expected_agent = self._runtime.get_expected_running_agent(str(issue_num))
             if not expected_agent:
                 return
 

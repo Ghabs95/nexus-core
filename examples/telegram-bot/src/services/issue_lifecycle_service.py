@@ -5,10 +5,78 @@ import contextlib
 import logging
 import os
 import re
+from datetime import UTC, datetime, timedelta
 
 from orchestration.nexus_core_helpers import get_git_platform
 
 logger = logging.getLogger(__name__)
+_SOURCE_MARKER_PREFIX = "nexus-inbox-source:"
+
+
+def _normalize_title(value: str) -> str:
+    return " ".join(str(value or "").split()).strip().lower()
+
+
+def _normalize_dedupe_key(value: str | None) -> str:
+    return " ".join(str(value or "").split()).strip().lower()
+
+
+def _build_source_marker(value: str) -> str:
+    return f"<!-- {_SOURCE_MARKER_PREFIX} {value} -->"
+
+
+def _extract_source_marker(body: str) -> str:
+    if not body:
+        return ""
+    match = re.search(rf"{re.escape(_SOURCE_MARKER_PREFIX)}\s*([^>]+)", str(body), re.IGNORECASE)
+    if not match:
+        return ""
+    raw = str(match.group(1) or "").strip()
+    raw = re.sub(r"\s*-+\s*$", "", raw).strip()
+    return _normalize_dedupe_key(raw)
+
+
+def _find_recent_duplicate_issue(
+    *,
+    issues: list,
+    title: str,
+    required_labels: list[str],
+    max_age_hours: float,
+    dedupe_key: str | None = None,
+):
+    if max_age_hours <= 0:
+        return None
+
+    cutoff = datetime.now(tz=UTC) - timedelta(hours=max_age_hours)
+    normalized_title = _normalize_title(title)
+    normalized_dedupe_key = _normalize_dedupe_key(dedupe_key)
+    required = {str(label).strip().lower() for label in required_labels if str(label).strip()}
+
+    for issue in issues or []:
+        created_at = getattr(issue, "created_at", None)
+        if not isinstance(created_at, datetime):
+            continue
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        if created_at < cutoff:
+            continue
+
+        if normalized_dedupe_key:
+            issue_marker = _extract_source_marker(str(getattr(issue, "body", "") or ""))
+            if issue_marker and issue_marker == normalized_dedupe_key:
+                return issue
+
+        issue_title = _normalize_title(getattr(issue, "title", ""))
+        if issue_title != normalized_title:
+            continue
+
+        issue_labels = {
+            str(label).strip().lower() for label in (getattr(issue, "labels", None) or []) if str(label).strip()
+        }
+        if not required.issubset(issue_labels):
+            continue
+        return issue
+    return None
 
 
 def create_issue(
@@ -19,25 +87,53 @@ def create_issue(
     workflow_label: str,
     task_type: str,
     repo_key: str,
+    dedupe_key: str | None = None,
 ) -> str:
     """Create a provider-backed issue and apply labels with fallback behavior."""
     type_label = f"type:{task_type}"
     project_label = f"project:{project}"
     labels = [project_label, type_label, workflow_label]
+    normalized_dedupe_key = _normalize_dedupe_key(dedupe_key)
+    issue_body = str(body or "")
+    if normalized_dedupe_key:
+        source_marker = _build_source_marker(normalized_dedupe_key)
+        if source_marker not in issue_body:
+            issue_body = f"{issue_body}\n\n{source_marker}"
 
     try:
         platform = get_git_platform(repo_key, project_name=project)
         issue_obj = None
+        dedupe_hours = 24.0
+        with contextlib.suppress(Exception):
+            dedupe_hours = max(0.0, float(os.getenv("NEXUS_ISSUE_DEDUPE_HOURS", "24")))
+
+        with contextlib.suppress(Exception):
+            open_issues = asyncio.run(platform.list_open_issues(limit=200, labels=[project_label]))
+            duplicate = _find_recent_duplicate_issue(
+                issues=open_issues,
+                title=title,
+                required_labels=labels,
+                max_age_hours=dedupe_hours,
+                dedupe_key=normalized_dedupe_key,
+            )
+            if duplicate:
+                logger.warning(
+                    "Duplicate issue create suppressed for project '%s': title='%s' -> #%s",
+                    project,
+                    title,
+                    getattr(duplicate, "number", "unknown"),
+                )
+                return str(getattr(duplicate, "url"))
 
         try:
-            issue_obj = asyncio.run(platform.create_issue(title=title, body=body, labels=labels))
+            issue_obj = asyncio.run(platform.create_issue(title=title, body=issue_body, labels=labels))
         except Exception as create_with_labels_exc:
             logger.warning(
                 "Issue create with labels failed for project '%s': %s. Retrying without labels.",
                 project,
                 create_with_labels_exc,
             )
-            issue_obj = asyncio.run(platform.create_issue(title=title, body=body, labels=None))
+            issue_obj = asyncio.run(platform.create_issue(title=title, body=issue_body, labels=None))
 
         if not issue_obj:
             raise RuntimeError("GitPlatform.create_issue returned no issue")

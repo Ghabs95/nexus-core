@@ -378,23 +378,31 @@ class PostgreSQLStorageBackend(StorageBackend):
     def _sync_save_completion(
         self, issue_number: str, agent_type: str, data: dict[str, Any]
     ) -> str:
-        dedup_key = f"{issue_number}:{agent_type}:{data.get('status', 'complete')}"
+        payload = dict(data or {})
+        status = str(payload.get("status") or "complete")
+        payload["status"] = status
+        payload.setdefault("issue_number", str(issue_number))
+        payload.setdefault("_issue_number", str(issue_number))
+        payload.setdefault("agent_type", str(agent_type))
+        payload.setdefault("_agent_type", str(agent_type))
+
+        dedup_key = f"{issue_number}:{agent_type}:{status}"
         with Session(self._engine) as session:
             existing = (
                 session.query(_CompletionRow).filter(_CompletionRow.dedup_key == dedup_key).first()
             )
             if existing:
-                existing.data = json.dumps(data, default=str)
-                existing.summary_text = data.get("summary", "")
-                existing.status = data.get("status", "complete")
+                existing.data = json.dumps(payload, default=str)
+                existing.summary_text = payload.get("summary", "")
+                existing.status = status
             else:
                 session.add(
                     _CompletionRow(
                         issue_number=issue_number,
                         agent_type=agent_type,
-                        status=data.get("status", "complete"),
-                        summary_text=data.get("summary", ""),
-                        data=json.dumps(data, default=str),
+                        status=status,
+                        summary_text=payload.get("summary", ""),
+                        data=json.dumps(payload, default=str),
                         dedup_key=dedup_key,
                     )
                 )
@@ -417,6 +425,14 @@ class PostgreSQLStorageBackend(StorageBackend):
                     payload = json.loads(row.data)
                 except Exception:
                     payload = {}
+                issue_number = str(row.issue_number or "").strip()
+                agent_type = str(row.agent_type or "").strip()
+                status = str(row.status or "complete").strip() or "complete"
+                payload["issue_number"] = issue_number
+                payload.setdefault("_issue_number", issue_number)
+                payload["agent_type"] = str(payload.get("agent_type") or agent_type).strip()
+                payload.setdefault("_agent_type", agent_type)
+                payload["status"] = str(payload.get("status") or status).strip() or "complete"
                 payload["_db_id"] = row.id
                 payload["_dedup_key"] = row.dedup_key
                 payload["_created_at"] = row.created_at.isoformat() if row.created_at else None

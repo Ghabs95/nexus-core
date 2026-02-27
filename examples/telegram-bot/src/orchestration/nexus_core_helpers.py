@@ -129,9 +129,9 @@ def setup_event_handlers() -> None:
     """Attach event handler plugins to the shared EventBus.
 
     Reads config from environment variables:
-        - TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID → Telegram handler
-        - DISCORD_WEBHOOK_URL / DISCORD_BOT_TOKEN → Discord handler
-        - SLACK_WEBHOOK_URL / SLACK_BOT_TOKEN → Slack handler
+        - TELEGRAM_TOKEN + TELEGRAM_CHAT_ID → Telegram handler
+        - DISCORD_WEBHOOK_URL / DISCORD_TOKEN → Discord handler
+        - SLACK_WEBHOOK_URL / SLACK_TOKEN → Slack handler
 
     Safe to call multiple times; handlers are only attached once.
     """
@@ -161,8 +161,14 @@ def setup_event_handlers() -> None:
     import os
 
     # Telegram
-    tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    tg_token = os.getenv("TELEGRAM_TOKEN", "")
     tg_chat = os.getenv("TELEGRAM_CHAT_ID", "")
+    if not tg_chat:
+        tg_chat = os.getenv("ALLOWED_USER", "")
+    if not tg_chat:
+        tg_allowed = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "")
+        if tg_allowed:
+            tg_chat = tg_allowed.split(",", 1)[0].strip()
     if tg_token and tg_chat:
         try:
             from nexus.plugins.builtin.telegram_event_handler_plugin import TelegramEventHandler
@@ -175,7 +181,7 @@ def setup_event_handlers() -> None:
 
     # Discord
     dc_webhook = os.getenv("DISCORD_WEBHOOK_URL", "")
-    dc_bot_token = os.getenv("DISCORD_BOT_TOKEN", "")
+    dc_bot_token = os.getenv("DISCORD_TOKEN", "")
     dc_channel = os.getenv("DISCORD_ALERT_CHANNEL_ID", "")
     if dc_webhook or dc_channel or dc_bot_token:
         try:
@@ -195,7 +201,7 @@ def setup_event_handlers() -> None:
 
     # Slack
     slack_webhook = os.getenv("SLACK_WEBHOOK_URL", "")
-    slack_bot_token = os.getenv("SLACK_BOT_TOKEN", "")
+    slack_bot_token = os.getenv("SLACK_TOKEN", "")
     slack_channel = os.getenv("SLACK_DEFAULT_CHANNEL", "#ops")
     if slack_webhook or slack_bot_token:
         try:

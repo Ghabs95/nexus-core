@@ -103,7 +103,12 @@ class GitHubIssueCLIPlugin:
                 capture_output=True,
                 text=True,
             )
-            return result.returncode == 0
+            if result.returncode == 0:
+                return True
+            stderr = (result.stderr or "").lower()
+            if "already exists" in stderr:
+                return True
+            return False
         except Exception as exc:
             logger.warning("Failed to ensure label %s: %s", label, exc)
             return False

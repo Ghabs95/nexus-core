@@ -448,7 +448,17 @@ def test_codex_invoker_unavailable_and_success(monkeypatch, tmp_path):
         env={"FOO": "BAR"},
     )
     assert pid == 4321
-    assert captured["cmd"] == ["codex", "exec", "--model", "gpt-5-codex", "do work"]
+    assert captured["cmd"] == [
+        "codex",
+        "exec",
+        "--sandbox",
+        "workspace-write",
+        "-c",
+        'sandbox_permissions=["network-access"]',
+        "--model",
+        "gpt-5-codex",
+        "do work",
+    ]
     assert captured["cwd"] == str(tmp_path / "repo")
     assert str(captured["stdout_name"]).endswith("codex_83_20260101_120000.log")
     assert isinstance(captured["env"], dict) and captured["env"]["FOO"] == "BAR"
