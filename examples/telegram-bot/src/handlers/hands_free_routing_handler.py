@@ -291,7 +291,9 @@ def _build_chat_persona(
     role_context = ""
     if project_key and project_cfg:
         try:
-            project_root = resolve_project_root(str(getattr(deps, "base_dir", "") or ""), project_key, project_cfg)
+            project_root = resolve_project_root(
+                str(getattr(deps, "base_dir", "") or ""), project_key, project_cfg
+            )
             agent_prompt = load_agent_prompt_from_definition(
                 base_dir=str(getattr(deps, "base_dir", "") or ""),
                 project_root=project_root,
@@ -329,9 +331,7 @@ def _build_chat_persona(
             "\n- For feature ideation, provide a complete proposal first (solution, acceptance criteria, risks/tradeoffs)."
         )
     else:
-        context_block += (
-            "\n- Execution details (issue/PR/branch/commit) are allowed only when implementation is explicitly requested."
-        )
+        context_block += "\n- Execution details (issue/PR/branch/commit) are allowed only when implementation is explicitly requested."
     sections: list[str] = []
     if agent_prompt:
         sections.append(
@@ -408,8 +408,8 @@ async def resolve_pending_project_selection(
 
 
 async def route_hands_free_text(
-    ctx: InteractiveContext | Any,
-    deps: HandsFreeRoutingDeps | Any,
+    ctx: Any,
+    deps: Any,
     status_msg: Any | None = None,
     text: str | None = None,
     legacy_deps: HandsFreeRoutingDeps | None = None,
@@ -444,8 +444,10 @@ async def route_hands_free_text(
 
     intent = intent_result.get("intent", "task")
     raw_feature_ideation = intent_result.get("feature_ideation")
-    feature_ideation = raw_feature_ideation if isinstance(raw_feature_ideation, bool) else (
-        str(raw_feature_ideation).strip().lower() in {"1", "true", "yes"}
+    feature_ideation = (
+        raw_feature_ideation
+        if isinstance(raw_feature_ideation, bool)
+        else (str(raw_feature_ideation).strip().lower() in {"1", "true", "yes"})
     )
     try:
         fi_confidence = float(intent_result.get("feature_ideation_confidence", 0.0))

@@ -254,7 +254,9 @@ def _ops_handler_deps() -> OpsHandlerDeps:
         get_inbox_storage_backend=get_inbox_storage_backend,
         get_inbox_queue_overview=_get_inbox_queue_overview,
         format_error_for_user=format_error_for_user,
-        get_audit_history=lambda issue_num, limit: AuditStore.get_audit_history(int(issue_num), limit),
+        get_audit_history=lambda issue_num, limit: AuditStore.get_audit_history(
+            int(issue_num), limit
+        ),
         get_repo=get_repo,
         get_direct_issue_plugin=_get_direct_issue_plugin,
         orchestrator=orchestrator,

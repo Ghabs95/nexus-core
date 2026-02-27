@@ -1,4 +1,5 @@
 """Tests for YamlWorkflowLoader — YAML-based workflow loading with schema validation."""
+
 import pytest
 
 from nexus.core.models import Workflow, WorkflowStep
@@ -7,6 +8,7 @@ from nexus.core.yaml_loader import RETRY_BACKOFF_STRATEGIES, YamlWorkflowLoader
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _minimal_dict(**overrides):
     """Return a minimal valid workflow dict."""
@@ -26,6 +28,7 @@ def _minimal_dict(**overrides):
 # validate_dict — happy paths
 # ---------------------------------------------------------------------------
 
+
 class TestValidateDictHappy:
     def test_valid_minimal_workflow_no_errors(self):
         errors = YamlWorkflowLoader.validate_dict(_minimal_dict())
@@ -44,7 +47,11 @@ class TestValidateDictHappy:
                 {
                     "id": "s1",
                     "agent_type": "triage",
-                    "retry_policy": {"max_retries": 3, "backoff": "exponential", "initial_delay": 5},
+                    "retry_policy": {
+                        "max_retries": 3,
+                        "backoff": "exponential",
+                        "initial_delay": 5,
+                    },
                 }
             ],
         }
@@ -55,7 +62,9 @@ class TestValidateDictHappy:
         for strategy in RETRY_BACKOFF_STRATEGIES:
             data = {
                 "name": "Retry",
-                "steps": [{"id": "s1", "agent_type": "triage", "retry_policy": {"backoff": strategy}}],
+                "steps": [
+                    {"id": "s1", "agent_type": "triage", "retry_policy": {"backoff": strategy}}
+                ],
             }
             errors = YamlWorkflowLoader.validate_dict(data)
             assert errors == [], f"Unexpected errors for backoff={strategy}: {errors}"
@@ -88,6 +97,7 @@ class TestValidateDictHappy:
 # ---------------------------------------------------------------------------
 # validate_dict — error cases
 # ---------------------------------------------------------------------------
+
 
 class TestValidateDictErrors:
     def test_non_dict_input(self):
@@ -167,6 +177,7 @@ class TestValidateDictErrors:
 # load_from_dict — integration with WorkflowDefinition
 # ---------------------------------------------------------------------------
 
+
 class TestLoadFromDict:
     def test_returns_workflow_instance(self):
         wf = YamlWorkflowLoader.load_from_dict(_minimal_dict())
@@ -220,6 +231,7 @@ class TestLoadFromDict:
 # retry_policy in YAML → WorkflowStep.retry
 # ---------------------------------------------------------------------------
 
+
 class TestRetryPolicyParsing:
     def test_retry_policy_max_retries_mapped_to_step_retry(self):
         data = {
@@ -261,6 +273,7 @@ class TestRetryPolicyParsing:
 # parallel field in YAML → WorkflowStep.parallel_with
 # ---------------------------------------------------------------------------
 
+
 class TestParallelFieldParsing:
     def test_parallel_field_populated(self):
         data = {
@@ -298,6 +311,7 @@ class TestParallelFieldParsing:
 # validate (file-based)
 # ---------------------------------------------------------------------------
 
+
 class TestValidateFile:
     def test_missing_file_returns_error(self, tmp_path):
         errors = YamlWorkflowLoader.validate(str(tmp_path / "nonexistent.yaml"))
@@ -305,6 +319,7 @@ class TestValidateFile:
 
     def test_valid_yaml_file_returns_no_errors(self, tmp_path):
         import yaml as _yaml
+
         wf_file = tmp_path / "workflow.yaml"
         wf_file.write_text(_yaml.dump(_minimal_dict()), encoding="utf-8")
         errors = YamlWorkflowLoader.validate(str(wf_file))
@@ -321,6 +336,7 @@ class TestValidateFile:
 # load (file-based)
 # ---------------------------------------------------------------------------
 
+
 class TestLoadFile:
     def test_load_missing_file_raises(self):
         with pytest.raises(FileNotFoundError):
@@ -328,6 +344,7 @@ class TestLoadFile:
 
     def test_load_valid_file(self, tmp_path):
         import yaml as _yaml
+
         wf_file = tmp_path / "workflow.yaml"
         wf_file.write_text(_yaml.dump(_minimal_dict()), encoding="utf-8")
         wf = YamlWorkflowLoader.load(str(wf_file))
@@ -336,11 +353,9 @@ class TestLoadFile:
     def test_load_enterprise_workflow_yaml(self):
         """Smoke test against the example enterprise workflow YAML."""
         from pathlib import Path
+
         yaml_path = (
-            Path(__file__).parent.parent
-            / "examples"
-            / "workflows"
-            / "enterprise_workflow.yaml"
+            Path(__file__).parent.parent / "examples" / "workflows" / "enterprise_workflow.yaml"
         )
         if not yaml_path.exists():
             pytest.skip("Example YAML not found")
@@ -352,6 +367,7 @@ class TestLoadFile:
 # ---------------------------------------------------------------------------
 # retry_policy backoff_strategy and initial_delay stored on WorkflowStep
 # ---------------------------------------------------------------------------
+
 
 class TestRetryPolicyBackoffStorage:
     def test_backoff_strategy_stored_on_step(self):
@@ -438,7 +454,9 @@ class _InMemoryStorage(StorageBackend):
     async def get_audit_log(self, workflow_id: str, since=None) -> list[AuditEvent]:
         return [e for e in self._audit if e.workflow_id == workflow_id]
 
-    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: dict[str, Any]) -> None:
+    async def save_agent_metadata(
+        self, workflow_id: str, agent_name: str, metadata: dict[str, Any]
+    ) -> None:
         pass
 
     async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> dict[str, Any] | None:
@@ -473,8 +491,14 @@ class TestGetRunnableSteps:
     @pytest.mark.asyncio
     async def test_returns_empty_when_workflow_not_running(self):
         step = _make_step(1, "triage")
-        wf = Workflow(id="w1", name="test", version="1.0", steps=[step],
-                      state=WorkflowState.PENDING, current_step=1)
+        wf = Workflow(
+            id="w1",
+            name="test",
+            version="1.0",
+            steps=[step],
+            state=WorkflowState.PENDING,
+            current_step=1,
+        )
         storage = _InMemoryStorage()
         await storage.save_workflow(wf)
         engine = WorkflowEngine(storage=storage)
@@ -484,8 +508,14 @@ class TestGetRunnableSteps:
     @pytest.mark.asyncio
     async def test_returns_empty_when_workflow_completed(self):
         step = _make_step(1, "triage")
-        wf = Workflow(id="w1", name="test", version="1.0", steps=[step],
-                      state=WorkflowState.COMPLETED, current_step=1)
+        wf = Workflow(
+            id="w1",
+            name="test",
+            version="1.0",
+            steps=[step],
+            state=WorkflowState.COMPLETED,
+            current_step=1,
+        )
         storage = _InMemoryStorage()
         await storage.save_workflow(wf)
         engine = WorkflowEngine(storage=storage)
@@ -495,8 +525,14 @@ class TestGetRunnableSteps:
     @pytest.mark.asyncio
     async def test_returns_current_pending_step(self):
         step = _make_step(1, "triage")
-        wf = Workflow(id="w1", name="test", version="1.0", steps=[step],
-                      state=WorkflowState.RUNNING, current_step=1)
+        wf = Workflow(
+            id="w1",
+            name="test",
+            version="1.0",
+            steps=[step],
+            state=WorkflowState.RUNNING,
+            current_step=1,
+        )
         storage = _InMemoryStorage()
         await storage.save_workflow(wf)
         engine = WorkflowEngine(storage=storage)
@@ -508,8 +544,14 @@ class TestGetRunnableSteps:
     async def test_does_not_return_already_running_current_step(self):
         step = _make_step(1, "triage")
         step.status = StepStatus.RUNNING
-        wf = Workflow(id="w1", name="test", version="1.0", steps=[step],
-                      state=WorkflowState.RUNNING, current_step=1)
+        wf = Workflow(
+            id="w1",
+            name="test",
+            version="1.0",
+            steps=[step],
+            state=WorkflowState.RUNNING,
+            current_step=1,
+        )
         storage = _InMemoryStorage()
         await storage.save_workflow(wf)
         engine = WorkflowEngine(storage=storage)
@@ -520,8 +562,14 @@ class TestGetRunnableSteps:
     async def test_includes_parallel_pending_steps(self):
         step1 = _make_step(1, "triage")
         step2 = _make_step(2, "developer", parallel_with=["triage"])
-        wf = Workflow(id="w1", name="test", version="1.0", steps=[step1, step2],
-                      state=WorkflowState.RUNNING, current_step=1)
+        wf = Workflow(
+            id="w1",
+            name="test",
+            version="1.0",
+            steps=[step1, step2],
+            state=WorkflowState.RUNNING,
+            current_step=1,
+        )
         storage = _InMemoryStorage()
         await storage.save_workflow(wf)
         engine = WorkflowEngine(storage=storage)
@@ -534,8 +582,14 @@ class TestGetRunnableSteps:
     async def test_does_not_include_parallel_steps_with_wrong_reference(self):
         step1 = _make_step(1, "triage")
         step2 = _make_step(2, "developer", parallel_with=["reviewer"])  # wrong reference
-        wf = Workflow(id="w1", name="test", version="1.0", steps=[step1, step2],
-                      state=WorkflowState.RUNNING, current_step=1)
+        wf = Workflow(
+            id="w1",
+            name="test",
+            version="1.0",
+            steps=[step1, step2],
+            state=WorkflowState.RUNNING,
+            current_step=1,
+        )
         storage = _InMemoryStorage()
         await storage.save_workflow(wf)
         engine = WorkflowEngine(storage=storage)
@@ -548,8 +602,14 @@ class TestGetRunnableSteps:
         step1 = _make_step(1, "triage")
         step2 = _make_step(2, "developer", parallel_with=["triage"])
         step2.status = StepStatus.COMPLETED
-        wf = Workflow(id="w1", name="test", version="1.0", steps=[step1, step2],
-                      state=WorkflowState.RUNNING, current_step=1)
+        wf = Workflow(
+            id="w1",
+            name="test",
+            version="1.0",
+            steps=[step1, step2],
+            state=WorkflowState.RUNNING,
+            current_step=1,
+        )
         storage = _InMemoryStorage()
         await storage.save_workflow(wf)
         engine = WorkflowEngine(storage=storage)
@@ -562,8 +622,14 @@ class TestGetRunnableSteps:
     async def test_no_parallel_with_returns_only_current(self):
         step1 = _make_step(1, "triage")
         step2 = _make_step(2, "developer")  # no parallel_with
-        wf = Workflow(id="w1", name="test", version="1.0", steps=[step1, step2],
-                      state=WorkflowState.RUNNING, current_step=1)
+        wf = Workflow(
+            id="w1",
+            name="test",
+            version="1.0",
+            steps=[step1, step2],
+            state=WorkflowState.RUNNING,
+            current_step=1,
+        )
         storage = _InMemoryStorage()
         await storage.save_workflow(wf)
         engine = WorkflowEngine(storage=storage)

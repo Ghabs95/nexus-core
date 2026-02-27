@@ -6,7 +6,7 @@ from nexus.plugins.builtin.ai_runtime_plugin import AIOrchestrator, AIProvider, 
 
 
 class _FakeCompletedProcess:
-    def __init__(self, stdout: str = "{\"text\": \"ok\"}"):
+    def __init__(self, stdout: str = '{"text": "ok"}'):
         self.returncode = 0
         self.stdout = stdout
         self.stderr = ""
@@ -183,7 +183,9 @@ def test_chat_defaults_to_project_chat_agent(monkeypatch):
             "operation_agents": {
                 "default": "triage",
             },
-            "chat_agent_types_resolver": lambda project: ["designer"] if project == "nexus" else ["triage"],
+            "chat_agent_types_resolver": lambda project: (
+                ["designer"] if project == "nexus" else ["triage"]
+            ),
         }
     )
     called = {"gemini": 0, "copilot": 0}
@@ -280,13 +282,7 @@ class TestStripCliToolOutput:
     """Tests for _strip_cli_tool_output."""
 
     def test_no_op_true_block(self):
-        text = (
-            "● No-op\n"
-            "  $ true\n"
-            "  └ 1 line...\n"
-            "\n"
-            "Add a dry-run validation mode."
-        )
+        text = "● No-op\n" "  $ true\n" "  └ 1 line...\n" "\n" "Add a dry-run validation mode."
         assert AIOrchestrator._strip_cli_tool_output(text) == "Add a dry-run validation mode."
 
     def test_multiple_tool_blocks(self):
@@ -306,14 +302,7 @@ class TestStripCliToolOutput:
         assert AIOrchestrator._strip_cli_tool_output(text) == text
 
     def test_mixed_content(self):
-        text = (
-            "Summary:\n"
-            "● No-op\n"
-            "  $ true\n"
-            "  └ 1 line...\n"
-            "\n"
-            "Details here."
-        )
+        text = "Summary:\n" "● No-op\n" "  $ true\n" "  └ 1 line...\n" "\n" "Details here."
         result = AIOrchestrator._strip_cli_tool_output(text)
         assert "No-op" not in result
         assert "$ true" not in result
@@ -329,11 +318,11 @@ class TestStripCliToolOutput:
 
     def test_codex_transcript_blocks_are_stripped(self):
         text = (
-            "✗ Grep \"OpenClaw\" (/home/ubuntu/git/ghabs)\n"
+            '✗ Grep "OpenClaw" (/home/ubuntu/git/ghabs)\n'
             "  └ Permission denied and could not request permission from user\n"
             "\n"
             "✗ List repos and markdown files\n"
-            "  $ find /home/ubuntu/git/ghabs -maxdepth 3 -name \"*.md\"\n"
+            '  $ find /home/ubuntu/git/ghabs -maxdepth 3 -name "*.md"\n'
             "  Permission denied and could not request permission from user\n"
             "\n"
             "Based on the codebase and OpenClaw's public profile, here's a comparison."
@@ -396,7 +385,9 @@ def test_refusal_text_is_not_accepted_as_transcription(monkeypatch):
 
 
 def test_detects_common_transcription_refusal_markers():
-    refusal = "My capabilities are limited to text-based interactions and I cannot transcribe audio."
+    refusal = (
+        "My capabilities are limited to text-based interactions and I cannot transcribe audio."
+    )
     assert AIOrchestrator._is_transcription_refusal(refusal) is True
     assert AIOrchestrator._is_transcription_refusal("ship issue 53 fix now") is False
 
@@ -428,7 +419,7 @@ def test_copilot_tool_debug_output_is_rejected(monkeypatch):
 
     debug_output = (
         "✗ Check whisper availability\n"
-        "$ python3 -c \"import whisper\"\n"
+        '$ python3 -c "import whisper"\n'
         "Permission denied and could not request permission from user\n"
         "I'm unable to transcribe the audio file."
     )

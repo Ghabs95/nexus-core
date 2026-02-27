@@ -3,10 +3,7 @@
 import os
 from unittest import mock
 
-import pytest
-
 from nexus.core.workspace import WorkspaceManager
-
 
 # ---------------------------------------------------------------------------
 # provision_worktree – branch_name parameter
@@ -16,7 +13,7 @@ from nexus.core.workspace import WorkspaceManager
 def _mock_subprocess_run_ok(*args, **kwargs):
     """subprocess.run stub that always succeeds."""
     result = mock.MagicMock()
-    result.returncode = 1          # branch does NOT exist → triggers creation
+    result.returncode = 1  # branch does NOT exist → triggers creation
     result.stdout = ""
     result.stderr = ""
     return result
@@ -62,14 +59,23 @@ class TestProvisionWorktreeCustomBranch:
     @mock.patch("nexus.core.workspace.subprocess.run", side_effect=_mock_subprocess_run_ok)
     @mock.patch("os.makedirs")
     @mock.patch("os.path.isdir", return_value=False)
-    def test_empty_string_branch_falls_back_to_default(self, mock_isdir, mock_makedirs, mock_run, tmp_path):
+    def test_empty_string_branch_falls_back_to_default(
+        self, mock_isdir, mock_makedirs, mock_run, tmp_path
+    ):
         base = str(tmp_path)
         WorkspaceManager.provision_worktree(base, "42", branch_name="")
 
         worktree_call = mock_run.call_args_list[-1]
         cmd = worktree_call[0][0]
         # Empty string is falsy, should fallback to default
-        assert cmd == ["git", "worktree", "add", "-b", "nexus/issue-42", os.path.join(base, ".nexus", "worktrees", "issue-42")]
+        assert cmd == [
+            "git",
+            "worktree",
+            "add",
+            "-b",
+            "nexus/issue-42",
+            os.path.join(base, ".nexus", "worktrees", "issue-42"),
+        ]
 
     @mock.patch("nexus.core.workspace.subprocess.run", side_effect=_mock_subprocess_run_ok)
     @mock.patch("os.makedirs")
@@ -80,4 +86,11 @@ class TestProvisionWorktreeCustomBranch:
 
         worktree_call = mock_run.call_args_list[-1]
         cmd = worktree_call[0][0]
-        assert cmd == ["git", "worktree", "add", "-b", "nexus/issue-42", os.path.join(base, ".nexus", "worktrees", "issue-42")]
+        assert cmd == [
+            "git",
+            "worktree",
+            "add",
+            "-b",
+            "nexus/issue-42",
+            os.path.join(base, ".nexus", "worktrees", "issue-42"),
+        ]

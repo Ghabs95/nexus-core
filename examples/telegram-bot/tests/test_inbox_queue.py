@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import pytest
-
 import integrations.inbox_queue as inbox_queue
+import pytest
 
 
 def _insert_row(*, engine, project_key: str, workspace: str, filename: str, status: str, body: str):

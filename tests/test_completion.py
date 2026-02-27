@@ -1,4 +1,5 @@
 """Tests for the completion protocol module."""
+
 import json
 import os
 
@@ -127,7 +128,9 @@ class TestGenerateCompletionInstructions:
         assert "Workflow Steps" in text
 
     def test_custom_nexus_dir(self):
-        text = generate_completion_instructions("1", "triage", project_name="myproject", nexus_dir=".custom")
+        text = generate_completion_instructions(
+            "1", "triage", project_name="myproject", nexus_dir=".custom"
+        )
         assert ".custom/tasks/myproject/completions" in text
 
     def test_uses_python_command_instead_of_heredoc(self):
@@ -207,7 +210,9 @@ class TestScanForCompletions:
         assert len(results) == 1
         assert results[0].issue_number == "44"
         assert results[0].summary.agent_type == "writer"
-        assert str(results[0].file_path).endswith("repo/.nexus/tasks/project_b/completions/completion_summary_44.json")
+        assert str(results[0].file_path).endswith(
+            "repo/.nexus/tasks/project_b/completions/completion_summary_44.json"
+        )
 
     def test_falls_back_to_older_valid_when_newest_invalid(self, tmp_path):
         older_dir = tmp_path / ".nexus" / "tasks" / "project_a" / "completions"

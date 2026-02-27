@@ -11,9 +11,9 @@ Includes post-hook broadcasting via SocketIO when configured.
 
 from __future__ import annotations
 
+import builtins
 import logging
 import time
-import builtins
 from pathlib import Path
 
 from config import (

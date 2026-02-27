@@ -1,4 +1,5 @@
 """Unit tests for WhisperTranscriptionProvider and AdapterRegistry.create_transcription."""
+
 import asyncio
 import sys
 from types import ModuleType
@@ -31,6 +32,7 @@ def openai_mock(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
 class TestWhisperTranscriptionProvider:
     def _make_provider(self, api_key="sk-test"):
         from nexus.adapters.transcription.whisper_provider import WhisperTranscriptionProvider
+
         return WhisperTranscriptionProvider(api_key=api_key)
 
     def test_name(self):
@@ -55,6 +57,7 @@ class TestWhisperTranscriptionProvider:
         sys.modules["openai"].AsyncOpenAI.return_value = mock_client
 
         from nexus.adapters.transcription.base import TranscriptionInput
+
         inp = TranscriptionInput(source=ogg_file)
         result = asyncio.run(provider.transcribe(inp))
 
@@ -69,6 +72,7 @@ class TestWhisperTranscriptionProvider:
         provider = self._make_provider()
 
         from nexus.adapters.transcription.base import TranscriptionInput
+
         inp = TranscriptionInput(source=bad_file)
 
         with pytest.raises(ValueError, match="Unsupported audio format"):
@@ -110,6 +114,7 @@ class TestAdapterRegistryTranscription:
         provider = registry.create_transcription("whisper", api_key="sk-test")
 
         from nexus.adapters.transcription.whisper_provider import WhisperTranscriptionProvider
+
         assert isinstance(provider, WhisperTranscriptionProvider)
 
     def test_unknown_transcription_type_raises(self):
@@ -152,5 +157,5 @@ class TestAdapterRegistryTranscription:
 def test_whisper_exported_from_package():
     """WhisperTranscriptionProvider must be importable from nexus.adapters.transcription."""
     from nexus.adapters.transcription import WhisperTranscriptionProvider  # noqa: F401
-    assert WhisperTranscriptionProvider is not None
 
+    assert WhisperTranscriptionProvider is not None

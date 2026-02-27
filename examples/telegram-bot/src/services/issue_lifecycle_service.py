@@ -71,7 +71,9 @@ def _find_recent_duplicate_issue(
             continue
 
         issue_labels = {
-            str(label).strip().lower() for label in (getattr(issue, "labels", None) or []) if str(label).strip()
+            str(label).strip().lower()
+            for label in (getattr(issue, "labels", None) or [])
+            if str(label).strip()
         }
         if not required.issubset(issue_labels):
             continue
@@ -126,14 +128,18 @@ def create_issue(
                 return str(getattr(duplicate, "url"))
 
         try:
-            issue_obj = asyncio.run(platform.create_issue(title=title, body=issue_body, labels=labels))
+            issue_obj = asyncio.run(
+                platform.create_issue(title=title, body=issue_body, labels=labels)
+            )
         except Exception as create_with_labels_exc:
             logger.warning(
                 "Issue create with labels failed for project '%s': %s. Retrying without labels.",
                 project,
                 create_with_labels_exc,
             )
-            issue_obj = asyncio.run(platform.create_issue(title=title, body=issue_body, labels=None))
+            issue_obj = asyncio.run(
+                platform.create_issue(title=title, body=issue_body, labels=None)
+            )
 
         if not issue_obj:
             raise RuntimeError("GitPlatform.create_issue returned no issue")

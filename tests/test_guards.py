@@ -1,4 +1,5 @@
 """Tests for the LaunchGuard module."""
+
 import time
 from unittest.mock import MagicMock
 

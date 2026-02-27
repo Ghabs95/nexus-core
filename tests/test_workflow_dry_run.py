@@ -7,6 +7,7 @@ from nexus.core.workflow import WorkflowDefinition
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _minimal_workflow(**overrides):
     """Return a minimal valid workflow dict."""
     base = {
@@ -25,6 +26,7 @@ def _minimal_workflow(**overrides):
 # DryRunReport model
 # ---------------------------------------------------------------------------
 
+
 class TestDryRunReport:
     def test_is_valid_no_errors(self):
         report = DryRunReport(errors=[], predicted_flow=["RUN  step1 (triage)"])
@@ -38,6 +40,7 @@ class TestDryRunReport:
 # ---------------------------------------------------------------------------
 # Validation checks
 # ---------------------------------------------------------------------------
+
 
 class TestDryRunValidation:
     def test_valid_workflow_returns_no_errors(self):
@@ -114,6 +117,7 @@ class TestDryRunValidation:
 # ---------------------------------------------------------------------------
 # Simulation / predicted_flow
 # ---------------------------------------------------------------------------
+
 
 class TestDryRunSimulation:
     def test_predicted_flow_populated(self):

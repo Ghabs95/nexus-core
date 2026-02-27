@@ -47,7 +47,14 @@ def test_builtin_plugin_add_comment(monkeypatch):
 
     assert success is True
     assert captured["cmd"] == [
-        "gh", "issue", "comment", "42", "--repo", "owner/repo", "--body", "hello"
+        "gh",
+        "issue",
+        "comment",
+        "42",
+        "--repo",
+        "owner/repo",
+        "--body",
+        "hello",
     ]
 
 

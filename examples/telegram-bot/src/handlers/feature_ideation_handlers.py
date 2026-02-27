@@ -166,10 +166,14 @@ def detect_feature_ideation_intent(
     """Detect feature-ideation intent with model-first classification."""
     phrase_match = is_feature_ideation_request(text)
     if not callable(run_analysis):
-        return (True, 0.55, "phrase_fallback_no_model") if phrase_match else (
-            False,
-            0.0,
-            "phrase_miss_no_model",
+        return (
+            (True, 0.55, "phrase_fallback_no_model")
+            if phrase_match
+            else (
+                False,
+                0.0,
+                "phrase_miss_no_model",
+            )
         )
 
     try:
@@ -177,10 +181,14 @@ def detect_feature_ideation_intent(
     except Exception as exc:
         if logger:
             logger.warning("Feature ideation detector model fallback failed: %s", exc)
-        return (True, 0.55, "phrase_fallback_model_error") if phrase_match else (
-            False,
-            0.0,
-            "model_error",
+        return (
+            (True, 0.55, "phrase_fallback_model_error")
+            if phrase_match
+            else (
+                False,
+                0.0,
+                "model_error",
+            )
         )
 
     if not isinstance(result, dict):
@@ -692,10 +700,10 @@ async def show_feature_suggestions(
 
 
 async def handle_feature_ideation_request(
-    ctx: InteractiveContext | None = None,
+    ctx: Any = None,
     status_msg_id: str | None = None,
     text: str | None = None,
-    deps: FeatureIdeationHandlerDeps | None = None,
+    deps: Any = None,
     preferred_project_key: str | None = None,
     preferred_agent_type: str | None = None,
     detected_feature_ideation: bool | None = None,
@@ -758,8 +766,8 @@ async def handle_feature_ideation_request(
 
 
 async def feature_callback_handler(
-    ctx: InteractiveContext | None = None,
-    deps: FeatureIdeationHandlerDeps | None = None,
+    ctx: Any = None,
+    deps: Any = None,
     *,
     update: Any | None = None,
     context: Any | None = None,

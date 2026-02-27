@@ -1,4 +1,5 @@
 """Tests for ProcessOrchestrator and AgentRuntime (Phase 2)."""
+
 import os
 import time
 from typing import Any
@@ -42,8 +43,12 @@ class StubRuntime(AgentRuntime):
 
     def launch_agent(self, issue_number, agent_type, *, trigger_source="", exclude_tools=None):
         self.launched.append(
-            {"issue": issue_number, "agent_type": agent_type, "trigger": trigger_source,
-             "exclude_tools": exclude_tools}
+            {
+                "issue": issue_number,
+                "agent_type": agent_type,
+                "trigger": trigger_source,
+                "exclude_tools": exclude_tools,
+            }
         )
         return (99999, "copilot")
 
@@ -103,7 +108,13 @@ def _make_workflow(state: WorkflowState, active_agent: str | None = None) -> Wor
     step = WorkflowStep(
         step_num=1,
         name="work",
-        agent=Agent(name=active_agent or "dev", display_name="Dev", description="", timeout=60, max_retries=0),
+        agent=Agent(
+            name=active_agent or "dev",
+            display_name="Dev",
+            description="",
+            timeout=60,
+            max_retries=0,
+        ),
         prompt_template="do {issue_url}",
         status=StepStatus.RUNNING if state == WorkflowState.RUNNING else StepStatus.COMPLETED,
     )
@@ -118,10 +129,14 @@ def _make_workflow(state: WorkflowState, active_agent: str | None = None) -> Wor
     return wf
 
 
-def _orchestrator(runtime: StubRuntime, complete_step_fn=None, stuck_threshold=60) -> ProcessOrchestrator:
+def _orchestrator(
+    runtime: StubRuntime, complete_step_fn=None, stuck_threshold=60
+) -> ProcessOrchestrator:
     if complete_step_fn is None:
+
         async def _noop(issue, agent, outputs, event_id=""):
             return None
+
         complete_step_fn = _noop
     runtime._agent_timeout_seconds = stuck_threshold
     return ProcessOrchestrator(
@@ -164,8 +179,7 @@ class TestIsTerminal:
 class TestScanAndProcessCompletions:
     """Tests for the engine path, manual fallback, dedup, and auto-chain."""
 
-    def _fake_summary(self, agent_type="developer", next_agent="reviewer",
-                      is_done=False):
+    def _fake_summary(self, agent_type="developer", next_agent="reviewer", is_done=False):
         summary = MagicMock()
         summary.agent_type = agent_type
         summary.next_agent = next_agent
@@ -173,8 +187,15 @@ class TestScanAndProcessCompletions:
         summary.to_dict.return_value = {"agent_type": agent_type}
         return summary
 
-    def _fake_detection(self, issue_num="42", dedup_key="key-42", file_path="/tmp/f",
-                        agent_type="developer", next_agent="reviewer", is_done=False):
+    def _fake_detection(
+        self,
+        issue_num="42",
+        dedup_key="key-42",
+        file_path="/tmp/f",
+        agent_type="developer",
+        next_agent="reviewer",
+        is_done=False,
+    ):
         det = MagicMock()
         det.issue_number = issue_num
         det.dedup_key = dedup_key
@@ -413,7 +434,6 @@ class TestScanAndProcessCompletions:
         runtime = StubRuntime()
         runtime.launched = []  # override: make launch fail
 
-
         def failing_launch(issue_number, agent_type, *, trigger_source="", exclude_tools=None):
             return (None, None)
 
@@ -440,7 +460,9 @@ class TestScanAndProcessCompletions:
         orc = _orchestrator(runtime, complete)
         det = self._fake_detection(next_agent="architect")
 
-        def duplicate_skip_launch(issue_number, agent_type, *, trigger_source="", exclude_tools=None):
+        def duplicate_skip_launch(
+            issue_number, agent_type, *, trigger_source="", exclude_tools=None
+        ):
             return (None, "duplicate-suppressed")
 
         runtime.launch_agent = duplicate_skip_launch  # type: ignore[method-assign]
@@ -478,8 +500,7 @@ class TestScanAndProcessCompletions:
 
 
 class TestDetectDeadAgents:
-    def _entry(self, pid=1234, agent_type="developer", tool="copilot",
-               age_seconds=7200):
+    def _entry(self, pid=1234, agent_type="developer", tool="copilot", age_seconds=7200):
         return {
             "pid": pid,
             "timestamp": time.time() - age_seconds,
@@ -631,8 +652,9 @@ class TestDetectDeadAgents:
     def test_exclude_tools_passed_on_retry(self):
         """The crashed tool must be in exclude_tools on the retry launch."""
         runtime = StubRuntime(retry=True)
-        runtime.tracker = {"70": self._entry(pid=7070, agent_type="developer",
-                                             tool="gemini", age_seconds=7200)}
+        runtime.tracker = {
+            "70": self._entry(pid=7070, agent_type="developer", tool="gemini", age_seconds=7200)
+        }
         orc = _orchestrator(runtime, stuck_threshold=60)
 
         with patch.object(runtime, "is_pid_alive", return_value=False):

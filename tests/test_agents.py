@@ -1,4 +1,5 @@
 """Tests for nexus.core.agents — agent YAML discovery and resolution."""
+
 import os
 import textwrap
 
@@ -9,6 +10,7 @@ from nexus.core.agents import find_agent_yaml, load_agent_definition, normalize_
 # ---------------------------------------------------------------------------
 # normalize_agent_key
 # ---------------------------------------------------------------------------
+
 
 class TestNormalizeAgentKey:
     def test_camel_case(self):
@@ -66,14 +68,12 @@ def agents_dir(tmp_path):
         AGENT_YAML_TEMPLATE.format(name="atlas", agent_type="Atlas")
     )
     # A non-agent YAML (should be skipped)
-    (d / "workflow.yaml").write_text(
-        textwrap.dedent("""\
+    (d / "workflow.yaml").write_text(textwrap.dedent("""\
             apiVersion: "nexus-core/v1"
             kind: "Workflow"
             metadata:
               name: "dev-workflow"
-        """)
-    )
+        """))
     # An invalid YAML file (should be skipped gracefully)
     (d / "broken.yaml").write_text("{{ invalid yaml content")
 
@@ -95,6 +95,7 @@ def shared_dir(tmp_path):
 # ---------------------------------------------------------------------------
 # find_agent_yaml
 # ---------------------------------------------------------------------------
+
 
 class TestFindAgentYaml:
     def test_match_exact(self, agents_dir):
@@ -164,6 +165,7 @@ class TestFindAgentYaml:
 # ---------------------------------------------------------------------------
 # load_agent_definition
 # ---------------------------------------------------------------------------
+
 
 class TestLoadAgentDefinition:
     def test_load_existing(self, agents_dir):

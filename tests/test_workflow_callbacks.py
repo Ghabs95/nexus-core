@@ -1,4 +1,5 @@
 """Tests for WorkflowEngine transition callbacks and WorkflowDefinition.to_prompt_context()."""
+
 import os
 from datetime import UTC, datetime
 from typing import Any
@@ -407,6 +408,7 @@ class TestMultiTierWorkflow:
 
     def test_resolve_full_tier(self, tmp_path):
         import yaml
+
         data = yaml.safe_load(TIERED_WORKFLOW)
         steps = WorkflowDefinition._resolve_steps(data, "full")
         assert len(steps) == 4
@@ -414,6 +416,7 @@ class TestMultiTierWorkflow:
 
     def test_resolve_shortened_tier(self, tmp_path):
         import yaml
+
         data = yaml.safe_load(TIERED_WORKFLOW)
         steps = WorkflowDefinition._resolve_steps(data, "shortened")
         assert len(steps) == 3
@@ -421,6 +424,7 @@ class TestMultiTierWorkflow:
 
     def test_resolve_fast_track_tier(self, tmp_path):
         import yaml
+
         data = yaml.safe_load(TIERED_WORKFLOW)
         steps = WorkflowDefinition._resolve_steps(data, "fast-track")
         assert len(steps) == 2
@@ -429,12 +433,14 @@ class TestMultiTierWorkflow:
     def test_resolve_no_type_falls_back_to_first_tier(self, tmp_path):
         """Without workflow_type and no flat steps, falls back to first tier."""
         import yaml
+
         data = yaml.safe_load(TIERED_WORKFLOW)
         steps = WorkflowDefinition._resolve_steps(data, "")
         assert len(steps) == 4  # full_workflow is first
 
     def test_resolve_invalid_type_returns_empty(self, tmp_path):
         import yaml
+
         data = yaml.safe_load(TIERED_WORKFLOW)
         steps = WorkflowDefinition._resolve_steps(data, "nonexistent")
         assert steps == []
@@ -442,12 +448,14 @@ class TestMultiTierWorkflow:
     def test_resolve_noncanonical_type_returns_empty(self, tmp_path):
         """Non-canonical workflow_type values are not resolved."""
         import yaml
+
         data = yaml.safe_load(TIERED_WORKFLOW)
         steps = WorkflowDefinition._resolve_steps(data, "bug_fix")
         assert steps == []
 
     def test_flat_steps_preferred_when_present(self, tmp_path):
         import yaml
+
         data = yaml.safe_load(TIERED_WORKFLOW)
         data["steps"] = [{"id": "flat", "agent_type": "flat_agent"}]
         steps = WorkflowDefinition._resolve_steps(data, "")
@@ -512,8 +520,6 @@ class TestMultiTierWorkflow:
         )
         assert "MUST be:" in text
         assert "`developer`" in text
-
-
 
     # -- enterprise workflow integration (example file) --
 

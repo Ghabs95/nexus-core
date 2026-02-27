@@ -6,7 +6,7 @@ the SQLAlchemy ORM layer without requiring a real PostgreSQL server.
 
 from __future__ import annotations
 
-import json
+from typing import Generator, Any
 
 import pytest
 
@@ -22,14 +22,13 @@ pytestmark = pytest.mark.skipif(not _SA, reason="sqlalchemy not installed")
 
 from nexus.adapters.storage.postgres_workflow_state import PostgresWorkflowStateStore
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
-def store() -> PostgresWorkflowStateStore:
+def store() -> Generator[PostgresWorkflowStateStore, Any, None]:
     """Create a store backed by in-memory SQLite (same SQLAlchemy ORM)."""
     instance = PostgresWorkflowStateStore(
         connection_string="sqlite:///:memory:",

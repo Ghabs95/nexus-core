@@ -1,4 +1,5 @@
 """Tests for conditional step execution in WorkflowEngine."""
+
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock
@@ -19,6 +20,7 @@ from nexus.core.workflow import WorkflowEngine
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_agent(name: str = "test_agent") -> Agent:
     return Agent(name=name, display_name=name, description="test", timeout=60, max_retries=1)
@@ -81,7 +83,9 @@ class InMemoryStorage(StorageBackend):
     async def get_audit_log(self, workflow_id: str, since=None) -> list[AuditEvent]:
         return [e for e in self._audit if e.workflow_id == workflow_id]
 
-    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: dict[str, Any]) -> None:
+    async def save_agent_metadata(
+        self, workflow_id: str, agent_name: str, metadata: dict[str, Any]
+    ) -> None:
         pass
 
     async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> dict[str, Any] | None:
@@ -101,6 +105,7 @@ async def engine_with_workflow(workflow: Workflow) -> tuple:
 # ---------------------------------------------------------------------------
 # Unit tests for _evaluate_condition
 # ---------------------------------------------------------------------------
+
 
 class TestEvaluateCondition:
     def setup_method(self):
@@ -142,6 +147,7 @@ class TestEvaluateCondition:
 # Integration tests for complete_step with conditions
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_condition_passes_step_runs():
     """When condition evaluates to True, the next step should run normally."""
@@ -150,9 +156,7 @@ async def test_condition_passes_step_runs():
     wf = make_workflow([step1, step2])
     engine, storage = await engine_with_workflow(wf)
 
-    result = await engine.complete_step(
-        "wf-test", step_num=1, outputs={"tier": "high"}
-    )
+    result = await engine.complete_step("wf-test", step_num=1, outputs={"tier": "high"})
 
     assert result.current_step == 2
     assert result.steps[1].status == StepStatus.RUNNING
@@ -167,9 +171,7 @@ async def test_condition_fails_step_skipped():
     wf = make_workflow([step1, step2])
     engine, storage = await engine_with_workflow(wf)
 
-    result = await engine.complete_step(
-        "wf-test", step_num=1, outputs={"tier": "low"}
-    )
+    result = await engine.complete_step("wf-test", step_num=1, outputs={"tier": "low"})
 
     assert result.steps[1].status == StepStatus.SKIPPED
     assert result.state == WorkflowState.COMPLETED
@@ -184,9 +186,7 @@ async def test_chained_skips():
     wf = make_workflow([step1, step2, step3])
     engine, storage = await engine_with_workflow(wf)
 
-    result = await engine.complete_step(
-        "wf-test", step_num=1, outputs={"tier": "low"}
-    )
+    result = await engine.complete_step("wf-test", step_num=1, outputs={"tier": "low"})
 
     assert result.steps[1].status == StepStatus.SKIPPED
     assert result.steps[2].status == StepStatus.SKIPPED
@@ -201,9 +201,7 @@ async def test_null_condition_step_always_runs():
     wf = make_workflow([step1, step2])
     engine, storage = await engine_with_workflow(wf)
 
-    result = await engine.complete_step(
-        "wf-test", step_num=1, outputs={}
-    )
+    result = await engine.complete_step("wf-test", step_num=1, outputs={})
 
     assert result.steps[1].status == StepStatus.RUNNING
     assert result.state == WorkflowState.RUNNING
@@ -236,9 +234,7 @@ async def test_condition_skips_middle_step_runs_last():
     wf = make_workflow([step1, step2, step3])
     engine, storage = await engine_with_workflow(wf)
 
-    result = await engine.complete_step(
-        "wf-test", step_num=1, outputs={"tier": "low"}
-    )
+    result = await engine.complete_step("wf-test", step_num=1, outputs={"tier": "low"})
 
     assert result.steps[1].status == StepStatus.SKIPPED
     assert result.steps[2].status == StepStatus.RUNNING

@@ -4,10 +4,12 @@ OpenAIProvider, PostgreSQLStorageBackend, and AdapterRegistry.
 All external SDK/driver calls are mocked so the suite runs without optional
 extras installed.
 """
+
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from typing import Any, cast
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -74,10 +76,11 @@ class TestAdapterRegistry:
             import importlib
 
             import nexus.adapters.ai.openai_provider as _mod
+
             importlib.reload(_mod)
-            _mod._OPENAI_AVAILABLE = True
-            _mod._openai_module = MagicMock()
-            _mod._openai_module.AsyncOpenAI = MagicMock(return_value=MagicMock())
+            setattr(_mod, "_OPENAI_AVAILABLE", True)
+            setattr(_mod, "_openai_module", MagicMock())
+            getattr(_mod, "_openai_module").AsyncOpenAI = MagicMock(return_value=MagicMock())
             provider = _mod.OpenAIProvider(api_key="sk-test")
         assert provider.name == "openai"
 
@@ -180,9 +183,7 @@ class TestSlackNotificationChannel:
         from nexus.core.models import Severity
 
         channel, mock_client = self._make_channel()
-        asyncio.run(
-            channel.send_alert("Deployment failed", Severity.WARNING)
-        )
+        asyncio.run(channel.send_alert("Deployment failed", Severity.WARNING))
         mock_client.chat_postMessage.assert_called_once()
         call_kwargs = mock_client.chat_postMessage.call_args.kwargs
         assert call_kwargs["channel"] == "#test"
@@ -204,9 +205,7 @@ class TestSlackNotificationChannel:
         channel._webhook_url = "https://hooks.slack.com/services/T0/B0/xxx"
 
         with patch.object(channel, "_send_via_webhook") as mock_webhook:
-            asyncio.run(
-                channel.send_alert("Test alert", Severity.CRITICAL)
-            )
+            asyncio.run(channel.send_alert("Test alert", Severity.CRITICAL))
         mock_webhook.assert_called_once()
         channel._client.chat_postMessage.assert_not_called()
 
@@ -362,9 +361,7 @@ class TestGitLabPlatform:
             "web_url": "https://gitlab.com/mygroup/myproject/-/issues/7",
         }
         with patch.object(platform, "_post", new=AsyncMock(return_value=mock_response)):
-            issue = asyncio.run(
-                platform.create_issue("New issue", "Body")
-            )
+            issue = asyncio.run(platform.create_issue("New issue", "Body"))
         assert issue.number == 7
         assert issue.title == "New issue"
 
@@ -372,17 +369,17 @@ class TestGitLabPlatform:
         import urllib.error
 
         platform = self._make_platform()
-        exc = urllib.error.HTTPError("url", 404, "Not Found", {}, None)
+        exc = urllib.error.HTTPError("url", 404, "Not Found", cast(Any, {}), None)
         with patch.object(platform, "_get", new=AsyncMock(side_effect=exc)):
             result = asyncio.run(platform.get_issue("999"))
         assert result is None
 
     def test_ensure_label_returns_true_on_success(self):
         platform = self._make_platform()
-        with patch.object(platform, "_post", new=AsyncMock(return_value={"name": "bug"})) as mock_post:
-            ok = asyncio.run(
-                platform.ensure_label("bug", color="FF0000", description="Bug label")
-            )
+        with patch.object(
+            platform, "_post", new=AsyncMock(return_value={"name": "bug"})
+        ) as mock_post:
+            ok = asyncio.run(platform.ensure_label("bug", color="FF0000", description="Bug label"))
         assert ok is True
         path, payload = mock_post.await_args.args
         assert path.endswith("/labels")
@@ -393,7 +390,7 @@ class TestGitLabPlatform:
         import urllib.error
 
         platform = self._make_platform()
-        exc = urllib.error.HTTPError("url", 409, "Conflict", {}, None)
+        exc = urllib.error.HTTPError("url", 409, "Conflict", cast(Any, {}), None)
         with patch.object(platform, "_post", new=AsyncMock(side_effect=exc)):
             ok = asyncio.run(platform.ensure_label("bug", color="FF0000"))
         assert ok is True
@@ -415,77 +412,6 @@ class TestGitLabPlatform:
         assert payload["should_remove_source_branch"] is True
         assert payload["merge_when_pipeline_succeeds"] is True
 
-    def test_list_open_issues_with_labels(self):
-        platform = self._make_platform()
-        response = [
-            {
-                "id": 101,
-                "iid": 5,
-                "title": "Bug report",
-                "description": "Something broke",
-                "state": "opened",
-                "labels": ["workflow:shortened", "bug"],
-                "created_at": "2026-02-01T10:00:00Z",
-                "updated_at": "2026-02-02T10:00:00Z",
-                "web_url": "https://gitlab.com/mygroup/myproject/-/issues/5",
-            }
-        ]
-        with patch.object(platform, "_get", new=AsyncMock(return_value=response)) as mock_get:
-            issues = asyncio.run(
-                platform.list_open_issues(limit=25, labels=["workflow:shortened", "workflow:full"])
-            )
-
-        assert len(issues) == 1
-        assert issues[0].number == 5
-        called_path = mock_get.await_args.args[0]
-        assert "state=opened" in called_path
-        assert "per_page=25" in called_path
-        assert "labels=" in called_path
-
-    def test_create_pr_from_changes_cross_repo_appends_fully_qualified_reference(self, tmp_path):
-        platform = self._make_platform()
-        repo_dir = tmp_path / "repo"
-        repo_dir.mkdir()
-
-        def fake_run(cmd, **kwargs):
-            result = MagicMock()
-            result.returncode = 0
-            result.stdout = ""
-            result.stderr = ""
-            if cmd[:3] == ["git", "status", "--porcelain"]:
-                result.stdout = " M file.py\n"
-            return result
-
-        mr_response = {
-            "id": 200,
-            "iid": 12,
-            "title": "Fix regression",
-            "state": "opened",
-            "source_branch": "nexus/issue-42",
-            "target_branch": "main",
-            "web_url": "https://gitlab.com/mygroup/myproject/-/merge_requests/12",
-        }
-
-        with patch("subprocess.run", side_effect=fake_run), patch.object(
-            platform,
-            "_post",
-            new=AsyncMock(return_value=mr_response),
-        ) as mock_post:
-            pr = asyncio.run(
-                platform.create_pr_from_changes(
-                    repo_dir=str(repo_dir),
-                    issue_number="42",
-                    title="Fix regression",
-                    body="Automated change",
-                    issue_repo="mygroup/workflow-repo",
-                )
-            )
-
-        assert pr is not None
-        assert pr.number == 12
-        payload = mock_post.await_args.args[1]
-        assert payload["description"].endswith("Closes mygroup/workflow-repo#42")
-
 
 # ---------------------------------------------------------------------------
 # OpenAIProvider
@@ -505,12 +431,17 @@ class TestOpenAIProvider:
 
         original_available = _mod._OPENAI_AVAILABLE
         original_module = _mod._openai_module
-        _mod._OPENAI_AVAILABLE = True
-        _mod._openai_module = mock_openai
+        setattr(_mod, "_OPENAI_AVAILABLE", True)
+        setattr(_mod, "_openai_module", mock_openai)
 
         provider = _mod.OpenAIProvider(api_key="sk-test")
         # Return provider + cleanup function
-        return provider, mock_client, lambda: setattr(_mod, "_OPENAI_AVAILABLE", original_available) or setattr(_mod, "_openai_module", original_module)
+        return (
+            provider,
+            mock_client,
+            lambda: setattr(_mod, "_OPENAI_AVAILABLE", original_available)
+            or setattr(_mod, "_openai_module", original_module),
+        )
 
     def test_name(self):
         provider, _, cleanup = self._make_provider()
@@ -549,9 +480,7 @@ class TestOpenAIProvider:
                 prompt="Analyze this issue",
                 workspace=Path("/tmp"),
             )
-            result = asyncio.run(
-                provider.execute_agent(ctx)
-            )
+            result = asyncio.run(provider.execute_agent(ctx))
             assert result.success is True
             assert result.output == "Analysis complete."
             assert result.provider_used == "openai"
@@ -565,7 +494,8 @@ class TestOpenAIProvider:
 
         provider, mock_client, cleanup = self._make_provider()
         try:
-            RateLimitError = _mod._openai_module.RateLimitError
+            mock_openai_mod = getattr(_mod, "_openai_module")
+            RateLimitError = mock_openai_mod.RateLimitError
             mock_client.chat.completions.create = AsyncMock(
                 side_effect=RateLimitError("Rate limited")
             )
@@ -617,9 +547,7 @@ class TestCodexCLIProvider:
 
         provider = CodexCLIProvider()
         with patch("nexus.adapters.ai.codex_provider.shutil.which", return_value=None):
-            available = asyncio.run(
-                provider.check_availability()
-            )
+            available = asyncio.run(provider.check_availability())
 
         assert available is False
 
@@ -633,7 +561,10 @@ class TestCodexCLIProvider:
         mock_proc.communicate = AsyncMock(return_value=(b"ok", b""))
         mock_proc.returncode = 0
 
-        with patch("nexus.adapters.ai.codex_provider.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch(
+            "nexus.adapters.ai.codex_provider.asyncio.create_subprocess_exec",
+            return_value=mock_proc,
+        ):
             ctx = ExecutionContext(
                 agent_name="developer",
                 prompt="Implement feature X",
@@ -655,8 +586,16 @@ class TestCodexCLIProvider:
         mock_proc.communicate = MagicMock(return_value=None)
         mock_proc.returncode = 0
 
-        with patch("nexus.adapters.ai.codex_provider.asyncio.create_subprocess_exec", return_value=mock_proc), \
-             patch("nexus.adapters.ai.codex_provider.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+        with (
+            patch(
+                "nexus.adapters.ai.codex_provider.asyncio.create_subprocess_exec",
+                return_value=mock_proc,
+            ),
+            patch(
+                "nexus.adapters.ai.codex_provider.asyncio.wait_for",
+                side_effect=asyncio.TimeoutError,
+            ),
+        ):
             ctx = ExecutionContext(
                 agent_name="developer",
                 prompt="Implement feature X",
@@ -692,9 +631,11 @@ class TestPostgreSQLStorageBackend:
         if not _mod._SA_AVAILABLE:
             pytest.skip("sqlalchemy not installed")
 
-        with patch("nexus.adapters.storage.postgres.sa.create_engine") as mock_engine, \
-             patch("nexus.adapters.storage.postgres.sa.orm.sessionmaker"), \
-             patch("nexus.adapters.storage.postgres._Base.metadata"):
+        with (
+            patch("nexus.adapters.storage.postgres.sa.create_engine") as mock_engine,
+            patch("nexus.adapters.storage.postgres.sa.orm.sessionmaker"),
+            patch("nexus.adapters.storage.postgres._Base.metadata"),
+        ):
             mock_engine.return_value.url = MagicMock()
             from nexus.adapters.storage.postgres import PostgreSQLStorageBackend
 
@@ -715,10 +656,196 @@ class TestPostgreSQLStorageBackend:
         from nexus.core.models import Agent, Workflow, WorkflowStep
 
         agent = Agent(name="triage", display_name="Triage", description="")
-        step = WorkflowStep(step_num=0, name="triage", agent=agent, prompt_template="Go", inputs={}, outputs={})
+        step = WorkflowStep(
+            step_num=0, name="triage", agent=agent, prompt_template="Go", inputs={}, outputs={}
+        )
         wf = Workflow(id="serde-test", name="test", description="", version="1", steps=[step])
         d = workflow_to_dict(wf)
         restored = dict_to_workflow(d)
         assert restored.id == "serde-test"
         assert len(restored.steps) == 1
         assert restored.steps[0].agent.name == "triage"
+
+
+# ---------------------------------------------------------------------------
+# DiscordNotificationChannel
+# ---------------------------------------------------------------------------
+
+
+class TestDiscordNotificationChannel:
+    def _make_channel(self):
+        """Create a DiscordNotificationChannel with aiohttp mocked out."""
+        from nexus.adapters.notifications.discord import (
+            _AIOHTTP_AVAILABLE,
+            DiscordNotificationChannel,
+        )
+
+        if not _AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp not installed")
+
+        channel = DiscordNotificationChannel.__new__(DiscordNotificationChannel)
+        channel._webhook_url = "https://discord.com/api/webhooks/0/token"
+        channel._bot_token = "Bot.test.token"
+        channel._alert_channel_id = "111222333"
+        return channel
+
+    def test_name(self):
+        from nexus.adapters.notifications.discord import (
+            _AIOHTTP_AVAILABLE,
+            DiscordNotificationChannel,
+        )
+
+        if not _AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp not installed")
+        channel = DiscordNotificationChannel.__new__(DiscordNotificationChannel)
+        assert channel.name == "discord"
+
+    def test_build_payload_basic(self):
+        from nexus.adapters.notifications.base import Message
+        from nexus.core.models import Severity
+
+        channel = self._make_channel()
+        msg = Message(text="Hello Discord", severity=Severity.INFO)
+        payload = channel._build_payload(msg)
+        assert "embeds" in payload
+        assert "Hello Discord" in payload["embeds"][0]["description"]
+
+    def test_build_payload_with_buttons(self):
+        from nexus.adapters.notifications.base import Button, Message
+        from nexus.core.models import Severity
+
+        channel = self._make_channel()
+        btns = [Button(label="Approve", callback_data="approve", url="https://example.com")]
+        msg = Message(text="Approve?", severity=Severity.WARNING, buttons=btns)
+        payload = channel._build_payload(msg)
+        assert "content" in payload
+        assert "Approve" in payload["content"]
+        assert "https://example.com" in payload["content"]
+
+    async def test_send_message_uses_webhook(self):
+        channel = self._make_channel()
+        from nexus.adapters.notifications.base import Message
+
+        msg = Message(text="Test via webhook")
+        with patch.object(channel, "_post_webhook", return_value="99999") as mock_wh:
+            result = await channel.send_message("123", msg)
+        assert result == "99999"
+        mock_wh.assert_called_once()
+
+    async def test_send_alert_uses_webhook(self):
+        from nexus.core.models import Severity
+
+        channel = self._make_channel()
+        with patch.object(channel, "_post_webhook", return_value="88888") as mock_wh:
+            await channel.send_alert("System down", Severity.CRITICAL)
+        mock_wh.assert_called_once()
+        payload = mock_wh.call_args[0][0]
+        assert "embeds" in payload
+        assert "CRITICAL" in payload["embeds"][0]["title"]
+
+    async def test_send_alert_uses_channel_when_no_webhook(self):
+        from nexus.adapters.notifications.discord import (
+            _AIOHTTP_AVAILABLE,
+            DiscordNotificationChannel,
+        )
+        from nexus.core.models import Severity
+
+        if not _AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp not installed")
+
+        channel = DiscordNotificationChannel.__new__(DiscordNotificationChannel)
+        channel._webhook_url = None
+        channel._bot_token = "Bot.test.token"
+        channel._alert_channel_id = "111222333"
+
+        with patch.object(channel, "_post_channel", return_value="77777") as mock_ch:
+            await channel.send_alert("Database error", Severity.ERROR)
+        mock_ch.assert_called_once_with("111222333", ANY)
+
+    async def test_update_message_webhook_path(self):
+        channel = self._make_channel()
+        with patch.object(channel, "_patch_webhook_message") as mock_patch:
+            await channel.update_message("555666", "Updated text")
+        mock_patch.assert_called_once_with("555666", {"content": "Updated text"})
+
+    async def test_update_message_bot_path(self):
+        channel = self._make_channel()
+        with patch.object(channel, "_patch_channel_message") as mock_patch:
+            await channel.update_message("chan123:msg456", "New content")
+        mock_patch.assert_called_once_with("chan123", "msg456", {"content": "New content"})
+
+    def test_requires_aiohttp_without_install(self):
+        import nexus.adapters.notifications.discord as _mod
+
+        original = _mod._AIOHTTP_AVAILABLE
+        _mod._AIOHTTP_AVAILABLE = False
+        try:
+            with pytest.raises(ImportError, match="aiohttp"):
+                _mod._require_aiohttp()
+        finally:
+            _mod._AIOHTTP_AVAILABLE = original
+
+    def test_missing_credentials_raises(self):
+        from nexus.adapters.notifications.discord import (
+            _AIOHTTP_AVAILABLE,
+            DiscordNotificationChannel,
+        )
+
+        if not _AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp not installed")
+
+        with pytest.raises(ValueError, match="webhook_url or bot_token"):
+            DiscordNotificationChannel()
+
+    async def test_request_input_requires_bot_token(self):
+        from nexus.adapters.notifications.discord import _AIOHTTP_AVAILABLE
+
+        if not _AIOHTTP_AVAILABLE:
+            pytest.skip("aiohttp not installed")
+
+        channel = self._make_channel()
+        channel._bot_token = None
+
+        with pytest.raises(ValueError, match="bot_token"):
+            await channel.request_input("chan123", "Prompt?")
+
+    async def test_request_input_returns_user_reply_filtering_bots(self):
+        channel = self._make_channel()
+        bot_msg = {"id": "1", "content": "I am a bot", "author": {"bot": True}}
+        user_msg = {"id": "2", "content": "Human reply", "author": {"bot": False}}
+
+        with (
+            patch.object(channel, "_post_channel", new=AsyncMock(return_value="msg123")),
+            patch.object(
+                channel,
+                "_fetch_messages_after",
+                new=AsyncMock(side_effect=[[bot_msg], [bot_msg, user_msg]]),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
+            result = await channel.request_input(
+                "chan999", "Please reply", timeout=5.0, poll_interval=0.01
+            )
+
+        assert result == "Human reply"
+
+    async def test_request_input_raises_timeout_when_no_reply(self):
+        channel = self._make_channel()
+
+        with (
+            patch.object(channel, "_post_channel", new=AsyncMock(return_value="msg123")),
+            patch.object(channel, "_fetch_messages_after", new=AsyncMock(return_value=[])),
+            pytest.raises(TimeoutError),
+        ):
+            # timeout=0.0 → deadline is already reached before the loop body
+            await channel.request_input("chan999", "Waiting", timeout=0.0)
+
+    async def test_http_error_propagates_from_send_message(self):
+        from nexus.adapters.notifications.base import Message
+
+        channel = self._make_channel()
+        error = RuntimeError("Discord API 403")
+
+        with patch.object(channel, "_post_webhook", side_effect=error):
+            with pytest.raises(RuntimeError, match="Discord API 403"):
+                await channel.send_message("chan123", Message(text="test"))

@@ -189,10 +189,12 @@ async def test_start_workflow_delegates_to_engine():
 
 @pytest.mark.asyncio
 async def test_request_approval_gate_invokes_callbacks():
-    captured = {
-        "set": None,
-        "audit": None,
-        "notify": None,
+    from typing import Any
+
+    captured: dict[str, Any] = {
+        "set": {},
+        "audit": (),
+        "notify": {},
     }
 
     def _set_pending_approval(**kwargs):
@@ -280,9 +282,7 @@ def test_build_storage_file_explicit_storage_type(tmp_path):
     """Explicit storage_type='file' works the same as the default."""
     from nexus.adapters.storage.file import FileStorage
 
-    plugin = WorkflowStateEnginePlugin(
-        {"storage_type": "file", "storage_dir": str(tmp_path)}
-    )
+    plugin = WorkflowStateEnginePlugin({"storage_type": "file", "storage_dir": str(tmp_path)})
     storage = plugin._build_storage()
     assert isinstance(storage, FileStorage)
 

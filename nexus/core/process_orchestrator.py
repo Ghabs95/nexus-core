@@ -283,7 +283,7 @@ class ProcessOrchestrator:
     def __init__(
         self,
         runtime: AgentRuntime,
-        complete_step_fn: Callable[[str, str, dict], Any],
+        complete_step_fn: Callable[..., Any],
         *,
         nexus_dir: str = ".nexus",
     ) -> None:
@@ -347,6 +347,7 @@ class ProcessOrchestrator:
         for detection in detected:
             issue_num = detection.issue_number
             summary = detection.summary
+            comment_key = None
             try:
                 comment_key = detection.dedup_key
                 if comment_key in dedup_seen:
@@ -437,7 +438,7 @@ class ProcessOrchestrator:
                             repo,
                             completed_agent,
                             project_name or "",
-                            reason=engine_workflow.state.value,
+                            reason=str(engine_workflow.state.value),
                         )
                         continue
 
@@ -526,9 +527,8 @@ class ProcessOrchestrator:
                     msg = f"🔀 Chaining #{issue_num}: {completed_agent} → {next_agent}"
                 self._runtime.send_alert(msg)
 
-                # Launch next agent.
                 pid, tool_used = self._runtime.launch_agent(
-                    issue_num, next_agent, trigger_source="completion-scan"
+                    issue_num, str(next_agent), trigger_source="completion-scan"
                 )
                 if pid:
                     logger.info(
@@ -558,7 +558,8 @@ class ProcessOrchestrator:
 
             except Exception as exc:
                 if isinstance(exc, ValueError) and "Completion agent mismatch" in str(exc):
-                    dedup_seen.add(comment_key)
+                    if comment_key:
+                        dedup_seen.add(comment_key)
                     logger.info(
                         "Skipping stale completion for issue #%s (%s): %s",
                         detection.issue_number,
@@ -827,9 +828,8 @@ class ProcessOrchestrator:
 
         # Ignore stale log-only timeouts for inactive issues with no live pid
         # and no RUNNING workflow step. This prevents timeout noise for old logs.
-        if (
-            not effective_pid
-            and (not isinstance(agent_type, str) or not agent_type.strip() or agent_type == "unknown")
+        if not effective_pid and (
+            not isinstance(agent_type, str) or not agent_type.strip() or agent_type == "unknown"
         ):
             logger.debug(
                 "Skipping stale timeout for issue #%s: no live pid or expected RUNNING agent",

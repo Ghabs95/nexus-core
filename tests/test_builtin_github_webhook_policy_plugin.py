@@ -25,6 +25,8 @@ def test_resolve_project_key_matches_repo_in_github_repos_list():
         }
     }
 
-    project = plugin.resolve_project_key("acme/project-alpha-mobile", config, default_project="fallback")
+    project = plugin.resolve_project_key(
+        "acme/project-alpha-mobile", config, default_project="fallback"
+    )
 
     assert project == "project_alpha"

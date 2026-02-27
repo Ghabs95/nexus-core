@@ -45,7 +45,9 @@ class InMemoryStorage(StorageBackend):
     async def get_audit_log(self, workflow_id: str, since=None) -> list[AuditEvent]:
         return [e for e in self._audit if e.workflow_id == workflow_id]
 
-    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: dict[str, Any]) -> None:
+    async def save_agent_metadata(
+        self, workflow_id: str, agent_name: str, metadata: dict[str, Any]
+    ) -> None:
         pass
 
     async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> dict[str, Any] | None:
@@ -56,7 +58,13 @@ class InMemoryStorage(StorageBackend):
 
 
 def _agent(agent_type: str) -> Agent:
-    return Agent(name=agent_type, display_name=agent_type.title(), description="test", timeout=60, max_retries=0)
+    return Agent(
+        name=agent_type,
+        display_name=agent_type.title(),
+        description="test",
+        timeout=60,
+        max_retries=0,
+    )
 
 
 def _step(num: int, step_id: str, agent_type: str, routes=None) -> WorkflowStep:
@@ -88,10 +96,12 @@ async def _plugin_with_workflow(workflow: Workflow, issue_number: str) -> tuple:
     await storage.save_workflow(workflow)
     engine = WorkflowEngine(storage=storage)
     issue_map = {issue_number: workflow.id}
-    plugin = WorkflowStateEnginePlugin({
-        "engine_factory": lambda: engine,
-        "issue_to_workflow_id": lambda n: issue_map.get(str(n)),
-    })
+    plugin = WorkflowStateEnginePlugin(
+        {
+            "engine_factory": lambda: engine,
+            "issue_to_workflow_id": lambda n: issue_map.get(str(n)),
+        }
+    )
     return plugin, storage
 
 
@@ -104,23 +114,36 @@ class TestActiveAgentType:
     def test_returns_agent_type_when_step_running(self):
         step = _step(1, "develop", "developer")
         step.status = StepStatus.RUNNING
-        wf = Workflow(id="w", name="t", version="1", steps=[step], state=WorkflowState.RUNNING, current_step=1)
+        wf = Workflow(
+            id="w", name="t", version="1", steps=[step], state=WorkflowState.RUNNING, current_step=1
+        )
         assert wf.active_agent_type == "developer"
 
     def test_returns_none_when_step_completed(self):
         step = _step(1, "develop", "developer")
         step.status = StepStatus.COMPLETED
-        wf = Workflow(id="w", name="t", version="1", steps=[step], state=WorkflowState.RUNNING, current_step=1)
+        wf = Workflow(
+            id="w", name="t", version="1", steps=[step], state=WorkflowState.RUNNING, current_step=1
+        )
         assert wf.active_agent_type is None
 
     def test_returns_none_when_no_current_step(self):
-        wf = Workflow(id="w", name="t", version="1", steps=[], state=WorkflowState.RUNNING, current_step=0)
+        wf = Workflow(
+            id="w", name="t", version="1", steps=[], state=WorkflowState.RUNNING, current_step=0
+        )
         assert wf.active_agent_type is None
 
     def test_returns_none_workflow_completed(self):
         step = _step(1, "develop", "developer")
         step.status = StepStatus.COMPLETED
-        wf = Workflow(id="w", name="t", version="1", steps=[step], state=WorkflowState.COMPLETED, current_step=1)
+        wf = Workflow(
+            id="w",
+            name="t",
+            version="1",
+            steps=[step],
+            state=WorkflowState.COMPLETED,
+            current_step=1,
+        )
         assert wf.active_agent_type is None
 
 
@@ -169,9 +192,11 @@ async def test_complete_step_for_issue_completes_workflow_on_last_step():
 @pytest.mark.asyncio
 async def test_complete_step_for_issue_returns_none_when_no_mapping():
     """Returns None when no workflow is mapped to the issue."""
-    plugin = WorkflowStateEnginePlugin({
-        "issue_to_workflow_id": lambda _: None,
-    })
+    plugin = WorkflowStateEnginePlugin(
+        {
+            "issue_to_workflow_id": lambda _: None,
+        }
+    )
     result = await plugin.complete_step_for_issue("999", "developer", {})
     assert result is None
 
@@ -229,10 +254,15 @@ async def test_complete_step_for_issue_routes_through_router_to_close():
     """Router evaluates route condition and routes approved review to close_loop."""
     develop = _step(1, "develop", "developer")
     review = _step(2, "review", "reviewer")
-    router = _step(3, "route_review", "router", routes=[
-        {"when": "approval_status == 'approved'", "then": "close_loop"},
-        {"default": "develop"},
-    ])
+    router = _step(
+        3,
+        "route_review",
+        "router",
+        routes=[
+            {"when": "approval_status == 'approved'", "then": "close_loop"},
+            {"default": "develop"},
+        ],
+    )
     close_loop = _step(4, "close_loop", "summarizer")
 
     wf = _make_workflow("wf-router", [develop, review, router, close_loop])
@@ -248,9 +278,9 @@ async def test_complete_step_for_issue_routes_through_router_to_close():
     )
 
     assert updated is not None
-    assert updated.active_agent_type == "summarizer", (
-        f"expected summarizer, got {updated.active_agent_type} (state={updated.state})"
-    )
+    assert (
+        updated.active_agent_type == "summarizer"
+    ), f"expected summarizer, got {updated.active_agent_type} (state={updated.state})"
 
 
 @pytest.mark.asyncio
@@ -258,10 +288,15 @@ async def test_complete_step_for_issue_routes_loop_back_to_develop():
     """Router evaluates default and loops reviewer → developer on changes_requested."""
     develop = _step(1, "develop", "developer")
     review = _step(2, "review", "reviewer")
-    router = _step(3, "route_review", "router", routes=[
-        {"when": "approval_status == 'approved'", "then": "close_loop"},
-        {"default": "develop"},
-    ])
+    router = _step(
+        3,
+        "route_review",
+        "router",
+        routes=[
+            {"when": "approval_status == 'approved'", "then": "close_loop"},
+            {"default": "develop"},
+        ],
+    )
     close_loop = _step(4, "close_loop", "summarizer")
 
     wf = _make_workflow("wf-loop", [develop, review, router, close_loop])
@@ -285,15 +320,22 @@ async def test_complete_step_for_issue_derives_review_status_for_changes_request
     """When reviewer provides next_agent=developer, routing derives changes_requested."""
     develop = _step(1, "develop", "developer")
     review = _step(2, "review", "reviewer")
-    route_review = _step(3, "route_review", "router", routes=[
-        {"when": "review_status == 'approved'", "then": "compliance"},
-        {"when": "review_status == 'changes_requested'", "then": "develop"},
-        {"default": "close_rejected"},
-    ])
+    route_review = _step(
+        3,
+        "route_review",
+        "router",
+        routes=[
+            {"when": "review_status == 'approved'", "then": "compliance"},
+            {"when": "review_status == 'changes_requested'", "then": "develop"},
+            {"default": "close_rejected"},
+        ],
+    )
     compliance = _step(4, "compliance", "compliance")
     close_rejected = _step(5, "close_rejected", "summarizer")
 
-    wf = _make_workflow("wf-review-derived-dev", [develop, review, route_review, compliance, close_rejected])
+    wf = _make_workflow(
+        "wf-review-derived-dev", [develop, review, route_review, compliance, close_rejected]
+    )
     plugin, _ = await _plugin_with_workflow(wf, "review-derived-dev")
 
     await plugin.complete_step_for_issue("review-derived-dev", "developer", {"pr": "1"})
@@ -312,15 +354,22 @@ async def test_complete_step_for_issue_derives_review_status_for_approved():
     """When reviewer provides next_agent=compliance, routing derives approved."""
     develop = _step(1, "develop", "developer")
     review = _step(2, "review", "reviewer")
-    route_review = _step(3, "route_review", "router", routes=[
-        {"when": "review_status == 'approved'", "then": "compliance"},
-        {"when": "review_status == 'changes_requested'", "then": "develop"},
-        {"default": "close_rejected"},
-    ])
+    route_review = _step(
+        3,
+        "route_review",
+        "router",
+        routes=[
+            {"when": "review_status == 'approved'", "then": "compliance"},
+            {"when": "review_status == 'changes_requested'", "then": "develop"},
+            {"default": "close_rejected"},
+        ],
+    )
     compliance = _step(4, "compliance", "compliance")
     close_rejected = _step(5, "close_rejected", "summarizer")
 
-    wf = _make_workflow("wf-review-derived-compliance", [develop, review, route_review, compliance, close_rejected])
+    wf = _make_workflow(
+        "wf-review-derived-compliance", [develop, review, route_review, compliance, close_rejected]
+    )
     plugin, _ = await _plugin_with_workflow(wf, "review-derived-compliance")
 
     await plugin.complete_step_for_issue("review-derived-compliance", "developer", {"pr": "1"})
@@ -339,11 +388,16 @@ async def test_complete_step_for_issue_derives_router_field_for_custom_agent_typ
     """Infer router condition vars from next_agent without hardcoded agent_type names."""
     implement = _step(1, "implement", "builder")
     validate = _step(2, "validate", "qa_guard")
-    route_validate = _step(3, "route_validate", "router", routes=[
-        {"when": "quality_gate == 'pass'", "then": "security_scan"},
-        {"when": "quality_gate == 'fail'", "then": "rework"},
-        {"default": "rework"},
-    ])
+    route_validate = _step(
+        3,
+        "route_validate",
+        "router",
+        routes=[
+            {"when": "quality_gate == 'pass'", "then": "security_scan"},
+            {"when": "quality_gate == 'fail'", "then": "rework"},
+            {"default": "rework"},
+        ],
+    )
     security_scan = _step(4, "security_scan", "sec_ops")
     rework = _step(5, "rework", "builder")
 
@@ -369,11 +423,16 @@ async def test_complete_step_for_issue_derives_numeric_router_field_from_next_ag
     """Infer numeric route condition assignments (e.g. retry_count == 1)."""
     execute = _step(1, "execute", "runner")
     verify = _step(2, "verify", "validator")
-    route_verify = _step(3, "route_verify", "router", routes=[
-        {"when": "retry_count == 1", "then": "retry_once"},
-        {"when": "retry_count == 0", "then": "ship"},
-        {"default": "ship"},
-    ])
+    route_verify = _step(
+        3,
+        "route_verify",
+        "router",
+        routes=[
+            {"when": "retry_count == 1", "then": "retry_once"},
+            {"when": "retry_count == 0", "then": "ship"},
+            {"default": "ship"},
+        ],
+    )
     retry_once = _step(4, "retry_once", "runner")
     ship = _step(5, "ship", "deployer")
 
@@ -399,11 +458,16 @@ async def test_complete_step_for_issue_derives_boolean_router_field_from_next_ag
     """Infer boolean route condition assignments (e.g. is_blocked == True)."""
     implement = _step(1, "implement", "builder")
     guard = _step(2, "guard", "policy_guard")
-    route_guard = _step(3, "route_guard", "router", routes=[
-        {"when": "is_blocked == True", "then": "rework"},
-        {"when": "is_blocked == False", "then": "release"},
-        {"default": "release"},
-    ])
+    route_guard = _step(
+        3,
+        "route_guard",
+        "router",
+        routes=[
+            {"when": "is_blocked == True", "then": "rework"},
+            {"when": "is_blocked == False", "then": "release"},
+            {"default": "release"},
+        ],
+    )
     rework = _step(4, "rework", "builder")
     release = _step(5, "release", "deployer")
 
@@ -502,6 +566,7 @@ async def test_reset_to_agent_for_issue_recovers_missing_workflow_from_mapping(t
 # Idempotency ledger tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_complete_step_for_issue_idempotency_duplicate_suppressed(tmp_path):
     """Calling complete_step_for_issue with a duplicate event_id must be a no-op.
@@ -547,6 +612,7 @@ async def test_complete_step_for_issue_different_event_ids_advance_independently
     updated = await plugin.complete_step_for_issue("idem2", "developer", {}, event_id="ev-bbb")
     assert updated is not None
     from nexus.core.models import WorkflowState as WS
+
     assert updated.state == WS.COMPLETED
 
 
@@ -564,4 +630,5 @@ async def test_complete_step_for_issue_no_event_id_always_advances(tmp_path):
     updated = await plugin.complete_step_for_issue("idem3", "developer", {})
     assert updated is not None
     from nexus.core.models import WorkflowState as WS
+
     assert updated.state == WS.COMPLETED

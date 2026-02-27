@@ -1,5 +1,7 @@
 """Tests for automatic PR-to-issue linking in GitHubPlatform.create_pr_from_changes()."""
+
 import json
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -109,8 +111,8 @@ class TestPRAutoLinking:
 
         assert result is not None
         assert body_sent is not None
-        # Should appear exactly once
-        assert body_sent.count("Closes #42") == 1
+
+        assert cast(Any, body_sent).count("Closes #42") == 1
 
     @pytest.mark.asyncio
     async def test_no_duplicate_with_fixes_keyword(self, platform, tmp_path):
@@ -292,7 +294,8 @@ class TestPRAutoLinking:
 
         assert result is not None
         assert body_sent is not None
-        assert body_sent.count("Closes owner/workflow-repo#42") == 1
+
+        assert cast(Any, body_sent).count("Closes owner/workflow-repo#42") == 1
 
 
 @pytest.mark.asyncio

@@ -630,7 +630,9 @@ def _get_inbox_queue_overview(limit: int) -> dict[str, Any]:
     return get_queue_overview(limit=limit)
 
 
-def _enqueue_inbox_task(*, project_key: str, workspace: str, filename: str, markdown_content: str) -> int:
+def _enqueue_inbox_task(
+    *, project_key: str, workspace: str, filename: str, markdown_content: str
+) -> int:
     from integrations.inbox_queue import enqueue_task
 
     return enqueue_task(

@@ -288,7 +288,16 @@ def _log_indicates_copilot_quota_failure(log_text: str) -> bool:
     text = str(log_text or "").lower()
     if not text:
         return False
-    quota_markers = ("402", "429", "quota", "rate limit", "ratelimit", "too many requests", "status: 429", "statustext: \'too many requests\'")
+    quota_markers = (
+        "402",
+        "429",
+        "quota",
+        "rate limit",
+        "ratelimit",
+        "too many requests",
+        "status: 429",
+        "statustext: 'too many requests'",
+    )
     summary_markers = ("total session time", "total usage est", "api time spent")
     return any(marker in text for marker in quota_markers) and any(
         marker in text for marker in summary_markers

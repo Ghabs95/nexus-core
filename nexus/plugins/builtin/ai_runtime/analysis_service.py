@@ -77,11 +77,7 @@ def strip_cli_tool_output(text: str) -> str:
         # Legacy tool transcript blocks (Copilot/Gemini) and newer Codex transcript
         # entries share the same "header + indented detail lines + blank separator"
         # shape, so strip them uniformly.
-        if (
-            stripped.startswith("●")
-            or stripped.startswith("✗ ")
-            or stripped.startswith("✓ ")
-        ):
+        if stripped.startswith("●") or stripped.startswith("✗ ") or stripped.startswith("✓ "):
             skip_until_blank = True
             continue
         if skip_until_blank and stripped.startswith("$"):

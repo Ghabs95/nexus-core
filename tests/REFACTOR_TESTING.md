@@ -11,5 +11,5 @@ Examples:
 - `tests/test_ai_runtime_policy_helpers.py` + `tests/test_builtin_ai_runtime_plugin.py`
 - `examples/telegram-bot/tests/test_*_service.py` + `examples/telegram-bot/tests/test_inbox_processor_dispatch.py`
 
-Avoid preserving legacy behavior in tests when the canonical config/schema changed. Update fixtures/tests to the current source-of-truth schema.
-
+Avoid preserving legacy behavior in tests when the canonical config/schema changed. Update fixtures/tests to the current
+source-of-truth schema.

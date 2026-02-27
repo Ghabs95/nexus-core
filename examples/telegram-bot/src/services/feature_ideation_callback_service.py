@@ -324,5 +324,9 @@ async def handle_feature_ideation_callback(
         return
 
     await ctx.edit_message_text("⚠️ Unknown feature action.")
+
+
 class _CreateFeatureTaskFn(Protocol):
-    def __call__(self, text: str, message_id: str, project_key: str) -> Awaitable[dict[str, Any]]: ...
+    def __call__(
+        self, text: str, message_id: str, project_key: str
+    ) -> Awaitable[dict[str, Any]]: ...

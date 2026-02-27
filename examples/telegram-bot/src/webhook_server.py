@@ -218,9 +218,7 @@ def _reset_workflow_to_agent(issue_number: str, agent_ref: str) -> bool:
 
     try:
         return bool(
-            asyncio.run(
-                workflow_plugin.reset_to_agent_for_issue(str(issue_number), str(agent_ref))
-            )
+            asyncio.run(workflow_plugin.reset_to_agent_for_issue(str(issue_number), str(agent_ref)))
         )
     except Exception as exc:
         logger.warning(

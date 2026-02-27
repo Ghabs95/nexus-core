@@ -1,4 +1,5 @@
 """Tests for workflow_type normalization and issue label extraction."""
+
 import json
 from unittest.mock import MagicMock, patch
 
@@ -49,9 +50,7 @@ class TestGetWorkflowTypeFromIssue:
     def _mock_gh_labels(self, platform, labels: list[str]):
         """Set up _run_gh_command to return the given labels."""
         label_data = [{"name": l} for l in labels]
-        platform._run_gh_command = MagicMock(
-            return_value=json.dumps({"labels": label_data})
-        )
+        platform._run_gh_command = MagicMock(return_value=json.dumps({"labels": label_data}))
 
     def test_full_label(self, platform):
         self._mock_gh_labels(platform, ["workflow:full", "bug"])

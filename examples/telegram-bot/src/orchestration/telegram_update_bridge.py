@@ -153,7 +153,14 @@ async def _reply_with_parse_fallback(
         raise
 
 
-async def _edit_with_parse_fallback(callable_edit, *, text: str, reply_markup: Any, parse_mode: str | None, disable_web_page_preview: bool):
+async def _edit_with_parse_fallback(
+    callable_edit,
+    *,
+    text: str,
+    reply_markup: Any,
+    parse_mode: str | None,
+    disable_web_page_preview: bool,
+):
     normalized_text = _clip_telegram_text(_normalize_telegram_markdown(text, parse_mode))
     try:
         return await callable_edit(
@@ -164,7 +171,9 @@ async def _edit_with_parse_fallback(callable_edit, *, text: str, reply_markup: A
         )
     except Exception as exc:
         if parse_mode and _is_parse_entity_error(exc):
-            logger.warning("Retrying edit_message_text without parse_mode due to Telegram entity parsing")
+            logger.warning(
+                "Retrying edit_message_text without parse_mode due to Telegram entity parsing"
+            )
             return await callable_edit(
                 text=normalized_text,
                 reply_markup=reply_markup,

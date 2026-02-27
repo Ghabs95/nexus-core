@@ -6,14 +6,12 @@ plus edge-cases: missing files, corrupt JSON, concurrent re-reads.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
 from nexus.adapters.storage.file_workflow_state import FileWorkflowStateStore
 from nexus.core.workflow_state import WorkflowStateStore
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -209,7 +207,9 @@ class TestEdgeCases:
         assert s.get_workflow_id("1") == "wf-1"
         assert nested.exists()
 
-    def test_atomic_write_leaves_no_tmp(self, store: FileWorkflowStateStore, tmp_path: Path) -> None:
+    def test_atomic_write_leaves_no_tmp(
+        self, store: FileWorkflowStateStore, tmp_path: Path
+    ) -> None:
         store.map_issue("1", "wf-1")
         # No .tmp file should be left behind
         tmp_files = list(tmp_path.glob("*.tmp"))

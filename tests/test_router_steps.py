@@ -44,7 +44,9 @@ class InMemoryStorage(StorageBackend):
     async def get_audit_log(self, workflow_id: str, since=None) -> list[AuditEvent]:
         return [e for e in self._audit if e.workflow_id == workflow_id]
 
-    async def save_agent_metadata(self, workflow_id: str, agent_name: str, metadata: dict[str, Any]) -> None:
+    async def save_agent_metadata(
+        self, workflow_id: str, agent_name: str, metadata: dict[str, Any]
+    ) -> None:
         pass
 
     async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> dict[str, Any] | None:
@@ -60,7 +62,9 @@ class InMemoryStorage(StorageBackend):
 
 
 def _agent() -> Agent:
-    return Agent(name="test-agent", display_name="Test Agent", description="test", timeout=60, max_retries=0)
+    return Agent(
+        name="test-agent", display_name="Test Agent", description="test", timeout=60, max_retries=0
+    )
 
 
 def _make_step(step_num: int, name: str, routes=None, condition=None) -> WorkflowStep:
@@ -105,10 +109,14 @@ async def test_router_routes_approved_to_deployer():
     """Router 'approved' condition should activate the deploy step."""
     develop = _make_step(1, "develop")
     review = _make_step(2, "review")
-    router = _make_step(3, "route_review", routes=[
-        {"when": "review['decision'] == 'approved'", "goto": "deploy"},
-        {"default": True, "goto": "develop"},
-    ])
+    router = _make_step(
+        3,
+        "route_review",
+        routes=[
+            {"when": "review['decision'] == 'approved'", "goto": "deploy"},
+            {"default": True, "goto": "develop"},
+        ],
+    )
     deploy = _make_step(4, "deploy")
 
     wf = _make_workflow([develop, review, router, deploy])
@@ -131,10 +139,14 @@ async def test_router_default_routes_to_develop():
     """Router default route should activate develop when no when-clause matches."""
     develop = _make_step(1, "develop")
     review = _make_step(2, "review")
-    router = _make_step(3, "route_review", routes=[
-        {"when": "review['decision'] == 'approved'", "goto": "deploy"},
-        {"default": True, "goto": "develop"},
-    ])
+    router = _make_step(
+        3,
+        "route_review",
+        routes=[
+            {"when": "review['decision'] == 'approved'", "goto": "deploy"},
+            {"default": True, "goto": "develop"},
+        ],
+    )
     deploy = _make_step(4, "deploy")
 
     wf = _make_workflow([develop, review, router, deploy])
@@ -143,7 +155,9 @@ async def test_router_default_routes_to_develop():
     await engine.complete_step("wf-test", step_num=1, outputs={"pr": "1"})
     await engine.complete_step("wf-test", step_num=2, outputs={"decision": "changes_requested"})
 
-    assert develop.status == StepStatus.RUNNING, "develop should be re-activated on changes_requested"
+    assert (
+        develop.status == StepStatus.RUNNING
+    ), "develop should be re-activated on changes_requested"
     assert wf.current_step == develop.step_num
     assert develop.iteration == 1
 
@@ -158,10 +172,14 @@ async def test_review_develop_loop_two_passes():
     """develop → review (changes) → develop → review (approved) → deploy."""
     develop = _make_step(1, "develop")
     review = _make_step(2, "review")
-    router = _make_step(3, "route_review", routes=[
-        {"when": "review['decision'] == 'approved'", "goto": "deploy"},
-        {"default": True, "goto": "develop"},
-    ])
+    router = _make_step(
+        3,
+        "route_review",
+        routes=[
+            {"when": "review['decision'] == 'approved'", "goto": "deploy"},
+            {"default": True, "goto": "develop"},
+        ],
+    )
     deploy = _make_step(4, "deploy")
 
     wf = _make_workflow([develop, review, router, deploy])
@@ -197,10 +215,14 @@ async def test_max_loop_iteration_fails_workflow():
     """After _MAX_LOOP_ITERATIONS re-activations, the workflow should FAIL."""
     develop = _make_step(1, "develop")
     review = _make_step(2, "review")
-    router = _make_step(3, "route_review", routes=[
-        {"when": "review['decision'] == 'approved'", "goto": "deploy"},
-        {"default": True, "goto": "develop"},
-    ])
+    router = _make_step(
+        3,
+        "route_review",
+        routes=[
+            {"when": "review['decision'] == 'approved'", "goto": "deploy"},
+            {"default": True, "goto": "develop"},
+        ],
+    )
     deploy = _make_step(4, "deploy")
 
     wf = _make_workflow([develop, review, router, deploy])
@@ -229,10 +251,14 @@ async def test_max_loop_iteration_fails_workflow():
 async def test_router_no_match_and_no_default_ends_workflow():
     """If no route matches and there is no default, the workflow should complete."""
     review = _make_step(1, "review")
-    router = _make_step(2, "route_review", routes=[
-        {"when": "review['decision'] == 'approved'", "goto": "deploy"},
-        # No default
-    ])
+    router = _make_step(
+        2,
+        "route_review",
+        routes=[
+            {"when": "review['decision'] == 'approved'", "goto": "deploy"},
+            # No default
+        ],
+    )
     deploy = _make_step(3, "deploy")
 
     wf = _make_workflow([review, router, deploy])
@@ -279,4 +305,3 @@ async def test_on_success_jumps_to_named_step_not_sequential():
     assert design.status == StepStatus.PENDING
     assert develop.status == StepStatus.RUNNING
     assert wf.current_step == develop.step_num
-

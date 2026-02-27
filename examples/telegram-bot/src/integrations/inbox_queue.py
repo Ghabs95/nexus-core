@@ -6,9 +6,9 @@ Used by the example Telegram bot when ``NEXUS_INBOX_BACKEND=postgres``.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-import os
 from typing import Any
 
 from config import NEXUS_STORAGE_DSN
@@ -20,6 +20,9 @@ try:
     _SA_AVAILABLE = True
 except ImportError:
     _SA_AVAILABLE = False
+    sa: Any = None
+    DeclarativeBase: Any = object
+    Session: Any = None
 
 
 logger = logging.getLogger(__name__)
@@ -123,7 +126,7 @@ def enqueue_task(
     normalized_content = str(markdown_content)
     now = datetime.now(tz=UTC)
     with Session(engine) as session:
-        existing = (
+        existing: Any = (
             session.query(_InboxTaskRow)
             .filter(_InboxTaskRow.project_key == normalized_project)
             .filter(_InboxTaskRow.workspace == normalized_workspace)
@@ -162,7 +165,7 @@ def enqueue_task(
 
         if _DEDUP_WINDOW_SECONDS > 0:
             dedupe_cutoff = now - timedelta(seconds=_DEDUP_WINDOW_SECONDS)
-            exact_existing = (
+            exact_existing: Any = (
                 session.query(_InboxTaskRow)
                 .filter(_InboxTaskRow.project_key == normalized_project)
                 .filter(_InboxTaskRow.workspace == normalized_workspace)
@@ -223,7 +226,8 @@ def claim_pending_tasks(*, limit: int, worker_id: str) -> list[InboxQueueTask]:
             session.commit()
             return []
 
-        for row in rows:
+        for r_item in rows:
+            row: Any = r_item
             prior_nonfailed = (
                 session.query(_InboxTaskRow.id, _InboxTaskRow.status)
                 .filter(_InboxTaskRow.project_key == row.project_key)
@@ -327,7 +331,8 @@ def get_queue_overview(*, limit: int = 10) -> dict[str, Any]:
             session.query(_InboxTaskRow).order_by(_InboxTaskRow.id.desc()).limit(safe_limit).all()
         )
 
-        for row in rows:
+        for r_item in rows:
+            row: Any = r_item
             recent.append(
                 {
                     "id": int(row.id),
@@ -359,7 +364,8 @@ def get_queue_overview(*, limit: int = 10) -> dict[str, Any]:
             .limit(max(50, safe_limit * 10))
             .all()
         )
-        for row in sample_rows:
+        for smp_item in sample_rows:
+            row: Any = smp_item
             bucket = pending_by_project.get(str(row.project_key))
             if not bucket:
                 continue

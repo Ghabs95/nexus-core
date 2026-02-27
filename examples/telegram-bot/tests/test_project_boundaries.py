@@ -271,18 +271,22 @@ def test_issue_body_resolution_skips_project_probe_failures(monkeypatch):
         async def get_issue(self, issue_number: str):
             return _Issue(body=f"Nexus issue body for {issue_number}")
 
-    monkeypatch.setattr(agent_launcher, "PROJECT_CONFIG", {
-        "project_alpha": {
-            "workspace": "project_alpha",
-            "git_platform": "gitlab",
-            "git_repo": "project_alpha/workflows",
+    monkeypatch.setattr(
+        agent_launcher,
+        "PROJECT_CONFIG",
+        {
+            "project_alpha": {
+                "workspace": "project_alpha",
+                "git_platform": "gitlab",
+                "git_repo": "project_alpha/workflows",
+            },
+            "nexus": {
+                "workspace": "ghabs",
+                "git_platform": "github",
+                "git_repo": "Ghabs95/nexus-core",
+            },
         },
-        "nexus": {
-            "workspace": "ghabs",
-            "git_platform": "github",
-            "git_repo": "Ghabs95/nexus-core",
-        },
-    })
+    )
     monkeypatch.setattr(
         agent_launcher,
         "_iter_project_configs",
@@ -302,7 +306,11 @@ def test_issue_body_resolution_skips_project_probe_failures(monkeypatch):
         return _Platform()
 
     monkeypatch.setattr(agent_launcher, "_get_git_platform_client", _fake_client)
-    monkeypatch.setattr(agent_launcher, "_run_coro_sync", lambda coro_factory: __import__("asyncio").run(coro_factory()))
+    monkeypatch.setattr(
+        agent_launcher,
+        "_run_coro_sync",
+        lambda coro_factory: __import__("asyncio").run(coro_factory()),
+    )
 
     body, repo, task_file = agent_launcher._load_issue_body_from_project_repo("88")
 

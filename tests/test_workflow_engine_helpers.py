@@ -47,15 +47,24 @@ def test_evaluate_condition_defaults_on_error():
 
 
 def test_compute_retry_backoff_seconds_strategies():
-    assert compute_retry_backoff_seconds(
-        retry_count=1, strategy="exponential", initial_delay=0.0, default_base=1.0
-    ) == 1.0
-    assert compute_retry_backoff_seconds(
-        retry_count=3, strategy="linear", initial_delay=2.0, default_base=1.0
-    ) == 6.0
-    assert compute_retry_backoff_seconds(
-        retry_count=2, strategy="constant", initial_delay=3.0, default_base=1.0
-    ) == 3.0
+    assert (
+        compute_retry_backoff_seconds(
+            retry_count=1, strategy="exponential", initial_delay=0.0, default_base=1.0
+        )
+        == 1.0
+    )
+    assert (
+        compute_retry_backoff_seconds(
+            retry_count=3, strategy="linear", initial_delay=2.0, default_base=1.0
+        )
+        == 6.0
+    )
+    assert (
+        compute_retry_backoff_seconds(
+            retry_count=2, strategy="constant", initial_delay=3.0, default_base=1.0
+        )
+        == 3.0
+    )
 
 
 def test_apply_retry_transition_requeues_step_until_limit():
@@ -119,7 +128,10 @@ async def test_apply_step_completion_result_success_emits_step_completed():
         error=None,
         default_backoff_base=1.0,
         save_workflow=lambda wf: (saved.append(wf.id), __import__("asyncio").sleep(0))[1],
-        audit=lambda wid, et, payload: (audits.append((wid, et, payload)), __import__("asyncio").sleep(0))[1],
+        audit=lambda wid, et, payload: (
+            audits.append((wid, et, payload)),
+            __import__("asyncio").sleep(0),
+        )[1],
         emit=lambda event: (emitted.append(event), __import__("asyncio").sleep(0))[1],
     )
 
@@ -152,7 +164,10 @@ async def test_apply_step_completion_result_retry_persists_and_audits():
         error="boom",
         default_backoff_base=1.0,
         save_workflow=lambda wf: (saved.append(wf.id), __import__("asyncio").sleep(0))[1],
-        audit=lambda wid, et, payload: (audits.append((wid, et, payload)), __import__("asyncio").sleep(0))[1],
+        audit=lambda wid, et, payload: (
+            audits.append((wid, et, payload)),
+            __import__("asyncio").sleep(0),
+        )[1],
         emit=lambda event: (emitted.append(event), __import__("asyncio").sleep(0))[1],
     )
 
@@ -205,7 +220,13 @@ def test_resolve_route_target_matches_when_then_and_default():
     ]
     deploy = WorkflowStep(step_num=2, name="deploy", agent=router.agent, prompt_template="x")
     develop = WorkflowStep(step_num=3, name="develop", agent=router.agent, prompt_template="x")
-    wf = Workflow(id="wf", name="wf", version="1", state=WorkflowState.RUNNING, steps=[router, deploy, develop])
+    wf = Workflow(
+        id="wf",
+        name="wf",
+        version="1",
+        state=WorkflowState.RUNNING,
+        steps=[router, deploy, develop],
+    )
 
     def _find(workflow: Workflow, name: str) -> WorkflowStep | None:
         return next((s for s in workflow.steps if s.name == name), None)
@@ -342,21 +363,30 @@ def test_canonicalize_next_agent_from_steps_maps_step_id_name_or_single_fallback
         {"id": "qa", "name": "Review", "agent_type": "qa"},
     ]
 
-    assert canonicalize_next_agent_from_steps(
-        steps=steps,
-        candidate="develop",
-        valid_next_agents=["developer", "qa"],
-    ) == "developer"
-    assert canonicalize_next_agent_from_steps(
-        steps=steps,
-        candidate="review",
-        valid_next_agents=["qa"],
-    ) == "qa"
-    assert canonicalize_next_agent_from_steps(
-        steps=steps,
-        candidate="unknown",
-        valid_next_agents=["qa"],
-    ) == "qa"
+    assert (
+        canonicalize_next_agent_from_steps(
+            steps=steps,
+            candidate="develop",
+            valid_next_agents=["developer", "qa"],
+        )
+        == "developer"
+    )
+    assert (
+        canonicalize_next_agent_from_steps(
+            steps=steps,
+            candidate="review",
+            valid_next_agents=["qa"],
+        )
+        == "qa"
+    )
+    assert (
+        canonicalize_next_agent_from_steps(
+            steps=steps,
+            candidate="unknown",
+            valid_next_agents=["qa"],
+        )
+        == "qa"
+    )
 
 
 def test_resolve_workflow_steps_list_prefers_tier_mapping_and_normalizes_hyphens():

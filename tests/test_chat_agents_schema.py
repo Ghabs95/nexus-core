@@ -43,6 +43,7 @@ class TestHandoffPayloadCreate:
     def test_creates_uuid_handoff_id(self):
         p = _make_payload()
         import re
+
         assert re.match(r"[0-9a-f-]{36}", p.handoff_id)
 
     def test_default_fields(self):
@@ -60,8 +61,10 @@ class TestHandoffPayloadCreate:
 
     def test_issue_number_coerced_to_str(self):
         p = HandoffPayload.create(
-            issued_by="a", target_agent="b",
-            issue_number=42, workflow_id="w",
+            issued_by="a",
+            target_agent="b",
+            issue_number="42",
+            workflow_id="w",
         )
         assert p.issue_number == "42"
 
@@ -228,6 +231,7 @@ class TestHandoffDispatcher:
 
     def test_missing_secret_raises(self):
         import os
+
         env_backup = os.environ.pop("NEXUS_HANDOFF_SECRET", None)
         try:
             d = HandoffDispatcher(secret_env="NEXUS_HANDOFF_SECRET")

@@ -1,19 +1,6 @@
-from nexus.plugins.builtin.ai_runtime.fallback_policy import (
-    fallback_order_from_preferences,
-    resolve_analysis_tool_order,
-)
-from nexus.plugins.builtin.ai_runtime.operation_agent_policy import resolve_issue_override_agent
-from nexus.plugins.builtin.ai_runtime.transcription_service import (
-    is_non_transcription_artifact,
-    is_transcription_refusal,
-    normalize_local_whisper_model_name,
-    run_transcription_attempts,
-    resolve_transcription_attempts,
-)
-from nexus.plugins.builtin.ai_runtime.provider_registry import (
-    parse_provider,
-    supports_analysis,
-    unique_tools,
+from nexus.plugins.builtin.ai_runtime.agent_invoke_service import (
+    extract_issue_number,
+    invoke_agent_with_fallback,
 )
 from nexus.plugins.builtin.ai_runtime.analysis_service import (
     build_analysis_prompt,
@@ -22,19 +9,23 @@ from nexus.plugins.builtin.ai_runtime.analysis_service import (
     run_analysis_with_provider,
     strip_cli_tool_output,
 )
-from nexus.plugins.builtin.ai_runtime.agent_invoke_service import (
-    extract_issue_number,
-    invoke_agent_with_fallback,
+from nexus.plugins.builtin.ai_runtime.fallback_policy import (
+    fallback_order_from_preferences,
+    resolve_analysis_tool_order,
+)
+from nexus.plugins.builtin.ai_runtime.operation_agent_policy import resolve_issue_override_agent
+from nexus.plugins.builtin.ai_runtime.provider_invokers.agent_invokers import (
+    invoke_copilot_agent_cli,
+    invoke_gemini_agent_cli,
 )
 from nexus.plugins.builtin.ai_runtime.provider_invokers.analysis_invokers import (
     run_copilot_analysis_cli,
     run_gemini_analysis_cli,
 )
-from nexus.plugins.builtin.ai_runtime.provider_invokers.agent_invokers import (
-    invoke_copilot_agent_cli,
-    invoke_gemini_agent_cli,
-)
 from nexus.plugins.builtin.ai_runtime.provider_invokers.codex_invoker import invoke_codex_cli
+from nexus.plugins.builtin.ai_runtime.provider_invokers.subprocess_utils import (
+    wrap_timeout_error,
+)
 from nexus.plugins.builtin.ai_runtime.provider_invokers.transcription_invokers import (
     transcribe_with_copilot_cli,
     transcribe_with_gemini_cli,
@@ -42,8 +33,17 @@ from nexus.plugins.builtin.ai_runtime.provider_invokers.transcription_invokers i
 from nexus.plugins.builtin.ai_runtime.provider_invokers.whisper_invoker import (
     transcribe_with_local_whisper,
 )
-from nexus.plugins.builtin.ai_runtime.provider_invokers.subprocess_utils import (
-    wrap_timeout_error,
+from nexus.plugins.builtin.ai_runtime.provider_registry import (
+    parse_provider,
+    supports_analysis,
+    unique_tools,
+)
+from nexus.plugins.builtin.ai_runtime.transcription_service import (
+    is_non_transcription_artifact,
+    is_transcription_refusal,
+    normalize_local_whisper_model_name,
+    run_transcription_attempts,
+    resolve_transcription_attempts,
 )
 from nexus.plugins.builtin.ai_runtime_plugin import AIProvider
 
@@ -60,7 +60,9 @@ def test_fallback_order_from_preferences_dedupes_and_parses():
     prefs = {"triage": "gemini", "designer": "copilot", "writer": "gemini", "x": "invalid"}
     order = fallback_order_from_preferences(
         resolved_tool_preferences=prefs,
-        parse_provider=lambda v: {"gemini": AIProvider.GEMINI, "copilot": AIProvider.COPILOT}.get(v),
+        parse_provider=lambda v: {"gemini": AIProvider.GEMINI, "copilot": AIProvider.COPILOT}.get(
+            v
+        ),
     )
     assert order == [AIProvider.GEMINI, AIProvider.COPILOT]
 
@@ -91,7 +93,9 @@ def test_resolve_analysis_tool_order_prefers_mapped_agent_and_filters():
         operation_agents={"default": "triage", "refine_description": "designer"},
         default_chat_agent_type="triage",
         resolve_issue_override_agent=lambda **kwargs: kwargs["mapped_agent"],
-        get_primary_tool=lambda agent, project: AIProvider.COPILOT if agent == "designer" else AIProvider.GEMINI,
+        get_primary_tool=lambda agent, project: (
+            AIProvider.COPILOT if agent == "designer" else AIProvider.GEMINI
+        ),
         fallback_order_from_preferences_fn=lambda project: [AIProvider.GEMINI, AIProvider.COPILOT],
         unique_tools=lambda items: list(dict.fromkeys(items)),
         supports_analysis=lambda tool: tool in {AIProvider.GEMINI, AIProvider.COPILOT},
@@ -110,7 +114,9 @@ def test_resolve_analysis_tool_order_chat_uses_default_chat_agent():
         operation_agents={"default": "triage"},
         default_chat_agent_type="designer",
         resolve_issue_override_agent=lambda **kwargs: kwargs["mapped_agent"],
-        get_primary_tool=lambda agent, project: AIProvider.COPILOT if agent == "designer" else AIProvider.GEMINI,
+        get_primary_tool=lambda agent, project: (
+            AIProvider.COPILOT if agent == "designer" else AIProvider.GEMINI
+        ),
         fallback_order_from_preferences_fn=lambda project: [AIProvider.GEMINI, AIProvider.COPILOT],
         unique_tools=lambda items: list(dict.fromkeys(items)),
         supports_analysis=lambda tool: True,
@@ -159,16 +165,22 @@ def test_transcription_filters_and_whisper_model_normalization():
 def test_provider_registry_helpers():
     assert parse_provider("gemini", AIProvider) == AIProvider.GEMINI
     assert parse_provider("unknown", AIProvider) is None
-    assert supports_analysis(
-        AIProvider.GEMINI,
-        gemini_provider=AIProvider.GEMINI,
-        copilot_provider=AIProvider.COPILOT,
-    ) is True
-    assert supports_analysis(
-        AIProvider.CODEX,
-        gemini_provider=AIProvider.GEMINI,
-        copilot_provider=AIProvider.COPILOT,
-    ) is False
+    assert (
+        supports_analysis(
+            AIProvider.GEMINI,
+            gemini_provider=AIProvider.GEMINI,
+            copilot_provider=AIProvider.COPILOT,
+        )
+        is True
+    )
+    assert (
+        supports_analysis(
+            AIProvider.CODEX,
+            gemini_provider=AIProvider.GEMINI,
+            copilot_provider=AIProvider.COPILOT,
+        )
+        is False
+    )
     assert unique_tools([AIProvider.GEMINI, AIProvider.COPILOT, AIProvider.GEMINI]) == [
         AIProvider.GEMINI,
         AIProvider.COPILOT,
@@ -246,7 +258,7 @@ def test_run_analysis_attempts_falls_back_and_defaults():
 
 
 def test_analysis_output_strip_and_parse_helpers():
-    noisy = "● No-op\n$ true\n└ 1 line...\n\n{\"project\":\"nexus\"}\n"
+    noisy = '● No-op\n$ true\n└ 1 line...\n\n{"project":"nexus"}\n'
     cleaned = strip_cli_tool_output(noisy)
     assert cleaned == '{"project":"nexus"}'
 
@@ -914,4 +926,6 @@ def test_invoke_agent_with_fallback_all_excluded_raises():
         assert False, "expected unavailable error"
     except _Unavailable as exc:
         assert "All tools excluded" in str(exc)
+
+
 from typing import Any

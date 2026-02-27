@@ -47,7 +47,9 @@ class _FakeSession:
         return _FakeQuery(self._rows)
 
 
-def test_sync_list_completions_includes_issue_and_agent_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sync_list_completions_includes_issue_and_agent_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Legacy/stale payloads may omit canonical issue/agent fields.
     raw_payload = {
         "status": "complete",
