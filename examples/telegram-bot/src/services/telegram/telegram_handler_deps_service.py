@@ -71,6 +71,8 @@ def build_feature_ideation_handler_deps(
     base_dir,
     project_config,
     process_inbox_task,
+    feature_registry_service=None,
+    dedup_similarity=0.86,
 ):
     async def _create_feature_task(text: str, message_id: str, project_key: str):
         return await process_inbox_task(
@@ -89,6 +91,8 @@ def build_feature_ideation_handler_deps(
         base_dir=base_dir,
         project_config=project_config,
         create_feature_task=_create_feature_task,
+        feature_registry_service=feature_registry_service,
+        dedup_similarity=dedup_similarity,
     )
 
 

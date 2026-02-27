@@ -10,6 +10,7 @@ Bridges ProcessOrchestrator (nexus-core) with the concrete nexus host:
 
 import asyncio
 import glob
+import json
 import logging
 import os
 import re
@@ -588,32 +589,37 @@ class NexusAgentRuntime(AgentRuntime):
         from integrations.workflow_state_factory import get_workflow_state
 
         workflow_id = get_workflow_state().get_workflow_id(str(issue_number))
-        if not workflow_id:
-            return None
+        normalized = ""
+        if workflow_id:
+            workflow_plugin = get_workflow_state_plugin(
+                storage_dir=NEXUS_CORE_STORAGE_DIR,
+                storage_type=("postgres" if NEXUS_WORKFLOW_BACKEND == "postgres" else "file"),
+                storage_config=(
+                    {"connection_string": NEXUS_STORAGE_DSN}
+                    if NEXUS_WORKFLOW_BACKEND == "postgres" and NEXUS_STORAGE_DSN
+                    else {}
+                ),
+                issue_to_workflow_id=lambda n: get_workflow_state().get_workflow_id(n),
+                clear_pending_approval=lambda n: get_workflow_state().clear_pending_approval(n),
+                cache_key="workflow:state-engine:runtime-state",
+            )
 
-        workflow_plugin = get_workflow_state_plugin(
-            storage_dir=NEXUS_CORE_STORAGE_DIR,
-            storage_type=("postgres" if NEXUS_WORKFLOW_BACKEND == "postgres" else "file"),
-            storage_config=(
-                {"connection_string": NEXUS_STORAGE_DSN}
-                if NEXUS_WORKFLOW_BACKEND == "postgres" and NEXUS_STORAGE_DSN
-                else {}
-            ),
-            issue_to_workflow_id=lambda n: get_workflow_state().get_workflow_id(n),
-            clear_pending_approval=lambda n: get_workflow_state().clear_pending_approval(n),
-            cache_key="workflow:state-engine:runtime-state",
-        )
+            async def _load_workflow() -> object:
+                engine = workflow_plugin._get_engine()
+                return await engine.get_workflow(workflow_id)
 
-        async def _load_workflow() -> object:
-            engine = workflow_plugin._get_engine()
-            return await engine.get_workflow(workflow_id)
+            workflow = _run_coro_sync(_load_workflow)
+            if workflow:
+                state_obj = getattr(workflow, "state", None)
+                normalized = str(getattr(state_obj, "value", state_obj or "")).strip().lower()
 
-        workflow = _run_coro_sync(_load_workflow)
-        if not workflow:
-            return None
-
-        state_obj = getattr(workflow, "state", None)
-        normalized = str(getattr(state_obj, "value", state_obj or "")).strip().lower()
+        if not normalized:
+            payload = self._load_workflow_payload_from_file(
+                issue_number=str(issue_number),
+                workflow_id=str(workflow_id or ""),
+                storage_dir=NEXUS_CORE_STORAGE_DIR,
+            )
+            normalized = str((payload or {}).get("state", "")).strip().lower()
         if normalized in {"paused", "cancelled", "completed", "failed"}:
             return normalized.upper()
         return None
@@ -683,48 +689,90 @@ class NexusAgentRuntime(AgentRuntime):
         from integrations.workflow_state_factory import get_workflow_state
 
         workflow_id = get_workflow_state().get_workflow_id(str(issue_number))
-        if not workflow_id:
-            return None
+        if workflow_id:
+            workflow_plugin = get_workflow_state_plugin(
+                storage_dir=NEXUS_CORE_STORAGE_DIR,
+                storage_type=("postgres" if NEXUS_WORKFLOW_BACKEND == "postgres" else "file"),
+                storage_config=(
+                    {"connection_string": NEXUS_STORAGE_DSN}
+                    if NEXUS_WORKFLOW_BACKEND == "postgres" and NEXUS_STORAGE_DSN
+                    else {}
+                ),
+                issue_to_workflow_id=lambda n: get_workflow_state().get_workflow_id(n),
+                clear_pending_approval=lambda n: get_workflow_state().clear_pending_approval(n),
+                cache_key="workflow:state-engine:runtime-expected-agent",
+            )
 
-        workflow_plugin = get_workflow_state_plugin(
+            async def _load_workflow() -> object:
+                engine = workflow_plugin._get_engine()
+                return await engine.get_workflow(workflow_id)
+
+            workflow = _run_coro_sync(_load_workflow)
+            if workflow:
+                state_obj = getattr(workflow, "state", None)
+                state_str = str(getattr(state_obj, "value", state_obj or "")).strip().lower()
+                if state_str in {"completed", "failed", "cancelled"}:
+                    return None
+
+                for step in list(getattr(workflow, "steps", []) or []):
+                    status_obj = getattr(step, "status", None)
+                    status = str(getattr(status_obj, "value", status_obj or "")).strip().upper()
+                    if status != "RUNNING":
+                        continue
+                    agent = getattr(step, "agent", None)
+                    name = str(getattr(agent, "name", "") or "").strip()
+                    display_name = str(getattr(agent, "display_name", "") or "").strip()
+                    if name:
+                        return name
+                    if display_name:
+                        return display_name
+
+        payload = self._load_workflow_payload_from_file(
+            issue_number=str(issue_number),
+            workflow_id=str(workflow_id or ""),
             storage_dir=NEXUS_CORE_STORAGE_DIR,
-            storage_type=("postgres" if NEXUS_WORKFLOW_BACKEND == "postgres" else "file"),
-            storage_config=(
-                {"connection_string": NEXUS_STORAGE_DSN}
-                if NEXUS_WORKFLOW_BACKEND == "postgres" and NEXUS_STORAGE_DSN
-                else {}
-            ),
-            issue_to_workflow_id=lambda n: get_workflow_state().get_workflow_id(n),
-            clear_pending_approval=lambda n: get_workflow_state().clear_pending_approval(n),
-            cache_key="workflow:state-engine:runtime-expected-agent",
         )
-
-        async def _load_workflow() -> object:
-            engine = workflow_plugin._get_engine()
-            return await engine.get_workflow(workflow_id)
-
-        workflow = _run_coro_sync(_load_workflow)
-        if not workflow:
+        state = str((payload or {}).get("state", "")).strip().lower()
+        if state in {"completed", "failed", "cancelled"}:
             return None
-
-        state_obj = getattr(workflow, "state", None)
-        state_str = str(getattr(state_obj, "value", state_obj or "")).strip().lower()
-        if state_str in {"completed", "failed", "cancelled"}:
-            return None
-
-        for step in list(getattr(workflow, "steps", []) or []):
-            status_obj = getattr(step, "status", None)
-            status = str(getattr(status_obj, "value", status_obj or "")).strip().upper()
-            if status != "RUNNING":
+        for step in (payload or {}).get("steps", []):
+            if not isinstance(step, dict):
                 continue
-            agent = getattr(step, "agent", None)
-            name = str(getattr(agent, "name", "") or "").strip()
-            display_name = str(getattr(agent, "display_name", "") or "").strip()
-            if name:
-                return name
-            if display_name:
-                return display_name
+            if str(step.get("status", "")).strip().upper() != "RUNNING":
+                continue
+            agent = step.get("agent")
+            if isinstance(agent, dict):
+                name = str(agent.get("name", "")).strip()
+                display_name = str(agent.get("display_name", "")).strip()
+                if name:
+                    return name
+                if display_name:
+                    return display_name
         return None
+
+    def _load_workflow_payload_from_file(
+        self,
+        *,
+        issue_number: str,
+        workflow_id: str,
+        storage_dir: str,
+    ) -> dict[str, Any]:
+        """Best-effort compatibility fallback for file-based workflow payload reads."""
+        candidate_ids = [str(workflow_id or "").strip(), str(issue_number or "").strip()]
+        seen: set[str] = set()
+        for cid in candidate_ids:
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            wf_file = os.path.join(storage_dir, "workflows", f"{cid}.json")
+            try:
+                with open(wf_file, encoding="utf-8") as handle:
+                    payload = json.load(handle)
+                if isinstance(payload, dict):
+                    return payload
+            except Exception:
+                continue
+        return {}
 
     def get_agent_timeout_seconds(
         self,
@@ -864,3 +912,9 @@ class NexusAgentRuntime(AgentRuntime):
             return max(matches, key=os.path.getmtime)
         except Exception:
             return None
+
+
+def get_expected_running_agent_from_workflow(issue_number: str) -> str | None:
+    """Compatibility helper for callers that need expected running agent lookup."""
+    runtime = NexusAgentRuntime(finalize_fn=lambda *_args, **_kwargs: None)
+    return runtime.get_expected_running_agent(str(issue_number))

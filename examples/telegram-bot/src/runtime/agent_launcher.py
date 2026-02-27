@@ -120,6 +120,20 @@ def _get_git_platform_client(repo: str, project_name: str | None = None):
     return platform
 
 
+def _get_issue_plugin(repo: str, project_name: str | None = None):
+    """Compatibility shim for tests and older call sites."""
+    return _get_git_platform_client(repo, project_name=project_name)
+
+
+def _extract_issue_body(issue_obj) -> str:
+    """Extract issue body from adapter object or dict payload."""
+    if not issue_obj:
+        return ""
+    if isinstance(issue_obj, dict):
+        return str(issue_obj.get("body", "") or "")
+    return str(getattr(issue_obj, "body", "") or "")
+
+
 def _resolve_project_from_task_file(task_file: str) -> str:
     """Resolve project key by matching task file path against project workspaces."""
     for project_key, project_cfg in _iter_project_configs(PROJECT_CONFIG, get_repos):
@@ -156,22 +170,35 @@ def _load_issue_body_from_project_repo(issue_number: str):
                 candidate_repos.append(pair)
 
     for project_key, repo_name in candidate_repos:
-        platform = _get_git_platform_client(repo_name, project_name=project_key)
+        try:
+            platform = _get_issue_plugin(repo_name, project_name=project_key)
+        except TypeError:
+            platform = _get_issue_plugin(repo_name)
         if not platform:
             continue
 
-        issue = _run_coro_sync(lambda: platform.get_issue(issue_number))
+        # Support both modern async adapters and legacy sync plugin contract.
+        issue = None
+        try:
+            issue = _run_coro_sync(lambda: platform.get_issue(issue_number))
+        except TypeError:
+            issue = None
+        if not issue:
+            try:
+                issue = platform.get_issue(issue_number, fields=["body"])
+            except TypeError:
+                issue = platform.get_issue(issue_number)
         if not issue:
             continue
 
-        body = str(getattr(issue, "body", "") or "")
+        body = _extract_issue_body(issue)
         if not body:
             continue
 
         task_file_match = re.search(r"\*\*Task File:\*\*\s*`([^`]+)`", body)
         task_file = task_file_match.group(1) if task_file_match else ""
-        if _db_only_task_mode():
-            # In DB-only mode, trust project->repo binding and avoid local task-file path resolution.
+        if _db_only_task_mode() and not task_file:
+            # In DB-only mode without a task-file hint, trust project->repo binding.
             return body, repo_name, task_file
         if not task_file:
             continue

@@ -52,6 +52,8 @@ class FeatureIdeationHandlerDeps:
     base_dir: str = ""
     project_config: dict[str, Any] | None = None
     create_feature_task: Callable[[str, str, str], Awaitable[dict[str, Any]]] | None = None
+    feature_registry_service: Any | None = None
+    dedup_similarity: float = 0.86
 
 
 def _legacy_reply_markup(buttons: list[list[Button]] | None) -> Any | None:
@@ -372,12 +374,22 @@ def _build_feature_persona(
     feature_count: int,
     context_block: str,
     agent_prompt: str,
+    excluded_titles: list[str] | None = None,
 ) -> str:
     role = str(routed_agent_type or "").strip().lower()
     role_prompt = (
         f"Use this dedicated agent definition as your operating role and voice for `{role}`:\n"
         f"{agent_prompt}"
     )
+
+    exclude_block = ""
+    excluded = [str(item).strip() for item in (excluded_titles or []) if str(item).strip()]
+    if excluded:
+        rendered = "\n".join(f"- {title}" for title in excluded[:50])
+        exclude_block = (
+            "\n\nAlready implemented features for this project (exclude these from suggestions):\n"
+            f"{rendered}"
+        )
 
     return (
         f"{role_prompt}\n"
@@ -386,6 +398,7 @@ def _build_feature_persona(
         '{"items":[{"title":"...","summary":"...","why":"...","steps":["...","...","..."]}]}\n'
         f"Generate exactly {feature_count} items. Keep titles concise and action-oriented."
         f"{context_block}"
+        f"{exclude_block}"
     )
 
 
@@ -408,6 +421,16 @@ def _build_feature_suggestions(
             )
         return []
 
+    excluded_titles: list[str] = []
+    feature_registry = getattr(deps, "feature_registry_service", None)
+    if feature_registry is not None and getattr(feature_registry, "is_enabled", None):
+        try:
+            if feature_registry.is_enabled():
+                excluded_titles = feature_registry.list_excluded_titles(project_key)
+        except Exception as exc:
+            if getattr(deps, "logger", None):
+                deps.logger.warning("Feature registry exclude-list load failed: %s", exc)
+
     agent_prompt = _load_agent_prompt_from_definition(project_key, routed_agent_type, deps)
     if not agent_prompt:
         if getattr(deps, "logger", None):
@@ -425,9 +448,10 @@ def _build_feature_suggestions(
         feature_count,
         context_block,
         agent_prompt,
+        excluded_titles,
     )
 
-    return _service_build_feature_suggestions(
+    generated = _service_build_feature_suggestions(
         project_key=project_key,
         feature_count=feature_count,
         text=text,
@@ -438,6 +462,27 @@ def _build_feature_suggestions(
         normalize_generated_features=_normalize_generated_features,
         extract_json_payload=_extract_json_payload,
     )
+
+    if not generated or feature_registry is None:
+        return generated
+
+    try:
+        filtered, removed = feature_registry.filter_ideation_items(
+            project_key=project_key,
+            items=generated,
+            similarity_threshold=float(getattr(deps, "dedup_similarity", 0.86)),
+        )
+        if removed and getattr(deps, "logger", None):
+            deps.logger.info(
+                "Feature registry filtered %d implemented suggestion(s) for project=%s",
+                len(removed),
+                project_key,
+            )
+        return filtered
+    except Exception as exc:
+        if getattr(deps, "logger", None):
+            deps.logger.warning("Feature registry post-filter failed: %s", exc)
+        return generated
 
 
 def _feature_generation_retry_text(project_key: str, deps: FeatureIdeationHandlerDeps) -> str:

@@ -997,3 +997,80 @@ def test_stale_callback_answer_does_not_abort_feature_callback():
 
     assert query.edits
     assert "Feature proposals for Acme" in query.edits[-1]["text"]
+
+
+class _RegistryStub:
+    def __init__(self, excluded=None):
+        self._excluded = excluded or []
+
+    def is_enabled(self):
+        return True
+
+    def list_excluded_titles(self, _project_key):
+        return list(self._excluded)
+
+    def filter_ideation_items(self, *, items, **_kwargs):
+        kept = [item for item in items if "duplicate" not in item.get("title", "").lower()]
+        removed = [item for item in items if item not in kept]
+        return kept, removed
+
+
+def test_build_feature_persona_includes_exclude_list():
+    persona = handlers._build_feature_persona(
+        project_label="Acme",
+        routed_agent_type="business",
+        feature_count=2,
+        context_block="",
+        agent_prompt="Prompt",
+        excluded_titles=["Legacy billing", "Old onboarding"],
+    )
+
+    assert "Already implemented features" in persona
+    assert "- Legacy billing" in persona
+    assert "- Old onboarding" in persona
+
+
+def test_build_feature_suggestions_filters_registry_matches(tmp_path, monkeypatch):
+    monkeypatch.setattr(handlers, "_load_agent_prompt_from_definition", lambda *_a, **_k: "Prompt")
+    monkeypatch.setattr(handlers, "_load_role_context", lambda *_a, **_k: "")
+
+    class _TwoFeatureOrchestrator:
+        def run_text_to_speech_analysis(self, **_kwargs):
+            return {
+                "items": [
+                    {
+                        "title": "Duplicate implemented feature",
+                        "summary": "dup",
+                        "why": "dup",
+                        "steps": ["a"],
+                    },
+                    {
+                        "title": "Brand new initiative",
+                        "summary": "new",
+                        "why": "new",
+                        "steps": ["a"],
+                    },
+                ]
+            }
+
+    deps = handlers.FeatureIdeationHandlerDeps(
+        logger=_CaptureLogger(),
+        allowed_user_ids=[],
+        projects={"acme": "Acme"},
+        get_project_label=lambda key: "Acme" if key == "acme" else key,
+        orchestrator=_TwoFeatureOrchestrator(),
+        base_dir=str(tmp_path),
+        project_config={"acme": {}},
+        feature_registry_service=_RegistryStub(["Duplicate implemented feature"]),
+        dedup_similarity=0.86,
+    )
+
+    items = handlers._build_feature_suggestions(
+        project_key="acme",
+        text="suggest two new features",
+        deps=deps,
+        preferred_agent_type="business",
+        feature_count=2,
+    )
+
+    assert [item["title"] for item in items] == ["Brand new initiative"]

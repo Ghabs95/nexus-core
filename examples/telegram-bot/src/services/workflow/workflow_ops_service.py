@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from inspect import isawaitable
 from collections import deque
 from collections.abc import Callable
 from typing import Any
@@ -19,6 +20,12 @@ from orchestration.plugin_runtime import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _resolve_maybe_await(value: Any) -> Any:
+    if isawaitable(value):
+        return await value
+    return value
 
 
 async def _latest_completion_from_storage(issue_num: str) -> dict[str, Any] | None:
@@ -140,10 +147,10 @@ async def reconcile_issue_from_signals(
         cache_key="workflow:state-engine",
     )
 
-    status_before = await workflow_plugin.get_workflow_status(issue_num)
+    status_before = await _resolve_maybe_await(workflow_plugin.get_workflow_status(issue_num))
     was_paused = bool(status_before and status_before.get("state") == "paused")
     if was_paused:
-        await workflow_plugin.resume_workflow(issue_num)
+        await _resolve_maybe_await(workflow_plugin.resume_workflow(issue_num))
 
     applied: list[dict[str, str]] = []
     for signal in signals:
@@ -155,10 +162,12 @@ async def reconcile_issue_from_signals(
             "source": "telegram-reconcile",
         }
         try:
-            result = await workflow_plugin.complete_step_for_issue(
-                issue_number=issue_num,
-                completed_agent_type=signal["completed_agent"],
-                outputs=outputs,
+            result = await _resolve_maybe_await(
+                workflow_plugin.complete_step_for_issue(
+                    issue_number=issue_num,
+                    completed_agent_type=signal["completed_agent"],
+                    outputs=outputs,
+                )
             )
             if result is not None:
                 applied.append(signal)
@@ -172,19 +181,23 @@ async def reconcile_issue_from_signals(
             )
 
     if was_paused:
-        await workflow_plugin.pause_workflow(issue_num, reason="Reconciled via Telegram")
+        await _resolve_maybe_await(
+            workflow_plugin.pause_workflow(issue_num, reason="Reconciled via Telegram")
+        )
 
     completion_path: str | None = None
     if applied:
         selected_signal = applied[-1]
         if not get_storage_capabilities().local_completions:
-            completion_path = await _save_completion_to_storage(issue_num, selected_signal)
+            completion_path = await _resolve_maybe_await(
+                _save_completion_to_storage(issue_num, selected_signal)
+            )
         else:
             completion_path = write_local_completion_from_signal(
                 project_key, issue_num, selected_signal
             )
 
-    status_after = await workflow_plugin.get_workflow_status(issue_num)
+    status_after = await _resolve_maybe_await(workflow_plugin.get_workflow_status(issue_num))
     if status_after:
         state_text = str(status_after.get("state", "unknown"))
         agent_text = str(status_after.get("current_agent", "unknown"))
@@ -221,14 +234,16 @@ async def fetch_workflow_state_snapshot(
 ) -> dict[str, Any]:
     """Reconcile and build workflow snapshot for /wfstate."""
     # 1. Reconcile from signals (guarantees local/remote state is synced before snapshot)
-    await reconcile_issue_from_signals(
-        issue_num=issue_num,
-        project_key=project_key,
-        repo=repo,
-        get_issue_plugin=get_issue_plugin,
-        extract_structured_completion_signals=extract_structured_completion_signals,
-        workflow_state_plugin_kwargs=workflow_state_plugin_kwargs,
-        write_local_completion_from_signal=write_local_completion_from_signal,
+    await _resolve_maybe_await(
+        reconcile_issue_from_signals(
+            issue_num=issue_num,
+            project_key=project_key,
+            repo=repo,
+            get_issue_plugin=get_issue_plugin,
+            extract_structured_completion_signals=extract_structured_completion_signals,
+            workflow_state_plugin_kwargs=workflow_state_plugin_kwargs,
+            write_local_completion_from_signal=write_local_completion_from_signal,
+        )
     )
 
     # 2. Get expected running agent reference
@@ -248,7 +263,7 @@ async def fetch_workflow_state_snapshot(
     if caps.local_completions:
         read_local_completion = read_latest_local_completion
     else:
-        db_completion = await _latest_completion_from_storage(issue_num)
+        db_completion = await _resolve_maybe_await(_latest_completion_from_storage(issue_num))
         read_local_completion = lambda _issue_num: db_completion
 
     snapshot = build_workflow_snapshot(
