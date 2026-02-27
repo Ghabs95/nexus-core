@@ -380,7 +380,7 @@ def _get_orchestrator_config():
     """Get orchestrator config, loading AI_TOOL_PREFERENCES lazily."""
     if "value" not in _orchestrator_config_cache:
         _orchestrator_config_cache["value"] = {
-            "copilot_cli_path": os.getenv("COPILOT_CLI_PATH", "copilot"),
+            "copilot_cli_path": os.getenv("COPILOT_PROVIDER", os.getenv("COPILOT_CLI_PATH", "copilot")),
             "gemini_cli_path": os.getenv("GEMINI_CLI_PATH", "gemini"),
             "gemini_model": os.getenv("GEMINI_MODEL", "").strip(),
             "codex_cli_path": os.getenv("CODEX_CLI_PATH", "codex"),
@@ -630,7 +630,9 @@ def get_tasks_logs_dir(workspace: str, project: str) -> str:
 # --- TIMING CONFIGURATION ---
 INBOX_CHECK_INTERVAL = 10  # seconds - how often to check for new completions
 SLEEP_INTERVAL = INBOX_CHECK_INTERVAL  # Alias for backward compatibility
-AGENT_RECENT_WINDOW = 120  # seconds - consider agent "recently launched" within this window
+AGENT_RECENT_WINDOW = _get_int_env("AGENT_RECENT_WINDOW", 120)  # seconds
+AGENT_TIMEOUT = _get_int_env("AGENT_TIMEOUT", 3600)  # seconds
+COPILOT_PROVIDER = os.getenv("COPILOT_PROVIDER", os.getenv("COPILOT_CLI_PATH", "copilot"))
 AUTO_CHAIN_CYCLE = 60  # seconds - frequency of auto-chain polling
 
 # --- LOGGING CONFIGURATION ---

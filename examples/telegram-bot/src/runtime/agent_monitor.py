@@ -10,6 +10,7 @@ import logging
 import os
 import time
 
+import config
 from audit_store import AuditStore
 from orchestration.plugin_runtime import get_runtime_ops_plugin
 
@@ -28,7 +29,7 @@ class AgentMonitor:
         timeout_seconds: int | None = None,
     ) -> tuple[bool, int | None]:
         """Check if an agent has timed out."""
-        threshold = int(timeout_seconds) if timeout_seconds else 3600
+        threshold = int(timeout_seconds) if timeout_seconds else config.AGENT_TIMEOUT
 
         try:
             last_modified = os.path.getmtime(log_file)

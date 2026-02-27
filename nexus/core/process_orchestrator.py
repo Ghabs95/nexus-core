@@ -984,7 +984,7 @@ class ProcessOrchestrator:
 
         if isinstance(timeout, (int, float)) and int(timeout) > 0:
             return int(timeout)
-        return 3600
+        return int(os.getenv("NEXUS_AGENT_TIMEOUT", "3600"))
 
 
 # ---------------------------------------------------------------------------
