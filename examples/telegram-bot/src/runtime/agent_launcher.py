@@ -21,6 +21,8 @@ from config import (
     ORCHESTRATOR_CONFIG,
     NEXUS_STORAGE_BACKEND,
     PROJECT_CONFIG,
+    get_default_project,
+    get_operation_agents,
     get_repo,
     get_repos,
     get_nexus_dir_name,
@@ -217,8 +219,22 @@ def _get_launch_policy_plugin():
     if _launch_policy_plugin:
         return _launch_policy_plugin
 
+    try:
+        default_project = str(get_default_project() or "").strip()
+    except Exception:
+        default_project = ""
+
+    default_operation_agents = (
+        get_operation_agents(default_project) if default_project else {}
+    )
+
     plugin = get_profiled_plugin(
         "agent_launch_policy",
+        overrides={
+            "operation_agents": default_operation_agents,
+            "operation_agents_resolver": get_operation_agents,
+            "default_project_name": default_project,
+        },
         cache_key="agent-launch:policy",
     )
     if plugin:

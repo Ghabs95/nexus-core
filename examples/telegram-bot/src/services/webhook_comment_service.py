@@ -3,6 +3,12 @@
 import re
 from typing import Any
 
+_MANUAL_OVERRIDE_RE = re.compile(
+    r"(?:^|\b)/?(?:handoff|continue|resume|rerun|re-run|retry)\s+"
+    r"(?:with\s+|to\s+)?@([A-Za-z][A-Za-z0-9_-]{0,63})\b",
+    re.IGNORECASE,
+)
+
 
 def _resolve_supported_agent_author(author: str) -> str | None:
     """Resolve comment author to canonical agent label when supported."""
@@ -31,6 +37,14 @@ def _extract_next_agent(comment_body: str) -> str | None:
         return None
 
     return mentions[-1].lower()
+
+
+def _extract_manual_override_agent(comment_body: str) -> str | None:
+    """Extract explicit manual override target from a command-style comment."""
+    matches = _MANUAL_OVERRIDE_RE.findall(str(comment_body or ""))
+    if not matches:
+        return None
+    return str(matches[-1]).strip().lower()
 
 
 def handle_issue_comment_event(
@@ -74,16 +88,23 @@ def handle_issue_comment_event(
     )
     mentions = re.findall(r"@([A-Za-z][A-Za-z0-9_-]{0,63})", str(comment_body or ""))
     next_agent = _extract_next_agent(comment_body)
+    manual_override_agent = _extract_manual_override_agent(comment_body)
     completed_agent = _resolve_supported_agent_author(comment_author)
     manual_issue_author = str((issue.get("user") or {}).get("login") or "").strip()
 
     if completed_agent is None:
-        # Manual override: allow explicit @agent handoff by the issue author.
-        if not (next_agent and manual_issue_author and comment_author == manual_issue_author):
+        # Manual override: allow explicit command-style handoff by the issue author only.
+        if not (manual_issue_author and comment_author == manual_issue_author):
             return {
                 "status": "ignored",
                 "reason": f"not from supported AI agent ({comment_author})",
             }
+        if not manual_override_agent:
+            return {
+                "status": "ignored",
+                "reason": "manual override command not detected",
+            }
+        next_agent = manual_override_agent
         logger.info(
             "⚠️ Manual chain override accepted for issue #%s by issue author %s -> @%s (mentions=%s)",
             issue_number,

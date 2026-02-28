@@ -105,7 +105,7 @@ def test_prompt_prefix_is_stable_for_different_issue_context():
     assert p1[:220] == p2[:220]
 
 
-def test_initial_prompt_triage_remains_triage_specific():
+def test_initial_prompt_is_role_specific_without_hardcoded_triage_rules():
     plugin = AgentLaunchPolicyPlugin()
     prompt = plugin.build_agent_prompt(
         issue_url="https://github.com/org/repo/issues/20",
@@ -116,9 +116,82 @@ def test_initial_prompt_triage_remains_triage_specific():
         workflow_path="",
         nexus_dir=".nexus",
     )
+    assert "You are the launch agent." in prompt
+    assert "**Assigned Workflow Step:** `triage`" in prompt
     assert "Execute the `triage` workflow step" in prompt
-    assert "Perform triage work (classification, severity, routing)" in prompt
-    assert "Implement code changes during triage" in prompt
+    assert "Perform your role-specific work for this step according to the agent definition" in prompt
+    assert "classification, severity, routing" not in prompt
+    assert "Implement code changes during triage" not in prompt
+
+
+def test_initial_prompt_uses_operation_agents_launch_mapping():
+    plugin = AgentLaunchPolicyPlugin({"operation_agents": {"launch": "triage"}})
+    prompt = plugin.build_agent_prompt(
+        issue_url="https://github.com/org/repo/issues/22",
+        tier_name="full",
+        task_content="Classify issue",
+        agent_type="triage",
+        continuation=False,
+        workflow_path="",
+        nexus_dir=".nexus",
+    )
+    assert "You are the triage agent." in prompt
+    assert "**Assigned Workflow Step:** `triage`" in prompt
+
+
+def test_initial_prompt_uses_project_operation_agents_launch_resolver():
+    def _resolver(project_name: str) -> dict:
+        if project_name == "acme":
+            return {"launch": "triage"}
+        return {}
+
+    plugin = AgentLaunchPolicyPlugin(
+        {
+            "operation_agents": {"launch": "launch"},
+            "operation_agents_resolver": _resolver,
+        }
+    )
+    prompt = plugin.build_agent_prompt(
+        issue_url="https://github.com/org/repo/issues/23",
+        tier_name="full",
+        task_content="Route issue",
+        agent_type="developer",
+        continuation=False,
+        workflow_path="",
+        nexus_dir=".nexus",
+        project_name="acme",
+    )
+    assert "You are the triage agent." in prompt
+    assert "**Assigned Workflow Step:** `developer`" in prompt
+
+
+def test_initial_prompt_uses_default_project_for_operation_agents_resolution():
+    calls: list[str] = []
+
+    def _resolver(project_name: str) -> dict:
+        calls.append(project_name)
+        if project_name == "default-project":
+            return {"launch": "triage"}
+        return {}
+
+    plugin = AgentLaunchPolicyPlugin(
+        {
+            "operation_agents": {"launch": "launch"},
+            "operation_agents_resolver": _resolver,
+            "default_project_name": "default-project",
+        }
+    )
+    prompt = plugin.build_agent_prompt(
+        issue_url="https://github.com/org/repo/issues/24",
+        tier_name="full",
+        task_content="Route issue",
+        agent_type="developer",
+        continuation=False,
+        workflow_path="",
+        nexus_dir=".nexus",
+    )
+    assert calls == ["default-project"]
+    assert "You are the triage agent." in prompt
 
 
 def test_initial_prompt_non_triage_is_role_specific_not_triage_only():

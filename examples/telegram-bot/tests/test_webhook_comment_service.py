@@ -120,3 +120,28 @@ def test_manual_override_launches_even_when_reset_fails():
 
     assert result["status"] == "agent_launched"
     assert result["next_agent"] == "developer"
+
+
+def test_issue_author_ready_for_comment_without_command_does_not_chain():
+    processed = set()
+
+    result = handle_issue_comment_event(
+        event={
+            "action": "created",
+            "comment_id": 6,
+            "comment_body": "Ready for @Writer",
+            "issue_number": "91",
+            "comment_author": "Ghabs95",
+            "issue": {"user": {"login": "Ghabs95"}},
+        },
+        logger=MagicMock(),
+        policy=_Policy(),
+        processed_events=processed,
+        launch_next_agent=lambda **kwargs: (3333, "codex"),
+        check_and_notify_pr=lambda issue, project: None,
+        reset_workflow_to_agent=lambda issue, agent: True,
+    )
+
+    assert result["status"] == "ignored"
+    assert "manual override command not detected" in result["reason"]
+    assert "comment_6" not in processed

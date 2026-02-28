@@ -83,6 +83,7 @@ ai_tool_preferences:
 # Global operation task -> agent type mapping.
 # Provider is selected through ai_tool_preferences for that agent type.
 operation_agents:
+  launch: triage
   default: triage
   classify: triage
   route: triage
@@ -99,6 +100,7 @@ nexus:
   # git_repos:
   #  - Ghabs95/nexus-core
   operation_agents:
+    launch: triage
     default: triage
     refine_description: designer
     overrides:

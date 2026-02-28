@@ -89,6 +89,7 @@ ai_tool_preferences:
 # These are non-agent orchestration tasks (classification, naming, refinement);
 # provider is resolved via ai_tool_preferences for the selected agent type.
 operation_agents:
+  launch: triage
   default: triage
   classify: triage
   route: triage
@@ -138,6 +139,7 @@ custom_project:
 
   # Optional per-project overrides for operation task routing.
   operation_agents:
+    launch: triage
     default: triage
     refine_description: designer
     overrides:

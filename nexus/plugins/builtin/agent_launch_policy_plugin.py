@@ -74,6 +74,7 @@ class AgentLaunchPolicyPlugin:
             nexus_dir=nexus_dir,
             project_name=project_name,
         )
+        agent_identity = self._resolve_launch_agent_identity(project_name=project_name)
         if alignment_output_requirements:
             instructions = f"{instructions}\n\n{alignment_output_requirements}"
 
@@ -121,7 +122,8 @@ class AgentLaunchPolicyPlugin:
             base_prompt = continuation_payload or "Please continue with the next step."
             merge_policy = self._get_merge_policy_block(agent_type)
             prompt = (
-                f"You are a {agent_type} agent. You previously started working on this task:\n\n"
+                f"You are the {agent_identity} agent. You previously started working on this task.\n\n"
+                f"**Assigned Workflow Step:** `{agent_type}`\n\n"
                 f"{base_prompt}\n\n"
                 f"{merge_policy}"
                 f"{instructions}\n\n"
@@ -141,50 +143,56 @@ class AgentLaunchPolicyPlugin:
             )
             return prompt
 
-        normalized_agent = str(agent_type or "").strip().lower()
-        if normalized_agent == "triage":
-            prompt = (
-                f"You are a {agent_type} agent. A new task has arrived and an issue has been created.\n\n"
-                f"**YOUR JOB:** Execute the `{agent_type}` workflow step for this issue.\n\n"
-                f"REQUIRED ACTIONS:\n"
-                f"1. Read the issue body and understand the task\n"
-                f"2. Perform triage work (classification, severity, routing) according to the agent definition\n"
-                f"3. Record outcomes and route to the correct next agent via completion output\n\n"
-                f"**DO NOT:**\n"
-                f"❌ Implement code changes during triage\n"
-                f"❌ Invoke, launch, or chain other agents directly\n\n"
-                f"{instructions}\n\n"
-                f"Runtime context:\n"
-                f"Issue: {issue_url}\n"
-                f"Tier: {tier_name}\n"
-                f"Workflow Tier: {workflow_type}\n\n"
-                f"Task details:\n{task_payload}"
-            )
-        else:
-            prompt = (
-                f"You are a {agent_type} agent. A new task has arrived and an issue has been created.\n\n"
-                f"**YOUR JOB:** Execute the `{agent_type}` workflow step for this issue.\n\n"
-                f"REQUIRED ACTIONS:\n"
-                f"1. Read the issue body and understand the task\n"
-                f"2. Perform your role-specific work for this step\n"
-                f"3. Keep changes focused and evidence-based\n"
-                f"4. Record outcomes and route to the correct next agent via completion output\n\n"
-                f"**DO NOT:**\n"
-                f"❌ Invoke, launch, or chain other agents directly\n"
-                f"❌ Edit unrelated files or expand scope beyond this step\n\n"
-                f"{instructions}\n\n"
-                f"Runtime context:\n"
-                f"Issue: {issue_url}\n"
-                f"Tier: {tier_name}\n"
-                f"Workflow Tier: {workflow_type}\n\n"
-                f"Task details:\n{task_payload}"
-            )
+        prompt = (
+            f"You are the {agent_identity} agent. A new task has arrived and an issue has been created.\n\n"
+            f"**Assigned Workflow Step:** `{agent_type}`\n\n"
+            f"**YOUR JOB:** Execute the `{agent_type}` workflow step for this issue.\n\n"
+            f"REQUIRED ACTIONS:\n"
+            f"1. Read the issue body and understand the task\n"
+            f"2. Perform your role-specific work for this step according to the agent definition\n"
+            f"3. Keep changes focused and evidence-based\n"
+            f"4. Record outcomes and route to the correct next agent via completion output\n\n"
+            f"**DO NOT:**\n"
+            f"❌ Invoke, launch, or chain other agents directly\n"
+            f"❌ Edit unrelated files or expand scope beyond this step\n\n"
+            f"{instructions}\n\n"
+            f"Runtime context:\n"
+            f"Issue: {issue_url}\n"
+            f"Tier: {tier_name}\n"
+            f"Workflow Tier: {workflow_type}\n\n"
+            f"Task details:\n{task_payload}"
+        )
         logger.debug(
             "Agent prompt built: chars=%s prefix_fp=%s mode=initial",
             len(prompt),
             prompt_prefix_fingerprint(prompt),
         )
         return prompt
+
+    def _resolve_launch_agent_identity(self, *, project_name: str = "") -> str:
+        """Resolve launch prompt identity from operation_agents config."""
+        operation_agents = self._resolve_operation_agents(project_name=project_name)
+        configured_identity = str(operation_agents.get("launch") or "").strip()
+        return configured_identity or "launch"
+
+    def _resolve_operation_agents(self, *, project_name: str = "") -> dict:
+        """Resolve operation_agents from static config or project resolver."""
+        resolver = self.config.get("operation_agents_resolver")
+        normalized_project = str(project_name or "").strip()
+        default_project = str(self.config.get("default_project_name") or "").strip()
+        project_for_resolution = normalized_project or default_project
+        if project_for_resolution and callable(resolver):
+            try:
+                resolved = resolver(project_for_resolution)
+            except Exception:
+                resolved = None
+            if isinstance(resolved, dict):
+                return resolved
+
+        configured = self.config.get("operation_agents")
+        if isinstance(configured, dict):
+            return configured
+        return {}
 
     def _build_alignment_context(self, *, task_content: str, workflow_type: str, repo_path: str) -> str:
         """Build repository-backed feature-alignment context block."""
