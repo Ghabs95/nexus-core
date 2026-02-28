@@ -321,7 +321,10 @@ async def _handle_continue_status_outcome(
 async def _maybe_reset_continue_workflow_position(
     ctx: Any, deps: Any, *, issue_num: Any, continue_ctx: dict[str, Any]
 ) -> bool:
-    if not continue_ctx.get("forced_agent_override"):
+    should_reset = bool(
+        continue_ctx.get("forced_agent_override") or continue_ctx.get("sync_workflow_to_agent")
+    )
+    if not should_reset:
         return True
 
     workflow_plugin = deps.get_workflow_state_plugin(

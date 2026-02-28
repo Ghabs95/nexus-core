@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 from services.workflow.workflow_reprocess_continue_service import (
+    _maybe_reset_continue_workflow_position,
     _launch_continue_agent,
     handle_continue,
     handle_reprocess,
@@ -127,3 +128,34 @@ async def test_launch_continue_agent_falls_back_to_reply_when_edit_fails():
     assert "Continuing issue #86" in ctx.replies[0]
     assert "Agent continued for issue #86" in ctx.replies[1]
     assert deleted["chat_id"] == 999
+
+
+@pytest.mark.asyncio
+async def test_maybe_reset_continue_workflow_position_resets_for_recovered_next_agent():
+    called = {}
+
+    class _WorkflowPlugin:
+        async def reset_to_agent_for_issue(self, issue_num, agent_type):
+            called["issue_num"] = issue_num
+            called["agent_type"] = agent_type
+            return True
+
+    deps = SimpleNamespace(
+        logger=logging.getLogger("test"),
+        workflow_state_plugin_kwargs={},
+        get_workflow_state_plugin=lambda **kwargs: _WorkflowPlugin(),
+    )
+    ctx = _Ctx()
+    ok = await _maybe_reset_continue_workflow_position(
+        ctx,
+        deps,
+        issue_num="106",
+        continue_ctx={
+            "forced_agent_override": False,
+            "sync_workflow_to_agent": True,
+            "agent_type": "developer",
+        },
+    )
+
+    assert ok is True
+    assert called == {"issue_num": "106", "agent_type": "developer"}

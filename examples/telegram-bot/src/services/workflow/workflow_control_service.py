@@ -299,8 +299,10 @@ def prepare_continue_context(
         return {"status": "error", "message": f"⚠️ Issue #{issue_num} is closed."}
 
     agent_type = None
+    agent_from_completion = False
     resumed_from = None
     workflow_already_done = False
+    sync_workflow_to_agent = False
 
     if not _db_only_task_mode():
         try:
@@ -325,6 +327,7 @@ def prepare_continue_context(
                         "",
                     }:
                         agent_type = normalized
+                        agent_from_completion = True
                         resumed_from = latest.summary.agent_type
                         logger.info(
                             "Continue issue #%s: last step was %s, resuming with next_agent=%s",
@@ -362,10 +365,12 @@ def prepare_continue_context(
                 resumed_from = latest_completion.get("agent_type") or resumed_from
             elif has_next_agent:
                 agent_type = normalized
+                agent_from_completion = True
                 resumed_from = latest_completion.get("agent_type") or resumed_from
 
     if forced_agent:
         agent_type = normalize_agent_reference(forced_agent) or forced_agent
+        agent_from_completion = False
         workflow_already_done = False
         logger.info("Continue issue #%s: overriding agent to %s (from: arg)", issue_num, agent_type)
 
@@ -406,15 +411,30 @@ def prepare_continue_context(
         and normalized_requested
         and normalized_expected != normalized_requested
     ):
-        logger.warning(
-            "Continue issue #%s: requested agent '%s' does not match workflow RUNNING step '%s'; "
-            "auto-aligning to workflow state",
-            issue_num,
-            agent_type,
-            expected_running_agent,
-        )
-        agent_type = normalized_expected
-        normalized_requested = normalized_expected
+        normalized_resumed_from = normalize_agent_reference(resumed_from) if resumed_from else None
+        if (
+            agent_from_completion
+            and normalized_resumed_from
+            and normalized_expected == normalized_resumed_from
+        ):
+            logger.info(
+                "Continue issue #%s: workflow pointer still at completed step '%s'; "
+                "proceeding with recovered next_agent '%s'",
+                issue_num,
+                expected_running_agent,
+                agent_type,
+            )
+            sync_workflow_to_agent = True
+        else:
+            logger.warning(
+                "Continue issue #%s: requested agent '%s' does not match workflow RUNNING step '%s'; "
+                "auto-aligning to workflow state",
+                issue_num,
+                agent_type,
+                expected_running_agent,
+            )
+            agent_type = normalized_expected
+            normalized_requested = normalized_expected
 
     if not agent_type and normalized_expected:
         agent_type = normalized_expected
@@ -452,6 +472,7 @@ def prepare_continue_context(
         "repo": repo,
         "agent_type": agent_type,
         "forced_agent_override": bool(forced_agent),
+        "sync_workflow_to_agent": sync_workflow_to_agent,
         "resumed_from": resumed_from,
         "continuation_prompt": continuation_prompt,
         "agents_abs": os.path.join(base_dir, config["agents_dir"]),
