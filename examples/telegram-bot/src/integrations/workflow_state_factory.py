@@ -13,15 +13,11 @@ from __future__ import annotations
 
 import builtins
 import logging
+import os
 import time
 from pathlib import Path
 
-from config import (
-    NEXUS_CORE_STORAGE_DIR,
-    NEXUS_STORAGE_BACKEND,
-    NEXUS_STORAGE_DSN,
-    NEXUS_WORKFLOW_BACKEND,
-)
+import config
 
 from nexus.adapters.storage.base import StorageBackend
 from nexus.core.workflow_state import WorkflowStateStore
@@ -31,6 +27,33 @@ logger = logging.getLogger(__name__)
 _instance: WorkflowStateStore | None = None
 _storage_backend_instance: StorageBackend | None = None
 _BUILTINS_STORAGE_BACKEND_KEY = "__nexus_storage_backend_instance"
+
+
+def _cfg(name: str, default: str = "") -> str:
+    return str(getattr(config, name, default))
+
+
+def _resolve_storage_dir() -> str:
+    """Resolve workflow/storage directory with runtime overrides.
+
+    Priority:
+    1. Explicit environment override (NEXUS_CORE_STORAGE_DIR)
+    2. DATA_DIR compatibility fallback (DATA_DIR/nexus-core)
+    3. Config constant if present and non-empty
+    """
+    env_value = str(os.getenv("NEXUS_CORE_STORAGE_DIR", "")).strip()
+    if env_value:
+        return env_value
+
+    data_dir = str(getattr(config, "DATA_DIR", "")).strip()
+    if data_dir:
+        return str(Path(data_dir) / "nexus-core")
+
+    cfg_value = _cfg("NEXUS_CORE_STORAGE_DIR").strip()
+    if cfg_value:
+        return cfg_value
+
+    return str(Path(".nexus") / "nexus-core")
 
 
 class _BroadcastingStore:
@@ -103,10 +126,10 @@ class _BroadcastingStore:
 
 def _build_inner_store() -> WorkflowStateStore:
     """Build the concrete store based on environment configuration."""
-    storage_type = str(NEXUS_WORKFLOW_BACKEND).strip().lower()
+    storage_type = _cfg("NEXUS_WORKFLOW_BACKEND").strip().lower()
 
     if storage_type == "postgres":
-        dsn = NEXUS_STORAGE_DSN
+        dsn = _cfg("NEXUS_STORAGE_DSN")
         if not dsn:
             logger.warning(
                 "NEXUS_WORKFLOW_BACKEND=postgres but NEXUS_STORAGE_DSN is empty; "
@@ -123,8 +146,9 @@ def _build_inner_store() -> WorkflowStateStore:
     # Default: file-based
     from nexus.adapters.storage.file_workflow_state import FileWorkflowStateStore
 
-    logger.info("Using FileWorkflowStateStore (base_path=%s)", NEXUS_CORE_STORAGE_DIR)
-    return FileWorkflowStateStore(base_path=Path(NEXUS_CORE_STORAGE_DIR))  # type: ignore[return-value]
+    storage_dir = _resolve_storage_dir()
+    logger.info("Using FileWorkflowStateStore (base_path=%s)", storage_dir)
+    return FileWorkflowStateStore(base_path=Path(storage_dir))  # type: ignore[return-value]
 
 
 def get_workflow_state() -> WorkflowStateStore:
@@ -154,23 +178,25 @@ def get_storage_backend() -> StorageBackend:
         _storage_backend_instance = existing
         return _storage_backend_instance
 
-    storage_type = str(NEXUS_STORAGE_BACKEND).strip().lower()
+    storage_type = _cfg("NEXUS_STORAGE_BACKEND").strip().lower()
 
     if storage_type == "postgres":
-        if not NEXUS_STORAGE_DSN:
+        dsn = _cfg("NEXUS_STORAGE_DSN")
+        if not dsn:
             raise ValueError("NEXUS_STORAGE_BACKEND=postgres but NEXUS_STORAGE_DSN is empty")
         from nexus.adapters.storage.postgres import PostgreSQLStorageBackend
 
         logger.info("Using PostgreSQLStorageBackend for host state")
         _storage_backend_instance = PostgreSQLStorageBackend(
-            connection_string=NEXUS_STORAGE_DSN,
+            connection_string=dsn,
         )
         setattr(builtins, _BUILTINS_STORAGE_BACKEND_KEY, _storage_backend_instance)
         return _storage_backend_instance
 
     from nexus.adapters.storage.file import FileStorage
 
-    logger.info("Using FileStorage for host state (base_path=%s)", NEXUS_CORE_STORAGE_DIR)
-    _storage_backend_instance = FileStorage(base_path=Path(NEXUS_CORE_STORAGE_DIR))
+    storage_dir = _resolve_storage_dir()
+    logger.info("Using FileStorage for host state (base_path=%s)", storage_dir)
+    _storage_backend_instance = FileStorage(base_path=Path(storage_dir))
     setattr(builtins, _BUILTINS_STORAGE_BACKEND_KEY, _storage_backend_instance)
     return _storage_backend_instance

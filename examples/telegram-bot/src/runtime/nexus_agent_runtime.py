@@ -465,6 +465,15 @@ class NexusAgentRuntime(AgentRuntime):
                 seen.add(repo_name)
                 status = self.is_issue_open(str(issue_number), repo_name)
                 if status is False:
+                    # Fail-open when no Git credentials are configured; in that
+                    # state we cannot reliably distinguish "closed" from
+                    # "unreachable/unauthorized".
+                    if not (
+                        os.getenv("GITHUB_TOKEN")
+                        or os.getenv("GH_TOKEN")
+                        or os.getenv("GITLAB_TOKEN")
+                    ):
+                        continue
                     return False
                 if status is True:
                     return True
@@ -548,13 +557,40 @@ class NexusAgentRuntime(AgentRuntime):
     def is_issue_open(self, issue_number: str, repo: str) -> bool | None:
         """Return issue open/closed status for auto-completion guardrails."""
         try:
+            import asyncio
+
             from orchestration.nexus_core_helpers import get_git_platform
 
             platform = get_git_platform(repo)
             if not platform:
                 return None
 
-            details = _run_coro_sync(lambda: platform.get_issue(str(issue_number)))
+            try:
+                asyncio.get_running_loop()
+                in_running_loop = True
+            except RuntimeError:
+                in_running_loop = False
+
+            if not in_running_loop:
+                details = asyncio.run(platform.get_issue(str(issue_number)))
+            else:
+                holder: dict[str, object] = {"value": None, "error": None}
+
+                def _runner() -> None:
+                    try:
+                        holder["value"] = asyncio.run(platform.get_issue(str(issue_number)))
+                    except Exception as inner_exc:
+                        holder["error"] = inner_exc
+
+                worker = threading.Thread(target=_runner, daemon=True)
+                worker.start()
+                worker.join(timeout=10)
+                if worker.is_alive():
+                    return None
+                if holder["error"] is not None:
+                    raise holder["error"]  # type: ignore[misc]
+                details = holder["value"]
+
             if not details:
                 return False
 
