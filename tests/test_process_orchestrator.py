@@ -98,6 +98,20 @@ class StubRuntime(AgentRuntime):
         return self._is_issue_open_fn(issue_number, repo)
 
 
+class FuseCounterRuntime(StubRuntime):
+    """Runtime stub that mutates retry-fuse counters during should_retry()."""
+
+    def should_retry(self, issue_number, agent_type):
+        issue_key = str(issue_number)
+        entry = dict(self.tracker.get(issue_key, {}))
+        fuse = dict(entry.get("retry_fuse", {}))
+        fuse["agent"] = str(agent_type or "")
+        fuse["attempts"] = int(fuse.get("attempts", 0) or 0) + 1
+        entry["retry_fuse"] = fuse
+        self.tracker[issue_key] = entry
+        return super().should_retry(issue_number, agent_type)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -675,6 +689,55 @@ class TestDetectDeadAgents:
         assert runtime.launched == []
         assert "71" not in runtime.tracker
         assert any(event == "AGENT_DEAD_STALE" for _, event, _ in runtime.audit_events)
+
+    def test_dead_agent_retry_preserves_retry_fuse_metadata(self):
+        """Retry-fuse counters should survive tracker cleanup during dead-agent retries."""
+        runtime = StubRuntime(retry=True)
+        runtime.tracker = {
+            "72": {
+                **self._entry(pid=7272, agent_type="developer", tool="codex", age_seconds=7200),
+                "retry_fuse": {
+                    "agent": "developer",
+                    "window_start": time.time() - 5,
+                    "attempts": 2,
+                    "tripped": False,
+                    "alerted": False,
+                    "hard_tripped": False,
+                },
+                "retry_fuse_trip_times": [time.time() - 5],
+            }
+        }
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        with patch.object(runtime, "is_pid_alive", return_value=False):
+            orc.detect_dead_agents()
+
+        assert any(e["issue"] == "72" for e in runtime.launched)
+        assert "72" in runtime.tracker
+        assert runtime.tracker["72"].get("retry_fuse", {}).get("attempts") == 2
+
+    def test_dead_agent_retry_keeps_latest_retry_fuse_counter(self):
+        """detect_dead_agents must not overwrite should_retry-updated fuse counters."""
+        runtime = FuseCounterRuntime(retry=True)
+        runtime.tracker = {
+            "73": {
+                **self._entry(pid=7373, agent_type="developer", tool="codex", age_seconds=7200),
+                "retry_fuse": {
+                    "agent": "developer",
+                    "window_start": time.time() - 5,
+                    "attempts": 1,
+                    "tripped": False,
+                    "alerted": False,
+                    "hard_tripped": False,
+                },
+            }
+        }
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        with patch.object(runtime, "is_pid_alive", return_value=False):
+            orc.detect_dead_agents()
+
+        assert runtime.tracker["73"]["retry_fuse"]["attempts"] == 2
 
 
 # ---------------------------------------------------------------------------

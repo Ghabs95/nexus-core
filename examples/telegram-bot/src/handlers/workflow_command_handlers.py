@@ -222,9 +222,32 @@ async def wfstate_handler(
 
     recovery_hint = "none"
     if processor_type == "completion_mismatch":
-        recovery_hint = "stale completion signal. Run /reconcile then /continue"
+        recovery_hint = "workflow/comment mismatch. Run /reconcile then /continue"
     elif processor_type in {"signal_drift", "retry_fuse", "pause_failed"}:
         recovery_hint = "workflow drift. Run /wfstate, then /reconcile and /continue"
+    elif "workflow_state_missing" in (snapshot.get("drift_flags") or []):
+        recovery_hint = (
+            "workflow state rows missing in backend. Run /reconcile then /continue "
+            "(or /resume if the workflow is paused)."
+        )
+
+    def _agent_label_with_canonical(display_value: str, canonical_value: str) -> str:
+        display = str(display_value or "").strip()
+        canonical = str(canonical_value or "").strip()
+        if display and canonical:
+            if display.lower() == canonical.lower():
+                return display
+            return f"{display} ({canonical})"
+        return display or canonical or "N/A"
+
+    current_agent_display = _agent_label_with_canonical(
+        str(snapshot.get("current_agent", "")),
+        str(snapshot.get("expected_running_agent", "")),
+    )
+    expected_agent_display = _agent_label_with_canonical(
+        str(snapshot.get("expected_running_agent", "")),
+        str(snapshot.get("expected_running_agent", "")),
+    )
 
     text = f"📊 Workflow Snapshot — Issue #{issue_num}\n\n"
     summary = {
@@ -232,8 +255,8 @@ async def wfstate_handler(
         "Workflow ID": snapshot.get("workflow_id", "N/A"),
         "Workflow State": snapshot.get("workflow_state", "N/A"),
         "Current Step": f"{snapshot.get('current_step', 'N/A')} ({snapshot.get('current_step_name', 'N/A')})",
-        "Current Agent": snapshot.get("current_agent", "N/A"),
-        "Expected RUNNING Agent": snapshot.get("expected_running_agent", "N/A"),
+        "Current Agent": current_agent_display,
+        "Expected RUNNING Agent": expected_agent_display,
         "Process": "running" if snapshot.get("running") else "stopped",
         "PID": snapshot.get("pid", "N/A"),
         "Task File": snapshot.get("task_file", "N/A"),

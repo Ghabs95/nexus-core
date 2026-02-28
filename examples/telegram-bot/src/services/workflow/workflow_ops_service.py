@@ -262,19 +262,21 @@ async def fetch_workflow_state_snapshot(
         )
     )
 
-    # 2. Get expected running agent reference
+    # 2. Get expected running agent reference + live workflow status
     from services.telegram.telegram_workflow_probe_service import (
         get_expected_running_agent_from_workflow,
     )
 
     expected_running = None
+    workflow_status: dict[str, Any] | None = None
     plugin_kwargs = dict(workflow_state_plugin_kwargs or {})
-    if plugin_kwargs.get("storage_dir"):
+    if plugin_kwargs:
         try:
             workflow_plugin = get_workflow_state_plugin(
                 **plugin_kwargs,
                 cache_key="workflow:state-engine:wfstate-probe",
             )
+            workflow_status = await _resolve_maybe_await(workflow_plugin.get_workflow_status(issue_num))
             expected_running = get_expected_running_agent_from_workflow(
                 issue_num=issue_num,
                 get_workflow_id=lambda n: _get_wf_state().get_workflow_id(n),
@@ -316,6 +318,7 @@ async def fetch_workflow_state_snapshot(
         issue_num=issue_num,
         repo=repo,
         get_issue_plugin=get_issue_plugin,
+        workflow_status=workflow_status,
         expected_running_agent=expected_running or "",
         find_task_file_by_issue=find_task_file,
         read_latest_local_completion=read_local_completion,
@@ -332,6 +335,7 @@ def build_workflow_snapshot(
     issue_num: str,
     repo: str,
     get_issue_plugin: Callable[[str], Any],
+    workflow_status: dict[str, Any] | None = None,
     expected_running_agent: str,
     find_task_file_by_issue: Callable[[str], str | None],
     read_latest_local_completion: Callable[[str], dict[str, Any] | None],
@@ -357,6 +361,26 @@ def build_workflow_snapshot(
     running_step = "?/?"
     running_step_name = "unknown"
     running_agent = ""
+
+    if isinstance(workflow_status, dict):
+        workflow_state = str(workflow_status.get("state") or workflow_state)
+        status_agent = str(workflow_status.get("current_agent") or "").strip()
+        if status_agent:
+            current_agent = status_agent
+        raw_step = workflow_status.get("current_step")
+        raw_total = workflow_status.get("total_steps")
+        try:
+            step_int = int(raw_step)
+        except (TypeError, ValueError):
+            step_int = None
+        try:
+            total_int = int(raw_total)
+        except (TypeError, ValueError):
+            total_int = None
+        if step_int is not None and total_int is not None and total_int > 0:
+            current_step = f"{step_int}/{total_int}"
+        elif step_int is not None:
+            current_step = f"{step_int}/?"
 
     if workflow_file and os.path.exists(workflow_file):
         try:
@@ -412,10 +436,10 @@ def build_workflow_snapshot(
                 current_step = running_step
                 current_step_name = running_step_name
                 current_agent = running_agent
-            else:
+            elif indexed_step != "?/?" or indexed_agent:
                 current_step = indexed_step
                 current_step_name = indexed_step_name
-                current_agent = indexed_agent or "unknown"
+                current_agent = indexed_agent or current_agent
         except Exception as exc:
             logger.warning("wfstate failed reading workflow file for #%s: %s", issue_num, exc)
 
@@ -456,6 +480,10 @@ def build_workflow_snapshot(
         drift_flags.append("workflow_vs_comment")
     if local_next and comment_next and local_next.lower() != comment_next.lower():
         drift_flags.append("local_vs_comment")
+    if workflow_state.lower() in {"unknown", ""} and (
+        effective_expected_running or local_next or comment_next
+    ):
+        drift_flags.append("workflow_state_missing")
 
     processor_signal = _latest_processor_signal_for_issue(issue_num)
 

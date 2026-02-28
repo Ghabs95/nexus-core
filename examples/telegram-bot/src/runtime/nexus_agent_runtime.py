@@ -485,7 +485,11 @@ class NexusAgentRuntime(AgentRuntime):
     def send_alert(self, message: str) -> bool:
         from integrations.notifications import emit_alert
 
-        return bool(emit_alert(message, severity="warning", source="agent_runtime"))
+        text = str(message or "")
+        severity = "warning"
+        if "**Agent Transition**" in text or text.lstrip().startswith("🔗"):
+            severity = "info"
+        return bool(emit_alert(text, severity=severity, source="agent_runtime"))
 
     def _has_recent_agent_completion_comment(
         self,

@@ -135,3 +135,32 @@ def test_recover_orphaned_running_agents_falls_back_when_runtime_does_not_accept
 
     assert recovered == 1
     assert runtime.calls == [("88", "developer", "orphan-recovery")]
+
+
+def test_recover_orphaned_running_agents_honors_retry_guard():
+    logger = MagicMock()
+    runtime = MagicMock()
+    runtime.get_workflow_state.return_value = None
+    runtime.get_expected_running_agent.return_value = "developer"
+    runtime.is_process_running.return_value = False
+    runtime.is_pid_alive.return_value = False
+    runtime.is_issue_open.return_value = True
+    runtime.should_retry_dead_agent.return_value = True
+    runtime.should_retry.return_value = False
+
+    recovered = recover_orphaned_running_agents(
+        max_relaunches=3,
+        logger=logger,
+        orchestrator=MagicMock(),
+        runtime=runtime,
+        load_all_mappings=lambda: {"88": "nexus-88-full"},
+        load_launched_agents=lambda **_kwargs: {},
+        orphan_recovery_last_attempt={},
+        orphan_recovery_cooldown_seconds=0,
+        resolve_project_for_issue=lambda issue_num, workflow_id=None: "nexus",
+        resolve_repo_for_issue=lambda issue_num, default_project=None: "Ghabs95/nexus-core",
+        reconcile_closed_or_missing_issue=None,
+    )
+
+    assert recovered == 0
+    runtime.launch_agent.assert_not_called()

@@ -1,11 +1,13 @@
 """Workflow control commands: pause, resume, stop, continue, new."""
 
+import asyncio
 import logging
 
 from audit_store import AuditStore
 from config import NEXUS_CORE_STORAGE_DIR, PROJECT_CONFIG, TELEGRAM_ALLOWED_USER_IDS
 from integrations.workflow_state_factory import get_workflow_state
 from interactive_context import InteractiveContext
+from orchestration.nexus_core_helpers import get_git_platform
 from orchestration.plugin_runtime import (
     get_profiled_plugin,
     get_runtime_ops_plugin,
@@ -70,6 +72,16 @@ async def pause_handler(ctx: InteractiveContext):
         **_WORKFLOW_STATE_PLUGIN_KWARGS,
         cache_key="workflow:state-engine",
     )
+
+    # Idempotent pause: report success when workflow is already paused.
+    current = await workflow_plugin.get_workflow_status(issue_num)
+    if current and str(current.get("state", "")).strip().lower() == "paused":
+        await ctx.reply_text(
+            f"⏸️ Workflow for issue #{issue_num} is already paused.\n\n"
+            f"Use /resume {project_key} {issue_num} to re-enable auto-chaining."
+        )
+        return
+
     success = await workflow_plugin.pause_workflow(
         issue_num,
         reason="User requested via Telegram",
@@ -203,17 +215,56 @@ async def stop_handler(ctx: InteractiveContext):
         )
 
     # Close the Git issue
+    issue_close_requested = False
+    issue_close_success = False
+    issue_state_verified: str | None = None
     try:
         repo = _get_project_repo(project_key)
-        plugin = _get_issue_plugin(repo)
-        if not plugin or not plugin.close_issue(issue_num):
-            raise RuntimeError("issue close failed")
-        logger.info(f"Closed issue #{issue_num}")
+        platform = get_git_platform(repo, project_name=project_key)
+        issue_close_requested = True
+        if not platform:
+            raise RuntimeError("git platform unavailable")
+        close_result = asyncio.run(
+            platform.close_issue(
+                issue_num,
+                comment="Workflow stopped by user via /stop.",
+            )
+        )
+        issue_close_success = bool(close_result)
+        if issue_close_success:
+            logger.info("Closed issue #%s", issue_num)
+        else:
+            logger.warning("close_issue returned falsy for issue #%s", issue_num)
+
+        # Best-effort post-close verification for both GitHub/GitLab style plugins.
+        issue_data = None
+        try:
+            issue_data = asyncio.run(platform.get_issue(issue_num))
+        except Exception:
+            issue_data = None
+
+        if isinstance(issue_data, dict):
+            state_raw = str(issue_data.get("state", "")).strip().lower()
+        else:
+            state_raw = str(getattr(issue_data, "state", "") or "").strip().lower()
+        if state_raw:
+            issue_state_verified = state_raw
+            if state_raw != "closed":
+                issue_close_success = False
     except Exception as e:
-        logger.error(f"Failed to close issue: {e}")
+        logger.error("Failed to close issue #%s: %s", issue_num, e)
+
+    if issue_close_success:
+        close_text = "Issue closed"
+    elif issue_close_requested and issue_state_verified:
+        close_text = f"Issue close failed (current state: {issue_state_verified})"
+    elif issue_close_requested:
+        close_text = "Issue close failed (remote state unverified)"
+    else:
+        close_text = "Issue close skipped"
 
     await ctx.reply_text(
         f"🛑 **Workflow stopped for issue #{issue_num}**\n\n"
-        f"Auto-chaining disabled and issue closed.\n\n"
-        f"Status: {pid and '✅ Agent killed' or '✅ No running agent'} | Issue closed"
+        f"Auto-chaining disabled.\n\n"
+        f"Status: {pid and '✅ Agent killed' or '✅ No running agent'} | {close_text}"
     )

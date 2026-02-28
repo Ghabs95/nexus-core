@@ -448,18 +448,25 @@ async def handle_continue(ctx: Any, deps: Any, *, finalize_workflow: Callable[..
         return
 
     continue_ctx = _prepare_continue_context(issue_num, project_key, rest, deps)
-    should_try_reconcile = (
-        str(continue_ctx.get("status") or "") == "ready"
-        and not continue_ctx.get("forced_agent_override")
-        and str(continue_ctx.get("agent_type") or "").strip().lower() == "triage"
-        and not str(continue_ctx.get("resumed_from") or "").strip()
+    should_try_reconcile = str(continue_ctx.get("status") or "") == "ready" and not continue_ctx.get(
+        "forced_agent_override"
     )
     if should_try_reconcile:
         repo = deps.project_repo(project_key)
-        deps.logger.info(
-            "Continue issue #%s: detected reset-like triage fallback; trying remote reconciliation",
-            issue_num,
+        is_reset_like_fallback = (
+            str(continue_ctx.get("agent_type") or "").strip().lower() == "triage"
+            and not str(continue_ctx.get("resumed_from") or "").strip()
         )
+        if is_reset_like_fallback:
+            deps.logger.info(
+                "Continue issue #%s: detected reset-like triage fallback; trying remote reconciliation",
+                issue_num,
+            )
+        else:
+            deps.logger.info(
+                "Continue issue #%s: trying remote reconciliation before launch",
+                issue_num,
+            )
         try:
             reconcile_result = await deps.reconcile_issue_from_signals(
                 issue_num=str(issue_num),

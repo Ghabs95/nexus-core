@@ -63,6 +63,81 @@ def test_build_workflow_snapshot_allows_workflow_file_when_local_task_files_disa
     assert snapshot["task_file"] is None
 
 
+def test_build_workflow_snapshot_uses_live_workflow_status_when_file_unavailable(monkeypatch):
+    from services.workflow import workflow_ops_service as svc
+
+    class _WFState:
+        def get_workflow_id(self, issue_num):  # noqa: ANN001
+            assert issue_num == "106"
+            return "wf-missing"
+
+    class _IssuePlugin:
+        def get_issue(self, issue_num, fields):  # noqa: ANN001
+            assert issue_num == "106"
+            assert "comments" in fields
+            return {"comments": []}
+
+    monkeypatch.setattr(svc, "_get_wf_state", lambda: _WFState())
+    monkeypatch.setattr(svc, "get_runtime_ops_plugin", lambda cache_key=None: None)
+    monkeypatch.setattr(svc, "_latest_processor_signal_for_issue", lambda issue_num: {})
+
+    snapshot = svc.build_workflow_snapshot(
+        issue_num="106",
+        repo="owner/repo",
+        get_issue_plugin=lambda repo: _IssuePlugin(),
+        workflow_status={
+            "state": "running",
+            "current_step": 3,
+            "total_steps": 8,
+            "current_agent": "developer",
+        },
+        expected_running_agent="developer",
+        find_task_file_by_issue=lambda issue_num: None,
+        read_latest_local_completion=lambda issue_num: {"agent_type": "designer", "next_agent": "developer"},
+        extract_structured_completion_signals=lambda comments: [],
+        local_task_files_enabled=False,
+        local_workflow_files_enabled=False,
+    )
+
+    assert snapshot["workflow_state"] == "running"
+    assert snapshot["current_step"] == "3/8"
+    assert snapshot["current_agent"] == "developer"
+    assert snapshot["workflow_file"] is None
+
+
+def test_build_workflow_snapshot_flags_missing_workflow_state_when_signals_exist(monkeypatch):
+    from services.workflow import workflow_ops_service as svc
+
+    class _WFState:
+        def get_workflow_id(self, issue_num):  # noqa: ANN001
+            assert issue_num == "106"
+            return "wf-missing"
+
+    class _IssuePlugin:
+        def get_issue(self, issue_num, fields):  # noqa: ANN001
+            assert issue_num == "106"
+            return {"comments": []}
+
+    monkeypatch.setattr(svc, "_get_wf_state", lambda: _WFState())
+    monkeypatch.setattr(svc, "get_runtime_ops_plugin", lambda cache_key=None: None)
+    monkeypatch.setattr(svc, "_latest_processor_signal_for_issue", lambda issue_num: {})
+
+    snapshot = svc.build_workflow_snapshot(
+        issue_num="106",
+        repo="owner/repo",
+        get_issue_plugin=lambda repo: _IssuePlugin(),
+        expected_running_agent="developer",
+        find_task_file_by_issue=lambda issue_num: None,
+        read_latest_local_completion=lambda issue_num: {"agent_type": "designer", "next_agent": "developer"},
+        extract_structured_completion_signals=lambda comments: [],
+        local_task_files_enabled=False,
+        local_workflow_files_enabled=False,
+    )
+
+    assert snapshot["workflow_state"] == "unknown"
+    assert "workflow_state_missing" in snapshot["drift_flags"]
+
+
 async def test_reconcile_issue_from_signals_uses_local_completion_writer_when_enabled(monkeypatch):
     from services.workflow import workflow_ops_service as svc
     from config_storage_capabilities import StorageCapabilities
@@ -257,6 +332,7 @@ async def test_fetch_workflow_state_snapshot_uses_capabilities_for_mixed_mode(mo
     assert captured["local_task_files_enabled"] is False
     assert captured["local_workflow_files_enabled"] is True
     assert captured["expected_running_agent"] == "developer"
+    assert captured["workflow_status"] is None
     find_task_file = cast(Callable[[str], Any], captured["find_task_file_by_issue"])
     read_latest_completion = cast(
         Callable[[str], dict[str, Any] | None],

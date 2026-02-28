@@ -2,6 +2,7 @@ import logging
 from types import SimpleNamespace
 
 import pytest
+from services.workflow import workflow_reprocess_continue_service as continue_service
 from services.workflow.workflow_reprocess_continue_service import (
     _maybe_reset_continue_workflow_position,
     _launch_continue_agent,
@@ -159,3 +160,72 @@ async def test_maybe_reset_continue_workflow_position_resets_for_recovered_next_
 
     assert ok is True
     assert called == {"issue_num": "106", "agent_type": "developer"}
+
+
+@pytest.mark.asyncio
+async def test_continue_service_reconciles_before_launch_when_ready(monkeypatch):
+    ctx = _Ctx(args=["nexus", "106"])
+    calls = {"prepare": 0, "reconcile": 0, "launched_agent": None}
+
+    async def _ensure(_ctx, _deps, _command):
+        return "nexus", "106", []
+
+    def _prepare(_issue_num, _project_key, _rest, _deps):
+        calls["prepare"] += 1
+        if calls["prepare"] == 1:
+            return {
+                "status": "ready",
+                "forced_agent_override": False,
+                "agent_type": "designer",
+                "resumed_from": "triage",
+            }
+        return {
+            "status": "ready",
+            "forced_agent_override": False,
+            "agent_type": "developer",
+            "resumed_from": "designer",
+            "agents_abs": "/tmp/agents",
+            "workspace_abs": "/tmp/workspace",
+            "issue_url": "https://github.com/acme/repo/issues/106",
+            "tier_name": "full",
+            "content": "task",
+            "continuation_prompt": "continue",
+            "log_subdir": "nexus",
+        }
+
+    async def _status_outcome(*_args, **_kwargs):
+        return False
+
+    async def _maybe_reset(*_args, **_kwargs):
+        return True
+
+    async def _launch(_ctx, _deps, *, issue_num, continue_ctx):
+        assert issue_num == "106"
+        calls["launched_agent"] = continue_ctx.get("agent_type")
+
+    async def _reconcile(**_kwargs):
+        calls["reconcile"] += 1
+        return {"ok": True, "signals_applied": 1}
+
+    monkeypatch.setattr(continue_service, "_ensure_project_issue_for_command", _ensure)
+    monkeypatch.setattr(continue_service, "_prepare_continue_context", _prepare)
+    monkeypatch.setattr(continue_service, "_handle_continue_status_outcome", _status_outcome)
+    monkeypatch.setattr(continue_service, "_maybe_reset_continue_workflow_position", _maybe_reset)
+    monkeypatch.setattr(continue_service, "_launch_continue_agent", _launch)
+
+    deps = SimpleNamespace(
+        logger=logging.getLogger("test"),
+        allowed_user_ids=[],
+        project_repo=lambda _project: "Ghabs95/nexus-core",
+        reconcile_issue_from_signals=_reconcile,
+        get_direct_issue_plugin=lambda _repo: None,
+        extract_structured_completion_signals=lambda _comments: [],
+        workflow_state_plugin_kwargs={},
+        write_local_completion_from_signal=lambda *_a, **_k: "",
+    )
+
+    await handle_continue(ctx, deps, finalize_workflow=lambda *a, **k: None)
+
+    assert calls["reconcile"] == 1
+    assert calls["prepare"] == 2
+    assert calls["launched_agent"] == "developer"

@@ -82,6 +82,7 @@ def reconcile_completion_signals_on_startup(
     read_latest_structured_comment: Callable[[str, str, str], dict[str, Any] | None],
     is_terminal_agent_reference: Callable[[str], bool],
     complete_step_for_issue: Callable[..., Any],
+    local_completions_enabled: Callable[[], bool] | None = None,
 ) -> None:
     """Audit workflow/comment/local completion alignment and alert on drift."""
     mappings = get_workflow_state_mappings()
@@ -171,7 +172,13 @@ def reconcile_completion_signals_on_startup(
                         event_id=f"startup:{comment_signal.get('comment_id', 'n/a')}",
                     )
                 )
-                if local_signal and local_signal.get("file"):
+                allow_local_completion_write = True
+                if local_completions_enabled is not None:
+                    try:
+                        allow_local_completion_write = bool(local_completions_enabled())
+                    except Exception:
+                        allow_local_completion_write = False
+                if allow_local_completion_write and local_signal and local_signal.get("file"):
                     try:
                         with open(local_signal["file"], "w", encoding="utf-8") as handle:
                             json.dump(

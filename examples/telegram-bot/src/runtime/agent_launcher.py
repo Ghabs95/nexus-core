@@ -21,6 +21,7 @@ from config import (
     ORCHESTRATOR_CONFIG,
     NEXUS_STORAGE_BACKEND,
     PROJECT_CONFIG,
+    WEBHOOK_PORT,
     get_default_project,
     get_operation_agents,
     get_repo,
@@ -228,12 +229,17 @@ def _get_launch_policy_plugin():
         get_operation_agents(default_project) if default_project else {}
     )
 
+    completion_backend = "postgres" if _db_only_task_mode() else "filesystem"
+    webhook_url = f"http://127.0.0.1:{WEBHOOK_PORT}"
+
     plugin = get_profiled_plugin(
         "agent_launch_policy",
         overrides={
             "operation_agents": default_operation_agents,
             "operation_agents_resolver": get_operation_agents,
             "default_project_name": default_project,
+            "completion_backend": completion_backend,
+            "webhook_url": webhook_url,
         },
         cache_key="agent-launch:policy",
     )
@@ -1058,13 +1064,18 @@ def _attach_post_launch_watchdog(
 def _pgrep_and_logfile_guard(issue_id: str, agent_type: str) -> bool:
     """Custom guard: returns True (allow) if no running process AND no recent log.
 
-    Check 1: pgrep for running Copilot process on this issue
+    Check 1: pgrep for running supported agent process on this issue
     Check 2: recent log files (within last 2 minutes)
     """
     # Check 1: Running processes
     try:
+        tool_pattern = "(copilot|codex|gemini)"
         check_result = subprocess.run(
-            ["pgrep", "-af", f"copilot.*issues/{issue_id}[^0-9]|copilot.*issues/{issue_id}$"],
+            [
+                "pgrep",
+                "-af",
+                f"{tool_pattern}.*issues/{issue_id}[^0-9]|{tool_pattern}.*issues/{issue_id}$",
+            ],
             text=True,
             capture_output=True,
             timeout=5,
@@ -1077,18 +1088,22 @@ def _pgrep_and_logfile_guard(issue_id: str, agent_type: str) -> bool:
 
     # Check 2: Recent log files (within last 2 minutes)
     nexus_dir_name = get_nexus_dir_name()
-    recent_logs = glob.glob(
-        os.path.join(
-            BASE_DIR,
-            "**",
-            nexus_dir_name,
-            "tasks",
-            "logs",
-            "**",
-            f"copilot_{issue_id}_*.log",
-        ),
-        recursive=True,
-    )
+    recent_logs: list[str] = []
+    for tool_name in ("copilot", "codex", "gemini"):
+        recent_logs.extend(
+            glob.glob(
+                os.path.join(
+                    BASE_DIR,
+                    "**",
+                    nexus_dir_name,
+                    "tasks",
+                    "logs",
+                    "**",
+                    f"{tool_name}_{issue_id}_*.log",
+                ),
+                recursive=True,
+            )
+        )
     if recent_logs:
         recent_logs.sort(key=lambda p: os.path.getmtime(p), reverse=True)
         latest_log_age = time.time() - os.path.getmtime(recent_logs[0])
@@ -1543,7 +1558,7 @@ def invoke_copilot_agent(
                 if _tool_is_rate_limited(orchestrator, "gemini"):
                     dynamic_exclusions.append("gemini")
 
-                launched_agents = HostStateManager.load_launched_agents()
+                launched_agents = HostStateManager.load_launched_agents(recent_only=False)
                 previous_entry = launched_agents.get(str(issue_num), {})
                 if not isinstance(previous_entry, dict):
                     previous_entry = {}
@@ -1787,7 +1802,7 @@ def launch_next_agent(
 
     # Merge caller-provided exclude_tools with any persisted ones from previous runs
     if exclude_tools is None:
-        launched_agents = HostStateManager.load_launched_agents()
+        launched_agents = HostStateManager.load_launched_agents(recent_only=False)
         persisted = launched_agents.get(str(issue_number), {}).get("exclude_tools", [])
         if persisted:
             exclude_tools = list(persisted)

@@ -135,6 +135,15 @@ def recover_orphaned_running_agents(
         if not runtime.should_retry_dead_agent(issue_num, expected_agent):
             continue
 
+        # Enforce retry-fuse limits for orphan recovery relaunches.
+        if hasattr(runtime, "should_retry") and not runtime.should_retry(issue_num, expected_agent):
+            logger.info(
+                "Skipping orphan recovery for issue #%s: retry guard rejected relaunch for %s",
+                issue_num,
+                expected_agent,
+            )
+            continue
+
         orphan_recovery_last_attempt[issue_num] = now
         launch_kwargs = {
             "trigger_source": "orphan-recovery",

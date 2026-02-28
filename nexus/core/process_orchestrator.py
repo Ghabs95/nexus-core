@@ -730,7 +730,26 @@ class ProcessOrchestrator:
 
                 self._dead_agent_alerted.add(alert_key)
                 self._dead_pid_miss_counts.pop(alert_key, None)
-                launched.pop(issue_num, None)
+                # Preserve retry-fuse metadata across retries; otherwise repeated
+                # dead-agent relaunches keep resetting the guard window.
+                preserved_meta: dict[str, Any] = {}
+                # Reload latest tracker entry after should_retry() bookkeeping,
+                # otherwise we can overwrite freshly incremented retry-fuse counters
+                # with this function's stale in-memory snapshot.
+                latest_tracker = self._runtime.load_launched_agents(recent_only=False)
+                current_entry = (
+                    latest_tracker.get(issue_num, {})
+                    if isinstance(latest_tracker, dict)
+                    else launched.get(issue_num, {})
+                )
+                if isinstance(current_entry, dict):
+                    for key in ("retry_fuse", "retry_fuse_trip_times", "exclude_tools"):
+                        if key in current_entry:
+                            preserved_meta[key] = current_entry.get(key)
+                if preserved_meta:
+                    launched[issue_num] = preserved_meta
+                else:
+                    launched.pop(issue_num, None)
                 self._runtime.save_launched_agents(launched)
                 self._runtime.clear_launch_guard(issue_num)
 

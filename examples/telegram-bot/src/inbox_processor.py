@@ -540,6 +540,7 @@ def reconcile_completion_signals_on_startup() -> None:
         read_latest_structured_comment=_read_latest_structured_comment,
         is_terminal_agent_reference=_is_terminal_agent_reference,
         complete_step_for_issue=complete_step_for_issue,
+        local_completions_enabled=lambda: not _db_only_task_mode(),
     )
 
 
