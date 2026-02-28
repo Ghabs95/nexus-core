@@ -51,14 +51,18 @@ Design principle: implement Telegram watch as a **consumer** of the same event s
 - On start:
   - Validate user authorization (same pattern as existing handlers).
   - Resolve project and issue via `ensure_project_issue` helper.
-  - Send confirmation message with active options.
+  - Send confirmation message: `👀 Watching workflow for <project>#<issue> ...`
 - During watch:
-  - Post concise transition updates (step id, agent, status, time).
+  - Post concise transition updates: `▶️ <agent_type> <status> (step: <step_id>)`
   - Coalesce bursts to avoid Telegram flood (debounce window, e.g., 1-2 seconds).
+  - **Deduplication**: Events with the same `(issue, step_id, status)` within a short window will be ignored.
+  - **Throttling**: Non-terminal updates will be throttled (default: 1 update per 2 seconds). Terminal events always bypass the throttle.
   - Only post Mermaid updates when explicitly enabled.
 - On completion (`workflow_completed`):
-  - Send terminal summary.
+  - Send terminal summary: `✅ Workflow completed: <status> (<summary>)`
   - Auto-stop session for that issue.
+- On stop:
+  - `⏹️ Stopped workflow watch for <project>#<issue>.`
 
 ## 4. Event Mapping Contract
 
