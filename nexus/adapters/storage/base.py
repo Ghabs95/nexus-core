@@ -94,3 +94,60 @@ class StorageBackend(ABC):
     async def load_host_state(self, key: str) -> dict[str, Any] | None:
         """Load a host state blob by key. Returns None if not found."""
         raise NotImplementedError("load_host_state is not implemented by this storage backend")
+
+    # --- Issue workflow mapping / approval state storage ---
+
+    async def map_issue_to_workflow(self, issue_num: str, workflow_id: str) -> None:
+        """Persist a mapping between an issue number and workflow id."""
+        raise NotImplementedError(
+            "map_issue_to_workflow is not implemented by this storage backend"
+        )
+
+    async def get_workflow_id_for_issue(self, issue_num: str) -> str | None:
+        """Return workflow id mapped to the issue number, if present."""
+        raise NotImplementedError(
+            "get_workflow_id_for_issue is not implemented by this storage backend"
+        )
+
+    async def remove_issue_workflow_mapping(self, issue_num: str) -> None:
+        """Delete persisted issue->workflow mapping for the issue number."""
+        raise NotImplementedError(
+            "remove_issue_workflow_mapping is not implemented by this storage backend"
+        )
+
+    async def load_issue_workflow_mappings(self) -> dict[str, str]:
+        """Load all issue->workflow mappings."""
+        raise NotImplementedError(
+            "load_issue_workflow_mappings is not implemented by this storage backend"
+        )
+
+    async def set_pending_workflow_approval(
+        self,
+        issue_num: str,
+        step_num: int,
+        step_name: str,
+        approvers: list[str],
+        approval_timeout: int,
+    ) -> None:
+        """Persist pending approval state for an issue workflow step."""
+        raise NotImplementedError(
+            "set_pending_workflow_approval is not implemented by this storage backend"
+        )
+
+    async def clear_pending_workflow_approval(self, issue_num: str) -> None:
+        """Remove persisted pending approval state for an issue."""
+        raise NotImplementedError(
+            "clear_pending_workflow_approval is not implemented by this storage backend"
+        )
+
+    async def get_pending_workflow_approval(self, issue_num: str) -> dict[str, Any] | None:
+        """Load pending approval state for an issue."""
+        raise NotImplementedError(
+            "get_pending_workflow_approval is not implemented by this storage backend"
+        )
+
+    async def load_pending_workflow_approvals(self) -> dict[str, dict[str, Any]]:
+        """Load all pending approval states."""
+        raise NotImplementedError(
+            "load_pending_workflow_approvals is not implemented by this storage backend"
+        )

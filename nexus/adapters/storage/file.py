@@ -2,13 +2,13 @@
 
 import json
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from nexus.adapters.storage._workflow_serde import dict_to_workflow, workflow_to_dict
 from nexus.adapters.storage.base import StorageBackend
-from nexus.core.completion import budget_completion_payload
 from nexus.core.models import AuditEvent, Workflow, WorkflowState
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,8 @@ class FileStorage(StorageBackend):
         self.agent_dir = self.base_path / "agents"
         self.completions_dir = self.base_path / "completions"
         self.host_state_dir = self.base_path / "host_state"
+        self.workflow_mapping_file = self.base_path / "workflow_mapping.json"
+        self.approval_state_file = self.base_path / "approval_state.json"
 
         # Create directories
         for directory in [
@@ -41,9 +43,18 @@ class FileStorage(StorageBackend):
         ]:
             directory.mkdir(parents=True, exist_ok=True)
 
+    def _safe_path(self, base_dir: Path, filename: str) -> Path:
+        """Resolve filename within base_dir and ensure it doesn't escape."""
+        # Use Path.name to strip any directory components from the filename
+        safe_name = Path(filename).name
+        resolved = (base_dir / safe_name).resolve()
+        if base_dir.resolve() not in resolved.parents:
+            raise ValueError(f"Security: path traversal detected for filename {filename!r}")
+        return resolved
+
     async def save_workflow(self, workflow: Workflow) -> None:
         """Save workflow to JSON file."""
-        workflow_file = self.workflows_dir / f"{workflow.id}.json"
+        workflow_file = self._safe_path(self.workflows_dir, f"{workflow.id}.json")
 
         # Convert workflow to dict (handle dataclasses and enums)
         data = self._workflow_to_dict(workflow)
@@ -58,7 +69,10 @@ class FileStorage(StorageBackend):
 
     async def load_workflow(self, workflow_id: str) -> Workflow | None:
         """Load workflow from JSON file."""
-        workflow_file = self.workflows_dir / f"{workflow_id}.json"
+        try:
+            workflow_file = self._safe_path(self.workflows_dir, f"{workflow_id}.json")
+        except ValueError:
+            return None
 
         if not workflow_file.exists():
             return None
@@ -99,7 +113,10 @@ class FileStorage(StorageBackend):
 
     async def delete_workflow(self, workflow_id: str) -> bool:
         """Delete workflow file."""
-        workflow_file = self.workflows_dir / f"{workflow_id}.json"
+        try:
+            workflow_file = self._safe_path(self.workflows_dir, f"{workflow_id}.json")
+        except ValueError:
+            return False
 
         if workflow_file.exists():
             workflow_file.unlink()
@@ -109,7 +126,7 @@ class FileStorage(StorageBackend):
 
     async def append_audit_event(self, event: AuditEvent) -> None:
         """Append audit event to workflow's audit log file."""
-        audit_file = self.audit_dir / f"{event.workflow_id}.jsonl"
+        audit_file = self._safe_path(self.audit_dir, f"{event.workflow_id}.jsonl")
 
         try:
             event_data = {
@@ -132,7 +149,10 @@ class FileStorage(StorageBackend):
         self, workflow_id: str, since: datetime | None = None
     ) -> list[AuditEvent]:
         """Get audit log for a workflow."""
-        audit_file = self.audit_dir / f"{workflow_id}.jsonl"
+        try:
+            audit_file = self._safe_path(self.audit_dir, f"{workflow_id}.jsonl")
+        except ValueError:
+            return []
 
         if not audit_file.exists():
             return []
@@ -168,7 +188,7 @@ class FileStorage(StorageBackend):
         self, workflow_id: str, agent_name: str, metadata: dict[str, Any]
     ) -> None:
         """Save agent execution metadata."""
-        agent_file = self.agent_dir / f"{workflow_id}_{agent_name}.json"
+        agent_file = self._safe_path(self.agent_dir, f"{workflow_id}_{agent_name}.json")
 
         try:
             with open(agent_file, "w") as f:
@@ -180,7 +200,10 @@ class FileStorage(StorageBackend):
 
     async def get_agent_metadata(self, workflow_id: str, agent_name: str) -> dict[str, Any] | None:
         """Get agent execution metadata."""
-        agent_file = self.agent_dir / f"{workflow_id}_{agent_name}.json"
+        try:
+            agent_file = self._safe_path(self.agent_dir, f"{workflow_id}_{agent_name}.json")
+        except ValueError:
+            return None
 
         if not agent_file.exists():
             return None
@@ -214,12 +237,11 @@ class FileStorage(StorageBackend):
         self, issue_number: str, agent_type: str, data: dict[str, Any]
     ) -> str:
         """Persist completion summary payload to JSON file."""
-        normalized = budget_completion_payload(data)
-        dedup_key = f"{issue_number}:{agent_type}:{normalized.get('status', 'complete')}"
-        completion_file = self.completions_dir / f"{issue_number}.json"
+        dedup_key = f"{issue_number}:{agent_type}:{data.get('status', 'complete')}"
+        completion_file = self._safe_path(self.completions_dir, f"{issue_number}.json")
 
         payload = {
-            **normalized,
+            **dict(data or {}),
             "_dedup_key": dedup_key,
             "_issue_number": str(issue_number),
             "_agent_type": str(agent_type),
@@ -236,8 +258,11 @@ class FileStorage(StorageBackend):
         completion_files: list[Path]
 
         if issue_number:
-            one_file = self.completions_dir / f"{issue_number}.json"
-            completion_files = [one_file] if one_file.exists() else []
+            try:
+                one_file = self._safe_path(self.completions_dir, f"{issue_number}.json")
+                completion_files = [one_file] if one_file.exists() else []
+            except ValueError:
+                completion_files = []
         else:
             completion_files = sorted(
                 self.completions_dir.glob("*.json"),
@@ -249,7 +274,7 @@ class FileStorage(StorageBackend):
         for completion_file in completion_files:
             try:
                 with open(completion_file) as f:
-                    completions.append(budget_completion_payload(json.load(f)))
+                    completions.append(json.load(f))
             except Exception as e:
                 logger.warning(f"Failed to load completion {completion_file}: {e}")
 
@@ -257,13 +282,17 @@ class FileStorage(StorageBackend):
 
     async def save_host_state(self, key: str, data: dict[str, Any]) -> None:
         """Persist host state blob by key."""
-        host_state_file = self.host_state_dir / f"{key}.json"
+        host_state_file = self._safe_path(self.host_state_dir, f"{key}.json")
         with open(host_state_file, "w") as f:
             json.dump(data, f, indent=2, default=str)
 
     async def load_host_state(self, key: str) -> dict[str, Any] | None:
         """Load host state blob by key."""
-        host_state_file = self.host_state_dir / f"{key}.json"
+        try:
+            host_state_file = self._safe_path(self.host_state_dir, f"{key}.json")
+        except ValueError:
+            return None
+
         if not host_state_file.exists():
             return None
 
@@ -274,6 +303,57 @@ class FileStorage(StorageBackend):
         except Exception as e:
             logger.warning(f"Failed to load host state {host_state_file}: {e}")
             return None
+
+    async def map_issue_to_workflow(self, issue_num: str, workflow_id: str) -> None:
+        data = self._read_json_dict(self.workflow_mapping_file)
+        data[str(issue_num)] = str(workflow_id)
+        self._write_json_dict(self.workflow_mapping_file, data)
+
+    async def get_workflow_id_for_issue(self, issue_num: str) -> str | None:
+        data = self._read_json_dict(self.workflow_mapping_file)
+        workflow_id = data.get(str(issue_num))
+        return str(workflow_id) if isinstance(workflow_id, str) else None
+
+    async def remove_issue_workflow_mapping(self, issue_num: str) -> None:
+        data = self._read_json_dict(self.workflow_mapping_file)
+        data.pop(str(issue_num), None)
+        self._write_json_dict(self.workflow_mapping_file, data)
+
+    async def load_issue_workflow_mappings(self) -> dict[str, str]:
+        data = self._read_json_dict(self.workflow_mapping_file)
+        return {str(k): str(v) for k, v in data.items() if isinstance(v, str)}
+
+    async def set_pending_workflow_approval(
+        self,
+        issue_num: str,
+        step_num: int,
+        step_name: str,
+        approvers: list[str],
+        approval_timeout: int,
+    ) -> None:
+        data = self._read_json_dict(self.approval_state_file)
+        data[str(issue_num)] = {
+            "step_num": int(step_num),
+            "step_name": str(step_name),
+            "approvers": list(approvers),
+            "approval_timeout": int(approval_timeout),
+            "requested_at": time.time(),
+        }
+        self._write_json_dict(self.approval_state_file, data)
+
+    async def clear_pending_workflow_approval(self, issue_num: str) -> None:
+        data = self._read_json_dict(self.approval_state_file)
+        data.pop(str(issue_num), None)
+        self._write_json_dict(self.approval_state_file, data)
+
+    async def get_pending_workflow_approval(self, issue_num: str) -> dict[str, Any] | None:
+        data = self._read_json_dict(self.approval_state_file)
+        pending = data.get(str(issue_num))
+        return pending if isinstance(pending, dict) else None
+
+    async def load_pending_workflow_approvals(self) -> dict[str, dict[str, Any]]:
+        data = self._read_json_dict(self.approval_state_file)
+        return {str(k): v for k, v in data.items() if isinstance(v, dict)}
 
     # Helper methods for serialization
 
@@ -290,3 +370,23 @@ class FileStorage(StorageBackend):
     def _dict_to_workflow(self, data: dict[str, Any]) -> Workflow:
         """Delegate to shared serde module."""
         return dict_to_workflow(data)
+
+    @staticmethod
+    def _read_json_dict(path: Path) -> dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            with open(path) as f:
+                payload = json.load(f)
+            return payload if isinstance(payload, dict) else {}
+        except Exception as e:
+            logger.warning(f"Failed to read JSON dict from {path}: {e}")
+            return {}
+
+    @staticmethod
+    def _write_json_dict(path: Path, payload: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(".tmp")
+        with open(tmp_path, "w") as f:
+            json.dump(payload, f, indent=2, default=str)
+        tmp_path.replace(path)

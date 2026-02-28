@@ -14,11 +14,11 @@ Schema is created automatically on first use (``create_all``).
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
 from nexus.adapters.storage.base import StorageBackend
-from nexus.core.completion import budget_completion_payload
 from nexus.core.models import AuditEvent, Workflow, WorkflowState
 
 try:
@@ -124,6 +124,33 @@ if _SA_AVAILABLE:
             onupdate=lambda: datetime.now(tz=UTC),
         )
 
+    class _WorkflowMappingRow(_Base):
+        __tablename__ = "nexus_workflow_mappings"
+
+        issue_num: sa.orm.Mapped[str] = sa.orm.mapped_column(
+            sa.String(64),
+            primary_key=True,
+        )
+        workflow_id: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(128))
+        updated_at: sa.orm.Mapped[datetime] = sa.orm.mapped_column(
+            sa.DateTime(timezone=True),
+            default=lambda: datetime.now(tz=UTC),
+            onupdate=lambda: datetime.now(tz=UTC),
+        )
+
+    class _ApprovalStateRow(_Base):
+        __tablename__ = "nexus_approval_state"
+
+        issue_num: sa.orm.Mapped[str] = sa.orm.mapped_column(
+            sa.String(64),
+            primary_key=True,
+        )
+        step_num: sa.orm.Mapped[int] = sa.orm.mapped_column(sa.Integer)
+        step_name: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(256))
+        approvers: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.Text)  # JSON list
+        approval_timeout: sa.orm.Mapped[int] = sa.orm.mapped_column(sa.Integer)
+        requested_at: sa.orm.Mapped[float] = sa.orm.mapped_column(sa.Float)
+
     class _TaskFileRow(_Base):
         __tablename__ = "nexus_task_files"
 
@@ -181,7 +208,14 @@ class PostgreSQLStorageBackend(StorageBackend):
             dsn = dsn.replace("postgresql://", "postgresql+psycopg2://", 1)
             dsn = dsn.replace("postgres://", "postgresql+psycopg2://", 1)
 
-        self._engine = sa.create_engine(dsn, pool_size=pool_size, echo=echo)
+        engine_kwargs: dict[str, Any] = {"echo": echo}
+        if dsn.startswith("sqlite://"):
+            engine_kwargs["connect_args"] = {"check_same_thread": False}
+            engine_kwargs["poolclass"] = sa.pool.StaticPool
+        else:
+            engine_kwargs["pool_size"] = pool_size
+
+        self._engine = sa.create_engine(dsn, **engine_kwargs)
         self._session_factory: sessionmaker = sessionmaker(
             bind=self._engine, expire_on_commit=False
         )
@@ -244,6 +278,44 @@ class PostgreSQLStorageBackend(StorageBackend):
 
     async def load_host_state(self, key: str) -> dict[str, Any] | None:
         return await asyncio.to_thread(self._sync_load_host_state, key)
+
+    async def map_issue_to_workflow(self, issue_num: str, workflow_id: str) -> None:
+        await asyncio.to_thread(self._sync_map_issue_to_workflow, issue_num, workflow_id)
+
+    async def get_workflow_id_for_issue(self, issue_num: str) -> str | None:
+        return await asyncio.to_thread(self._sync_get_workflow_id_for_issue, issue_num)
+
+    async def remove_issue_workflow_mapping(self, issue_num: str) -> None:
+        await asyncio.to_thread(self._sync_remove_issue_workflow_mapping, issue_num)
+
+    async def load_issue_workflow_mappings(self) -> dict[str, str]:
+        return await asyncio.to_thread(self._sync_load_issue_workflow_mappings)
+
+    async def set_pending_workflow_approval(
+        self,
+        issue_num: str,
+        step_num: int,
+        step_name: str,
+        approvers: list[str],
+        approval_timeout: int,
+    ) -> None:
+        await asyncio.to_thread(
+            self._sync_set_pending_workflow_approval,
+            issue_num,
+            step_num,
+            step_name,
+            approvers,
+            approval_timeout,
+        )
+
+    async def clear_pending_workflow_approval(self, issue_num: str) -> None:
+        await asyncio.to_thread(self._sync_clear_pending_workflow_approval, issue_num)
+
+    async def get_pending_workflow_approval(self, issue_num: str) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self._sync_get_pending_workflow_approval, issue_num)
+
+    async def load_pending_workflow_approvals(self) -> dict[str, dict[str, Any]]:
+        return await asyncio.to_thread(self._sync_load_pending_workflow_approvals)
 
     # ------------------------------------------------------------------
     # Synchronous DB helpers
@@ -379,31 +451,23 @@ class PostgreSQLStorageBackend(StorageBackend):
     def _sync_save_completion(
         self, issue_number: str, agent_type: str, data: dict[str, Any]
     ) -> str:
-        payload = budget_completion_payload(data)
-        status = str(payload.get("status") or "complete")
-        payload["status"] = status
-        payload.setdefault("issue_number", str(issue_number))
-        payload.setdefault("_issue_number", str(issue_number))
-        payload.setdefault("agent_type", str(agent_type))
-        payload.setdefault("_agent_type", str(agent_type))
-
-        dedup_key = f"{issue_number}:{agent_type}:{status}"
+        dedup_key = f"{issue_number}:{agent_type}:{data.get('status', 'complete')}"
         with Session(self._engine) as session:
             existing = (
                 session.query(_CompletionRow).filter(_CompletionRow.dedup_key == dedup_key).first()
             )
             if existing:
-                existing.data = json.dumps(payload, default=str)
-                existing.summary_text = payload.get("summary", "")
-                existing.status = status
+                existing.data = json.dumps(data, default=str)
+                existing.summary_text = data.get("summary", "")
+                existing.status = data.get("status", "complete")
             else:
                 session.add(
                     _CompletionRow(
                         issue_number=issue_number,
                         agent_type=agent_type,
-                        status=status,
-                        summary_text=payload.get("summary", ""),
-                        data=json.dumps(payload, default=str),
+                        status=data.get("status", "complete"),
+                        summary_text=data.get("summary", ""),
+                        data=json.dumps(data, default=str),
                         dedup_key=dedup_key,
                     )
                 )
@@ -426,18 +490,6 @@ class PostgreSQLStorageBackend(StorageBackend):
                     payload = json.loads(row.data)
                 except Exception:
                     payload = {}
-                payload = budget_completion_payload(payload)
-                issue_number = str(row.issue_number or "").strip()
-                agent_type = str(row.agent_type or "").strip()
-                status = str(row.status or "complete").strip() or "complete"
-                payload["issue_number"] = issue_number
-                payload.setdefault("_issue_number", issue_number)
-                payload_agent = str(payload.get("agent_type") or "").strip()
-                if not payload_agent or payload_agent == "unknown":
-                    payload_agent = agent_type
-                payload["agent_type"] = payload_agent
-                payload.setdefault("_agent_type", agent_type)
-                payload["status"] = str(payload.get("status") or status).strip() or "complete"
                 payload["_db_id"] = row.id
                 payload["_dedup_key"] = row.dedup_key
                 payload["_created_at"] = row.created_at.isoformat() if row.created_at else None
@@ -463,6 +515,103 @@ class PostgreSQLStorageBackend(StorageBackend):
             except Exception:
                 return None
 
+    def _sync_map_issue_to_workflow(self, issue_num: str, workflow_id: str) -> None:
+        with Session(self._engine) as session:
+            row = session.get(_WorkflowMappingRow, str(issue_num))
+            now = datetime.now(tz=UTC)
+            if row:
+                row.workflow_id = str(workflow_id)
+                row.updated_at = now
+            else:
+                session.add(
+                    _WorkflowMappingRow(
+                        issue_num=str(issue_num),
+                        workflow_id=str(workflow_id),
+                        updated_at=now,
+                    )
+                )
+            session.commit()
+
+    def _sync_get_workflow_id_for_issue(self, issue_num: str) -> str | None:
+        with Session(self._engine) as session:
+            row = session.get(_WorkflowMappingRow, str(issue_num))
+            return row.workflow_id if row else None
+
+    def _sync_remove_issue_workflow_mapping(self, issue_num: str) -> None:
+        with Session(self._engine) as session:
+            row = session.get(_WorkflowMappingRow, str(issue_num))
+            if row:
+                session.delete(row)
+                session.commit()
+
+    def _sync_load_issue_workflow_mappings(self) -> dict[str, str]:
+        with Session(self._engine) as session:
+            rows = session.query(_WorkflowMappingRow).all()
+            return {r.issue_num: r.workflow_id for r in rows}
+
+    def _sync_set_pending_workflow_approval(
+        self,
+        issue_num: str,
+        step_num: int,
+        step_name: str,
+        approvers: list[str],
+        approval_timeout: int,
+    ) -> None:
+        with Session(self._engine) as session:
+            row = session.get(_ApprovalStateRow, str(issue_num))
+            if row:
+                row.step_num = int(step_num)
+                row.step_name = str(step_name)
+                row.approvers = json.dumps(list(approvers))
+                row.approval_timeout = int(approval_timeout)
+                row.requested_at = time.time()
+            else:
+                session.add(
+                    _ApprovalStateRow(
+                        issue_num=str(issue_num),
+                        step_num=int(step_num),
+                        step_name=str(step_name),
+                        approvers=json.dumps(list(approvers)),
+                        approval_timeout=int(approval_timeout),
+                        requested_at=time.time(),
+                    )
+                )
+            session.commit()
+
+    def _sync_clear_pending_workflow_approval(self, issue_num: str) -> None:
+        with Session(self._engine) as session:
+            row = session.get(_ApprovalStateRow, str(issue_num))
+            if row:
+                session.delete(row)
+                session.commit()
+
+    def _sync_get_pending_workflow_approval(self, issue_num: str) -> dict[str, Any] | None:
+        with Session(self._engine) as session:
+            row = session.get(_ApprovalStateRow, str(issue_num))
+            if not row:
+                return None
+            return {
+                "step_num": row.step_num,
+                "step_name": row.step_name,
+                "approvers": json.loads(row.approvers),
+                "approval_timeout": row.approval_timeout,
+                "requested_at": row.requested_at,
+            }
+
+    def _sync_load_pending_workflow_approvals(self) -> dict[str, dict[str, Any]]:
+        with Session(self._engine) as session:
+            rows = session.query(_ApprovalStateRow).all()
+            return {
+                r.issue_num: {
+                    "step_num": r.step_num,
+                    "step_name": r.step_name,
+                    "approvers": json.loads(r.approvers),
+                    "approval_timeout": r.approval_timeout,
+                    "requested_at": r.requested_at,
+                }
+                for r in rows
+            }
+
     # ------------------------------------------------------------------
     # Serialization helpers — shared with FileStorage
     # ------------------------------------------------------------------
@@ -478,3 +627,16 @@ class PostgreSQLStorageBackend(StorageBackend):
         from nexus.adapters.storage._workflow_serde import dict_to_workflow
 
         return dict_to_workflow(data)
+
+    def close(self) -> None:
+        """Dispose underlying SQLAlchemy engine resources."""
+        try:
+            self._engine.dispose()
+        except Exception as exc:
+            logger.debug("Failed to dispose PostgreSQLStorageBackend engine: %s", exc)
+
+    def __del__(self) -> None:  # pragma: no cover - defensive finalizer
+        try:
+            self.close()
+        except Exception:
+            pass

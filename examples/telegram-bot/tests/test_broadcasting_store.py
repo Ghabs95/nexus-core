@@ -18,9 +18,9 @@ _nexus_src = Path(__file__).parent.parent / "src"
 if str(_nexus_src) not in sys.path:
     sys.path.insert(0, str(_nexus_src))
 
-_nexus_core = Path(__file__).parent.parent.parent / "nexus-core"
-if str(_nexus_core) not in sys.path:
-    sys.path.insert(0, str(_nexus_core))
+_repo_root = Path(__file__).resolve().parents[3]
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
 
 
 # ---------------------------------------------------------------------------
