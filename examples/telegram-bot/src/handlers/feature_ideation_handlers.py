@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -40,6 +41,11 @@ FEATURE_STATE_KEY = "feature_suggestions"
 FEATURE_MIN_COUNT = 1
 FEATURE_MAX_COUNT = 5
 FEATURE_DEFAULT_COUNT = 3
+FEATURE_IDEATION_CONTEXT_MODE_DEFAULT = os.getenv("FEATURE_IDEATION_CONTEXT_MODE", "index")
+FEATURE_IDEATION_CONTEXT_MAX_CHARS_DEFAULT = int(
+    os.getenv("FEATURE_IDEATION_CONTEXT_MAX_CHARS", "6000")
+)
+FEATURE_IDEATION_CONTEXT_SUMMARY_MAX_CHARS = int(os.getenv("AI_CONTEXT_SUMMARY_MAX_CHARS", "1200"))
 
 
 @dataclass
@@ -420,12 +426,32 @@ def _load_role_context(
     project_key: str,
     routed_agent_type: str,
     deps: FeatureIdeationHandlerDeps,
-    max_chars: int = 18000,
+    max_chars: int = FEATURE_IDEATION_CONTEXT_MAX_CHARS_DEFAULT,
+    query: str = "",
 ) -> str:
     """Load prompt context based on operation_agents.chat and AGENTS protocol."""
     agent_cfg = _chat_agent_config_for_project(project_key, routed_agent_type, deps)
+    configured_mode = str(
+        agent_cfg.get("feature_ideation_context_mode")
+        or agent_cfg.get("context_mode")
+        or FEATURE_IDEATION_CONTEXT_MODE_DEFAULT
+    ).strip().lower()
+    configured_max = agent_cfg.get("feature_ideation_context_max_chars")
+    if not isinstance(configured_max, int) or configured_max <= 0:
+        configured_max = (
+            agent_cfg.get("context_max_chars")
+            if isinstance(agent_cfg.get("context_max_chars"), int)
+            else FEATURE_IDEATION_CONTEXT_MAX_CHARS_DEFAULT
+        )
     project_root = _resolve_project_root(project_key, deps)
-    return load_role_context(project_root=project_root, agent_cfg=agent_cfg, max_chars=max_chars)
+    return load_role_context(
+        project_root=project_root,
+        agent_cfg=agent_cfg,
+        max_chars=min(max_chars, int(configured_max)),
+        mode=configured_mode,
+        query=query,
+        summary_max_chars=FEATURE_IDEATION_CONTEXT_SUMMARY_MAX_CHARS,
+    )
 
 
 def _build_feature_persona(
@@ -501,7 +527,7 @@ def _build_feature_suggestions(
             )
         return []
 
-    context_block = _load_role_context(project_key, routed_agent_type, deps)
+    context_block = _load_role_context(project_key, routed_agent_type, deps, query=text)
     persona = _build_feature_persona(
         project_label,
         routed_agent_type,

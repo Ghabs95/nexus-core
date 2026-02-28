@@ -8,6 +8,8 @@ from typing import Any
 
 import yaml
 
+from nexus.core.prompt_budget import apply_prompt_budget, truncate_text
+
 
 def resolve_project_root(base_dir: str, project_key: str, project_cfg: dict[str, Any]) -> str:
     normalized_base_dir = str(base_dir or "").strip()
@@ -242,9 +244,20 @@ def load_role_context(
     project_root: str,
     agent_cfg: dict[str, Any],
     max_chars: int = 18000,
+    mode: str | None = None,
+    query: str = "",
+    summary_max_chars: int = 1200,
 ) -> str:
     if not project_root or not isinstance(agent_cfg, dict):
         return ""
+
+    configured_max = agent_cfg.get("context_max_chars")
+    if isinstance(configured_max, int) and configured_max > 0:
+        max_chars = min(max_chars, configured_max)
+
+    resolved_mode = str(mode or agent_cfg.get("context_mode") or "index").strip().lower()
+    if resolved_mode not in {"full", "index"}:
+        resolved_mode = "index"
 
     context_paths = normalize_paths(agent_cfg.get("context_path"))
     if not context_paths:
@@ -257,6 +270,21 @@ def load_role_context(
     chunks: list[str] = []
     used_chars = 0
     resolved_context_roots: list[str] = []
+    collected_files: list[str] = []
+
+    query_tokens = {
+        token.strip().lower()
+        for token in re.split(r"[^a-zA-Z0-9_]+", str(query or ""))
+        if token.strip()
+    }
+
+    def _file_score(path: str) -> tuple[int, int, str]:
+        rel_name = os.path.relpath(path, project_root).lower()
+        score = 0
+        if query_tokens:
+            score += sum(1 for token in query_tokens if token and token in rel_name) * 2
+        docs_bias = 1 if "/docs/" in f"/{rel_name}" else 0
+        return (-score, -docs_bias, rel_name)
 
     for raw_context_path in context_paths:
         context_root = resolve_path(project_root, raw_context_path)
@@ -269,6 +297,12 @@ def load_role_context(
             seed_files=context_files,
             search_root=project_root,
         ):
+            if file_path not in collected_files:
+                collected_files.append(file_path)
+
+    if resolved_mode == "index":
+        lines = ["Context index (retrieval mode):"]
+        for file_path in sorted(collected_files, key=_file_score):
             try:
                 with open(file_path, encoding="utf-8") as handle:
                     content = handle.read().strip()
@@ -278,15 +312,66 @@ def load_role_context(
             if not content:
                 continue
 
+            rel_name = os.path.relpath(file_path, project_root)
+            heading = ""
+            for line in content.splitlines():
+                candidate = line.strip().lstrip("#").strip()
+                if candidate:
+                    heading = candidate
+                    break
+            if not heading:
+                heading = "(no heading)"
+            heading = truncate_text(heading, max_chars=180, suffix="...")
+            line = f"- {rel_name}: {heading}"
             remaining = max_chars - used_chars
             if remaining <= 0:
                 break
+            line = truncate_text(line, max_chars=remaining, suffix="...")
+            lines.append(line)
+            used_chars += len(line) + 1
+            if used_chars >= max_chars:
+                break
+        if len(lines) <= 1:
+            return ""
+        text = "\n".join(lines)
+        budget = apply_prompt_budget(
+            text,
+            max_chars=max_chars,
+            summary_max_chars=summary_max_chars,
+        )
+        roots_display = ", ".join(
+            os.path.relpath(path, project_root) for path in resolved_context_roots
+        )
+        return (
+            "\n\nUse this project context index as source material (do not invent facts):\n"
+            f"Context folders: {roots_display}\n"
+            f"{budget['text']}"
+        )
 
-            excerpt = content[:remaining]
-            rel_name = os.path.relpath(file_path, project_root)
-            chunks.append(f"[{rel_name}]\n{excerpt}")
-            used_chars += len(excerpt)
+    for file_path in sorted(collected_files, key=lambda p: os.path.relpath(p, project_root).lower()):
+        try:
+            with open(file_path, encoding="utf-8") as handle:
+                content = handle.read().strip()
+        except Exception:
+            continue
 
+        if not content:
+            continue
+
+        remaining = max_chars - used_chars
+        if remaining <= 0:
+            break
+
+        budget = apply_prompt_budget(
+            content,
+            max_chars=remaining,
+            summary_max_chars=summary_max_chars,
+        )
+        excerpt = str(budget["text"])
+        rel_name = os.path.relpath(file_path, project_root)
+        block = f"[{rel_name}]\n{excerpt}"
+        chunks.append(block)
+        used_chars += len(block)
         if used_chars >= max_chars:
             break
 

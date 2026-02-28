@@ -15,8 +15,13 @@ from config import NEXUS_STORAGE_BACKEND
 from integrations.workflow_state_factory import get_storage_backend
 
 from nexus.adapters.git.utils import build_issue_url, resolve_repo
+from nexus.core.completion import budget_completion_payload
+from nexus.core.prompt_budget import apply_prompt_budget
 
 logger = logging.getLogger(__name__)
+
+_PROMPT_MAX_CHARS = int(os.getenv("AI_PROMPT_MAX_CHARS", "16000"))
+_CONTEXT_SUMMARY_MAX_CHARS = int(os.getenv("AI_CONTEXT_SUMMARY_MAX_CHARS", "1200"))
 
 
 def _run_coro_sync(coro_factory):
@@ -57,15 +62,16 @@ def _read_latest_completion_from_storage(issue_num: str) -> dict[str, Any] | Non
     payload = _run_coro_sync(_load)
     if not isinstance(payload, dict):
         return None
+    normalized = budget_completion_payload(payload)
 
     return {
-        "agent_type": str(payload.get("agent_type") or payload.get("_agent_type") or "")
+        "agent_type": str(normalized.get("agent_type") or normalized.get("_agent_type") or "")
         .strip()
         .lower(),
-        "next_agent": str(payload.get("next_agent") or "").strip().lower(),
-        "status": str(payload.get("status") or "").strip().lower(),
-        "is_workflow_done": bool(payload.get("is_workflow_done", False)),
-        "summary": payload,
+        "next_agent": str(normalized.get("next_agent") or "").strip().lower(),
+        "status": str(normalized.get("status") or "").strip().lower(),
+        "is_workflow_done": bool(normalized.get("is_workflow_done", False)),
+        "summary": normalized,
     }
 
 
@@ -159,6 +165,12 @@ def prepare_continue_context(
     continuation_prompt = (
         " ".join(filtered_rest) if filtered_rest else "Please continue with the next step."
     )
+    continuation_budget = apply_prompt_budget(
+        continuation_prompt,
+        max_chars=min(_PROMPT_MAX_CHARS, 3000),
+        summary_max_chars=min(_CONTEXT_SUMMARY_MAX_CHARS, 800),
+    )
+    continuation_prompt = str(continuation_budget["text"])
 
     runtime_ops = get_runtime_ops_plugin(cache_key="runtime-ops:telegram")
     pid = runtime_ops.find_agent_pid_for_issue(issue_num) if runtime_ops else None
@@ -417,6 +429,22 @@ def prepare_continue_context(
 
     issue_url = build_issue_url(repo, issue_num, config)
     log_subdir = project_name or project_key
+    raw_content = content
+    content_budget = apply_prompt_budget(
+        content,
+        max_chars=_PROMPT_MAX_CHARS,
+        summary_max_chars=_CONTEXT_SUMMARY_MAX_CHARS,
+    )
+    content = str(content_budget["text"])
+    if content_budget["summarized"] or content_budget["truncated"]:
+        logger.info(
+            "Continue context budget applied: issue=%s original=%s final=%s summarized=%s truncated=%s",
+            issue_num,
+            content_budget["original_chars"],
+            content_budget["final_chars"],
+            content_budget["summarized"],
+            content_budget["truncated"],
+        )
 
     return {
         "status": "ready",
@@ -431,6 +459,7 @@ def prepare_continue_context(
         "issue_url": issue_url,
         "tier_name": tier_name,
         "content": content,
+        "raw_content": raw_content,
         "log_subdir": log_subdir,
     }
 

@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from config_storage_capabilities import get_storage_capabilities
+from nexus.core.completion import budget_completion_payload
 
 _STEP_COMPLETE_COMMENT_RE = re.compile(
     r"^\s*##\s+.+?\bcomplete\b\s+—\s+([a-zA-Z0-9_-]+)\s*$",
@@ -89,6 +90,7 @@ def read_latest_local_completion(
             payload = json.load(handle)
     except Exception:
         return None
+    payload = budget_completion_payload(payload)
 
     return {
         "path": latest,

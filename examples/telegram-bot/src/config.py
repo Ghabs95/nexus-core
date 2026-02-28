@@ -385,10 +385,15 @@ def _get_orchestrator_config():
             "copilot_cli_path": os.getenv(
                 "COPILOT_PROVIDER", os.getenv("COPILOT_CLI_PATH", "copilot")
             ),
+            "copilot_model": os.getenv("COPILOT_MODEL", "").strip(),
+            "copilot_supports_model": os.getenv("COPILOT_SUPPORTS_MODEL", "false").lower()
+            == "true",
             "gemini_cli_path": os.getenv("GEMINI_CLI_PATH", "gemini"),
             "gemini_model": os.getenv("GEMINI_MODEL", "").strip(),
             "codex_cli_path": os.getenv("CODEX_CLI_PATH", "codex"),
             "codex_model": os.getenv("CODEX_MODEL", "").strip(),
+            "ai_tool_preferences_strict": os.getenv("AI_TOOL_PREFERENCES_STRICT", "false").lower()
+            == "true",
             "tool_preferences": AI_TOOL_PREFERENCES._ensure_loaded(),
             "tool_preferences_resolver": get_ai_tool_preferences,
             "operation_agents": OPERATION_AGENTS._ensure_loaded(),
@@ -398,6 +403,8 @@ def _get_orchestrator_config():
             "rate_limit_ttl": int(os.getenv("AI_RATE_LIMIT_TTL", "3600")),
             "max_retries": int(os.getenv("AI_MAX_RETRIES", "3")),
             "analysis_timeout": _get_int_env("AI_ANALYSIS_TIMEOUT", 120),
+            "ai_prompt_max_chars": _get_int_env("AI_PROMPT_MAX_CHARS", 16000),
+            "ai_context_summary_max_chars": _get_int_env("AI_CONTEXT_SUMMARY_MAX_CHARS", 1200),
             "transcription_primary": os.getenv("TRANSCRIPTION_PRIMARY", "gemini").strip().lower(),
             "gemini_transcription_timeout": _get_int_env("GEMINI_TRANSCRIPTION_TIMEOUT", 60),
             "copilot_transcription_timeout": _get_int_env("COPILOT_TRANSCRIPTION_TIMEOUT", 120),

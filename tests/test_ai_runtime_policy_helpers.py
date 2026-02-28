@@ -34,6 +34,7 @@ from nexus.plugins.builtin.ai_runtime.provider_invokers.whisper_invoker import (
     transcribe_with_local_whisper,
 )
 from nexus.plugins.builtin.ai_runtime.provider_registry import (
+    parse_tool_preference,
     parse_provider,
     supports_analysis,
     unique_tools,
@@ -164,7 +165,14 @@ def test_transcription_filters_and_whisper_model_normalization():
 
 def test_provider_registry_helpers():
     assert parse_provider("gemini", AIProvider) == AIProvider.GEMINI
+    assert parse_provider('copilot["gpt-5-mini"]', AIProvider) == AIProvider.COPILOT
+    assert parse_provider({"provider": "codex", "model": "gpt-5"}, AIProvider) == AIProvider.CODEX
     assert parse_provider("unknown", AIProvider) is None
+    assert parse_provider('gemini[gpt-5-mini]', AIProvider) is None
+    parsed = parse_tool_preference('gemini["gemini-2.0-flash"]', AIProvider)
+    assert parsed.valid is True
+    assert parsed.provider == AIProvider.GEMINI
+    assert parsed.model == "gemini-2.0-flash"
     assert (
         supports_analysis(
             AIProvider.GEMINI,
@@ -315,6 +323,7 @@ def test_gemini_analysis_invoker_rate_limit_and_timeout(monkeypatch):
             check_tool_available=lambda provider: True,
             gemini_provider=AIProvider.GEMINI,
             gemini_cli_path="gemini",
+            gemini_model="gemini-2.0-flash",
             build_analysis_prompt=lambda text, task, **kwargs: "prompt",
             parse_analysis_result=lambda output, task: {"ok": True},
             tool_unavailable_error=RuntimeError,
@@ -337,6 +346,7 @@ def test_gemini_analysis_invoker_rate_limit_and_timeout(monkeypatch):
             check_tool_available=lambda provider: True,
             gemini_provider=AIProvider.GEMINI,
             gemini_cli_path="gemini",
+            gemini_model="",
             build_analysis_prompt=lambda text, task, **kwargs: "prompt",
             parse_analysis_result=lambda output, task: {"ok": True},
             tool_unavailable_error=RuntimeError,
@@ -364,6 +374,8 @@ def test_copilot_analysis_invoker_success_and_unavailable(monkeypatch):
         check_tool_available=lambda provider: True,
         copilot_provider=AIProvider.COPILOT,
         copilot_cli_path="copilot",
+        copilot_model="gpt-5-mini",
+        copilot_supports_model=True,
         build_analysis_prompt=lambda text, task, **kwargs: "prompt",
         parse_analysis_result=lambda output, task: {"parsed": output, "task": task},
         tool_unavailable_error=RuntimeError,
@@ -379,6 +391,8 @@ def test_copilot_analysis_invoker_success_and_unavailable(monkeypatch):
             check_tool_available=lambda provider: False,
             copilot_provider=AIProvider.COPILOT,
             copilot_cli_path="copilot",
+            copilot_model="",
+            copilot_supports_model=False,
             build_analysis_prompt=lambda text, task, **kwargs: "prompt",
             parse_analysis_result=lambda output, task: {"ok": True},
             tool_unavailable_error=RuntimeError,
@@ -507,6 +521,8 @@ def test_copilot_agent_invoker_success(monkeypatch, tmp_path):
         check_tool_available=lambda provider: True,
         copilot_provider=AIProvider.COPILOT,
         copilot_cli_path="copilot",
+        copilot_model="gpt-5-mini",
+        copilot_supports_model=True,
         get_tasks_logs_dir=lambda workspace, subdir: str(tmp_path / "logs"),
         tool_unavailable_error=RuntimeError,
         rate_limited_error=RuntimeError,
@@ -520,6 +536,8 @@ def test_copilot_agent_invoker_success(monkeypatch, tmp_path):
     )
     assert pid == 9876
     assert "--allow-all-tools" in captured["cmd"]
+    assert "--model" in captured["cmd"]
+    assert "gpt-5-mini" in captured["cmd"]
     assert str(captured["stdout_name"]).endswith("copilot_10_20260101_120000.log")
     assert isinstance(captured["env"], dict) and captured["env"]["X"] == "1"
 
@@ -558,6 +576,8 @@ def test_copilot_agent_invoker_immediate_exit_rate_limit(monkeypatch, tmp_path):
             check_tool_available=lambda provider: True,
             copilot_provider=AIProvider.COPILOT,
             copilot_cli_path="copilot",
+            copilot_model="",
+            copilot_supports_model=False,
             get_tasks_logs_dir=lambda workspace, subdir: str(tmp_path / "logs"),
             tool_unavailable_error=RuntimeError,
             rate_limited_error=_RateLimited,

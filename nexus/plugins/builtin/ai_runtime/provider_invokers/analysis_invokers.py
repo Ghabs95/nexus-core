@@ -12,6 +12,7 @@ def run_gemini_analysis_cli(
     check_tool_available: Callable[[Any], bool],
     gemini_provider: Any,
     gemini_cli_path: str,
+    gemini_model: str,
     build_analysis_prompt: Callable[..., str],
     parse_analysis_result: Callable[[str, str], dict[str, Any]],
     tool_unavailable_error: type[Exception],
@@ -26,7 +27,10 @@ def run_gemini_analysis_cli(
 
     prompt = build_analysis_prompt(text, task, **kwargs)
     try:
-        result = run_cli_prompt([gemini_cli_path, "-p", prompt], timeout=timeout)
+        cmd = [gemini_cli_path, "-p", prompt]
+        if gemini_model:
+            cmd.extend(["--model", gemini_model])
+        result = run_cli_prompt(cmd, timeout=timeout)
         if result.returncode != 0:
             stderr = result.stderr or ""
             if "rate limit" in stderr.lower() or "quota" in stderr.lower():
@@ -42,6 +46,8 @@ def run_copilot_analysis_cli(
     check_tool_available: Callable[[Any], bool],
     copilot_provider: Any,
     copilot_cli_path: str,
+    copilot_model: str,
+    copilot_supports_model: bool,
     build_analysis_prompt: Callable[..., str],
     parse_analysis_result: Callable[[str, str], dict[str, Any]],
     tool_unavailable_error: type[Exception],
@@ -55,7 +61,10 @@ def run_copilot_analysis_cli(
 
     prompt = build_analysis_prompt(text, task, **kwargs)
     try:
-        result = run_cli_prompt([copilot_cli_path, "-p", prompt], timeout=timeout)
+        cmd = [copilot_cli_path, "-p", prompt]
+        if copilot_model and copilot_supports_model:
+            cmd.extend(["--model", copilot_model])
+        result = run_cli_prompt(cmd, timeout=timeout)
         if result.returncode != 0:
             raise Exception(f"Copilot error: {result.stderr}")
         return parse_analysis_result(result.stdout or "", task)

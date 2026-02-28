@@ -65,7 +65,7 @@ spec:
     3. Affected versions
     4. Severity level (critical/high/medium/low)
     
-    Format your response as a GitHub comment.
+    Format your response as a structured issue comment.
 
   # Success criteria
   validation:

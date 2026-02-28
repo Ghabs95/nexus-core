@@ -47,7 +47,7 @@ def test_merge_policy_injected_for_deployer():
         workflow_path="",
         nexus_dir=".nexus",
     )
-    assert "MUST NOT run `gh pr merge`" in prompt
+    assert "MUST NOT run merge commands automatically." in prompt
     assert "merge_queue.review_mode" in prompt
 
 
@@ -63,7 +63,7 @@ def test_merge_policy_injected_for_ops():
         workflow_path="",
         nexus_dir=".nexus",
     )
-    assert "MUST NOT run `gh pr merge`" in prompt
+    assert "MUST NOT run merge commands automatically." in prompt
 
 
 def test_merge_policy_not_injected_for_developer():
@@ -78,7 +78,86 @@ def test_merge_policy_not_injected_for_developer():
         workflow_path="",
         nexus_dir=".nexus",
     )
-    assert "MUST NOT run `gh pr merge`" not in prompt
+    assert "MUST NOT run merge commands automatically." not in prompt
+
+
+def test_prompt_prefix_is_stable_for_different_issue_context():
+    plugin = AgentLaunchPolicyPlugin()
+    p1 = plugin.build_agent_prompt(
+        issue_url="https://github.com/org/repo/issues/10",
+        tier_name="full",
+        task_content="Implement feature A",
+        agent_type="triage",
+        continuation=False,
+        workflow_path="",
+        nexus_dir=".nexus",
+    )
+    p2 = plugin.build_agent_prompt(
+        issue_url="https://github.com/org/repo/issues/11",
+        tier_name="full",
+        task_content="Implement feature B",
+        agent_type="triage",
+        continuation=False,
+        workflow_path="",
+        nexus_dir=".nexus",
+    )
+
+    assert p1[:220] == p2[:220]
+
+
+def test_initial_prompt_triage_remains_triage_specific():
+    plugin = AgentLaunchPolicyPlugin()
+    prompt = plugin.build_agent_prompt(
+        issue_url="https://github.com/org/repo/issues/20",
+        tier_name="full",
+        task_content="Investigate production incident",
+        agent_type="triage",
+        continuation=False,
+        workflow_path="",
+        nexus_dir=".nexus",
+    )
+    assert "Execute the `triage` workflow step" in prompt
+    assert "Perform triage work (classification, severity, routing)" in prompt
+    assert "Implement code changes during triage" in prompt
+
+
+def test_initial_prompt_non_triage_is_role_specific_not_triage_only():
+    plugin = AgentLaunchPolicyPlugin()
+    prompt = plugin.build_agent_prompt(
+        issue_url="https://github.com/org/repo/issues/21",
+        tier_name="full",
+        task_content="Implement validation fix",
+        agent_type="developer",
+        continuation=False,
+        workflow_path="",
+        nexus_dir=".nexus",
+    )
+    assert "Analyze, triage, and route" not in prompt
+    assert "Try to implement the feature yourself" not in prompt
+    assert "Execute the `developer` workflow step" in prompt
+
+
+def test_build_agent_prompt_budgets_large_task_content():
+    plugin = AgentLaunchPolicyPlugin(
+        {
+            "ai_prompt_max_chars": 1200,
+            "ai_context_summary_max_chars": 200,
+        }
+    )
+    huge_content = "\n".join(f"line {idx}: verbose tool output" for idx in range(2000))
+    prompt = plugin.build_agent_prompt(
+        issue_url="https://github.com/org/repo/issues/10",
+        tier_name="full",
+        task_content=huge_content,
+        agent_type="triage",
+        continuation=False,
+        workflow_path="",
+        nexus_dir=".nexus",
+    )
+
+    assert len(prompt) < 9000
+    assert "Summary:" in prompt
+    assert "line 1999" not in prompt
 
 
 def test_build_agent_prompt_includes_alignment_report(tmp_path):

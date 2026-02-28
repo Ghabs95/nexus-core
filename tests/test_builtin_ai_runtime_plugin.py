@@ -590,3 +590,51 @@ def test_transcription_operation_mapping_uses_global_fallback_order(monkeypatch)
 
     assert result == "gemini transcript"
     assert call_order == ["copilot", "gemini"]
+
+
+def test_primary_tool_parses_model_wrapped_preferences():
+    orchestrator = AIOrchestrator(
+        {
+            "tool_preferences": {
+                "triage": 'copilot["gpt-5-mini"]',
+                "writer": 'gemini["gemini-2.0-flash"]',
+            }
+        }
+    )
+    assert orchestrator.get_primary_tool("triage") == AIProvider.COPILOT
+    assert orchestrator.get_primary_tool("writer") == AIProvider.GEMINI
+
+
+def test_copilot_model_override_is_capability_gated(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    def _fake_invoke(**kwargs):
+        captured.update(kwargs)
+        return 111
+
+    monkeypatch.setattr(
+        "nexus.plugins.builtin.ai_runtime_plugin.invoke_copilot_agent_cli_impl",
+        _fake_invoke,
+    )
+
+    orchestrator = AIOrchestrator(
+        {
+            "copilot_model": "global-model",
+            "copilot_supports_model": False,
+            "tool_preferences": {"triage": 'copilot["agent-model"]'},
+        }
+    )
+
+    pid = orchestrator._invoke_copilot(
+        agent_prompt="go",
+        workspace_dir=str(tmp_path),
+        agents_dir=str(tmp_path),
+        base_dir=str(tmp_path),
+        model_override=orchestrator._resolve_model_for_tool(
+            tool=AIProvider.COPILOT,
+            agent_name="triage",
+        ),
+    )
+    assert pid == 111
+    assert captured["copilot_model"] == "global-model"
+    assert captured["copilot_supports_model"] is False

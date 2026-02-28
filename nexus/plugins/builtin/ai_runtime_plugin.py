@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from enum import Enum
 from typing import Any
 
+from nexus.core.prompt_budget import prompt_prefix_fingerprint
 from nexus.plugins.builtin.ai_runtime.agent_invoke_service import (
     invoke_agent_with_fallback as invoke_agent_with_fallback_impl,
 )
@@ -45,6 +46,7 @@ from nexus.plugins.builtin.ai_runtime.provider_invokers.whisper_invoker import (
     transcribe_with_local_whisper as transcribe_with_local_whisper_impl,
 )
 from nexus.plugins.builtin.ai_runtime.provider_registry import (
+    parse_tool_preference as parse_tool_preference_impl,
     parse_provider as parse_provider_impl,
     supports_analysis as supports_analysis_impl,
     unique_tools as unique_tools_impl,
@@ -99,6 +101,9 @@ class AIOrchestrator:
         self.gemini_model = str(self.config.get("gemini_model", "")).strip()
         self.codex_cli_path = self.config.get("codex_cli_path", "codex")
         self.codex_model = str(self.config.get("codex_model", "")).strip()
+        self.copilot_model = str(self.config.get("copilot_model", "")).strip()
+        self.copilot_supports_model = bool(self.config.get("copilot_supports_model", False))
+        self.ai_tool_preferences_strict = bool(self.config.get("ai_tool_preferences_strict", False))
         self.tool_preferences = self.config.get("tool_preferences", {})
         self.tool_preferences_resolver: Callable[[str], dict[str, Any] | None] | None = (
             self.config.get(
@@ -119,6 +124,10 @@ class AIOrchestrator:
         self.max_retries = self.config.get("max_retries", 3)
         self.analysis_timeout = self.config.get("analysis_timeout", 120)
         self.refine_description_timeout = self.config.get("refine_description_timeout", 90)
+        self.ai_prompt_max_chars = int(self.config.get("ai_prompt_max_chars", 16000) or 16000)
+        self.ai_context_summary_max_chars = int(
+            self.config.get("ai_context_summary_max_chars", 1200) or 1200
+        )
         self.gemini_transcription_timeout = self.config.get("gemini_transcription_timeout", 60)
         self.copilot_transcription_timeout = self.config.get("copilot_transcription_timeout", 120)
         primary = str(self.config.get("transcription_primary", "gemini")).strip().lower()
@@ -135,6 +144,7 @@ class AIOrchestrator:
         ]
         self._whisper_model_instance = None
         self._whisper_model_name = ""
+        self._warned_tool_preferences: set[str] = set()
         self.get_tasks_logs_dir: Callable[[str, str | None], str] = self.config.get(
             "tasks_logs_dir_resolver",
             _default_tasks_logs_dir,
@@ -144,6 +154,39 @@ class AIOrchestrator:
     def _parse_provider(candidate: Any) -> AIProvider | None:
         parsed = parse_provider_impl(candidate, AIProvider)
         return parsed if isinstance(parsed, AIProvider) else None
+
+    @staticmethod
+    def _parse_tool_preference(candidate: Any) -> Any:
+        return parse_tool_preference_impl(candidate, AIProvider)
+
+    def _parse_provider_with_policy(
+        self,
+        candidate: Any,
+        *,
+        project_name: str | None = None,
+        agent_name: str | None = None,
+    ) -> AIProvider | None:
+        spec = self._parse_tool_preference(candidate)
+        if getattr(spec, "valid", False):
+            provider = getattr(spec, "provider", None)
+            return provider if isinstance(provider, AIProvider) else None
+
+        key = f"{project_name or 'default'}:{agent_name or '*'}:{candidate!r}"
+        if self.ai_tool_preferences_strict:
+            raise ValueError(
+                f"Invalid ai_tool_preferences entry for {agent_name or 'unknown'}"
+                f" in project {project_name or 'default'}: {getattr(spec, 'reason', 'parse error')}"
+            )
+        if key not in self._warned_tool_preferences:
+            self._warned_tool_preferences.add(key)
+            logger.warning(
+                "Ignoring invalid ai_tool_preferences entry for agent=%s project=%s: %r (%s)",
+                agent_name or "unknown",
+                project_name or "default",
+                candidate,
+                getattr(spec, "reason", "parse error"),
+            )
+        return None
 
     @staticmethod
     def _supports_analysis(tool: AIProvider) -> bool:
@@ -215,8 +258,59 @@ class AIOrchestrator:
         tool_preferences = self._resolved_tool_preferences(project_name)
         return fallback_order_from_preferences_impl(
             resolved_tool_preferences=tool_preferences,
-            parse_provider=self._parse_provider,
+            parse_provider=lambda candidate: self._parse_provider_with_policy(
+                candidate,
+                project_name=project_name,
+            ),
         )
+
+    def _resolved_tool_spec(
+        self,
+        agent_name: str | None,
+        project_name: str | None = None,
+    ) -> Any:
+        if not agent_name:
+            return self._parse_tool_preference("")
+        preferences = self._resolved_tool_preferences(project_name)
+        raw_value = preferences.get(agent_name)
+        return self._parse_tool_preference(raw_value)
+
+    def _resolve_model_for_tool(
+        self,
+        *,
+        tool: AIProvider,
+        agent_name: str | None,
+        project_name: str | None = None,
+    ) -> str:
+        if not agent_name:
+            return ""
+
+        spec = self._resolved_tool_spec(agent_name, project_name=project_name)
+        spec_provider = getattr(spec, "provider", None)
+        spec_model = str(getattr(spec, "model", "") or "").strip()
+        spec_valid = bool(getattr(spec, "valid", False))
+
+        if not spec_valid:
+            self._parse_provider_with_policy(
+                self._resolved_tool_preferences(project_name).get(agent_name),
+                project_name=project_name,
+                agent_name=agent_name,
+            )
+            return ""
+        if spec_provider != tool or not spec_model:
+            return ""
+        if tool == AIProvider.COPILOT and not self.copilot_supports_model:
+            warn_key = f"copilot_model_disabled:{project_name or 'default'}:{agent_name}:{spec_model}"
+            if warn_key not in self._warned_tool_preferences:
+                self._warned_tool_preferences.add(warn_key)
+                logger.warning(
+                    "Copilot model override ignored for agent=%s project=%s because "
+                    "copilot_supports_model is disabled",
+                    agent_name,
+                    project_name or "default",
+                )
+            return ""
+        return spec_model
 
     def _default_chat_agent_type(self, project_name: str | None = None) -> str:
         if not project_name or not callable(self.chat_agent_types_resolver):
@@ -307,7 +401,11 @@ class AIOrchestrator:
     ) -> AIProvider:
         tool_preferences = self._resolved_tool_preferences(project_name)
         if agent_name and agent_name in tool_preferences:
-            pref = self._parse_provider(tool_preferences.get(agent_name))
+            pref = self._parse_provider_with_policy(
+                tool_preferences.get(agent_name),
+                project_name=project_name,
+                agent_name=agent_name,
+            )
             if pref:
                 return pref
 
@@ -417,17 +515,23 @@ class AIOrchestrator:
         workspace_dir: str,
         agents_dir: str,
         base_dir: str,
+        agent_name: str | None = None,
         issue_num: str | None = None,
         log_subdir: str | None = None,
         env: dict[str, str] | None = None,
     ) -> int | None:
         """Dispatch to the correct CLI for *tool*. Extend here when adding new providers."""
+        model_override = self._resolve_model_for_tool(
+            tool=tool,
+            agent_name=agent_name,
+        )
         if tool == AIProvider.COPILOT:
             return self._invoke_copilot(
                 agent_prompt,
                 workspace_dir,
                 agents_dir,
                 base_dir,
+                model_override=model_override,
                 issue_num=issue_num,
                 log_subdir=log_subdir,
                 env=env,
@@ -438,6 +542,7 @@ class AIOrchestrator:
                 workspace_dir,
                 agents_dir,
                 base_dir,
+                model_override=model_override,
                 issue_num=issue_num,
                 log_subdir=log_subdir,
                 env=env,
@@ -448,6 +553,7 @@ class AIOrchestrator:
                 workspace_dir,
                 agents_dir,
                 base_dir,
+                model_override=model_override,
                 issue_num=issue_num,
                 log_subdir=log_subdir,
                 env=env,
@@ -512,7 +618,14 @@ class AIOrchestrator:
         be skipped entirely — used by the retry path so a crashed tool is not retried.
         Adding a new provider only requires extending AIProvider + _invoke_tool.
         """
-        return invoke_agent_with_fallback_impl(
+        fingerprint = prompt_prefix_fingerprint(agent_prompt)
+        logger.info(
+            "🧾 Agent prompt metrics: chars=%s prefix_fp=%s agent=%s",
+            len(agent_prompt),
+            fingerprint,
+            agent_name or "unknown",
+        )
+        pid, selected_tool = invoke_agent_with_fallback_impl(
             issue_url=issue_url,
             exclude_tools=exclude_tools,
             get_tool_order=lambda: self._get_tool_order(agent_name, use_gemini),
@@ -523,6 +636,7 @@ class AIOrchestrator:
                 workspace_dir,
                 agents_dir,
                 base_dir,
+                agent_name=agent_name,
                 issue_num=issue_num,
                 log_subdir=log_subdir,
                 env=env,
@@ -537,6 +651,18 @@ class AIOrchestrator:
             tool_unavailable_error_type=ToolUnavailableError,
             logger=logger,
         )
+        selected_model = self._resolve_model_for_tool(
+            tool=selected_tool,
+            agent_name=agent_name,
+        )
+        logger.info(
+            "✅ Agent provider selected: agent=%s provider=%s model=%s pid=%s",
+            agent_name or "unknown",
+            selected_tool.value,
+            selected_model or "default",
+            pid,
+        )
+        return pid, selected_tool
 
     def _invoke_copilot(
         self,
@@ -544,6 +670,7 @@ class AIOrchestrator:
         workspace_dir: str,
         agents_dir: str,
         base_dir: str,
+        model_override: str = "",
         issue_num: str | None = None,
         log_subdir: str | None = None,
         env: dict[str, str] | None = None,
@@ -552,6 +679,8 @@ class AIOrchestrator:
             check_tool_available=self.check_tool_available,
             copilot_provider=AIProvider.COPILOT,
             copilot_cli_path=self.copilot_cli_path,
+            copilot_model=model_override or self.copilot_model,
+            copilot_supports_model=self.copilot_supports_model,
             get_tasks_logs_dir=self.get_tasks_logs_dir,
             tool_unavailable_error=ToolUnavailableError,
             rate_limited_error=RateLimitedError,
@@ -571,6 +700,7 @@ class AIOrchestrator:
         workspace_dir: str,
         agents_dir: str,
         base_dir: str,
+        model_override: str = "",
         issue_num: str | None = None,
         log_subdir: str | None = None,
         env: dict[str, str] | None = None,
@@ -579,7 +709,7 @@ class AIOrchestrator:
             check_tool_available=self.check_tool_available,
             gemini_provider=AIProvider.GEMINI,
             gemini_cli_path=self.gemini_cli_path,
-            gemini_model=self.gemini_model,
+            gemini_model=model_override or self.gemini_model,
             get_tasks_logs_dir=self.get_tasks_logs_dir,
             tool_unavailable_error=ToolUnavailableError,
             rate_limited_error=RateLimitedError,
@@ -598,6 +728,7 @@ class AIOrchestrator:
         workspace_dir: str,
         agents_dir: str,
         base_dir: str,
+        model_override: str = "",
         issue_num: str | None = None,
         log_subdir: str | None = None,
         env: dict[str, str] | None = None,
@@ -606,7 +737,7 @@ class AIOrchestrator:
             check_tool_available=self.check_tool_available,
             codex_provider=AIProvider.CODEX,
             codex_cli_path=self.codex_cli_path,
-            codex_model=self.codex_model,
+            codex_model=model_override or self.codex_model,
             get_tasks_logs_dir=self.get_tasks_logs_dir,
             tool_unavailable_error=ToolUnavailableError,
             logger=logger,
@@ -701,15 +832,33 @@ class AIOrchestrator:
             text=text,
             project_name=project_name,
         )
+        model_overrides = {
+            "gemini": self._resolve_model_for_tool(
+                tool=AIProvider.GEMINI,
+                agent_name=mapped_agent or None,
+                project_name=project_name,
+            ),
+            "copilot": self._resolve_model_for_tool(
+                tool=AIProvider.COPILOT,
+                agent_name=mapped_agent or None,
+                project_name=project_name,
+            ),
+            "codex": self._resolve_model_for_tool(
+                tool=AIProvider.CODEX,
+                agent_name=mapped_agent or None,
+                project_name=project_name,
+            ),
+        }
         if tool_order:
             preferred = tool_order[0]
             preferred_name = str(getattr(preferred, "value", preferred))
             fallback_names = [str(getattr(tool, "value", tool)) for tool in tool_order[1:]]
             logger.info(
-                "🧭 Analysis provider order: task=%s project=%s mapped_agent=%s order=%s",
+                "🧭 Analysis provider order: task=%s project=%s mapped_agent=%s model=%s order=%s",
                 task,
                 project_name or "default",
                 mapped_agent or "unknown",
+                model_overrides.get(preferred_name, "") or "default",
                 " -> ".join([preferred_name] + fallback_names),
             )
             if not self.check_tool_available(preferred):
@@ -723,11 +872,24 @@ class AIOrchestrator:
                     mapped_agent or "unknown",
                     fallback_display,
                 )
+        analysis_kwargs = dict(kwargs)
+        analysis_kwargs.setdefault("prompt_max_chars", self.ai_prompt_max_chars)
+        analysis_kwargs.setdefault("summary_max_chars", self.ai_context_summary_max_chars)
+        analysis_kwargs["_gemini_model_override"] = model_overrides["gemini"]
+        analysis_kwargs["_copilot_model_override"] = model_overrides["copilot"]
+        analysis_kwargs["_codex_model_override"] = model_overrides["codex"]
+        logger.info(
+            "🧾 Analysis prompt metrics: input_chars=%s history_chars=%s prefix_fp=%s task=%s",
+            len(text),
+            len(str(kwargs.get("history", "") or "")),
+            prompt_prefix_fingerprint(text),
+            task,
+        )
         return run_analysis_attempts_impl(
             tool_order=tool_order,
             text=text,
             task=task,
-            kwargs=kwargs,
+            kwargs=analysis_kwargs,
             invoke_provider=lambda tool, text_arg, task_arg, kw: self._run_analysis_with_provider(
                 tool, text_arg, task_arg, **kw
             ),
@@ -806,10 +968,13 @@ class AIOrchestrator:
         return mapped_agent
 
     def _run_gemini_cli_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
+        gemini_model = str(kwargs.get("_gemini_model_override") or "").strip() or self.gemini_model
+        prompt_kwargs = {k: v for k, v in kwargs.items() if not str(k).startswith("_")}
         return run_gemini_analysis_cli_impl(
             check_tool_available=self.check_tool_available,
             gemini_provider=AIProvider.GEMINI,
             gemini_cli_path=self.gemini_cli_path,
+            gemini_model=gemini_model,
             build_analysis_prompt=self._build_analysis_prompt,
             parse_analysis_result=self._parse_analysis_result,
             tool_unavailable_error=ToolUnavailableError,
@@ -817,7 +982,7 @@ class AIOrchestrator:
             text=text,
             task=task,
             timeout=self.analysis_timeout,
-            kwargs=kwargs,
+            kwargs=prompt_kwargs,
         )
 
     def _run_copilot_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
@@ -826,17 +991,23 @@ class AIOrchestrator:
             if task == "refine_description"
             else self.analysis_timeout
         )
+        copilot_model = (
+            str(kwargs.get("_copilot_model_override") or "").strip() or self.copilot_model
+        )
+        prompt_kwargs = {k: v for k, v in kwargs.items() if not str(k).startswith("_")}
         return run_copilot_analysis_cli_impl(
             check_tool_available=self.check_tool_available,
             copilot_provider=AIProvider.COPILOT,
             copilot_cli_path=self.copilot_cli_path,
+            copilot_model=copilot_model,
+            copilot_supports_model=self.copilot_supports_model,
             build_analysis_prompt=self._build_analysis_prompt,
             parse_analysis_result=self._parse_analysis_result,
             tool_unavailable_error=ToolUnavailableError,
             text=text,
             task=task,
             timeout=timeout,
-            kwargs=kwargs,
+            kwargs=prompt_kwargs,
         )
 
     def _run_codex_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
@@ -845,11 +1016,13 @@ class AIOrchestrator:
             if task == "refine_description"
             else self.analysis_timeout
         )
+        codex_model = str(kwargs.get("_codex_model_override") or "").strip() or self.codex_model
+        prompt_kwargs = {k: v for k, v in kwargs.items() if not str(k).startswith("_")}
         return run_codex_analysis_cli_impl(
             check_tool_available=self.check_tool_available,
             codex_provider=AIProvider.CODEX,
             codex_cli_path=self.codex_cli_path,
-            codex_model=self.codex_model,
+            codex_model=codex_model,
             build_analysis_prompt=self._build_analysis_prompt,
             parse_analysis_result=self._parse_analysis_result,
             tool_unavailable_error=ToolUnavailableError,
@@ -857,7 +1030,7 @@ class AIOrchestrator:
             text=text,
             task=task,
             timeout=timeout,
-            kwargs=kwargs,
+            kwargs=prompt_kwargs,
         )
 
     def _build_analysis_prompt(self, text: str, task: str, **kwargs) -> str:

@@ -3,6 +3,8 @@ import glob
 import json
 import os
 
+from nexus.core.completion import budget_completion_payload
+
 
 def read_latest_local_completion(
     *,
@@ -50,6 +52,7 @@ def read_latest_local_completion(
             payload = json.load(handle)
     except Exception:
         return None
+    payload = budget_completion_payload(payload)
 
     return {
         "file": latest,

@@ -8,6 +8,7 @@ from typing import Any
 
 from nexus.adapters.storage._workflow_serde import dict_to_workflow, workflow_to_dict
 from nexus.adapters.storage.base import StorageBackend
+from nexus.core.completion import budget_completion_payload
 from nexus.core.models import AuditEvent, Workflow, WorkflowState
 
 logger = logging.getLogger(__name__)
@@ -213,11 +214,12 @@ class FileStorage(StorageBackend):
         self, issue_number: str, agent_type: str, data: dict[str, Any]
     ) -> str:
         """Persist completion summary payload to JSON file."""
-        dedup_key = f"{issue_number}:{agent_type}:{data.get('status', 'complete')}"
+        normalized = budget_completion_payload(data)
+        dedup_key = f"{issue_number}:{agent_type}:{normalized.get('status', 'complete')}"
         completion_file = self.completions_dir / f"{issue_number}.json"
 
         payload = {
-            **dict(data or {}),
+            **normalized,
             "_dedup_key": dedup_key,
             "_issue_number": str(issue_number),
             "_agent_type": str(agent_type),
@@ -247,7 +249,7 @@ class FileStorage(StorageBackend):
         for completion_file in completion_files:
             try:
                 with open(completion_file) as f:
-                    completions.append(json.load(f))
+                    completions.append(budget_completion_payload(json.load(f)))
             except Exception as e:
                 logger.warning(f"Failed to load completion {completion_file}: {e}")
 

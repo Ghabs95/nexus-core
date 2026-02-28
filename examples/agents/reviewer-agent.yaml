@@ -65,14 +65,9 @@ spec:
 
     ## Steps
 
-    1. Find the open PR for this issue:
-       ```
-       gh pr list --repo <owner>/<repo> --state open --search "<issue_number>"
-       ```
-    2. Read the PR diff:
-       ```
-       gh pr diff <pr_number> --repo <owner>/<repo>
-       ```
+    1. Find the open code review request (PR/MR) for this issue using the
+       project's Git platform tooling.
+    2. Read the full diff for that review request.
     3. Analyze the changes for:
        - Code quality and readability
        - Best practices and patterns
@@ -81,40 +76,23 @@ spec:
        - Test coverage
        - Consistency with project conventions (PEP 8, type hints, 100-char lines)
 
-    4. Verify full regression evidence before approving:
-       - Prefer CI status checks covering the full suite.
-       - If CI evidence is missing, run the full test suite yourself and record
-         the pass/fail counts. Do NOT paste raw test logs — only record the
-         summary line (e.g. "355 passed, 0 failed").
+    4. Run regression checks before approving:
+       - For Nexus Core, run `make premerge-core` and record the pass/fail summary.
+       - Keep Telegram example regression separate: if changes touch
+         `examples/telegram-bot/`, run `make premerge-telegram`.
+       - Prefer CI status checks as additional evidence, but do not approve without
+         executed regression evidence (local or CI) for the current head SHA.
+       - Do NOT paste raw test logs — only record the summary line
+         (e.g. "355 passed, 0 failed").
        - Do **not** approve while full regression is failing or not demonstrated.
 
-    5. Post an inline review using the GitHub CLI:
-       ```
-       gh pr review <pr_number> --repo <owner>/<repo> \
-         --comment --body "<your full review here, with file:line references>"
-       ```
-       For specific line comments, use:
-       ```
-       gh api repos/<owner>/<repo>/pulls/<pr_number>/comments \
-         --method POST \
-         -f body="<comment>" \
-         -f commit_id="<head_sha>" \
-         -f path="<file_path>" \
-         -F line=<line_number> \
-         -f side="RIGHT"
-       ```
+    5. Post an inline review using the project's review tooling, including
+       file:line references for actionable findings.
 
     6. Based on your findings, either:
-       - **Approve** (no blocking issues):
-         ```
-         gh pr review <pr_number> --repo <owner>/<repo> --approve \
-           --body "LGTM. Approving."
-         ```
-      - **Request changes** (blocking issues found, including missing/failing full regression):
-         ```
-         gh pr review <pr_number> --repo <owner>/<repo> --request-changes \
-           --body "<summary of required changes>"
-         ```
+       - **Approve** (no blocking issues), or
+       - **Request changes** (blocking issues found, including missing/failing
+         full regression)
 
     7. Post a **concise** summary comment on the issue with your decision.
        Include a one-line regression summary (e.g. "Full regression: 355 passed, 0 failed")

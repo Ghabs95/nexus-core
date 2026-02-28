@@ -14,7 +14,7 @@ spec:
   purpose: |
     After a debug agent identifies root cause or a design agent creates a proposal,
     this agent implements the actual code changes:
-    1. Reads the previous agent's analysis from GitHub comments
+    1. Reads the previous agent's analysis from issue comments
     2. Creates a feature/fix branch from develop (or main for hotfixes)
     3. Implements the required code changes
     4. Runs syntax/static validation before declaring completion
@@ -35,7 +35,7 @@ spec:
   inputs:
     issue_url:
       type: string
-      description: "URL to the GitHub issue being worked on"
+      description: "URL to the issue being worked on"
       required: true
     previous_analysis:
       type: string
@@ -65,13 +65,9 @@ spec:
 
     ## Before writing any code
 
-    Check whether there is already an open PR for this issue and whether it has
-    pending review comments requesting changes:
-    ```
-    gh pr list --repo <owner>/<repo> --state open --search "<issue_number>"
-    gh pr view <pr_number> --repo <owner>/<repo> --json reviews,comments
-    gh api repos/<owner>/<repo>/pulls/<pr_number>/comments
-    ```
+    Check whether there is already an open review request (PR/MR) for this issue
+    and whether it has pending review comments requesting changes, using the
+    project's Git platform tooling.
     If a reviewer has requested changes, **address those comments first** before
     adding any new functionality. Push directly to the existing branch — do not
     open a new PR.
@@ -79,10 +75,19 @@ spec:
     ## If starting fresh (no existing PR)
 
     3. Implement the required changes based on the analysis
-    4. Run syntax/static validation command(s) appropriate to the stack
-       (examples: `python3 -m py_compile ...`, `pytest -q`, `npm run lint`, `flutter analyze`)
-    5. If validation fails, fix or mark blocked; do NOT report completion while failing
-    6. Write or update tests
+    4. For Nexus Core repositories, use the low-token local loop first:
+       - `make lint-file FILE=<changed_file.py>`
+       - `make type-file FILE=<changed_file.py>`
+       - Optional smoke check only when needed to unblock implementation:
+         `make test-file TEST=<impacted_test.py>`
+       Leave full regression execution to the reviewer agent.
+    5. Write or update tests for your code changes.
+    6. Run every test file you created or modified:
+       - Core tests: `make test-changed-core`
+       - Telegram example tests: `make test-changed-telegram`
+       - If auto-detection misses a test, run it explicitly with
+         `make test-file TEST=...` or `make test-example-file TEST=...`
+       If any of these fail, fix or mark blocked; do NOT report completion while failing.
     7. Commit with clear, descriptive messages
     8. Push the branch
     9. Open a pull request targeting the correct base branch with:
@@ -92,6 +97,8 @@ spec:
     10. Post a status comment on the issue with the PR link and validation evidence:
         - exact command(s) run
         - pass/fail result (and key output)
+        - list of created/updated test files that were executed
+        - mention that full regression is reviewer-owned
 
     Follow the project's coding conventions (PEP 8, type hints, 100-char lines).
     Keep changes minimal and focused on the identified issue.
