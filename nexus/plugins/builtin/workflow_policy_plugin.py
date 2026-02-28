@@ -202,9 +202,9 @@ class WorkflowPolicyPlugin:
             "issue_closed": False,
             "notification_sent": False,
         }
+        git_dirs_by_repo: dict[str, str] = {}
 
         if project_name:
-            git_dirs_by_repo: dict[str, str] = {}
             resolve_many = self._callback("resolve_git_dirs")
             if resolve_many:
                 try:
@@ -247,7 +247,6 @@ class WorkflowPolicyPlugin:
                     )
                     if created_pr_url:
                         result["pr_urls"].append(created_pr_url)
-                        self._cleanup_worktree(repo_dir=git_dir, issue_number=issue_number)
                 except Exception as exc:
                     logger.warning(
                         "Error creating PR for issue #%s in repo %s: %s",
@@ -265,6 +264,12 @@ class WorkflowPolicyPlugin:
             )
         except Exception as exc:
             logger.warning("Error closing issue #%s: %s", issue_number, exc)
+
+        if result.get("issue_closed"):
+            for git_dir in set(git_dirs_by_repo.values()):
+                if not git_dir:
+                    continue
+                self._cleanup_worktree(repo_dir=git_dir, issue_number=issue_number)
 
         try:
             self._notify(

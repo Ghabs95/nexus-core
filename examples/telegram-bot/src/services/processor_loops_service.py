@@ -18,6 +18,7 @@ def run_processor_loop(
     check_agent_comments: Callable[[], None],
     check_completed_agents: Callable[[], None],
     merge_queue_auto_merge_once: Callable[[], None],
+    cleanup_stale_worktrees_once: Callable[[], None] | None = None,
     runtime_state=None,
     time_module: Any = time,
 ) -> None:
@@ -38,6 +39,8 @@ def run_processor_loop(
             check_agent_comments()
             check_completed_agents()
             merge_queue_auto_merge_once()
+            if callable(cleanup_stale_worktrees_once):
+                cleanup_stale_worktrees_once()
             last_check = current_time
 
         time_module.sleep(sleep_interval)

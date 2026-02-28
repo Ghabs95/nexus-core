@@ -16,33 +16,37 @@ class TestTrackedIssues:
         """Test loading tracked issues when store is empty."""
         plugin = MagicMock()
         plugin.load_json.return_value = {}
-        with patch("state_manager._get_state_store_plugin", return_value=plugin):
-            result = HostStateManager.load_tracked_issues()
-            assert result == {}
+        with patch("state_manager._get_host_state_backend", return_value="filesystem"):
+            with patch("state_manager._get_state_store_plugin", return_value=plugin):
+                result = HostStateManager.load_tracked_issues()
+                assert result == {}
 
     def test_load_tracked_issues_valid_data(self):
         """Test loading valid tracked issues."""
         test_data = {"123": {"project": "test", "status": "active"}}
         plugin = MagicMock()
         plugin.load_json.return_value = test_data
-        with patch("state_manager._get_state_store_plugin", return_value=plugin):
-            result = HostStateManager.load_tracked_issues()
-            assert result == test_data
+        with patch("state_manager._get_host_state_backend", return_value="filesystem"):
+            with patch("state_manager._get_state_store_plugin", return_value=plugin):
+                result = HostStateManager.load_tracked_issues()
+                assert result == test_data
 
     def test_load_tracked_issues_plugin_missing(self):
         """Test loading when plugin is unavailable."""
-        with patch("state_manager._get_state_store_plugin", return_value=None):
-            result = HostStateManager.load_tracked_issues()
-            assert result == {}
+        with patch("state_manager._get_host_state_backend", return_value="filesystem"):
+            with patch("state_manager._get_state_store_plugin", return_value=None):
+                result = HostStateManager.load_tracked_issues()
+                assert result == {}
 
     def test_save_tracked_issues(self):
         """Test saving tracked issues."""
         test_data = {"111": {"project": "test", "status": "active"}}
         plugin = MagicMock()
-        with patch("state_manager._get_state_store_plugin", return_value=plugin):
-            HostStateManager.save_tracked_issues(test_data)
-            plugin.save_json.assert_called_once()
-            assert plugin.save_json.call_args.args[1] == test_data
+        with patch("state_manager._get_host_state_backend", return_value="filesystem"):
+            with patch("state_manager._get_state_store_plugin", return_value=plugin):
+                HostStateManager.save_tracked_issues(test_data)
+                plugin.save_json.assert_called_once()
+                assert plugin.save_json.call_args.args[1] == test_data
 
     def test_add_tracked_issue(self):
         """Test adding a tracked issue."""
@@ -75,8 +79,9 @@ class TestMergeQueue:
     def test_load_merge_queue_empty(self):
         plugin = MagicMock()
         plugin.load_json.return_value = {}
-        with patch("state_manager._get_state_store_plugin", return_value=plugin):
-            assert HostStateManager.load_merge_queue() == {}
+        with patch("state_manager._get_host_state_backend", return_value="filesystem"):
+            with patch("state_manager._get_state_store_plugin", return_value=plugin):
+                assert HostStateManager.load_merge_queue() == {}
 
     def test_enqueue_merge_candidate_manual(self):
         with patch.object(HostStateManager, "load_merge_queue", return_value={}):
@@ -151,9 +156,10 @@ class TestLaunchedAgents:
         """Test loading launched agents when store is empty."""
         plugin = MagicMock()
         plugin.load_json.return_value = {}
-        with patch("state_manager._get_state_store_plugin", return_value=plugin):
-            result = HostStateManager.load_launched_agents()
-            assert result == {}
+        with patch("state_manager._get_host_state_backend", return_value="filesystem"):
+            with patch("state_manager._get_state_store_plugin", return_value=plugin):
+                result = HostStateManager.load_launched_agents()
+                assert result == {}
 
     def test_load_launched_agents_filters_old(self):
         """Test that old entries are filtered during load."""
@@ -165,12 +171,13 @@ class TestLaunchedAgents:
         }
         plugin = MagicMock()
         plugin.load_json.return_value = test_data
-        with patch("state_manager._get_state_store_plugin", return_value=plugin):
-            result = HostStateManager.load_launched_agents()
+        with patch("state_manager._get_host_state_backend", return_value="filesystem"):
+            with patch("state_manager._get_state_store_plugin", return_value=plugin):
+                result = HostStateManager.load_launched_agents()
 
-            # Old entry should be filtered out (>2 minute window)
-            assert "123_OldAgent" not in result
-            assert "456_RecentAgent" in result
+                # Old entry should be filtered out (>2 minute window)
+                assert "123_OldAgent" not in result
+                assert "456_RecentAgent" in result
 
     def test_register_launched_agent(self):
         """Test registering a newly launched agent."""
@@ -183,11 +190,32 @@ class TestLaunchedAgents:
                 assert "123_TestAgent" in saved_data
                 assert saved_data["123_TestAgent"]["pid"] == 12345
 
+    def test_register_launched_agent_with_nexus_identity(self):
+        """Test registering a launched agent with user-scoped UNI identity."""
+        with patch.object(HostStateManager, "load_launched_agents", return_value={}):
+            with patch.object(HostStateManager, "save_launched_agents") as mock_save:
+                HostStateManager.register_launched_agent(
+                    "123", "TestAgent", 12345, nexus_id="nexus-abc"
+                )
+
+                saved_data = mock_save.call_args[0][0]
+                assert "123_TestAgent_nexus-abc" in saved_data
+                assert saved_data["123_TestAgent_nexus-abc"]["nexus_id"] == "nexus-abc"
+
     def test_was_recently_launched(self):
         """Test checking if agent was recently launched."""
         test_data = {"123_TestAgent": {"issue": "123", "timestamp": time.time()}}
         with patch.object(HostStateManager, "load_launched_agents", return_value=test_data):
             result = HostStateManager.was_recently_launched("123", "TestAgent")
+            assert result is True
+
+    def test_was_recently_launched_falls_back_to_legacy_key(self):
+        """Test UNI lookup falls back to legacy non-identity key."""
+        test_data = {"123_TestAgent": {"issue": "123", "timestamp": time.time()}}
+        with patch.object(HostStateManager, "load_launched_agents", return_value=test_data):
+            result = HostStateManager.was_recently_launched(
+                "123", "TestAgent", nexus_id="nexus-abc"
+            )
             assert result is True
 
     def test_was_not_recently_launched(self):

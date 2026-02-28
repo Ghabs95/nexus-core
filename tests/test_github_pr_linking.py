@@ -297,6 +297,53 @@ class TestPRAutoLinking:
 
         assert cast(Any, body_sent).count("Closes owner/workflow-repo#42") == 1
 
+    @pytest.mark.asyncio
+    async def test_reuses_current_feature_branch_for_pr_head(self, platform, tmp_path):
+        """When already on a feature branch, PR head should reuse it."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+
+        seen_commands: list[list[str]] = []
+        head_branch = None
+
+        def fake_run(cmd, **kwargs):
+            nonlocal head_branch
+            seen_commands.append(list(cmd))
+            m = MagicMock()
+            m.returncode = 0
+            m.stdout = ""
+            m.stderr = ""
+
+            if cmd[0] == "git":
+                subcmd = cmd[1] if len(cmd) > 1 else ""
+                if subcmd == "diff":
+                    m.stdout = " file.py | 2 +-\n"
+                elif subcmd == "rev-parse":
+                    m.stdout = "feat/universal-nexus-identity-issue-86"
+                elif subcmd == "ls-files":
+                    m.stdout = ""
+            elif cmd[0] == "gh":
+                if "--head" in cmd:
+                    idx = cmd.index("--head")
+                    if idx + 1 < len(cmd):
+                        head_branch = cmd[idx + 1]
+                m.stdout = "https://github.com/owner/repo/pull/99"
+            return m
+
+        with patch("subprocess.run", side_effect=fake_run):
+            result = await platform.create_pr_from_changes(
+                repo_dir=str(repo),
+                issue_number="86",
+                title="feat: UNI",
+                body="Automated change",
+            )
+
+        assert result is not None
+        assert head_branch == "feat/universal-nexus-identity-issue-86"
+        assert result.head_branch == "feat/universal-nexus-identity-issue-86"
+        assert ["git", "checkout", "-b", "nexus/issue-86"] not in seen_commands
+
 
 @pytest.mark.asyncio
 async def test_list_open_issues_github_adapter(tmp_path):

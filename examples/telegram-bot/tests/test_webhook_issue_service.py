@@ -83,3 +83,37 @@ def test_handle_issue_opened_event_creates_task_file(tmp_path):
     assert task_path.exists()
     assert "Source:** webhook" in task_path.read_text()
     assert notifications
+
+
+def test_handle_issue_closed_event_triggers_worktree_cleanup():
+    notifications = []
+    cleanups = []
+
+    result = handle_issue_opened_event(
+        event={
+            "action": "closed",
+            "number": 88,
+            "title": "Done",
+            "body": "",
+            "author": "alice",
+            "url": "https://github.com/acme/repo/issues/88",
+            "labels": [],
+            "repo": "acme/repo",
+        },
+        logger=MagicMock(),
+        policy=_Policy(),
+        notify_lifecycle=lambda m: notifications.append(m) or True,
+        emit_alert=lambda *args, **kwargs: True,
+        project_config={},
+        base_dir="/tmp",
+        project_repos=lambda key, cfg, get_repos: [],
+        get_repos=lambda _key: [],
+        get_tasks_active_dir=lambda root, project: "/tmp",
+        get_inbox_dir=lambda root, project: "/tmp",
+        cleanup_worktree_for_issue=lambda repo, issue: cleanups.append((repo, issue)) or True,
+    )
+
+    assert result["status"] == "issue_closed_notified"
+    assert result["worktree_cleanup"] is True
+    assert cleanups == [("acme/repo", "88")]
+    assert notifications == ["closed:88"]

@@ -5,6 +5,13 @@ from pathlib import Path
 from typing import Any
 
 
+def _write_webhook_task_file(inbox_dir: str, task_filename: str, task_content: str) -> str:
+    Path(inbox_dir).mkdir(parents=True, exist_ok=True)
+    task_file = Path(inbox_dir) / task_filename
+    task_file.write_text(task_content, encoding="utf-8")
+    return str(task_file)
+
+
 def handle_issue_opened_event(
     *,
     event: dict[str, Any],
@@ -18,8 +25,9 @@ def handle_issue_opened_event(
     get_repos,
     get_tasks_active_dir,
     get_inbox_dir,
-    get_inbox_storage_backend,
-    enqueue_task,
+    get_inbox_storage_backend=None,
+    enqueue_task=None,
+    cleanup_worktree_for_issue=None,
 ) -> dict[str, Any]:
     """Handle parsed issue webhook event and create inbox task file when applicable."""
     action = event.get("action")
@@ -36,7 +44,23 @@ def handle_issue_opened_event(
     if action == "closed":
         message = policy.build_issue_closed_message(event)
         notify_lifecycle(message)
-        return {"status": "issue_closed_notified", "issue": issue_number}
+        cleanup_ok = None
+        if callable(cleanup_worktree_for_issue):
+            try:
+                cleanup_ok = bool(cleanup_worktree_for_issue(repo_name, str(issue_number)))
+            except Exception as exc:
+                logger.warning(
+                    "Failed webhook issue-close worktree cleanup for issue #%s in %s: %s",
+                    issue_number,
+                    repo_name,
+                    exc,
+                )
+                cleanup_ok = False
+        return {
+            "status": "issue_closed_notified",
+            "issue": issue_number,
+            "worktree_cleanup": cleanup_ok,
+        }
 
     if action != "opened":
         return {"status": "ignored", "reason": f"action is {action}, not opened"}
@@ -49,6 +73,11 @@ def handle_issue_opened_event(
             workflow_labels,
         )
         return {"status": "ignored", "reason": "self-created issue (has workflow label)"}
+
+    if get_inbox_storage_backend is None:
+        get_inbox_storage_backend = lambda: "filesystem"
+    if enqueue_task is None:
+        enqueue_task = lambda **_kwargs: None
 
     inbox_backend = str(get_inbox_storage_backend() or "").strip().lower()
     if inbox_backend != "postgres":
@@ -162,19 +191,25 @@ The actual agent assignment depends on the current project's workflow configurat
                 issue_number,
                 agent_type,
             )
-            task_file_str = None
+            try:
+                task_file_str = _write_webhook_task_file(inbox_dir, task_filename, task_content)
+            except Exception as mirror_exc:
+                logger.debug(
+                    "Postgres webhook mirror file write skipped for issue #%s: %s",
+                    issue_number,
+                    mirror_exc,
+                )
+                task_file_str = None
         else:
-            Path(inbox_dir).mkdir(parents=True, exist_ok=True)
-            task_file = Path(inbox_dir) / task_filename
-            task_file.write_text(task_content)
-            logger.info("✅ Created task file: %s (agent_type: %s)", task_file, agent_type)
-            task_file_str = str(task_file)
+            task_file_str = _write_webhook_task_file(inbox_dir, task_filename, task_content)
+            logger.info("✅ Created task file: %s (agent_type: %s)", task_file_str, agent_type)
 
         message = policy.build_issue_created_message(event, agent_type)
         notify_lifecycle(message)
 
         return {
-            "status": "task_queued" if inbox_backend == "postgres" else "task_created",
+            # Keep external webhook contract stable while still exposing queue_id.
+            "status": "task_created",
             "issue": issue_number,
             "task_file": task_file_str,
             "queue_id": queue_id,

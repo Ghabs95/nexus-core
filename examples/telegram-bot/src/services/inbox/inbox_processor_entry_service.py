@@ -14,6 +14,7 @@ def run_inbox_processor_main(
     check_agent_comments,
     check_completed_agents,
     merge_queue_auto_merge_once,
+    cleanup_stale_worktrees_once=None,
     drain_postgres_inbox_queue,
     process_filesystem_inbox_once,
     run_processor_loop,
@@ -43,6 +44,7 @@ def run_inbox_processor_main(
         check_agent_comments=check_agent_comments,
         check_completed_agents=check_completed_agents,
         merge_queue_auto_merge_once=merge_queue_auto_merge_once,
+        cleanup_stale_worktrees_once=cleanup_stale_worktrees_once,
         runtime_state=runtime_state,
         time_module=time_module,
     )

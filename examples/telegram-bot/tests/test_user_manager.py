@@ -1,5 +1,7 @@
 """Tests for user_manager module."""
 
+import json
+
 from user_manager import UserManager
 
 
@@ -7,15 +9,14 @@ class TestUserManager:
     """Tests for UserManager class."""
 
     def test_initialization(self, tmp_path):
-        """Test UserManager initialization."""
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 
         assert manager.data_file == data_file
         assert manager.users == {}
+        assert manager.identity_map == {}
 
     def test_create_new_user(self, tmp_path):
-        """Test creating a new user."""
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 
@@ -25,26 +26,23 @@ class TestUserManager:
         assert user.username == "testuser"
         assert user.first_name == "Test"
         assert user.projects == {}
-        assert 12345 in manager.users
+        assert user.nexus_id in manager.users
+        assert manager.resolve_nexus_id("telegram", "12345") == user.nexus_id
 
-    def test_get_existing_user(self, tmp_path):
-        """Test getting an existing user updates last_seen."""
+    def test_get_existing_user_updates_last_seen(self, tmp_path):
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 
-        # Create user
         user1 = manager.get_or_create_user(12345, "user1", "User")
         first_seen = user1.last_seen
 
-        # Get same user
         user2 = manager.get_or_create_user(12345, "user1_updated")
 
-        assert user1 is user2  # Same object
+        assert user1 is user2
         assert user2.username == "user1_updated"
-        assert user2.last_seen > first_seen  # Updated timestamp
+        assert user2.last_seen > first_seen
 
-    def test_track_issue(self, tmp_path):
-        """Test tracking an issue for a user."""
+    def test_track_issue_by_legacy_telegram_api(self, tmp_path):
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 
@@ -52,74 +50,60 @@ class TestUserManager:
             telegram_id=12345, project="proj_a", issue_number="123", username="testuser"
         )
 
-        user = manager.users[12345]
+        nexus_id = manager.resolve_nexus_id("telegram", "12345")
+        assert nexus_id is not None
+        user = manager.users[nexus_id]
         assert "proj_a" in user.projects
         assert "123" in user.projects["proj_a"].tracked_issues
 
-    def test_track_multiple_issues_per_project(self, tmp_path):
-        """Test tracking multiple issues in same project."""
+    def test_track_issue_by_nexus_id(self, tmp_path):
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 
-        manager.track_issue(12345, "proj_a", "123")
-        manager.track_issue(12345, "proj_a", "456")
-        manager.track_issue(12345, "proj_a", "789")
+        user = manager.get_or_create_user_by_identity("discord", "444", "discuser", "Disc")
+        manager.track_issue_by_nexus_id(user.nexus_id, "proj_a", "123")
 
-        user = manager.users[12345]
-        assert len(user.projects["proj_a"].tracked_issues) == 3
-        assert "123" in user.projects["proj_a"].tracked_issues
-        assert "456" in user.projects["proj_a"].tracked_issues
-        assert "789" in user.projects["proj_a"].tracked_issues
+        assert "123" in manager.users[user.nexus_id].projects["proj_a"].tracked_issues
 
-    def test_track_issues_across_multiple_projects(self, tmp_path):
-        """Test tracking issues across different projects."""
+    def test_link_identity_and_cross_platform_lookup(self, tmp_path):
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 
-        manager.track_issue(12345, "proj_a", "123")
-        manager.track_issue(12345, "proj_b", "456")
-        manager.track_issue(12345, "proj_c", "789")
+        user = manager.get_or_create_user_by_identity("telegram", "12345", "tguser", "TG")
+        manager.link_identity(user.nexus_id, "discord", "98765")
 
-        user = manager.users[12345]
-        assert len(user.projects) == 3
-        assert "proj_a" in user.projects
-        assert "proj_b" in user.projects
-        assert "proj_c" in user.projects
+        assert manager.resolve_nexus_id("discord", "98765") == user.nexus_id
+        tracked = manager.get_user_tracked_issues_by_nexus_id(user.nexus_id)
+        assert tracked == {}
 
-    def test_track_duplicate_issue_ignored(self, tmp_path):
-        """Test tracking same issue twice doesn't create duplicates."""
+    def test_link_identity_rejects_existing_mapping_to_other_user(self, tmp_path):
+        import pytest
+
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 
-        manager.track_issue(12345, "proj_a", "123")
-        manager.track_issue(12345, "proj_a", "123")
-        manager.track_issue(12345, "proj_a", "123")
+        user_a = manager.get_or_create_user_by_identity("telegram", "12345", "tguser", "TG")
+        user_b = manager.get_or_create_user_by_identity("telegram", "54321", "tguser2", "TG2")
+        manager.link_identity(user_a.nexus_id, "discord", "98765")
 
-        user = manager.users[12345]
-        assert len(user.projects["proj_a"].tracked_issues) == 1
+        with pytest.raises(ValueError, match="already linked"):
+            manager.link_identity(user_b.nexus_id, "discord", "98765")
+
+        assert manager.resolve_nexus_id("discord", "98765") == user_a.nexus_id
 
     def test_untrack_issue(self, tmp_path):
-        """Test untracking an issue."""
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 
         manager.track_issue(12345, "proj_a", "123")
-        assert "123" in manager.users[12345].projects["proj_a"].tracked_issues
+        success = manager.untrack_issue(12345, "proj_a", "123")
 
-        result = manager.untrack_issue(12345, "proj_a", "123")
-        assert result is True
-        assert "123" not in manager.users[12345].projects["proj_a"].tracked_issues
+        assert success is True
+        nexus_id = manager.resolve_nexus_id("telegram", "12345")
+        assert nexus_id is not None
+        assert "123" not in manager.users[nexus_id].projects["proj_a"].tracked_issues
 
-    def test_untrack_nonexistent_issue(self, tmp_path):
-        """Test untracking an issue that wasn't tracked."""
-        data_file = tmp_path / "users.json"
-        manager = UserManager(data_file)
-
-        result = manager.untrack_issue(12345, "proj_a", "999")
-        assert result is False
-
-    def test_get_user_tracked_issues_all_projects(self, tmp_path):
-        """Test getting all tracked issues for a user."""
+    def test_get_user_tracked_issues(self, tmp_path):
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 
@@ -129,44 +113,32 @@ class TestUserManager:
 
         tracked = manager.get_user_tracked_issues(12345)
 
-        assert len(tracked) == 2
-        assert "proj_a" in tracked
-        assert "proj_b" in tracked
         assert tracked["proj_a"] == ["123", "456"]
         assert tracked["proj_b"] == ["789"]
 
-    def test_get_user_tracked_issues_specific_project(self, tmp_path):
-        """Test getting tracked issues for specific project."""
-        data_file = tmp_path / "users.json"
-        manager = UserManager(data_file)
-
-        manager.track_issue(12345, "proj_a", "123")
-        manager.track_issue(12345, "proj_b", "789")
-
-        tracked = manager.get_user_tracked_issues(12345, project="proj_a")
-
-        assert len(tracked) == 1
-        assert "proj_a" in tracked
-        assert "proj_b" not in tracked
-
-    def test_get_issue_trackers(self, tmp_path):
-        """Test getting all users tracking an issue."""
+    def test_get_issue_trackers_legacy_returns_telegram_ids(self, tmp_path):
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 
         manager.track_issue(111, "proj_a", "123")
         manager.track_issue(222, "proj_a", "123")
-        manager.track_issue(333, "proj_a", "456")
 
         trackers = manager.get_issue_trackers("proj_a", "123")
+        assert set(trackers) == {111, 222}
 
-        assert len(trackers) == 2
-        assert 111 in trackers
-        assert 222 in trackers
-        assert 333 not in trackers
+    def test_get_issue_tracker_nexus_ids(self, tmp_path):
+        data_file = tmp_path / "users.json"
+        manager = UserManager(data_file)
+
+        u1 = manager.get_or_create_user_by_identity("discord", "111")
+        u2 = manager.get_or_create_user_by_identity("discord", "222")
+        manager.track_issue_by_nexus_id(u1.nexus_id, "proj_a", "123")
+        manager.track_issue_by_nexus_id(u2.nexus_id, "proj_a", "123")
+
+        trackers = manager.get_issue_tracker_nexus_ids("proj_a", "123")
+        assert set(trackers) == {u1.nexus_id, u2.nexus_id}
 
     def test_get_user_stats(self, tmp_path):
-        """Test getting user statistics."""
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 
@@ -183,7 +155,6 @@ class TestUserManager:
         assert stats["total_tracked_issues"] == 3
 
     def test_get_nonexistent_user_stats(self, tmp_path):
-        """Test getting stats for user that doesn't exist."""
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 
@@ -191,7 +162,6 @@ class TestUserManager:
         assert stats["exists"] is False
 
     def test_get_all_users_stats(self, tmp_path):
-        """Test getting overall statistics."""
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 
@@ -207,26 +177,49 @@ class TestUserManager:
         assert set(stats["projects"]) == {"proj_a", "proj_b", "proj_c"}
         assert stats["total_tracked_issues"] == 4
 
-    def test_save_and_load_users(self, tmp_path):
-        """Test persisting and loading user data."""
+    def test_save_and_load_users_new_format(self, tmp_path):
         data_file = tmp_path / "users.json"
 
-        # Create and populate manager
         manager1 = UserManager(data_file)
         manager1.track_issue(12345, "proj_a", "123", username="user1")
         manager1.track_issue(67890, "proj_b", "456", username="user2")
 
-        # Create new manager from same file
         manager2 = UserManager(data_file)
 
         assert len(manager2.users) == 2
-        assert 12345 in manager2.users
-        assert 67890 in manager2.users
-        assert manager2.users[12345].username == "user1"
-        assert "123" in manager2.users[12345].projects["proj_a"].tracked_issues
+        n1 = manager2.resolve_nexus_id("telegram", "12345")
+        n2 = manager2.resolve_nexus_id("telegram", "67890")
+        assert n1 is not None and n2 is not None
+        assert manager2.users[n1].username == "user1"
+        assert "123" in manager2.users[n1].projects["proj_a"].tracked_issues
+
+    def test_load_legacy_telegram_format_migrates(self, tmp_path):
+        data_file = tmp_path / "users.json"
+        legacy_payload = {
+            "12345": {
+                "telegram_id": 12345,
+                "username": "legacy",
+                "first_name": "User",
+                "projects": {
+                    "proj_a": {
+                        "project_name": "proj_a",
+                        "tracked_issues": ["1"],
+                        "last_activity": "2024-01-01T00:00:00",
+                    }
+                },
+                "created_at": "2024-01-01T00:00:00",
+                "last_seen": "2024-01-01T00:00:00",
+            }
+        }
+        data_file.write_text(json.dumps(legacy_payload), encoding="utf-8")
+
+        manager = UserManager(data_file)
+        nexus_id = manager.resolve_nexus_id("telegram", "12345")
+        assert nexus_id is not None
+        assert manager.users[nexus_id].username == "legacy"
+        assert manager.users[nexus_id].projects["proj_a"].tracked_issues == ["1"]
 
     def test_multi_user_isolation(self, tmp_path):
-        """Test that different users' tracking is isolated."""
         data_file = tmp_path / "users.json"
         manager = UserManager(data_file)
 

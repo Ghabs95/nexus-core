@@ -5,8 +5,6 @@ import re
 import time
 from typing import Any
 
-from config import NEXUS_STORAGE_BACKEND
-
 
 def archive_closed_task_files(
     *,
@@ -19,13 +17,6 @@ def archive_closed_task_files(
     logger,
 ) -> int:
     """Archive active task files for a closed issue into tasks/closed."""
-    if str(NEXUS_STORAGE_BACKEND or "").strip().lower() == "postgres":
-        logger.debug(
-            "Skipping task-file archival for issue #%s in postgres mode",
-            issue_num,
-        )
-        return 0
-
     projects_to_scan = []
     if project_name and project_name in project_config:
         projects_to_scan.append(project_name)

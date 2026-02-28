@@ -79,3 +79,44 @@ def test_merge_policy_not_injected_for_developer():
         nexus_dir=".nexus",
     )
     assert "MUST NOT run `gh pr merge`" not in prompt
+
+
+def test_build_agent_prompt_includes_alignment_report(tmp_path):
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "ADR-042.md").write_text(
+        "# Feature Alignment\n\nEvaluate feature alignment using repository docs.",
+        encoding="utf-8",
+    )
+
+    plugin = AgentLaunchPolicyPlugin()
+    prompt = plugin.build_agent_prompt(
+        issue_url="https://github.com/org/repo/issues/11",
+        tier_name="full",
+        task_content="Evaluate feature alignment knowledge base",
+        agent_type="developer",
+        continuation=True,
+        continuation_prompt="Previous step complete.",
+        workflow_path="",
+        nexus_dir=".nexus",
+        repo_path=str(tmp_path),
+    )
+    assert "Feature Alignment Report" in prompt
+    assert "Alignment score:" in prompt
+    assert "docs/ADR-042.md" in prompt
+
+
+def test_designer_prompt_includes_alignment_output_contract():
+    plugin = AgentLaunchPolicyPlugin()
+    prompt = plugin.build_agent_prompt(
+        issue_url="https://github.com/org/repo/issues/12",
+        tier_name="full",
+        task_content="Design feature alignment",
+        agent_type="designer",
+        continuation=True,
+        continuation_prompt="Previous step complete.",
+        workflow_path="",
+        nexus_dir=".nexus",
+    )
+    assert "Designer Output Contract (required for this feature)" in prompt
+    assert "alignment_score" in prompt

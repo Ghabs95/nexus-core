@@ -34,6 +34,7 @@ def post_completion_comments_from_logs(
     get_completion_store: Callable[[], Any],
     resolve_project,
     resolve_repo,
+    ingest_detected_completions: Callable[[list[Any], set[str]], None] | None = None,
 ) -> None:
     """Detect agent completions and auto-chain to the next workflow step."""
     orchestrator = cast(_ProcessOrchestratorLike, get_process_orchestrator())
@@ -43,6 +44,8 @@ def post_completion_comments_from_logs(
     replay_window_seconds = get_completion_replay_window_seconds()
     completion_store = cast(_CompletionStoreLike, get_completion_store())
     detected_completions = completion_store.scan()
+    if ingest_detected_completions is not None:
+        ingest_detected_completions(detected_completions, dedup)
     orchestrator.scan_and_process_completions(
         base_dir,
         dedup,

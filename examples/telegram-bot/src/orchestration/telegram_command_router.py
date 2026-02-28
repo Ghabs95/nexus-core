@@ -16,7 +16,7 @@ async def dispatch_command(
     reply_unsupported: Callable[[Any], Awaitable[None]],
 ) -> None:
     """Dispatch command to Telegram handlers while normalizing args."""
-    project_only_commands = {"agents"}
+    project_only_commands = {"agents", "feature_done", "feature_list", "feature_forget"}
     if command in project_only_commands:
         context.args = [project_key] + (rest or [])
     else:

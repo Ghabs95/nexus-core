@@ -21,6 +21,9 @@ All configuration lives in environment variables (loaded from `.env`) and `confi
 | `NEXUS_WORKFLOW_BACKEND` | ❌        | follows primary | Workflow state backend override                           |
 | `NEXUS_INBOX_BACKEND`    | ❌        | follows primary | Inbox queue backend override                              |
 | `NEXUS_STORAGE_DSN`      | 🟡       | —               | PostgreSQL connection string (required if using postgres) |
+| `NEXUS_FEATURE_REGISTRY_ENABLED` | ❌ | `true` | Enable implemented-feature registry and ideation dedup |
+| `NEXUS_FEATURE_REGISTRY_MAX_ITEMS_PER_PROJECT` | ❌ | `500` | Maximum implemented features retained per project |
+| `NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY` | ❌ | `0.86` | Fuzzy similarity threshold used for ideation dedup filtering |
 
 ### Webhook Server
 
@@ -76,6 +79,8 @@ require_human_merge_approval: always  # always | workflow-based | never
 |------------------------|-----------------|-------------------------------------|
 | `launched_agents.json` | `.nexus/state/` | Active agent PIDs with timestamps   |
 | `tracked_issues.json`  | `.nexus/state/` | User-subscribed issue notifications |
+| `user_tracking.json`   | `.nexus/state/` | UNI profiles and identity mappings  |
+| `feature_registry.json`| `.nexus/state/` | Implemented features registry (filesystem backend) |
 | `audit.log`            | `logs/`         | Append-only event log               |
 | `workflow_state.json`  | `.nexus/state/` | Pause/resume/stop state per issue   |
 

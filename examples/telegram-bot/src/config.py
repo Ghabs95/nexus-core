@@ -88,6 +88,8 @@ BASE_DIR = _PATH_CONFIG["BASE_DIR"]
 NEXUS_RUNTIME_DIR = _PATH_CONFIG["NEXUS_RUNTIME_DIR"]
 NEXUS_STATE_DIR = _PATH_CONFIG["NEXUS_STATE_DIR"]
 LOGS_DIR = _PATH_CONFIG["LOGS_DIR"]
+# Compatibility alias used by older call sites/tests.
+DATA_DIR = NEXUS_STATE_DIR
 TRACKED_ISSUES_FILE = _PATH_CONFIG["TRACKED_ISSUES_FILE"]
 LAUNCHED_AGENTS_FILE = _PATH_CONFIG["LAUNCHED_AGENTS_FILE"]
 WORKFLOW_STATE_FILE = _PATH_CONFIG["WORKFLOW_STATE_FILE"]
@@ -467,6 +469,31 @@ NEXUS_INBOX_BACKEND = _normalize_storage_backend(
     default=NEXUS_STORAGE_BACKEND,
 )
 NEXUS_STORAGE_DSN = os.getenv("NEXUS_STORAGE_DSN", "").strip()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, str(default))
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+NEXUS_FEATURE_REGISTRY_ENABLED = _env_bool("NEXUS_FEATURE_REGISTRY_ENABLED", True)
+NEXUS_FEATURE_REGISTRY_MAX_ITEMS_PER_PROJECT = max(
+    10, _get_int_env("NEXUS_FEATURE_REGISTRY_MAX_ITEMS_PER_PROJECT", 500)
+)
+NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY = min(
+    1.0,
+    max(0.0, _env_float("NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY", 0.86)),
+)
 
 # Compatibility alias retained for older code paths that still reference this constant.
 NEXUS_CORE_STORAGE_BACKEND = NEXUS_WORKFLOW_BACKEND

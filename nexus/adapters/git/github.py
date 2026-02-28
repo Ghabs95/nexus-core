@@ -385,18 +385,25 @@ class GitHubPlatform(GitPlatform):
             logger.info(f"No uncommitted changes in {repo_dir} — skipping PR creation")
             return None
 
-        # Resolve current branch as base
+        # Resolve current branch and choose the head branch for this PR.
         current = _git(["rev-parse", "--abbrev-ref", "HEAD"])
-        resolved_base = current.stdout.strip() or base_branch
-
-        branch_name = f"{branch_prefix}/issue-{issue_number}"
+        current_branch = current.stdout.strip()
+        resolved_base = str(base_branch or "main").strip() or "main"
+        long_lived = {"main", "master", "develop", "development", "dev", "HEAD"}
+        use_current_branch = bool(current_branch and current_branch not in long_lived)
+        branch_name = (
+            current_branch if use_current_branch else f"{branch_prefix}/issue-{issue_number}"
+        )
+        switched_branch = False
 
         try:
-            # Create and switch to branch
-            result = _git(["checkout", "-b", branch_name])
-            if result.returncode != 0:
-                logger.warning(f"Could not create branch {branch_name}: {result.stderr}")
-                return None
+            # Create and switch only when we are on a long-lived branch.
+            if not use_current_branch:
+                result = _git(["checkout", "-b", branch_name])
+                if result.returncode != 0:
+                    logger.warning(f"Could not create branch {branch_name}: {result.stderr}")
+                    return None
+                switched_branch = True
 
             # Stage all changes
             _git(["add", "-A"])
@@ -409,7 +416,8 @@ class GitHubPlatform(GitPlatform):
             push = _git(["push", "-u", "origin", branch_name], timeout=60)
             if push.returncode != 0:
                 logger.warning(f"Could not push branch {branch_name}: {push.stderr}")
-                _git(["checkout", resolved_base])
+                if switched_branch and current_branch and current_branch != "HEAD":
+                    _git(["checkout", current_branch])
                 return None
 
             # Create PR via gh CLI
@@ -439,7 +447,8 @@ class GitHubPlatform(GitPlatform):
                     f"Could not create PR for issue #{issue_number}: "
                     f"{pr_result.stderr or pr_result.stdout}"
                 )
-                _git(["checkout", resolved_base])
+                if switched_branch and current_branch and current_branch != "HEAD":
+                    _git(["checkout", current_branch])
                 return None
 
             pr_link = pr_result.stdout.strip()
@@ -459,8 +468,9 @@ class GitHubPlatform(GitPlatform):
             logger.warning(f"Error during PR creation for issue #{issue_number}: {exc}")
             return None
         finally:
-            # Always switch back to the base branch
-            _git(["checkout", resolved_base])
+            # Switch back only when we created a temporary issue branch.
+            if switched_branch and current_branch and current_branch != "HEAD":
+                _git(["checkout", current_branch])
 
     def get_workflow_type_from_issue(
         self,

@@ -78,6 +78,9 @@ def register_application_handlers(
         ("assign", "assign_handler"),
         ("implement", "implement_handler"),
         ("prepare", "prepare_handler"),
+        ("feature_done", "feature_done_handler"),
+        ("feature_list", "feature_list_handler"),
+        ("feature_forget", "feature_forget_handler"),
         ("chat", "chat_menu_handler"),
         ("chatagents", "chat_agents_handler"),
     ):
@@ -155,4 +158,7 @@ def build_command_handler_map(**handlers):
         "tracked": handlers["tracked_handler"],
         "untrack": handlers["untrack_handler"],
         "agents": handlers["agents_handler"],
+        "feature_done": handlers["feature_done_handler"],
+        "feature_list": handlers["feature_list_handler"],
+        "feature_forget": handlers["feature_forget_handler"],
     }
