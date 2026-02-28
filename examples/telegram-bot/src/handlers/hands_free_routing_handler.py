@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -31,9 +30,6 @@ from handlers.feature_ideation_handlers import (
     FEATURE_STATE_KEY,
     handle_feature_ideation_request,
 )
-from orchestration.telegram_update_bridge import _clip_telegram_text, _normalize_telegram_markdown
-
-
 @dataclass
 class HandsFreeRoutingDeps:
     logger: logging.Logger
@@ -51,75 +47,6 @@ class HandsFreeRoutingDeps:
     feature_ideation_deps: Any = None
     base_dir: str = ""
     project_config: dict[str, Any] | None = None
-
-
-def _legacy_reply_markup(buttons: list[list[Button]] | None) -> Any | None:
-    if not buttons:
-        return None
-    inline_keyboard: list[list[Any]] = []
-    for row in buttons:
-        if not isinstance(row, list):
-            continue
-        inline_row: list[Any] = []
-        for button in row:
-            if not isinstance(button, Button):
-                continue
-            payload = {
-                "text": button.label,
-                "callback_data": button.callback_data,
-            }
-            if button.url:
-                payload = {
-                    "text": button.label,
-                    "url": button.url,
-                }
-            inline_row.append(SimpleNamespace(**payload))
-        if inline_row:
-            inline_keyboard.append(inline_row)
-    return SimpleNamespace(inline_keyboard=inline_keyboard)
-
-
-def _coerce_legacy_ctx(update: Any, context: Any, status_msg: Any, text: str | None):
-    user_id = str(getattr(getattr(update, "effective_user", None), "id", ""))
-    raw_event = getattr(update, "message", update)
-
-    class _LegacyCtx:
-        def __init__(self):
-            self.user_id = user_id
-            self.text = text if text is not None else str(getattr(raw_event, "text", "") or "")
-            self.args = []
-            self.raw_event = raw_event
-            self.user_state = getattr(context, "user_data", {})
-
-        async def reply_text(self, text: str, buttons: list[list[Button]] | None = None) -> str:
-            message_id = str(getattr(status_msg, "message_id", ""))
-            rendered_text = _clip_telegram_text(_normalize_telegram_markdown(text, "Markdown"))
-            await getattr(context, "bot").edit_message_text(
-                chat_id=getattr(getattr(update, "effective_chat", None), "id", None),
-                message_id=message_id,
-                text=rendered_text,
-                parse_mode="Markdown",
-                reply_markup=_legacy_reply_markup(buttons),
-            )
-            return message_id
-
-        async def edit_message_text(
-            self,
-            *,
-            message_id: str,
-            text: str,
-            buttons: list[list[Button]] | None = None,
-        ) -> None:
-            rendered_text = _clip_telegram_text(_normalize_telegram_markdown(text, "Markdown"))
-            await getattr(context, "bot").edit_message_text(
-                chat_id=getattr(getattr(update, "effective_chat", None), "id", None),
-                message_id=message_id,
-                text=rendered_text,
-                parse_mode="Markdown",
-                reply_markup=_legacy_reply_markup(buttons),
-            )
-
-    return _LegacyCtx()
 
 
 def _configured_primary_agent_type(project_key: str) -> str:
@@ -407,17 +334,7 @@ async def resolve_pending_project_selection(
     return True
 
 
-async def route_hands_free_text(
-    ctx: Any,
-    deps: Any,
-    status_msg: Any | None = None,
-    text: str | None = None,
-    legacy_deps: HandsFreeRoutingDeps | None = None,
-) -> None:
-    if legacy_deps is not None:
-        ctx = _coerce_legacy_ctx(ctx, deps, status_msg, text)
-        deps = legacy_deps
-
+async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingDeps) -> None:
     text = ctx.text
 
     # First check if we're resolving a project selection

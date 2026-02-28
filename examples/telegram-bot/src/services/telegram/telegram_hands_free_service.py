@@ -22,7 +22,7 @@ async def handle_hands_free_message(
     get_chat: Callable[[int], Any],
     handle_feature_ideation_request: Callable[..., Awaitable[bool]],
     feature_ideation_deps_factory: Callable[[], Any],
-    route_hands_free_text: Callable[..., Awaitable[Any]],
+    route_hands_free_text: Callable[[Any, Any], Awaitable[Any]],
 ) -> None:
     try:
         logger.info(
@@ -136,35 +136,20 @@ async def handle_hands_free_message(
             return
 
         text = ""
-        status_text = "⚡ AI Listening..." if update.message.voice else "🤖 Nexus thinking..."
-        status_msg = await update.message.reply_text(status_text)
 
         if update.message.voice:
             logger.info("Processing voice message...")
             text = await transcribe_voice_message(update.message.voice.file_id, context)
             if not text:
                 logger.warning("Voice transcription returned empty text")
-                await context.bot.edit_message_text(
-                    chat_id=update.effective_chat.id,
-                    message_id=status_msg.message_id,
-                    text="⚠️ Transcription failed",
-                )
+                await update.message.reply_text("⚠️ Transcription failed")
                 return
         else:
             logger.info("Processing text input... text=%s", (update.message.text or "")[:50])
             text = update.message.text
-
-        active_chat = get_chat(update.effective_user.id)
-        active_chat_metadata = active_chat.get("metadata") if isinstance(active_chat, dict) else {}
-        preferred_project_key = None
-        preferred_agent_type = None
-        if isinstance(active_chat_metadata, dict):
-            preferred_project_key = active_chat_metadata.get("project_key")
-            preferred_agent_type = active_chat_metadata.get("primary_agent_type")
-
-        await route_hands_free_text(
-            update, context, status_msg, text, hands_free_routing_deps_factory()
-        )
+        interactive_ctx = build_ctx(update, context)
+        interactive_ctx.text = text
+        await route_hands_free_text(interactive_ctx, hands_free_routing_deps_factory())
     except Exception as exc:
         logger.error("Unexpected error in hands_free_handler: %s", exc, exc_info=True)
         with contextlib.suppress(Exception):
