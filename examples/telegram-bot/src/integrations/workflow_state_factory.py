@@ -11,15 +11,21 @@ Includes post-hook broadcasting via SocketIO when configured.
 
 from __future__ import annotations
 
-import builtins
 import logging
-import os
 import time
+import builtins
 from pathlib import Path
 
-import config
+from config import (
+    NEXUS_CORE_STORAGE_DIR,
+    NEXUS_STORAGE_BACKEND,
+    NEXUS_STORAGE_DSN,
+    NEXUS_WORKFLOW_BACKEND,
+)
 
+from nexus.adapters.registry import AdapterRegistry
 from nexus.adapters.storage.base import StorageBackend
+from nexus.adapters.storage.workflow_state_adapter import StorageWorkflowStateStore
 from nexus.core.workflow_state import WorkflowStateStore
 
 logger = logging.getLogger(__name__)
@@ -29,31 +35,20 @@ _storage_backend_instance: StorageBackend | None = None
 _BUILTINS_STORAGE_BACKEND_KEY = "__nexus_storage_backend_instance"
 
 
-def _cfg(name: str, default: str = "") -> str:
-    return str(getattr(config, name, default))
+def _storage_adapter_type(backend: str) -> str:
+    normalized = str(backend).strip().lower()
+    if normalized in {"postgres", "postgresql"}:
+        return "postgres"
+    return "file"
 
 
-def _resolve_storage_dir() -> str:
-    """Resolve workflow/storage directory with runtime overrides.
-
-    Priority:
-    1. Explicit environment override (NEXUS_CORE_STORAGE_DIR)
-    2. DATA_DIR compatibility fallback (DATA_DIR/nexus-core)
-    3. Config constant if present and non-empty
-    """
-    env_value = str(os.getenv("NEXUS_CORE_STORAGE_DIR", "")).strip()
-    if env_value:
-        return env_value
-
-    data_dir = str(getattr(config, "DATA_DIR", "")).strip()
-    if data_dir:
-        return str(Path(data_dir) / "nexus-core")
-
-    cfg_value = _cfg("NEXUS_CORE_STORAGE_DIR").strip()
-    if cfg_value:
-        return cfg_value
-
-    return str(Path(".nexus") / "nexus-core")
+def _create_storage_backend(adapter_type: str) -> StorageBackend:
+    registry = AdapterRegistry()
+    if adapter_type == "postgres":
+        if not NEXUS_STORAGE_DSN:
+            raise ValueError("Postgres storage backend requires NEXUS_STORAGE_DSN")
+        return registry.create_storage("postgres", connection_string=NEXUS_STORAGE_DSN)
+    return registry.create_storage("file", base_path=Path(NEXUS_CORE_STORAGE_DIR))
 
 
 class _BroadcastingStore:
@@ -126,29 +121,21 @@ class _BroadcastingStore:
 
 def _build_inner_store() -> WorkflowStateStore:
     """Build the concrete store based on environment configuration."""
-    storage_type = _cfg("NEXUS_WORKFLOW_BACKEND").strip().lower()
+    workflow_adapter_type = _storage_adapter_type(NEXUS_WORKFLOW_BACKEND)
 
-    if storage_type == "postgres":
-        dsn = _cfg("NEXUS_STORAGE_DSN")
-        if not dsn:
-            logger.warning(
-                "NEXUS_WORKFLOW_BACKEND=postgres but NEXUS_STORAGE_DSN is empty; "
-                "falling back to file-based workflow state store"
-            )
-        else:
-            from nexus.adapters.storage.postgres_workflow_state import (
-                PostgresWorkflowStateStore,
-            )
+    if workflow_adapter_type == "postgres" and not NEXUS_STORAGE_DSN:
+        logger.warning(
+            "NEXUS_WORKFLOW_BACKEND=postgres but NEXUS_STORAGE_DSN is empty; "
+            "falling back to file-based workflow state store"
+        )
+        workflow_adapter_type = "file"
 
-            logger.info("Using PostgresWorkflowStateStore")
-            return PostgresWorkflowStateStore(connection_string=dsn)  # type: ignore[return-value]
-
-    # Default: file-based
-    from nexus.adapters.storage.file_workflow_state import FileWorkflowStateStore
-
-    storage_dir = _resolve_storage_dir()
-    logger.info("Using FileWorkflowStateStore (base_path=%s)", storage_dir)
-    return FileWorkflowStateStore(base_path=Path(storage_dir))  # type: ignore[return-value]
+    storage = _create_storage_backend(workflow_adapter_type)
+    logger.info(
+        "Using StorageWorkflowStateStore with %s backend",
+        workflow_adapter_type,
+    )
+    return StorageWorkflowStateStore(storage)  # type: ignore[return-value]
 
 
 def get_workflow_state() -> WorkflowStateStore:
@@ -178,25 +165,11 @@ def get_storage_backend() -> StorageBackend:
         _storage_backend_instance = existing
         return _storage_backend_instance
 
-    storage_type = _cfg("NEXUS_STORAGE_BACKEND").strip().lower()
+    adapter_type = _storage_adapter_type(NEXUS_STORAGE_BACKEND)
+    if adapter_type == "postgres" and not NEXUS_STORAGE_DSN:
+        raise ValueError("NEXUS_STORAGE_BACKEND=postgres but NEXUS_STORAGE_DSN is empty")
 
-    if storage_type == "postgres":
-        dsn = _cfg("NEXUS_STORAGE_DSN")
-        if not dsn:
-            raise ValueError("NEXUS_STORAGE_BACKEND=postgres but NEXUS_STORAGE_DSN is empty")
-        from nexus.adapters.storage.postgres import PostgreSQLStorageBackend
-
-        logger.info("Using PostgreSQLStorageBackend for host state")
-        _storage_backend_instance = PostgreSQLStorageBackend(
-            connection_string=dsn,
-        )
-        setattr(builtins, _BUILTINS_STORAGE_BACKEND_KEY, _storage_backend_instance)
-        return _storage_backend_instance
-
-    from nexus.adapters.storage.file import FileStorage
-
-    storage_dir = _resolve_storage_dir()
-    logger.info("Using FileStorage for host state (base_path=%s)", storage_dir)
-    _storage_backend_instance = FileStorage(base_path=Path(storage_dir))
+    _storage_backend_instance = _create_storage_backend(adapter_type)
+    logger.info("Using %s storage backend for host state", adapter_type)
     setattr(builtins, _BUILTINS_STORAGE_BACKEND_KEY, _storage_backend_instance)
     return _storage_backend_instance
