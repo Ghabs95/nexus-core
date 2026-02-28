@@ -28,6 +28,7 @@ TELEGRAM_COMMANDS: set[str] = {
     "audit",
     "wfstate",
     "visualize",
+    "watch",
     "stats",
     "comments",
     "reprocess",

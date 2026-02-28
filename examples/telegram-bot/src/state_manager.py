@@ -28,6 +28,7 @@ from orchestration.plugin_runtime import get_profiled_plugin
 
 logger = logging.getLogger(__name__)
 MERGE_QUEUE_FILE = f"{NEXUS_STATE_DIR}/merge_queue.json"
+WORKFLOW_WATCH_SUBSCRIPTIONS_FILE = f"{NEXUS_STATE_DIR}/workflow_watch_subscriptions.json"
 
 # Optional SocketIO emitter injected at startup by webhook_server.py.
 # Signature: (event_name: str, data: dict) -> None
@@ -315,6 +316,24 @@ class HostStateManager:
             MERGE_QUEUE_FILE,
             data,
             context="merge queue",
+        )
+
+    @staticmethod
+    def load_workflow_watch_subscriptions() -> dict[str, dict]:
+        """Load persisted Telegram workflow watch subscriptions."""
+        data = HostStateManager._load_json_state(
+            WORKFLOW_WATCH_SUBSCRIPTIONS_FILE,
+            default={},
+        )
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def save_workflow_watch_subscriptions(data: dict[str, dict]) -> None:
+        """Persist Telegram workflow watch subscriptions."""
+        HostStateManager._save_json_state(
+            WORKFLOW_WATCH_SUBSCRIPTIONS_FILE,
+            data,
+            context="workflow watch subscriptions",
         )
 
     @staticmethod
