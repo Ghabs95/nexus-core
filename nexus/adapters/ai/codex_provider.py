@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import shutil
 import subprocess
 import time
@@ -75,6 +76,7 @@ class CodexCLIProvider(AIProvider):
         start = time.time()
         workspace = Path(context.workspace)
         workspace.mkdir(parents=True, exist_ok=True)
+        self._cleanup_empty_rollout_files()
 
         cmd = [self._binary, "exec"]
         if self._model:
@@ -124,3 +126,32 @@ class CodexCLIProvider(AIProvider):
                 execution_time=time.time() - start,
                 provider_used=self.name,
             )
+
+    def _cleanup_empty_rollout_files(self) -> int:
+        """Best-effort cleanup for zero-byte Codex rollout files."""
+        home = str(os.getenv("CODEX_HOME") or os.path.expanduser("~/.codex")).strip()
+        if not home:
+            return 0
+        sessions_dir = Path(home) / "sessions"
+        if not sessions_dir.is_dir():
+            return 0
+
+        removed = 0
+        now = time.time()
+        for path in sessions_dir.rglob("rollout-*.jsonl"):
+            try:
+                if not path.is_file():
+                    continue
+                stat = path.stat()
+                if stat.st_size != 0:
+                    continue
+                if (now - stat.st_mtime) < 120:
+                    continue
+                path.unlink()
+                removed += 1
+            except Exception:
+                continue
+
+        if removed:
+            logger.warning("Removed %s empty Codex rollout file(s) from %s", removed, sessions_dir)
+        return removed

@@ -4,6 +4,44 @@ import time
 from typing import Any, Callable
 
 
+def _cleanup_empty_rollout_files(*, logger: Any, codex_home: str | None = None) -> int:
+    """Remove zero-byte Codex rollout session files that can crash reconcile startup."""
+    home = str(codex_home or os.getenv("CODEX_HOME") or os.path.expanduser("~/.codex")).strip()
+    if not home:
+        return 0
+
+    sessions_dir = os.path.join(home, "sessions")
+    if not os.path.isdir(sessions_dir):
+        return 0
+
+    removed = 0
+    now = time.time()
+    for root, _dirs, files in os.walk(sessions_dir):
+        for name in files:
+            if not (name.startswith("rollout-") and name.endswith(".jsonl")):
+                continue
+            path = os.path.join(root, name)
+            try:
+                if os.path.getsize(path) != 0:
+                    continue
+                # Avoid racing with files currently being created by a live process.
+                if (now - os.path.getmtime(path)) < 120:
+                    continue
+                os.remove(path)
+                removed += 1
+            except Exception:
+                # Best-effort hygiene only.
+                continue
+
+    if removed:
+        logger.warning(
+            "Removed %s empty Codex rollout session file(s) from %s",
+            removed,
+            sessions_dir,
+        )
+    return removed
+
+
 def invoke_codex_cli(
     *,
     check_tool_available: Callable[[Any], bool],
@@ -21,6 +59,8 @@ def invoke_codex_cli(
 ) -> int | None:
     if not check_tool_available(codex_provider):
         raise tool_unavailable_error("Codex CLI not available")
+
+    _cleanup_empty_rollout_files(logger=logger)
 
     # Force writable workspace + network permission so Codex can post issue comments
     # and write completion summaries during workflow handoff.

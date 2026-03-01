@@ -17,9 +17,10 @@ class TestAgentMonitor:
         runtime_ops.kill_process.return_value = True
         mock_get_runtime_ops.return_value = runtime_ops
 
-        result = AgentMonitor.kill_agent(12345, "42")
+        with patch.object(AgentMonitor, "_pid_alive", return_value=False):
+            result = AgentMonitor.kill_agent(12345, "42")
         assert result is True
-        runtime_ops.kill_process.assert_called_once_with(12345, force=True)
+        runtime_ops.kill_process.assert_called_once_with(12345, force=False)
 
     @patch("runtime.agent_monitor.get_runtime_ops_plugin")
     def test_kill_agent_failure(self, mock_get_runtime_ops):
@@ -30,6 +31,23 @@ class TestAgentMonitor:
 
         result = AgentMonitor.kill_agent(12345, "42")
         assert result is False
+        runtime_ops.kill_process.assert_called_once_with(12345, force=False)
+
+    @patch("runtime.agent_monitor.get_runtime_ops_plugin")
+    @patch("runtime.agent_monitor.time.sleep", return_value=None)
+    def test_kill_agent_escalates_to_force_after_grace(self, _mock_sleep, mock_get_runtime_ops):
+        """Escalate to force kill when graceful termination does not stop the PID."""
+        runtime_ops = MagicMock()
+        runtime_ops.kill_process.side_effect = [True, True]
+        mock_get_runtime_ops.return_value = runtime_ops
+
+        # Stay alive throughout grace loop and final check.
+        with patch.object(AgentMonitor, "_pid_alive", side_effect=[True] * 25):
+            result = AgentMonitor.kill_agent(12345, "42")
+
+        assert result is True
+        assert runtime_ops.kill_process.call_args_list[0].kwargs == {"force": False}
+        assert runtime_ops.kill_process.call_args_list[1].kwargs == {"force": True}
 
     @patch("runtime.agent_monitor.get_runtime_ops_plugin")
     @patch("os.path.getmtime")

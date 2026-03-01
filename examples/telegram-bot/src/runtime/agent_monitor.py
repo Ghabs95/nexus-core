@@ -56,11 +56,30 @@ class AgentMonitor:
 
     @staticmethod
     def kill_agent(pid: int, issue_num: str) -> bool:
-        """Kill a stuck agent process."""
+        """Kill a stuck agent process.
+
+        Prefer graceful termination first to reduce provider state corruption
+        (notably Codex rollout/session files). Escalate to force kill only
+        when the process remains alive after a short grace window.
+        """
         try:
             runtime_ops = get_runtime_ops_plugin(cache_key="runtime-ops:monitor")
-            if not runtime_ops or not runtime_ops.kill_process(pid, force=True):
+            if not runtime_ops:
+                logger.error("Runtime ops plugin unavailable; cannot kill PID %s", pid)
+                return False
+
+            if not runtime_ops.kill_process(pid, force=False):
                 logger.error("Failed to kill agent PID %s", pid)
+                return False
+
+            # Give the process a chance to flush and exit cleanly before escalating.
+            for _ in range(20):
+                if not AgentMonitor._pid_alive(pid):
+                    break
+                time.sleep(0.25)
+
+            if AgentMonitor._pid_alive(pid) and not runtime_ops.kill_process(pid, force=True):
+                logger.error("Failed to force kill agent PID %s", pid)
                 return False
 
             logger.warning("Killed stuck agent PID %s for issue #%s", pid, issue_num)
@@ -72,6 +91,18 @@ class AgentMonitor:
             return True
         except Exception as e:
             logger.error("Failed to kill agent PID %s: %s", pid, e)
+            return False
+
+    @staticmethod
+    def _pid_alive(pid: int) -> bool:
+        try:
+            os.kill(int(pid), 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except Exception:
             return False
 
     @staticmethod

@@ -1,3 +1,5 @@
+import os
+
 from nexus.plugins.builtin.ai_runtime.agent_invoke_service import (
     extract_issue_number,
     invoke_agent_with_fallback,
@@ -447,6 +449,14 @@ def test_codex_invoker_unavailable_and_success(monkeypatch, tmp_path):
 
     monkeypatch.setattr(codex_mod.time, "strftime", lambda fmt: "20260101_120000")
     captured: dict[str, Any] = {}
+    codex_home = tmp_path / ".codex"
+    empty_rollout = codex_home / "sessions" / "2026" / "02" / "28" / "rollout-empty.jsonl"
+    non_empty_rollout = codex_home / "sessions" / "2026" / "02" / "28" / "rollout-ok.jsonl"
+    empty_rollout.parent.mkdir(parents=True, exist_ok=True)
+    empty_rollout.write_text("")
+    non_empty_rollout.write_text("{\"ok\":true}\n", encoding="utf-8")
+    os.utime(empty_rollout, (946684800, 946684800))
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
     class _Proc:
         pid = 4321
@@ -488,6 +498,8 @@ def test_codex_invoker_unavailable_and_success(monkeypatch, tmp_path):
     assert captured["cwd"] == str(tmp_path / "repo")
     assert str(captured["stdout_name"]).endswith("codex_83_20260101_120000.log")
     assert isinstance(captured["env"], dict) and captured["env"]["FOO"] == "BAR"
+    assert os.path.exists(non_empty_rollout)
+    assert not os.path.exists(empty_rollout)
 
 
 def test_copilot_agent_invoker_success(monkeypatch, tmp_path):

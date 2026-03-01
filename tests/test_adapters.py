@@ -7,6 +7,7 @@ extras installed.
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
@@ -756,6 +757,40 @@ class TestCodexCLIProvider:
 
         assert result.success is False
         assert "Timeout" in (result.error or "")
+
+    def test_execute_agent_cleans_empty_codex_rollout_files(self, tmp_path, monkeypatch):
+        from nexus.adapters.ai.base import ExecutionContext
+        from nexus.adapters.ai.codex_provider import CodexCLIProvider
+
+        codex_home = tmp_path / ".codex"
+        sessions = codex_home / "sessions" / "2026" / "02" / "28"
+        sessions.mkdir(parents=True, exist_ok=True)
+        empty_rollout = sessions / "rollout-empty.jsonl"
+        non_empty_rollout = sessions / "rollout-ok.jsonl"
+        empty_rollout.write_text("")
+        non_empty_rollout.write_text("{\"ok\":true}\n", encoding="utf-8")
+        os.utime(empty_rollout, (946684800, 946684800))
+        monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+        provider = CodexCLIProvider(model="gpt-5-codex")
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"ok", b""))
+        mock_proc.returncode = 0
+
+        with patch(
+            "nexus.adapters.ai.codex_provider.asyncio.create_subprocess_exec",
+            return_value=mock_proc,
+        ):
+            ctx = ExecutionContext(
+                agent_name="developer",
+                prompt="Implement feature X",
+                workspace=Path("/tmp"),
+            )
+            result = asyncio.run(provider.execute_agent(ctx))
+
+        assert result.success is True
+        assert non_empty_rollout.exists()
+        assert not empty_rollout.exists()
 
 
 # ---------------------------------------------------------------------------
