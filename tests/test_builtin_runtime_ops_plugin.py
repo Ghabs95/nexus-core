@@ -70,3 +70,37 @@ def test_is_issue_process_running(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", _fake_run_missing)
     assert plugin.is_issue_process_running("9") is False
+
+
+def test_find_issue_processes_skips_ide_extension_host(monkeypatch):
+    plugin = RuntimeOpsPlugin({"process_name": "copilot|codex"})
+
+    def _fake_run(cmd, text, capture_output, timeout, check):
+        assert cmd[0:2] == ["pgrep", "-af"]
+        return _Result(
+            "1111 /Applications/Visual Studio Code.app/Contents/MacOS/Electron "
+            "--ms-enable-electron-run-as-node extensionHost issues/42 codex\n"
+            "2222 codex exec --issue https://github.com/acme/repo/issues/42\n"
+        )
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    matches = plugin.find_issue_processes("42")
+
+    assert matches == [{"pid": 2222, "command": "codex exec --issue https://github.com/acme/repo/issues/42"}]
+
+
+def test_find_issue_processes_accepts_wrapped_cli_invocation(monkeypatch):
+    plugin = RuntimeOpsPlugin({"process_name": "copilot|codex"})
+
+    def _fake_run(cmd, text, capture_output, timeout, check):
+        assert cmd[0:2] == ["pgrep", "-af"]
+        return _Result("3333 bash -lc codex exec --issue https://github.com/acme/repo/issues/42\n")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    matches = plugin.find_issue_processes("42")
+
+    assert matches == [
+        {"pid": 3333, "command": "bash -lc codex exec --issue https://github.com/acme/repo/issues/42"}
+    ]

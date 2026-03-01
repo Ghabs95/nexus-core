@@ -770,13 +770,14 @@ class ProcessOrchestrator:
                     logger.error(f"Exception during dead-agent retry for #{issue_num}: {exc}")
 
             else:
+                log_line = f"Log: {latest_log}\n" if latest_log else ""
                 msg = (
                     f"💀 **Agent Crashed → Manual Intervention**\n\n"
                     f"Issue: #{issue_num}\n"
                     f"Agent: {agent_type} (PID {pid})\n"
                     f"Status: Process exited without completion, "
                     f"max retries reached\n\n"
-                    f"{f'Log: {latest_log}\n' if latest_log else ''}"
+                    f"{log_line}"
                     f"Use /reprocess to retry"
                 )
                 if not self._runtime.send_alert(msg):
@@ -853,6 +854,21 @@ class ProcessOrchestrator:
             logger.debug(
                 "Skipping stale timeout for issue #%s: no live pid or expected RUNNING agent",
                 issue_num,
+            )
+            return
+
+        # Safety guard: never kill or notify timeout for unresolved/unknown agents.
+        # This avoids false-positive kills when tracker metadata is stale or missing.
+        if not isinstance(agent_type, str) or not agent_type.strip() or agent_type == "unknown":
+            logger.warning(
+                "Skipping timeout handling for issue #%s: unresolved agent identity (pid=%s)",
+                issue_num,
+                effective_pid,
+            )
+            self._runtime.audit_log(
+                issue_num,
+                "AGENT_TIMEOUT_SKIPPED_UNKNOWN",
+                f"pid={effective_pid or 'n/a'} log={log_file}",
             )
             return
 

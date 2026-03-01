@@ -561,6 +561,24 @@ class TestDetectDeadAgents:
 
         assert not any("Orphaned Running Step" in a for a in runtime.alerts)
 
+    def test_timeout_with_unknown_agent_skips_kill_and_notification(self, tmp_path):
+        """Unknown agent identity must not trigger kill/notify timeout side effects."""
+        runtime = StubRuntime(retry=True)
+        runtime.tracker = {"60": self._entry(pid=6060, agent_type="unknown", age_seconds=7200)}
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        log_file = tmp_path / "copilot_60_20260221.log"
+        log_file.write_text("stale log")
+
+        runtime.kill_process = MagicMock(return_value=True)
+        runtime.notify_timeout = MagicMock()
+
+        orc._handle_timeout("60", str(log_file), pid=None)
+
+        runtime.kill_process.assert_not_called()
+        runtime.notify_timeout.assert_not_called()
+        assert any(event == "AGENT_TIMEOUT_SKIPPED_UNKNOWN" for _, event, _ in runtime.audit_events)
+
     def test_alive_pid_is_skipped(self):
         """Alive PIDs should not be alerted."""
         runtime = StubRuntime()

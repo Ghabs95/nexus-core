@@ -1,6 +1,7 @@
 """Built-in plugin: runtime process operations and guard helpers."""
 
 import logging
+import os
 import re
 import subprocess
 from typing import Any
@@ -53,6 +54,8 @@ class RuntimeOpsPlugin:
             if pid is None:
                 continue
             command = parts[1] if len(parts) > 1 else ""
+            if not self._is_safe_agent_match(command):
+                continue
             matches.append({"pid": pid, "command": command})
         return matches
 
@@ -97,6 +100,63 @@ class RuntimeOpsPlugin:
         if not match:
             return None
         return int(match.group(1))
+
+    def _is_safe_agent_match(self, command: str) -> bool:
+        """Return True only for likely CLI agent invocations (not IDE extension hosts)."""
+        if not command:
+            return False
+
+        lowered = command.lower()
+        # Avoid killing IDE extension hosts that may mention codex/copilot in args.
+        blocked_markers = (
+            "extensionhost",
+            "visual studio code",
+            "vscode",
+            "--ms-enable-electron-run-as-node",
+            ".vscode/extensions",
+        )
+        if any(marker in lowered for marker in blocked_markers):
+            return False
+
+        allowed_names = self._allowed_process_names()
+        if not allowed_names:
+            return False
+
+        tokens = command.split()
+        if not tokens:
+            return False
+
+        # Direct invocation: first executable token is the agent CLI itself.
+        for token in tokens[:3]:
+            name = self._token_basename(token)
+            if name in allowed_names:
+                return True
+
+        # Wrapped invocation (shell/node/python wrapper), where CLI appears soon after.
+        wrapper_names = {"bash", "sh", "zsh", "node", "nodejs", "python", "python3"}
+        head = self._token_basename(tokens[0])
+        if head in wrapper_names:
+            for token in tokens[1:8]:
+                if self._token_basename(token) in allowed_names:
+                    return True
+
+        return False
+
+    def _allowed_process_names(self) -> set[str]:
+        # process_name can be configured as alternation regex (e.g. "copilot|codex").
+        return {p.lower() for p in re.findall(r"[A-Za-z0-9_-]+", str(self.process_name or ""))}
+
+    @staticmethod
+    def _token_basename(token: str) -> str:
+        value = str(token or "").strip("\"' ")
+        if not value:
+            return ""
+        # Skip env assignments in command preambles (e.g. FOO=bar copilot ...).
+        if "=" in value and not value.startswith(("/", "./", "../")):
+            key, _, _rest = value.partition("=")
+            if key and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                return ""
+        return os.path.basename(value).lower()
 
 
 def register_plugins(registry) -> None:
