@@ -340,7 +340,14 @@ class GitHubPlatform(GitPlatform):
         import os
         import re as _re
 
-        if not os.path.isdir(os.path.join(repo_dir, ".git")):
+        git_repo_probe = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=repo_dir,
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+        if git_repo_probe.returncode != 0:
             logger.warning(f"Not a git repo: {repo_dir}")
             return None
 

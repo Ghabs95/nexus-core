@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 
 from integrations.notifications import emit_alert
 from orchestration.nexus_core_helpers import get_git_platform
@@ -55,10 +56,24 @@ def create_pr_from_changes(
     body: str,
     issue_repo: str | None = None,
 ) -> str | None:
+    issue_worktree_dir = os.path.join(
+        str(repo_dir),
+        ".nexus",
+        "worktrees",
+        f"issue-{str(issue_number).strip()}",
+    )
+    target_repo_dir = issue_worktree_dir if os.path.isdir(issue_worktree_dir) else repo_dir
+    if target_repo_dir != repo_dir:
+        logger.info(
+            "Using issue worktree for PR creation on issue #%s: %s",
+            issue_number,
+            target_repo_dir,
+        )
+
     platform = get_git_platform(repo, project_name=project_name)
     pr_result = asyncio.run(
         platform.create_pr_from_changes(
-            repo_dir=repo_dir,
+            repo_dir=target_repo_dir,
             issue_number=issue_number,
             title=title,
             body=body,

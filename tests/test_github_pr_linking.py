@@ -344,6 +344,42 @@ class TestPRAutoLinking:
         assert result.head_branch == "feat/universal-nexus-identity-issue-86"
         assert ["git", "checkout", "-b", "nexus/issue-86"] not in seen_commands
 
+    @pytest.mark.asyncio
+    async def test_accepts_git_worktree_without_dotgit_directory(self, platform, tmp_path):
+        """Worktrees expose .git as a file; adapter should still treat them as git repos."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        def fake_run(cmd, **kwargs):
+            m = MagicMock()
+            m.returncode = 0
+            m.stdout = ""
+            m.stderr = ""
+
+            if cmd[0] == "git":
+                subcmd = cmd[1] if len(cmd) > 1 else ""
+                if subcmd == "rev-parse" and "--is-inside-work-tree" in cmd:
+                    m.stdout = "true\n"
+                elif subcmd == "diff":
+                    m.stdout = " file.py | 1 +\n"
+                elif subcmd == "rev-parse" and "--abbrev-ref" in cmd:
+                    m.stdout = "main\n"
+                elif subcmd == "ls-files":
+                    m.stdout = ""
+            elif cmd[0] == "gh":
+                m.stdout = "https://github.com/owner/repo/pull/101"
+            return m
+
+        with patch("subprocess.run", side_effect=fake_run):
+            result = await platform.create_pr_from_changes(
+                repo_dir=str(repo),
+                issue_number="42",
+                title="fix: worktree support",
+                body="Body",
+            )
+
+        assert result is not None
+
 
 @pytest.mark.asyncio
 async def test_list_open_issues_github_adapter(tmp_path):

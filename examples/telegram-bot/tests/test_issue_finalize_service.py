@@ -87,3 +87,24 @@ def test_cleanup_worktree_delegates_workspace_manager():
         is_issue_agent_running=None,
         require_clean=True,
     )
+
+
+def test_create_pr_from_changes_prefers_issue_worktree(tmp_path):
+    platform = _FakePlatform()
+    repo_dir = tmp_path / "repo"
+    worktree = repo_dir / ".nexus" / "worktrees" / "issue-42"
+    worktree.mkdir(parents=True)
+
+    with patch.object(svc, "get_git_platform", return_value=platform):
+        pr_url = svc.create_pr_from_changes(
+            project_name="proj-a",
+            repo="acme/repo",
+            repo_dir=str(repo_dir),
+            issue_number="42",
+            title="PR",
+            body="Body",
+        )
+
+    assert pr_url.endswith("/pull/1")
+    create_call = next(c for c in platform.calls if c[0] == "create_pr_from_changes")
+    assert create_call[1]["repo_dir"] == str(worktree)
