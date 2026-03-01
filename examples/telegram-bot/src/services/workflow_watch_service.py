@@ -8,6 +8,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -226,8 +227,12 @@ class WorkflowWatchService:
         return os.getenv("NEXUS_TELEGRAM_WATCH_URL", default_url).strip() or default_url
 
     def _socket_namespace(self) -> str:
-        ns = os.getenv("NEXUS_TELEGRAM_WATCH_NAMESPACE", _DEFAULT_NAMESPACE).strip()
-        return ns if ns.startswith("/") else _DEFAULT_NAMESPACE
+        raw = os.getenv("NEXUS_TELEGRAM_WATCH_NAMESPACE", "").strip()
+        if not raw:
+            return _DEFAULT_NAMESPACE
+        if not raw.startswith("/"):
+            raw = "/" + raw
+        return raw
 
     def _run_socket_worker(self) -> None:
         if socketio is None:  # pragma: no cover - import fallback
