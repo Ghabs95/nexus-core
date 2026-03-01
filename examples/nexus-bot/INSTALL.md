@@ -53,7 +53,25 @@ After installation, four commands become available:
 
 ---
 
-## 2. Configure
+## 2. Configure (Interactive Setup)
+
+The easiest way to configure the bot, generate the `.env` file, and install external CLIs (like Copilot, Gemini, Ollama, etc.) is to use our interactive setup wizard:
+
+```bash
+# If you cloned the repository (from step 1):
+./examples/nexus-bot/install.sh
+```
+
+> **Prefer a quick curl install instead of cloning the whole repo?**
+> You can download and run the setup script directly using bash:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/Ghabs95/nexus-arc/main/examples/nexus-bot/install.sh | bash
+> ```
+> *(A Python version `install.py` is also available if preferred).*
+
+The wizard will ask you for your Storage preferences (Lite vs Enterprise), ask to setup Postgres/Redis for you, and securely configure your Tokens.
+
+Alternatively, you can configure it manually by copying the `.env`:
 
 ```bash
 cd examples/nexus-bot
