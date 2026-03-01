@@ -578,6 +578,7 @@ class TestDetectDeadAgents:
         runtime.kill_process.assert_not_called()
         runtime.notify_timeout.assert_not_called()
         assert any(event == "AGENT_TIMEOUT_SKIPPED_UNKNOWN" for _, event, _ in runtime.audit_events)
+        assert "60" not in runtime.tracker
 
     def test_alive_pid_is_skipped(self):
         """Alive PIDs should not be alerted."""

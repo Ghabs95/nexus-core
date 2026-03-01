@@ -840,16 +840,23 @@ class ProcessOrchestrator:
             )
             return
 
+        normalized_agent_type = (
+            str(agent_type or "").strip().lstrip("@").strip().lower()
+            if isinstance(agent_type, str)
+            else ""
+        )
+
         expected_agent = None
-        if not isinstance(agent_type, str) or not agent_type.strip() or agent_type == "unknown":
+        if not normalized_agent_type or normalized_agent_type in {"unknown", "none", "n/a"}:
             expected_agent = self._runtime.get_expected_running_agent(str(issue_num))
             if expected_agent:
                 agent_type = expected_agent
+                normalized_agent_type = str(expected_agent).strip().lstrip("@").strip().lower()
 
         # Ignore stale log-only timeouts for inactive issues with no live pid
         # and no RUNNING workflow step. This prevents timeout noise for old logs.
         if not effective_pid and (
-            not isinstance(agent_type, str) or not agent_type.strip() or agent_type == "unknown"
+            not normalized_agent_type or normalized_agent_type in {"unknown", "none", "n/a"}
         ):
             logger.debug(
                 "Skipping stale timeout for issue #%s: no live pid or expected RUNNING agent",
@@ -859,7 +866,7 @@ class ProcessOrchestrator:
 
         # Safety guard: never kill or notify timeout for unresolved/unknown agents.
         # This avoids false-positive kills when tracker metadata is stale or missing.
-        if not isinstance(agent_type, str) or not agent_type.strip() or agent_type == "unknown":
+        if not normalized_agent_type or normalized_agent_type in {"unknown", "none", "n/a"}:
             logger.warning(
                 "Skipping timeout handling for issue #%s: unresolved agent identity (pid=%s)",
                 issue_num,
@@ -870,6 +877,11 @@ class ProcessOrchestrator:
                 "AGENT_TIMEOUT_SKIPPED_UNKNOWN",
                 f"pid={effective_pid or 'n/a'} log={log_file}",
             )
+            # Drop stale tracker entries so unresolved placeholders don't keep
+            # re-triggering timeout scans for the same issue.
+            if str(issue_num) in launched:
+                launched.pop(str(issue_num), None)
+                self._runtime.save_launched_agents(launched)
             return
 
         if (

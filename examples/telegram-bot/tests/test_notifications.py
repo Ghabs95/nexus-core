@@ -219,6 +219,19 @@ class TestNotificationFunctions:
         assert "FailedAgent" in message
 
     @patch("integrations.notifications.send_notification")
+    def test_notify_agent_timeout_unresolved_agent(self, mock_send):
+        """Unknown agent identity should not render Max Retries @unknown."""
+        mock_send.return_value = True
+
+        result = notify_agent_timeout("333", "unknown", will_retry=False)
+
+        assert result is True
+        message = mock_send.call_args[0][0]
+        assert "Unresolved Agent" in message
+        assert "Max Retries" not in message
+        assert "Agent: n/a" in message
+
+    @patch("integrations.notifications.send_notification")
     def test_notify_workflow_completed(self, mock_send):
         """Test workflow completed notification."""
         mock_send.return_value = True

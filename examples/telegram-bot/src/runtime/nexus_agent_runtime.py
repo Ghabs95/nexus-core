@@ -965,6 +965,15 @@ class NexusAgentRuntime(AgentRuntime):
         return bool(AgentMonitor.kill_agent(pid, ""))
 
     def notify_timeout(self, issue_number: str, agent_type: str, will_retry: bool) -> None:
+        normalized = str(agent_type or "").strip().lstrip("@").strip().lower()
+        if not normalized or normalized in {"unknown", "none", "n/a"}:
+            logger.warning(
+                "Skipping timeout notification for issue #%s: unresolved agent type (%r)",
+                issue_number,
+                agent_type,
+            )
+            return
+
         try:
             from integrations.notifications import notify_agent_timeout
 

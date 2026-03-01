@@ -415,11 +415,50 @@ def notify_agent_timeout(
     Returns:
         True if sent successfully
     """
+    agent_label = str(agent or "").strip().lstrip("@").strip()
+    normalized = agent_label.lower()
+    unresolved = not agent_label or normalized in {"unknown", "none", "n/a"}
+
+    if unresolved:
+        message = (
+            f"⚠️ **Agent Timeout → Unresolved Agent**\n\n"
+            f"Issue: #{issue_number}\n"
+            f"Agent: n/a\n"
+            f"Status: Missing agent identity in runtime tracker; review logs and reprocess manually"
+        )
+
+        keyboard = (
+            InlineKeyboard()
+            .add_button(
+                "📝 View Logs", callback_data=_issue_callback("logs", issue_number, project)
+            )
+            .add_button(
+                "🔗 Issue",
+                url=build_issue_url(
+                    get_repo(project),
+                    issue_number,
+                    (
+                        PROJECT_CONFIG.get(project)
+                        if isinstance(PROJECT_CONFIG.get(project), dict)
+                        else None
+                    ),
+                ),
+            )
+            .new_row()
+            .add_button(
+                "🔄 Reprocess", callback_data=_issue_callback("reprocess", issue_number, project)
+            )
+            .add_button(
+                "🛑 Stop Workflow", callback_data=_issue_callback("stop", issue_number, project)
+            )
+        )
+        return send_notification(message, keyboard=keyboard)
+
     if will_retry:
         message = (
             f"⚠️ **Agent Timeout → Retrying**\n\n"
             f"Issue: #{issue_number}\n"
-            f"Agent: @{agent}\n"
+            f"Agent: @{agent_label}\n"
             f"Status: Process killed, retry scheduled"
         )
 
@@ -451,7 +490,7 @@ def notify_agent_timeout(
         message = (
             f"❌ **Agent Failed → Max Retries**\n\n"
             f"Issue: #{issue_number}\n"
-            f"Agent: @{agent}\n"
+            f"Agent: @{agent_label}\n"
             f"Status: Manual intervention required"
         )
 
