@@ -248,6 +248,10 @@ async def wfstate_handler(
         str(snapshot.get("expected_running_agent", "")),
         str(snapshot.get("expected_running_agent", "")),
     )
+    completion_source = str(snapshot.get("completion_source", "filesystem")).strip().lower()
+    completion_label_prefix = (
+        "DB Completion" if completion_source in {"postgres", "db", "database"} else "Local Completion"
+    )
 
     text = f"📊 Workflow Snapshot — Issue #{issue_num}\n\n"
     summary = {
@@ -261,11 +265,11 @@ async def wfstate_handler(
         "PID": snapshot.get("pid", "N/A"),
         "Task File": snapshot.get("task_file", "N/A"),
         "Workflow File": snapshot.get("workflow_file", "N/A"),
-        "Local Completion (from)": snapshot.get("local_from", "N/A"),
-        "Local Completion (next)": snapshot.get("local_next", "N/A"),
-        "Local Completion (status)": (snapshot.get("local", {})).get("status", "N/A"),
-        "Local Completion (updated)": (snapshot.get("local", {})).get("mtime", "N/A"),
-        "Local Completion (file)": (snapshot.get("local", {})).get("path", "N/A"),
+        f"{completion_label_prefix} (from)": snapshot.get("local_from", "N/A"),
+        f"{completion_label_prefix} (next)": snapshot.get("local_next", "N/A"),
+        f"{completion_label_prefix} (status)": (snapshot.get("local", {})).get("status", "N/A"),
+        f"{completion_label_prefix} (updated)": (snapshot.get("local", {})).get("mtime", "N/A"),
+        f"{completion_label_prefix} (file)": (snapshot.get("local", {})).get("path", "N/A"),
         "Latest Structured Comment (from)": snapshot.get("comment_from", "N/A"),
         "Latest Structured Comment (next)": snapshot.get("comment_next", "N/A"),
         "Latest Structured Comment (comment_id)": (snapshot.get("latest_signal", {})).get(

@@ -617,12 +617,13 @@ class WorkflowStateEnginePlugin:
 
         if not running_step:
             active_agent = workflow.active_agent_type
-            logger.error(
-                "complete_step_for_issue: completion mismatch for issue #%s: "
-                "completed_agent=%s, active_agent=%s",
+            logger.warning(
+                "complete_step_for_issue: stale or mismatched completion for issue #%s: "
+                "completed_agent=%s, active_agent=%s, event_id=%s",
                 issue_number,
                 completed_agent_type,
                 active_agent,
+                event_id or "<none>",
             )
             raise ValueError(
                 f"Completion agent mismatch for issue #{issue_number}: "
@@ -705,6 +706,8 @@ class WorkflowStateEnginePlugin:
                 step.started_at = now
                 step.completed_at = None
                 step.error = None
+                # Manual rewind starts a fresh execution branch from this point.
+                step.iteration = 0
             else:
                 step.status = StepStatus.PENDING
                 step.started_at = None
@@ -712,6 +715,8 @@ class WorkflowStateEnginePlugin:
                 step.error = None
                 step.outputs = {}
                 step.retry_count = 0
+                # Clear loop-guard counters so future router gotos can re-activate.
+                step.iteration = 0
 
         workflow.state = WorkflowState.RUNNING
         workflow.current_step = target_step.step_num

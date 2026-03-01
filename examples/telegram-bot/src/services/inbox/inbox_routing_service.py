@@ -155,21 +155,6 @@ def process_inbox_task_request(
                 markdown_content=markdown_content,
             )
             logger.info("✅ Postgres inbox task queued: id=%s project=%s", queue_id, project)
-            try:
-                _write_inbox_markdown_file(
-                    base_dir=base_dir,
-                    workspace=str(workspace),
-                    project=str(project),
-                    filename=filename,
-                    markdown_content=markdown_content,
-                    get_inbox_dir=get_inbox_dir,
-                )
-            except Exception as mirror_exc:
-                logger.debug(
-                    "Postgres inbox mirror write skipped for %s: %s",
-                    filename,
-                    mirror_exc,
-                )
         except Exception as exc:
             logger.error("Failed to enqueue Postgres inbox task: %s", exc)
             return {
@@ -247,21 +232,6 @@ def save_resolved_inbox_task_request(
                 filename=filename,
                 markdown_content=markdown_content,
             )
-            try:
-                _write_inbox_markdown_file(
-                    base_dir=base_dir,
-                    workspace=str(workspace),
-                    project=str(project),
-                    filename=filename,
-                    markdown_content=markdown_content,
-                    get_inbox_dir=get_inbox_dir,
-                )
-            except Exception as mirror_exc:
-                logger.debug(
-                    "Postgres resolved-task mirror write skipped for %s: %s",
-                    filename,
-                    mirror_exc,
-                )
         except Exception as exc:
             logger.error("Failed to enqueue resolved Postgres inbox task: %s", exc)
             return {

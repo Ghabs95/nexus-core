@@ -936,9 +936,28 @@ class NexusAgentRuntime(AgentRuntime):
 
             ops = get_runtime_ops_plugin(cache_key="runtime-ops:inbox")
             if ops:
-                return bool(ops.is_issue_process_running(issue_number))
+                if bool(ops.is_issue_process_running(issue_number)):
+                    return True
         except Exception as exc:
             logger.debug(f"is_process_running check failed for #{issue_number}: {exc}")
+
+        # Fallback: rely on persisted launch PID when command-line pattern
+        # matching is insufficient (e.g., wrapped CLIs or prompt-only context).
+        try:
+            from state_manager import HostStateManager
+
+            launched = HostStateManager.load_launched_agents(recent_only=False) or {}
+            entry = launched.get(str(issue_number), {})
+            if isinstance(entry, dict):
+                pid = entry.get("pid")
+                if isinstance(pid, int) and pid > 0:
+                    try:
+                        os.kill(int(pid), 0)
+                        return True
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logger.debug("PID fallback process check failed for #%s: %s", issue_number, exc)
         return False
 
     def check_log_timeout(

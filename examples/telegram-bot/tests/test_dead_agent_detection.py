@@ -211,6 +211,53 @@ class TestNexusAgentRuntimeGetWorkflowState:
         assert result is None
 
 
+class TestNexusAgentRuntimeIsProcessRunning:
+    def test_true_when_runtime_ops_reports_running(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        ops = MagicMock()
+        ops.is_issue_process_running.return_value = True
+
+        with patch("orchestration.plugin_runtime.get_runtime_ops_plugin", return_value=ops):
+            assert runtime.is_process_running("106") is True
+
+    def test_true_when_pid_fallback_detects_alive_process(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        ops = MagicMock()
+        ops.is_issue_process_running.return_value = False
+
+        with (
+            patch("orchestration.plugin_runtime.get_runtime_ops_plugin", return_value=ops),
+            patch(
+                "state_manager.HostStateManager.load_launched_agents",
+                return_value={"106": {"pid": 12345}},
+            ),
+            patch("runtime.nexus_agent_runtime.os.kill", return_value=None) as kill_mock,
+        ):
+            assert runtime.is_process_running("106") is True
+            kill_mock.assert_called_once_with(12345, 0)
+
+    def test_false_when_runtime_ops_and_pid_fallback_fail(self):
+        from runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        ops = MagicMock()
+        ops.is_issue_process_running.return_value = False
+
+        with (
+            patch("orchestration.plugin_runtime.get_runtime_ops_plugin", return_value=ops),
+            patch(
+                "state_manager.HostStateManager.load_launched_agents",
+                return_value={"106": {"pid": 12345}},
+            ),
+            patch("runtime.nexus_agent_runtime.os.kill", side_effect=OSError("not running")),
+        ):
+            assert runtime.is_process_running("106") is False
+
+
 class TestNexusAgentRuntimeShouldRetryDeadAgent:
     def test_true_when_matching_running_step(self):
         from runtime.nexus_agent_runtime import NexusAgentRuntime

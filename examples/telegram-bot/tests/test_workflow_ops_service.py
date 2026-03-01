@@ -328,7 +328,7 @@ async def test_fetch_workflow_state_snapshot_uses_capabilities_for_mixed_mode(mo
         read_latest_local_completion=lambda issue_num: {"agent_type": "local", "next_agent": "x"},
     )
 
-    assert out == {"ok": True, "snapshot": {"ok": True}}
+    assert out == {"ok": True, "snapshot": {"ok": True, "completion_source": "postgres"}}
     assert captured["local_task_files_enabled"] is False
     assert captured["local_workflow_files_enabled"] is True
     assert captured["expected_running_agent"] == "developer"

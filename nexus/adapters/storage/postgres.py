@@ -152,29 +152,6 @@ if _SA_AVAILABLE:
         approval_timeout: sa.orm.Mapped[int] = sa.orm.mapped_column(sa.Integer)
         requested_at: sa.orm.Mapped[float] = sa.orm.mapped_column(sa.Float)
 
-    class _TaskFileRow(_Base):
-        __tablename__ = "nexus_task_files"
-
-        id: sa.orm.Mapped[int] = sa.orm.mapped_column(
-            sa.Integer, primary_key=True, autoincrement=True
-        )
-        project: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(64), index=True)
-        issue_number: sa.orm.Mapped[str | None] = sa.orm.mapped_column(
-            sa.String(32), index=True, nullable=True
-        )
-        filename: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(256))
-        content: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.Text)
-        state: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(16), default="active")
-        created_at: sa.orm.Mapped[datetime] = sa.orm.mapped_column(
-            sa.DateTime(timezone=True), default=lambda: datetime.now(tz=UTC)
-        )
-        updated_at: sa.orm.Mapped[datetime] = sa.orm.mapped_column(
-            sa.DateTime(timezone=True),
-            default=lambda: datetime.now(tz=UTC),
-            onupdate=lambda: datetime.now(tz=UTC),
-        )
-
-
 # ---------------------------------------------------------------------------
 # Storage backend
 # ---------------------------------------------------------------------------

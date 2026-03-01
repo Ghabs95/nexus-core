@@ -191,15 +191,7 @@ The actual agent assignment depends on the current project's workflow configurat
                 issue_number,
                 agent_type,
             )
-            try:
-                task_file_str = _write_webhook_task_file(inbox_dir, task_filename, task_content)
-            except Exception as mirror_exc:
-                logger.debug(
-                    "Postgres webhook mirror file write skipped for issue #%s: %s",
-                    issue_number,
-                    mirror_exc,
-                )
-                task_file_str = None
+            task_file_str = None
         else:
             task_file_str = _write_webhook_task_file(inbox_dir, task_filename, task_content)
             logger.info("✅ Created task file: %s (agent_type: %s)", task_file_str, agent_type)

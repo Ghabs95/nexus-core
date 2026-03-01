@@ -163,6 +163,76 @@ async def test_maybe_reset_continue_workflow_position_resets_for_recovered_next_
 
 
 @pytest.mark.asyncio
+async def test_maybe_reset_continue_workflow_position_resets_when_workflow_failed():
+    called = {}
+
+    class _WorkflowPlugin:
+        async def get_workflow_status(self, issue_num):
+            assert issue_num == "106"
+            return {"state": "failed"}
+
+        async def reset_to_agent_for_issue(self, issue_num, agent_type):
+            called["issue_num"] = issue_num
+            called["agent_type"] = agent_type
+            return True
+
+    deps = SimpleNamespace(
+        logger=logging.getLogger("test"),
+        workflow_state_plugin_kwargs={},
+        get_workflow_state_plugin=lambda **kwargs: _WorkflowPlugin(),
+    )
+    ctx = _Ctx()
+    ok = await _maybe_reset_continue_workflow_position(
+        ctx,
+        deps,
+        issue_num="106",
+        continue_ctx={
+            "forced_agent_override": False,
+            "sync_workflow_to_agent": False,
+            "agent_type": "reviewer",
+        },
+    )
+
+    assert ok is True
+    assert called == {"issue_num": "106", "agent_type": "reviewer"}
+
+
+@pytest.mark.asyncio
+async def test_maybe_reset_continue_workflow_position_skips_when_running_and_no_override():
+    called = {"reset": 0}
+
+    class _WorkflowPlugin:
+        async def get_workflow_status(self, issue_num):
+            assert issue_num == "106"
+            return {"state": "running"}
+
+        async def reset_to_agent_for_issue(self, issue_num, agent_type):
+            called["reset"] += 1
+            return True
+
+    deps = SimpleNamespace(
+        logger=logging.getLogger("test"),
+        workflow_state_plugin_kwargs={},
+        get_workflow_state_plugin=lambda **kwargs: _WorkflowPlugin(),
+    )
+    ctx = _Ctx()
+    ok = await _maybe_reset_continue_workflow_position(
+        ctx,
+        deps,
+        issue_num="106",
+        continue_ctx={
+            "forced_agent_override": False,
+            "sync_workflow_to_agent": False,
+            "agent_type": "reviewer",
+        },
+    )
+
+    assert ok is True
+    assert called["reset"] == 0
+    assert ctx.replies == []
+
+
+@pytest.mark.asyncio
 async def test_continue_service_reconciles_before_launch_when_ready(monkeypatch):
     ctx = _Ctx(args=["nexus", "106"])
     calls = {"prepare": 0, "reconcile": 0, "launched_agent": None}

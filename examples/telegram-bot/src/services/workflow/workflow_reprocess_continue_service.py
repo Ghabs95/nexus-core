@@ -321,26 +321,51 @@ async def _handle_continue_status_outcome(
 async def _maybe_reset_continue_workflow_position(
     ctx: Any, deps: Any, *, issue_num: Any, continue_ctx: dict[str, Any]
 ) -> bool:
+    workflow_plugin = deps.get_workflow_state_plugin(
+        **deps.workflow_state_plugin_kwargs, cache_key="workflow:state-engine"
+    )
+    workflow_state = ""
+    if workflow_plugin and hasattr(workflow_plugin, "get_workflow_status"):
+        try:
+            status_payload = workflow_plugin.get_workflow_status(str(issue_num))
+            if asyncio.iscoroutine(status_payload):
+                status_payload = await status_payload
+            if isinstance(status_payload, dict):
+                workflow_state = str(status_payload.get("state") or "").strip().lower()
+        except Exception as exc:
+            deps.logger.debug(
+                "Failed to read workflow status for issue #%s before continue reset: %s",
+                issue_num,
+                exc,
+            )
+
+    workflow_failed = workflow_state == "failed"
     should_reset = bool(
-        continue_ctx.get("forced_agent_override") or continue_ctx.get("sync_workflow_to_agent")
+        continue_ctx.get("forced_agent_override")
+        or continue_ctx.get("sync_workflow_to_agent")
+        or workflow_failed
     )
     if not should_reset:
         return True
 
-    workflow_plugin = deps.get_workflow_state_plugin(
-        **deps.workflow_state_plugin_kwargs, cache_key="workflow:state-engine"
-    )
+    agent_type = str(continue_ctx.get("agent_type") or "").strip()
+    if not agent_type:
+        await ctx.reply_text(
+            f"❌ Missing target agent for workflow reset on issue #{issue_num}."
+        )
+        return False
+
     reset_ok = False
     if workflow_plugin:
         try:
             reset_ok = await workflow_plugin.reset_to_agent_for_issue(
-                issue_num, continue_ctx["agent_type"]
+                issue_num, agent_type
             )
         except Exception as exc:
             deps.logger.error(
                 "Failed to reset workflow state for issue #%s to %s: %s",
                 issue_num,
-                continue_ctx["agent_type"],
+                agent_type,
                 exc,
                 exc_info=True,
             )
@@ -348,7 +373,7 @@ async def _maybe_reset_continue_workflow_position(
         return True
 
     await ctx.reply_text(
-        f"❌ Could not reset workflow to `{continue_ctx['agent_type']}` for issue #{issue_num}."
+        f"❌ Could not reset workflow to `{agent_type}` for issue #{issue_num}."
     )
     return False
 

@@ -310,9 +310,11 @@ async def fetch_workflow_state_snapshot(
 
     if caps.local_completions:
         read_local_completion = read_latest_local_completion
+        completion_source = "filesystem"
     else:
         db_completion = await _resolve_maybe_await(_latest_completion_from_storage(issue_num))
         read_local_completion = lambda _issue_num: db_completion
+        completion_source = "postgres"
 
     snapshot = build_workflow_snapshot(
         issue_num=issue_num,
@@ -326,6 +328,7 @@ async def fetch_workflow_state_snapshot(
         local_task_files_enabled=caps.local_task_files,
         local_workflow_files_enabled=caps.local_workflow_files,
     )
+    snapshot["completion_source"] = completion_source
 
     return {"ok": True, "snapshot": snapshot}
 

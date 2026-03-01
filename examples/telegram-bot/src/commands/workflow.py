@@ -130,9 +130,38 @@ async def resume_handler(ctx: InteractiveContext):
         **_WORKFLOW_STATE_PLUGIN_KWARGS,
         cache_key="workflow:state-engine",
     )
+    status_before = await workflow_plugin.get_workflow_status(issue_num)
+    state_before = str((status_before or {}).get("state", "")).strip().lower()
+
+    if state_before and state_before != "paused":
+        if state_before == "running":
+            await ctx.reply_text(
+                f"ℹ️ Workflow for issue #{issue_num} is already running.\n"
+                f"Use /continue {project_key} {issue_num} to launch/relaunch the expected agent."
+            )
+            return
+        if state_before == "failed":
+            await ctx.reply_text(
+                f"⚠️ Workflow for issue #{issue_num} is in `failed` state.\n"
+                f"`/resume` only applies to paused workflows.\n\n"
+                f"Use /wfstate {project_key} {issue_num} to inspect drift, then /continue {project_key} {issue_num} or /reprocess {project_key} {issue_num}."
+            )
+            return
+        if state_before in {"completed", "cancelled"}:
+            await ctx.reply_text(
+                f"ℹ️ Workflow for issue #{issue_num} is `{state_before}`.\n"
+                f"`/resume` is not applicable."
+            )
+            return
+
     success = await workflow_plugin.resume_workflow(issue_num)
     if not success:
-        await ctx.reply_text(f"⚠️ Unable to resume workflow for issue #{issue_num}.")
+        details = await workflow_plugin.get_workflow_status(issue_num)
+        state_after = str((details or {}).get("state", "unknown")).strip().lower() or "unknown"
+        await ctx.reply_text(
+            f"⚠️ Unable to resume workflow for issue #{issue_num}.\n"
+            f"Current state: `{state_after}`."
+        )
         return
 
     AuditStore.audit_log(int(issue_num), "WORKFLOW_RESUMED", "via nexus-core")

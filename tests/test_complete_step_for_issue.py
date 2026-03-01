@@ -514,6 +514,36 @@ async def test_reset_to_agent_for_issue_rewinds_completed_workflow():
 
 
 @pytest.mark.asyncio
+async def test_reset_to_agent_for_issue_clears_iteration_counters_for_recovery():
+    """Manual rewind should clear loop counters from the target step onward."""
+    develop = _step(1, "develop", "developer")
+    review = _step(2, "review", "reviewer")
+    close_loop = _step(3, "close_loop", "writer")
+    wf = _make_workflow("wf-reset-iterations", [develop, review, close_loop])
+    plugin, _ = await _plugin_with_workflow(wf, "reset-iterations")
+
+    loaded = await plugin._get_engine().get_workflow("wf-reset-iterations")
+    assert loaded is not None
+    loaded.steps[0].iteration = 5
+    loaded.steps[1].iteration = 5
+    loaded.steps[2].iteration = 3
+    await plugin._get_engine().storage.save_workflow(loaded)
+
+    rewound = await plugin.reset_to_agent_for_issue("reset-iterations", "developer")
+    assert rewound is True
+
+    status = await plugin.get_workflow_status("reset-iterations")
+    assert status is not None
+    assert status["state"] == WorkflowState.RUNNING.value
+
+    updated = await plugin._get_engine().get_workflow("wf-reset-iterations")
+    assert updated is not None
+    assert updated.steps[0].iteration == 0
+    assert updated.steps[1].iteration == 0
+    assert updated.steps[2].iteration == 0
+
+
+@pytest.mark.asyncio
 async def test_reset_to_agent_for_issue_recovers_missing_workflow_from_mapping(tmp_path):
     """When mapping exists but workflow row is missing, reset should recover then rewind."""
     workflow_yaml = tmp_path / "workflow.yaml"

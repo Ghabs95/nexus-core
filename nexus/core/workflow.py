@@ -55,7 +55,9 @@ logger = logging.getLogger(__name__)
 OnStepTransition = Callable[[Workflow, WorkflowStep, dict], Awaitable[None]]
 OnWorkflowComplete = Callable[[Workflow, dict], Awaitable[None]]
 
-_MAX_LOOP_ITERATIONS = 5  # Maximum times a step can be re-activated by a goto before aborting
+_MAX_LOOP_ITERATIONS = max(
+    1, int(os.getenv("NEXUS_MAX_LOOP_ITERATIONS", "20"))
+)  # Maximum times a step can be re-activated by a goto before aborting
 _DEFAULT_BACKOFF_BASE = 1.0  # Default base delay (seconds) used when step.initial_delay is unset
 
 

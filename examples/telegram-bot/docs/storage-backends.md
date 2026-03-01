@@ -59,20 +59,7 @@ When `NEXUS_STORAGE_BACKEND=postgres`, the following tables are auto-created:
 | `data`       | JSON text | Serialized state blob                                |
 | `updated_at` | timestamp | Auto-updated                                         |
 
-### `nexus_task_files` — Task markdown files
-
-| Column         | Type      | Description           |
-|----------------|-----------|-----------------------|
-| `id`           | PK int    | Auto-increment        |
-| `project`      | string    | Project key           |
-| `issue_number` | string    | Optional issue number |
-| `filename`     | string    | Original filename     |
-| `content`      | text      | Markdown content      |
-| `state`        | string    | `active` or `closed`  |
-| `created_at`   | timestamp |                       |
-| `updated_at`   | timestamp |                       |
-
-### `nexus_inbox_queue` — Inbox task queue
+### `nexus_inbox_tasks` — Inbox task queue
 
 | Column             | Type   | Description                     |
 |--------------------|--------|---------------------------------|
@@ -94,8 +81,6 @@ When `NEXUS_STORAGE_BACKEND=filesystem`:
 │   └── tracked_issues.json    → nexus_host_state (key: tracked_issues)
 ├── tasks/
 │   └── {project}/
-│       ├── active/            → nexus_task_files (state: active)
-│       ├── closed/            → nexus_task_files (state: closed)
 │       └── completions/       → nexus_completions
 │           └── completion_summary_{issue}.json
 └── inbox/
