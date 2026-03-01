@@ -252,6 +252,13 @@ class WorkflowWatchService:
             engineio_logger=False,
         )
 
+        transports = None
+        try:
+            import websocket  # type: ignore  # noqa: F401
+        except Exception:
+            transports = ["polling"]
+            logger.warning("websocket-client not installed; workflow watch will use polling transport")
+
         @client.on("connect", namespace=namespace)
         def _on_connect() -> None:
             nonlocal backoff
@@ -278,7 +285,7 @@ class WorkflowWatchService:
 
         while not self._stop_event.is_set():
             try:
-                client.connect(url, namespaces=[namespace], wait_timeout=5)
+                client.connect(url, namespaces=[namespace], wait_timeout=5, transports=transports)
                 while client.connected and not self._stop_event.wait(0.25):
                     pass
             except Exception as exc:

@@ -167,6 +167,16 @@ except Exception as _e:
     logger.warning(f"⚠️ Could not register SocketIO emitter: {_e}")
 
 
+@socketio.on("connect", namespace="/visualizer")
+def _visualizer_socket_connect():
+    logger.info("Visualizer Socket.IO client connected")
+
+
+@socketio.on("disconnect", namespace="/visualizer")
+def _visualizer_socket_disconnect():
+    logger.info("Visualizer Socket.IO client disconnected")
+
+
 def _get_webhook_policy():
     """Get framework webhook policy plugin."""
     return get_webhook_policy_plugin(cache_key="git-webhook-policy:webhook")
