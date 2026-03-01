@@ -203,6 +203,12 @@ from handlers.visualize_command_handlers import (
 from handlers.visualize_command_handlers import (
     visualize_handler as workflow_visualize_handler,
 )
+from handlers.watch_command_handlers import (
+    WatchHandlerDeps,
+)
+from handlers.watch_command_handlers import (
+    watch_handler as workflow_watch_handler,
+)
 from handlers.workflow_command_handlers import (
     WorkflowHandlerDeps,
 )
@@ -330,6 +336,9 @@ from services.telegram.telegram_handler_deps_service import (
 )
 from services.telegram.telegram_handler_deps_service import (
     build_visualize_handler_deps as _svc_build_visualize_handler_deps,
+)
+from services.telegram.telegram_handler_deps_service import (
+    build_watch_handler_deps as _svc_build_watch_handler_deps,
 )
 from services.telegram.telegram_handler_deps_service import (
     build_workflow_handler_deps as _svc_build_workflow_handler_deps,
@@ -467,6 +476,7 @@ from services.workflow_signal_sync import (
     read_latest_local_completion,
     write_local_completion_from_signal,
 )
+from services.workflow_watch_service import get_workflow_watch_service
 from services.feature_registry_service import FeatureRegistryService
 from state_manager import HostStateManager
 from user_manager import get_user_manager
@@ -570,6 +580,33 @@ def _visualize_handler_deps() -> VisualizeHandlerDeps:
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
         prompt_project_selection=_ctx_prompt_project_selection,
         ensure_project_issue=_ctx_ensure_project_issue,
+    )
+
+
+def _fetch_workflow_snapshot(issue_num: str, project_key: str) -> dict[str, Any]:
+    """Helper for /watch to fetch current state without passing all deps manually."""
+    repo = _project_repo(project_key)
+    expected_running = _normalize_agent_reference(
+        _svc_get_expected_running_agent_from_workflow(issue_num) or ""
+    )
+    return build_workflow_snapshot(
+        issue_num=issue_num,
+        repo=repo,
+        get_issue_plugin=_get_direct_issue_plugin,
+        expected_running_agent=expected_running,
+        find_task_file_by_issue=find_task_file_by_issue,
+        read_latest_local_completion=_read_latest_local_completion,
+        extract_structured_completion_signals=_extract_structured_completion_signals,
+    )
+
+
+def _watch_handler_deps() -> WatchHandlerDeps:
+    return _svc_build_watch_handler_deps(
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        prompt_project_selection=_ctx_prompt_project_selection,
+        ensure_project_issue=_ctx_ensure_project_issue,
+        get_watch_service=get_workflow_watch_service,
     )
 
 
@@ -1106,6 +1143,7 @@ def _command_handler_map():
         comments_handler=comments_handler,
         wfstate_handler=wfstate_handler,
         visualize_handler=visualize_handler,
+        watch_handler=watch_handler,
         reprocess_handler=reprocess_handler,
         reconcile_handler=reconcile_handler,
         continue_handler=continue_handler,
@@ -1290,6 +1328,7 @@ tracked_issues = load_tracked_issues()  # Load on startup
 active_tail_sessions: dict[tuple[int, int], str] = {}
 active_tail_tasks: dict[tuple[int, int], asyncio.Task] = {}
 TASK_CONFIRMATION_MODE = os.getenv("TASK_CONFIRMATION_MODE", "smart").strip().lower()
+_watch_sender_bot = None
 
 
 # --- 0. HELP & INFO ---
@@ -1371,6 +1410,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def on_startup(application):
+    global _watch_sender_bot
     await _svc_on_startup(
         application=application,
         logger=logger,
@@ -1379,6 +1419,11 @@ async def on_startup(application):
         bot_command_cls=BotCommand,
         check_tool_health_fn=_check_tool_health,
     )
+    _watch_sender_bot = application.bot
+    watch_service = get_workflow_watch_service()
+    watch_service.bind_runtime(loop=asyncio.get_running_loop(), sender=_send_watch_message)
+    watch_service.bind_snapshot_fetcher(fetcher=_fetch_workflow_snapshot)
+    watch_service.ensure_started()
 
 
 async def _check_tool_health(application):
@@ -1389,6 +1434,12 @@ async def _check_tool_health(application):
         logger=logger,
         telegram_chat_id=TELEGRAM_CHAT_ID,
     )
+
+
+async def _send_watch_message(chat_id: int, text: str) -> None:
+    if _watch_sender_bot is None:
+        return
+    await _watch_sender_bot.send_message(chat_id=chat_id, text=text)
 
 
 async def feature_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1715,6 +1766,13 @@ async def visualize_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def watch_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stream live workflow updates for an issue."""
+    await workflow_watch_handler(
+        _build_telegram_interactive_ctx(update, context), _watch_handler_deps()
+    )
+
+
 async def pause_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Pause auto-chaining with project picker support."""
     await workflow_pause_picker_handler(
@@ -1889,6 +1947,7 @@ if __name__ == "__main__":
             "audit_handler": audit_handler,
             "wfstate_handler": wfstate_handler,
             "visualize_handler": visualize_handler,
+            "watch_handler": watch_handler,
             "stats_handler": stats_handler,
             "comments_handler": comments_handler,
             "reprocess_handler": reprocess_handler,

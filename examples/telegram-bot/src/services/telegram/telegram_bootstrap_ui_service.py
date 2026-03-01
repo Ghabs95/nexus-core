@@ -56,6 +56,7 @@ def build_help_text() -> str:
         "/reprocess <project> <issue#> - Re-run agent processing\n"
         "/wfstate <project> <issue#> - Show workflow state and drift snapshot\n"
         "/visualize <project> <issue#> - Show Mermaid workflow diagram for an issue\n"
+        "/watch <project> <issue#> - Stream live workflow updates in chat\n"
         "/reconcile <project> <issue#> - Reconcile workflow/comment/local state\n"
         "/continue <project> <issue#> - Check stuck agent status\n"
         "/forget <project> <issue#> - Permanently clear local state for an issue\n"

@@ -55,6 +55,7 @@ def menu_section_text(menu_key: str) -> str:
         "workflow": (
             "🔁 **Workflow Control**\n"
             "- /visualize <project> <issue#> — Show Mermaid workflow diagram\n"
+            "- /watch <project> <issue#> — Stream live workflow updates\n"
             "- /reprocess <project> <issue#> — Re-run agent processing\n"
             "- /wfstate <project> <issue#> — Show workflow state + drift\n"
             "- /reconcile <project> <issue#> — Reconcile workflow/comment/local state\n"
