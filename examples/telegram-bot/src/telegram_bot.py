@@ -587,7 +587,7 @@ def _fetch_workflow_snapshot(issue_num: str, project_key: str) -> dict[str, Any]
     """Helper for /watch to fetch current state without passing all deps manually."""
     repo = _project_repo(project_key)
     expected_running = _normalize_agent_reference(
-        _svc_get_expected_running_agent_from_workflow(issue_num) or ""
+        _get_expected_running_agent_from_workflow(issue_num) or ""
     )
     return build_workflow_snapshot(
         issue_num=issue_num,

@@ -126,20 +126,20 @@ Watch session state is host runtime metadata, not workflow source of truth.
 
 ### State model
 
-Create a host-state key (e.g., `watch_sessions`) in the existing host-state store abstraction:
+Create a host-state key (`watch_sessions`) in the existing host-state store abstraction. The implementation enforces a single active subscription per chat/user — the most recent `/watch` command replaces any existing session.
 
-- Session key: `<chat_id>:<user_id>:<project>:<issue>`
+- Session key: `<chat_id>:<user_id>`
 - Value fields:
-  - `project_key`
-  - `issue_num`
-  - `workflow_id` (nullable until resolved)
   - `chat_id`
   - `user_id`
+  - `project_key`
+  - `issue_num`
+  - `workflow_id` (nullable until resolved from events)
   - `mermaid_enabled` (bool)
-  - `last_event_ts`
-  - `last_event_type`
-  - `last_message_id` (for edit-in-place behavior)
-  - `created_at`, `updated_at`
+  - `last_event_at`
+  - `last_event_key`
+  - `last_sent_at`
+  - `updated_at`
 
 ### Persistence strategy
 
@@ -180,7 +180,7 @@ This covers missed events during downtime and works identically across backend t
 
 ## New components
 
-- `src/services/monitoring/workflow_watch_service.py`
+- `src/services/workflow_watch_service.py`
   - subscribe/unsubscribe registry
   - session persistence adapter
   - event-to-telegram rendering

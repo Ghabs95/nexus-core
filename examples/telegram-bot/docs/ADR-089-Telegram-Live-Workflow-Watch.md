@@ -27,10 +27,16 @@ Subscriptions must persist across bot restarts and be compatible with both `file
   ```json
   {
     "chat_id:user_id": {
-      "project": "string",
-      "issue": "string",
-      "started_at": "timestamp",
-      "last_event_at": "timestamp"
+      "chat_id": "integer",
+      "user_id": "integer",
+      "project_key": "string",
+      "issue_num": "string",
+      "workflow_id": "string",
+      "mermaid_enabled": "boolean",
+      "last_event_at": "timestamp",
+      "last_event_key": "string",
+      "last_sent_at": "timestamp",
+      "updated_at": "timestamp"
     }
   }
   ```
@@ -44,7 +50,8 @@ To prevent chat flooding:
 ### 5. Failure and Reconnect Behavior
 - **Socket Disconnect**: The bot will attempt to reconnect to the Socket.IO server with exponential backoff.
 - **Bot Restart**: On startup, the bot will rehydrate subscriptions from storage and resume watching.
-- **Stale Subscriptions**: Subscriptions without activity for a long period (e.g., 2 hours) will be auto-cleaned.
+- **Stale Subscriptions**: The initial implementation does not perform automatic TTL-based cleanup. Subscriptions may
+  persist until a `/watch stop` command is issued or a future maintenance/TTL mechanism is introduced.
 
 ## Consequences
 - **Pros**: Real-time feedback in Telegram; consistent monitoring experience across web and mobile; reuses existing WebSocket infrastructure.
