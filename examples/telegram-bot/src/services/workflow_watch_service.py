@@ -51,6 +51,7 @@ class WorkflowWatchService:
         self._subscriptions: dict[str, WatchSubscription] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._sender: Any = None
+        self._snapshot_fetcher: Callable[[str, str], dict[str, Any]] | None = None
         self._stop_event = threading.Event()
         self._worker: threading.Thread | None = None
         self._client_started = False
@@ -63,6 +64,10 @@ class WorkflowWatchService:
         """Bind async runtime pieces used to deliver Telegram messages."""
         self._loop = loop
         self._sender = sender
+
+    def bind_snapshot_fetcher(self, fetcher: Callable[[str, str], dict[str, Any]]) -> None:
+        """Bind helper to fetch current workflow state snapshots."""
+        self._snapshot_fetcher = fetcher
 
     def ensure_started(self) -> None:
         """Start the Socket.IO listener worker when needed."""
@@ -103,6 +108,7 @@ class WorkflowWatchService:
             self._subscriptions[sub.key] = sub
             self._save_subscriptions()
         self.ensure_started()
+        self._send_initial_snapshot(sub)
         return {"ok": True, "replaced": replaced, "subscription": asdict(sub)}
 
     def stop_watch(
@@ -150,6 +156,38 @@ class WorkflowWatchService:
             if not current:
                 return None
             return asdict(current)
+
+    def _send_initial_snapshot(self, sub: WatchSubscription) -> None:
+        """Send a one-time status snapshot to the chat if fetcher is available."""
+        if not self._snapshot_fetcher:
+            return
+        try:
+            snapshot = self._snapshot_fetcher(sub.issue_num, sub.project_key)
+            if not snapshot:
+                return
+            state = str(snapshot.get("workflow_state", "unknown"))
+            step = str(snapshot.get("current_step", "?/?"))
+            step_name = str(snapshot.get("current_step_name", "unknown"))
+            agent = str(snapshot.get("current_agent", "unknown"))
+            msg = (
+                f"👀 Watching workflow #{sub.issue_num} ({sub.project_key})\n"
+                f"Status: {state}\n"
+                f"Step: {step} ({step_name})\n"
+                f"Agent: {agent}"
+            )
+            self._send_message(sub.chat_id, msg)
+        except Exception as exc:
+            logger.warning("Failed to send initial snapshot for #%s: %s", sub.issue_num, exc)
+
+    def _send_reconnect_snapshots(self) -> None:
+        """Send a recovery status snapshot to all active subscribers on reconnect."""
+        if not self._snapshot_fetcher:
+            return
+        with self._lock:
+            subs = list(self._subscriptions.values())
+        for sub in subs:
+            # Reconnect recovery: providing current state in case events were missed
+            self._send_initial_snapshot(sub)
 
     def _load_subscriptions(self) -> None:
         raw = HostStateManager.load_workflow_watch_subscriptions()
@@ -215,6 +253,7 @@ class WorkflowWatchService:
             backoff = 1.0
             self._client_started = True
             logger.info("Telegram watch connected to %s%s", url, namespace)
+            self._send_reconnect_snapshots()
 
         @client.on("disconnect", namespace=namespace)
         def _on_disconnect() -> None:

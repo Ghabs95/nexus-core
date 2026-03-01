@@ -583,6 +583,23 @@ def _visualize_handler_deps() -> VisualizeHandlerDeps:
     )
 
 
+def _fetch_workflow_snapshot(issue_num: str, project_key: str) -> dict[str, Any]:
+    """Helper for /watch to fetch current state without passing all deps manually."""
+    repo = _project_repo(project_key)
+    expected_running = _normalize_agent_reference(
+        _svc_get_expected_running_agent_from_workflow(issue_num) or ""
+    )
+    return build_workflow_snapshot(
+        issue_num=issue_num,
+        repo=repo,
+        get_issue_plugin=_get_direct_issue_plugin,
+        expected_running_agent=expected_running,
+        find_task_file_by_issue=find_task_file_by_issue,
+        read_latest_local_completion=_read_latest_local_completion,
+        extract_structured_completion_signals=_extract_structured_completion_signals,
+    )
+
+
 def _watch_handler_deps() -> WatchHandlerDeps:
     return _svc_build_watch_handler_deps(
         logger=logger,
@@ -1405,6 +1422,7 @@ async def on_startup(application):
     _watch_sender_bot = application.bot
     watch_service = get_workflow_watch_service()
     watch_service.bind_runtime(loop=asyncio.get_running_loop(), sender=_send_watch_message)
+    watch_service.bind_snapshot_fetcher(fetcher=_fetch_workflow_snapshot)
     watch_service.ensure_started()
 
 
