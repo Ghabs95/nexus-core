@@ -1,36 +1,37 @@
 import os
 import re
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Iterable
 
 
 def resolve_transcription_attempts(
     *,
     project_name: str | None,
-    operation_agents: Mapping[str, Any],
+    system_operations: Mapping[str, Any],
     fallback_enabled: bool,
-    transcription_primary: str,
+    fallback_provider: str,
     get_primary_tool: Callable[[str, str | None], Any],
     fallback_order_from_preferences_fn: Callable[[str | None], list[Any]],
     unique_tools: Callable[[list[Any]], list[Any]],
-    gemini_provider: Any,
-    copilot_provider: Any,
+    supported_providers: Iterable[Any],
     whisper_name: str = "whisper",
     warn_unsupported_mapped_provider: Callable[[str, str], None] | None = None,
 ) -> list[str]:
     """Resolve ordered transcription attempts as provider names."""
-    mapped_agent = str(operation_agents.get("transcribe_audio") or "").strip()
+    mapped_agent = str(system_operations.get("transcribe_audio") or "").strip()
+
+    supported_set = set(supported_providers)
 
     if mapped_agent:
         mapped_primary = get_primary_tool(mapped_agent, project_name)
-        if mapped_primary in {gemini_provider, copilot_provider}:
+        if mapped_primary in supported_set:
             base_order = [
                 tool
                 for tool in fallback_order_from_preferences_fn(project_name)
-                if tool in {gemini_provider, copilot_provider}
+                if tool in supported_set
             ]
             if not base_order:
-                base_order = [gemini_provider, copilot_provider]
+                base_order = list(supported_providers)
             ordered = [mapped_primary] + [tool for tool in base_order if tool != mapped_primary]
             normalized = [tool.value for tool in unique_tools(ordered)]
             if not fallback_enabled:
@@ -42,12 +43,16 @@ def resolve_transcription_attempts(
                 getattr(mapped_primary, "value", str(mapped_primary)), mapped_agent
             )
 
-    primary = str(transcription_primary or "gemini").strip().lower()
-    if primary == "whisper":
-        return [whisper_name, "gemini", "copilot"] if fallback_enabled else [whisper_name]
-    if primary == "copilot":
-        return ["copilot", "gemini"] if fallback_enabled else ["copilot"]
-    return ["gemini", "copilot"] if fallback_enabled else ["gemini"]
+    defaults = [p.value for p in supported_providers if hasattr(p, "value")]
+    primary = str(fallback_provider or (defaults[0] if defaults else "")).strip().lower()
+    # Default fallback chain if no mapping
+    if primary == whisper_name:
+        return [whisper_name] + defaults if fallback_enabled else [whisper_name]
+    if primary in defaults:
+        idx = defaults.index(primary)
+        ordered_defaults = [primary] + [d for d in defaults if d != primary]
+        return ordered_defaults if fallback_enabled else [primary]
+    return defaults if fallback_enabled else defaults[:1]
 
 
 def normalize_local_whisper_model_name(configured_model: str) -> str:
@@ -121,31 +126,27 @@ def run_transcription_attempts(
     *,
     attempts: list[str],
     audio_file_path: str,
-    transcribe_with_whisper: Callable[[str], str | None],
-    transcribe_with_gemini: Callable[[str], str | None],
-    transcribe_with_copilot: Callable[[str], str | None],
+    transcribers_map: Mapping[str, Callable[[str], str | None]],
     rate_limited_error_type: type[Exception],
     record_rate_limit_with_context: Callable[[Any, Exception, str], None],
-    gemini_provider: Any,
-    copilot_provider: Any,
+    provider_to_tool: Mapping[str, Any],
     logger: Any,
 ) -> str | None:
     """Execute ordered transcription attempts with fallback and rate-limit recording."""
     for tool_name in attempts:
         try:
-            if tool_name == "whisper":
-                text = transcribe_with_whisper(audio_file_path)
-            elif tool_name == "gemini":
-                text = transcribe_with_gemini(audio_file_path)
-            else:
-                text = transcribe_with_copilot(audio_file_path)
+            handler = transcribers_map.get(tool_name)
+            if not handler:
+                continue
+
+            text = handler(audio_file_path)
 
             if text:
                 logger.info("✅ Transcription successful with %s", tool_name)
                 return text
         except rate_limited_error_type as exc:
-            if tool_name in {"gemini", "copilot"}:
-                ai_tool = gemini_provider if tool_name == "gemini" else copilot_provider
+            ai_tool = provider_to_tool.get(tool_name)
+            if ai_tool:
                 record_rate_limit_with_context(ai_tool, exc, "transcribe")
             else:
                 logger.warning("⚠️  %s transcription failed (rate-limited): %s", tool_name, exc)

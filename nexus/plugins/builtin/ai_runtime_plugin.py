@@ -23,9 +23,6 @@ from nexus.plugins.builtin.ai_runtime.fallback_policy import (
     fallback_order_from_preferences as fallback_order_from_preferences_impl,
     resolve_analysis_tool_order as resolve_analysis_tool_order_impl,
 )
-from nexus.plugins.builtin.ai_runtime.operation_agent_policy import (
-    resolve_issue_override_agent as resolve_issue_override_agent_impl,
-)
 from nexus.plugins.builtin.ai_runtime.provider_invokers.agent_invokers import (
     invoke_copilot_agent_cli as invoke_copilot_agent_cli_impl,
     invoke_gemini_agent_cli as invoke_gemini_agent_cli_impl,
@@ -37,6 +34,11 @@ from nexus.plugins.builtin.ai_runtime.provider_invokers.analysis_invokers import
 )
 from nexus.plugins.builtin.ai_runtime.provider_invokers.codex_invoker import (
     invoke_codex_cli as invoke_codex_cli_impl,
+)
+from nexus.plugins.builtin.ai_runtime.provider_invokers.ollama_invoker import (
+    invoke_ollama_agent_cli as invoke_ollama_agent_cli_impl,
+    run_ollama_analysis_cli as run_ollama_analysis_cli_impl,
+    run_ollama_transcription_cli as run_ollama_transcription_cli_impl,
 )
 from nexus.plugins.builtin.ai_runtime.provider_invokers.transcription_invokers import (
     transcribe_with_copilot_cli as transcribe_with_copilot_cli_impl,
@@ -50,6 +52,9 @@ from nexus.plugins.builtin.ai_runtime.provider_registry import (
     parse_provider as parse_provider_impl,
     supports_analysis as supports_analysis_impl,
     unique_tools as unique_tools_impl,
+)
+from nexus.plugins.builtin.ai_runtime.system_operation_policy import (
+    resolve_issue_override_agent as resolve_issue_override_agent_impl,
 )
 from nexus.plugins.builtin.ai_runtime.transcription_service import (
     is_non_transcription_artifact as is_non_transcription_artifact_impl,
@@ -68,6 +73,7 @@ class AIProvider(Enum):
     COPILOT = "copilot"
     GEMINI = "gemini"
     CODEX = "codex"
+    OLLAMA = "ollama"
 
 
 class ToolUnavailableError(Exception):
@@ -101,6 +107,8 @@ class AIOrchestrator:
         self.gemini_model = str(self.config.get("gemini_model", "")).strip()
         self.codex_cli_path = self.config.get("codex_cli_path", "codex")
         self.codex_model = str(self.config.get("codex_model", "")).strip()
+        self.ollama_cli_path = self.config.get("ollama_cli_path", "ollama")
+        self.ollama_model = str(self.config.get("ollama_model", "")).strip()
         self.copilot_model = str(self.config.get("copilot_model", "")).strip()
         self.copilot_supports_model = bool(self.config.get("copilot_supports_model", False))
         self.ai_tool_preferences_strict = bool(self.config.get("ai_tool_preferences_strict", False))
@@ -110,10 +118,18 @@ class AIOrchestrator:
                 "tool_preferences_resolver",
             )
         )
-        self.operation_agents = self.config.get("operation_agents", {})
-        self.operation_agents_resolver: Callable[[str], dict[str, Any] | None] | None = (
+        self.model_profiles = self.config.get("model_profiles", {})
+        self.model_profiles_resolver: Callable[[str], dict[str, Any] | None] | None = (
+            self.config.get("model_profiles_resolver")
+        )
+        self.profile_provider_priority = self.config.get("profile_provider_priority", {})
+        self.profile_provider_priority_resolver: Callable[[str], dict[str, Any] | None] | None = (
+            self.config.get("profile_provider_priority_resolver")
+        )
+        self.system_operations = self.config.get("system_operations", {})
+        self.system_operations_resolver: Callable[[str], dict[str, Any] | None] | None = (
             self.config.get(
-                "operation_agents_resolver",
+                "system_operations_resolver",
             )
         )
         self.chat_agent_types_resolver: Callable[[str], list[str] | None] | None = self.config.get(
@@ -128,12 +144,7 @@ class AIOrchestrator:
         self.ai_context_summary_max_chars = int(
             self.config.get("ai_context_summary_max_chars", 1200) or 1200
         )
-        self.gemini_transcription_timeout = self.config.get("gemini_transcription_timeout", 60)
-        self.copilot_transcription_timeout = self.config.get("copilot_transcription_timeout", 120)
-        primary = str(self.config.get("transcription_primary", "gemini")).strip().lower()
-        self.transcription_primary = (
-            primary if primary in {"gemini", "copilot", "whisper"} else "gemini"
-        )
+        self.transcription_timeout = self.config.get("transcription_timeout", 120)
         self.whisper_model = (
             str(self.config.get("whisper_model", "whisper-1")).strip() or "whisper-1"
         )
@@ -192,9 +203,12 @@ class AIOrchestrator:
     def _supports_analysis(tool: AIProvider) -> bool:
         return supports_analysis_impl(
             tool,
-            gemini_provider=AIProvider.GEMINI,
-            copilot_provider=AIProvider.COPILOT,
-            codex_provider=AIProvider.CODEX,
+            supported_tools=[
+                AIProvider.GEMINI,
+                AIProvider.COPILOT,
+                AIProvider.CODEX,
+                AIProvider.OLLAMA,
+            ],
         )
 
     @staticmethod
@@ -240,10 +254,10 @@ class AIOrchestrator:
                 )
         return self.tool_preferences if isinstance(self.tool_preferences, dict) else {}
 
-    def _resolved_operation_agents(self, project_name: str | None = None) -> dict[str, Any]:
-        if project_name and callable(self.operation_agents_resolver):
+    def _resolved_system_operations(self, project_name: str | None = None) -> dict[str, Any]:
+        if project_name and callable(self.system_operations_resolver):
             try:
-                resolved = self.operation_agents_resolver(str(project_name))
+                resolved = self.system_operations_resolver(str(project_name))
                 if isinstance(resolved, dict):
                     return resolved
             except Exception as exc:
@@ -252,7 +266,110 @@ class AIOrchestrator:
                     project_name,
                     exc,
                 )
-        return self.operation_agents if isinstance(self.operation_agents, dict) else {}
+        return self.system_operations if isinstance(self.system_operations, dict) else {}
+
+    def _resolved_model_profiles(self, project_name: str | None = None) -> dict[str, Any]:
+        if project_name and callable(self.model_profiles_resolver):
+            try:
+                resolved = self.model_profiles_resolver(str(project_name))
+                if isinstance(resolved, dict):
+                    return resolved
+            except Exception as exc:
+                logger.warning(
+                    "Could not resolve model profiles for project %s: %s",
+                    project_name,
+                    exc,
+                )
+        return self.model_profiles if isinstance(self.model_profiles, dict) else {}
+
+    def _auto_primary_tool_for_profile(
+        self,
+        profile_name: str,
+        project_name: str | None = None,
+    ) -> AIProvider:
+        providers_for_profile = self._providers_for_profile(
+            profile_name,
+            project_name=project_name,
+        )
+        if not providers_for_profile:
+            return AIProvider.COPILOT
+
+        for tool in providers_for_profile:
+            if self.check_tool_available(tool):
+                return tool
+        return providers_for_profile[0]
+
+    def _resolved_profile_provider_priority(
+        self, project_name: str | None = None
+    ) -> dict[str, Any]:
+        if project_name and callable(self.profile_provider_priority_resolver):
+            try:
+                resolved = self.profile_provider_priority_resolver(str(project_name))
+                if isinstance(resolved, dict):
+                    return resolved
+            except Exception as exc:
+                logger.warning(
+                    "Could not resolve profile provider priority for project %s: %s",
+                    project_name,
+                    exc,
+                )
+        return (
+            self.profile_provider_priority
+            if isinstance(self.profile_provider_priority, dict)
+            else {}
+        )
+
+    def _profile_priority_order(
+        self,
+        profile_name: str,
+        project_name: str | None = None,
+    ) -> list[AIProvider]:
+        normalized = str(profile_name or "").strip().lower()
+
+        configured = self._resolved_profile_provider_priority(project_name).get(normalized)
+        if isinstance(configured, list):
+            parsed: list[AIProvider] = []
+            seen: set[AIProvider] = set()
+            for item in configured:
+                parsed_provider = self._parse_provider({"provider": item, "profile": normalized})
+                if isinstance(parsed_provider, AIProvider) and parsed_provider not in seen:
+                    parsed.append(parsed_provider)
+                    seen.add(parsed_provider)
+            if parsed:
+                return parsed
+
+        if normalized in {"fast", "flash", "small", "low"}:
+            return [AIProvider.GEMINI, AIProvider.COPILOT, AIProvider.CODEX, AIProvider.OLLAMA]
+        if normalized in {"reasoning", "pro", "large", "high"}:
+            return [AIProvider.CODEX, AIProvider.COPILOT, AIProvider.GEMINI, AIProvider.OLLAMA]
+        return [AIProvider.COPILOT, AIProvider.GEMINI, AIProvider.CODEX, AIProvider.OLLAMA]
+
+    def _providers_for_profile(
+        self,
+        profile_name: str,
+        *,
+        project_name: str | None = None,
+    ) -> list[AIProvider]:
+        profiles = self._resolved_model_profiles(project_name)
+        profile_cfg = profiles.get(str(profile_name or "").strip())
+        if not isinstance(profile_cfg, Mapping):
+            return []
+
+        ordered: list[AIProvider] = []
+        for tool in self._profile_priority_order(profile_name, project_name=project_name):
+            model_name = str(profile_cfg.get(tool.value) or "").strip()
+            if model_name:
+                ordered.append(tool)
+
+        # Keep backward-compatible behavior for custom profile names
+        # by appending any configured provider not already in the profile order.
+        for tool in AIProvider:
+            if tool in ordered:
+                continue
+            model_name = str(profile_cfg.get(tool.value) or "").strip()
+            if model_name:
+                ordered.append(tool)
+        return ordered
 
     def _fallback_order_from_preferences(self, project_name: str | None = None) -> list[AIProvider]:
         tool_preferences = self._resolved_tool_preferences(project_name)
@@ -286,8 +403,7 @@ class AIOrchestrator:
             return ""
 
         spec = self._resolved_tool_spec(agent_name, project_name=project_name)
-        spec_provider = getattr(spec, "provider", None)
-        spec_model = str(getattr(spec, "model", "") or "").strip()
+        spec_profile = str(getattr(spec, "profile", "") or "").strip()
         spec_valid = bool(getattr(spec, "valid", False))
 
         if not spec_valid:
@@ -297,10 +413,35 @@ class AIOrchestrator:
                 agent_name=agent_name,
             )
             return ""
-        if spec_provider != tool or not spec_model:
+        if not spec_profile:
+            return ""
+
+        profiles = self._resolved_model_profiles(project_name)
+        profile_cfg = profiles.get(spec_profile)
+        if not isinstance(profile_cfg, Mapping):
+            if self.ai_tool_preferences_strict:
+                raise ValueError(
+                    f"Unknown model profile '{spec_profile}' for agent '{agent_name}' "
+                    f"in project '{project_name or 'default'}'"
+                )
+            warn_key = f"missing_profile:{project_name or 'default'}:{agent_name}:{spec_profile}"
+            if warn_key not in self._warned_tool_preferences:
+                self._warned_tool_preferences.add(warn_key)
+                logger.warning(
+                    "Ignoring unknown model profile for agent=%s project=%s: %s",
+                    agent_name,
+                    project_name or "default",
+                    spec_profile,
+                )
+            return ""
+
+        spec_model = str(profile_cfg.get(tool.value) or "").strip()
+        if not spec_model:
             return ""
         if tool == AIProvider.COPILOT and not self.copilot_supports_model:
-            warn_key = f"copilot_model_disabled:{project_name or 'default'}:{agent_name}:{spec_model}"
+            warn_key = (
+                f"copilot_model_disabled:{project_name or 'default'}:{agent_name}:{spec_model}"
+            )
             if warn_key not in self._warned_tool_preferences:
                 self._warned_tool_preferences.add(warn_key)
                 logger.warning(
@@ -336,13 +477,13 @@ class AIOrchestrator:
         task_key: str,
         mapped_agent: str,
         text: str,
-        operation_agents: Mapping[str, Any] | None,
+        system_operations: Mapping[str, Any] | None,
     ) -> str:
         return resolve_issue_override_agent_impl(
             task_key=task_key,
             mapped_agent=mapped_agent,
             text=text,
-            operation_agents=operation_agents,
+            system_operations=system_operations,
             looks_like_bug_issue=self._looks_like_bug_issue,
         )
 
@@ -370,6 +511,8 @@ class AIOrchestrator:
                 path = self.gemini_cli_path
             elif tool == AIProvider.CODEX:
                 path = self.codex_cli_path
+            elif tool == AIProvider.OLLAMA:
+                path = self.ollama_cli_path
             else:
                 path = self.copilot_cli_path
             result = subprocess.run(
@@ -401,13 +544,20 @@ class AIOrchestrator:
     ) -> AIProvider:
         tool_preferences = self._resolved_tool_preferences(project_name)
         if agent_name and agent_name in tool_preferences:
-            pref = self._parse_provider_with_policy(
-                tool_preferences.get(agent_name),
-                project_name=project_name,
-                agent_name=agent_name,
-            )
-            if pref:
-                return pref
+            spec = self._parse_tool_preference(tool_preferences.get(agent_name))
+            if bool(getattr(spec, "valid", False)):
+                pref = getattr(spec, "provider", None)
+                if isinstance(pref, AIProvider):
+                    return pref
+                profile_name = str(getattr(spec, "profile", "") or "").strip()
+                if profile_name:
+                    return self._auto_primary_tool_for_profile(profile_name, project_name)
+            else:
+                self._parse_provider_with_policy(
+                    tool_preferences.get(agent_name),
+                    project_name=project_name,
+                    agent_name=agent_name,
+                )
 
         return AIProvider.COPILOT
 
@@ -434,15 +584,15 @@ class AIOrchestrator:
         project_name: str | None = None,
         text: str = "",
     ) -> list[AIProvider]:
-        operation_agents = self._resolved_operation_agents(project_name)
-        if not isinstance(operation_agents, Mapping):
-            operation_agents = {}
+        system_operations = self._resolved_system_operations(project_name)
+        if not isinstance(system_operations, Mapping):
+            system_operations = {}
         return resolve_analysis_tool_order_impl(
             task=task,
             text=text,
             project_name=project_name,
             fallback_enabled=bool(self.fallback_enabled),
-            operation_agents=operation_agents,
+            system_operations=system_operations,
             default_chat_agent_type=self._default_chat_agent_type(project_name),
             resolve_issue_override_agent=self._resolve_issue_override_agent,
             get_primary_tool=lambda agent, project: self.get_primary_tool(
@@ -452,29 +602,32 @@ class AIOrchestrator:
             fallback_order_from_preferences_fn=self._fallback_order_from_preferences,
             unique_tools=self._unique_tools,
             supports_analysis=self._supports_analysis,
-            gemini_provider=AIProvider.GEMINI,
-            copilot_provider=AIProvider.COPILOT,
+            default_tools=[
+                AIProvider.GEMINI,
+                AIProvider.COPILOT,
+                AIProvider.CODEX,
+                AIProvider.OLLAMA,
+            ],
         )
 
     def _resolve_transcription_attempts(self, project_name: str | None = None) -> list[str]:
-        operation_agents = self._resolved_operation_agents(project_name)
-        if not isinstance(operation_agents, Mapping):
-            operation_agents = {}
+        system_operations = self._resolved_system_operations(project_name)
+        if not isinstance(system_operations, Mapping):
+            system_operations = {}
         return resolve_transcription_attempts_impl(
             project_name=project_name,
-            operation_agents=operation_agents,
+            system_operations=system_operations,
             fallback_enabled=bool(self.fallback_enabled),
-            transcription_primary=self.transcription_primary,
+            fallback_provider=os.getenv("TRANSCRIPT_PROVIDER", "").strip().lower(),
             get_primary_tool=lambda agent, project: self.get_primary_tool(
                 agent, project_name=project
             ),
             fallback_order_from_preferences_fn=self._fallback_order_from_preferences,
             unique_tools=self._unique_tools,
-            gemini_provider=AIProvider.GEMINI,
-            copilot_provider=AIProvider.COPILOT,
+            supported_providers=[AIProvider.GEMINI, AIProvider.COPILOT, AIProvider.OLLAMA],
             warn_unsupported_mapped_provider=lambda provider, agent: logger.warning(
                 "Ignoring unsupported transcription provider '%s' for mapped agent '%s'; "
-                "falling back to transcription_primary",
+                "falling back to TRANSCRIPT_PROVIDER",
                 provider,
                 agent,
             ),
@@ -485,26 +638,51 @@ class AIOrchestrator:
     ) -> dict[str, Any]:
         return run_analysis_with_provider_impl(
             tool=tool,
-            gemini_provider=AIProvider.GEMINI,
-            copilot_provider=AIProvider.COPILOT,
-            codex_provider=AIProvider.CODEX,
-            run_gemini_cli_analysis=self._run_gemini_cli_analysis,
-            run_copilot_analysis=self._run_copilot_analysis,
-            run_codex_analysis=self._run_codex_analysis,
+            providers_map={
+                AIProvider.GEMINI: self._run_gemini_cli_analysis,
+                AIProvider.COPILOT: self._run_copilot_analysis,
+                AIProvider.CODEX: self._run_codex_analysis,
+                AIProvider.OLLAMA: self._run_ollama_analysis,
+            },
             text=text,
             task=task,
             kwargs=kwargs,
             tool_unavailable_error=ToolUnavailableError,
         )
 
-    def _get_tool_order(self, agent_name: str | None = None, use_gemini: bool = False) -> list:
+    def _get_tool_order(
+        self,
+        agent_name: str | None = None,
+        use_gemini: bool = False,
+        project_name: str | None = None,
+    ) -> list:
         """Return all known tools in priority order for this agent.
 
         The preferred tool goes first; the rest follow in enum declaration order.
         Adding a new provider (Claude, Codex, …) only requires extending AIProvider
         and implementing _invoke_tool dispatch — no other changes needed.
         """
-        preferred = AIProvider.GEMINI if use_gemini else self.get_primary_tool(agent_name)
+        if use_gemini:
+            preferred = AIProvider.GEMINI
+            all_tools = list(AIProvider)
+            return [preferred] + [t for t in all_tools if t != preferred]
+
+        spec = self._resolved_tool_spec(agent_name, project_name=project_name)
+        spec_valid = bool(getattr(spec, "valid", False))
+        spec_profile = str(getattr(spec, "profile", "") or "").strip()
+        providers_for_profile = (
+            self._providers_for_profile(
+                spec_profile,
+                project_name=project_name,
+            )
+            if spec_valid and spec_profile
+            else []
+        )
+
+        preferred = self.get_primary_tool(agent_name, project_name=project_name)
+        if providers_for_profile:
+            return [preferred] + [t for t in providers_for_profile if t != preferred]
+
         all_tools = list(AIProvider)
         return [preferred] + [t for t in all_tools if t != preferred]
 
@@ -516,6 +694,7 @@ class AIOrchestrator:
         agents_dir: str,
         base_dir: str,
         agent_name: str | None = None,
+        project_name: str | None = None,
         issue_num: str | None = None,
         log_subdir: str | None = None,
         env: dict[str, str] | None = None,
@@ -524,6 +703,7 @@ class AIOrchestrator:
         model_override = self._resolve_model_for_tool(
             tool=tool,
             agent_name=agent_name,
+            project_name=project_name,
         )
         if tool == AIProvider.COPILOT:
             return self._invoke_copilot(
@@ -549,6 +729,17 @@ class AIOrchestrator:
             )
         if tool == AIProvider.CODEX:
             return self._invoke_codex(
+                agent_prompt,
+                workspace_dir,
+                agents_dir,
+                base_dir,
+                model_override=model_override,
+                issue_num=issue_num,
+                log_subdir=log_subdir,
+                env=env,
+            )
+        if tool == AIProvider.OLLAMA:
+            return self._invoke_ollama(
                 agent_prompt,
                 workspace_dir,
                 agents_dir,
@@ -607,6 +798,7 @@ class AIOrchestrator:
         base_dir: str,
         issue_url: str | None = None,
         agent_name: str | None = None,
+        project_name: str | None = None,
         use_gemini: bool = False,
         exclude_tools: list | None = None,
         log_subdir: str | None = None,
@@ -628,7 +820,11 @@ class AIOrchestrator:
         pid, selected_tool = invoke_agent_with_fallback_impl(
             issue_url=issue_url,
             exclude_tools=exclude_tools,
-            get_tool_order=lambda: self._get_tool_order(agent_name, use_gemini),
+            get_tool_order=lambda: self._get_tool_order(
+                agent_name,
+                use_gemini,
+                project_name,
+            ),
             check_tool_available=self.check_tool_available,
             invoke_tool=lambda tool, issue_num: self._invoke_tool(
                 tool,
@@ -637,6 +833,7 @@ class AIOrchestrator:
                 agents_dir,
                 base_dir,
                 agent_name=agent_name,
+                project_name=project_name,
                 issue_num=issue_num,
                 log_subdir=log_subdir,
                 env=env,
@@ -654,6 +851,7 @@ class AIOrchestrator:
         selected_model = self._resolve_model_for_tool(
             tool=selected_tool,
             agent_name=agent_name,
+            project_name=project_name,
         )
         logger.info(
             "✅ Agent provider selected: agent=%s provider=%s model=%s pid=%s",
@@ -748,22 +946,56 @@ class AIOrchestrator:
             env=env,
         )
 
+    def _invoke_ollama(
+        self,
+        agent_prompt: str,
+        workspace_dir: str,
+        agents_dir: str,
+        base_dir: str,
+        model_override: str = "",
+        issue_num: str | None = None,
+        log_subdir: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> int | None:
+        return invoke_ollama_agent_cli_impl(
+            check_tool_available=self.check_tool_available,
+            ollama_provider=AIProvider.OLLAMA,
+            ollama_cli_path=self.ollama_cli_path,
+            ollama_model=model_override or str(self.config.get("ollama_model", "")).strip(),
+            get_tasks_logs_dir=self.get_tasks_logs_dir,
+            tool_unavailable_error=ToolUnavailableError,
+            rate_limited_error=RateLimitedError,
+            logger=logger,
+            agent_prompt=agent_prompt,
+            workspace_dir=workspace_dir,
+            agents_dir=agents_dir,
+            issue_num=issue_num,
+            log_subdir=log_subdir,
+            env=env,
+        )
+
     def transcribe_audio(self, audio_file_path: str, project_name: str | None = None) -> str | None:
         attempts = self._resolve_transcription_attempts(project_name=project_name)
         return run_transcription_attempts_impl(
             attempts=attempts,
             audio_file_path=audio_file_path,
-            transcribe_with_whisper=self._transcribe_with_whisper_api,
-            transcribe_with_gemini=self._transcribe_with_gemini_cli,
-            transcribe_with_copilot=self._transcribe_with_copilot_cli,
+            transcribers_map={
+                "whisper": self._transcribe_with_whisper_api,
+                "gemini": self._transcribe_with_gemini_cli,
+                "copilot": self._transcribe_with_copilot_cli,
+                "ollama": self._transcribe_with_ollama_cli,
+            },
             rate_limited_error_type=RateLimitedError,
             record_rate_limit_with_context=lambda tool, exc, context: self._record_rate_limit_with_context(
                 tool,
                 exc,
                 context=context,
             ),
-            gemini_provider=AIProvider.GEMINI,
-            copilot_provider=AIProvider.COPILOT,
+            provider_to_tool={
+                "gemini": AIProvider.GEMINI,
+                "copilot": AIProvider.COPILOT,
+                "ollama": AIProvider.OLLAMA,
+            },
             logger=logger,
         )
 
@@ -806,7 +1038,7 @@ class AIOrchestrator:
             rate_limited_error=RateLimitedError,
             logger=logger,
             audio_file_path=audio_file_path,
-            timeout=self.gemini_transcription_timeout,
+            timeout=self.transcription_timeout,
         )
 
     def _transcribe_with_copilot_cli(self, audio_file_path: str) -> str | None:
@@ -819,7 +1051,21 @@ class AIOrchestrator:
             tool_unavailable_error=ToolUnavailableError,
             logger=logger,
             audio_file_path=audio_file_path,
-            timeout=self.copilot_transcription_timeout,
+            timeout=self.transcription_timeout,
+        )
+
+    def _transcribe_with_ollama_cli(self, audio_file_path: str) -> str | None:
+        return run_ollama_transcription_cli_impl(
+            check_tool_available=self.check_tool_available,
+            ollama_provider=AIProvider.OLLAMA,
+            ollama_cli_path=self.ollama_cli_path,
+            ollama_model=self.ollama_model,
+            strip_cli_tool_output=self._strip_cli_tool_output,
+            is_non_transcription_artifact=self._is_non_transcription_artifact,
+            tool_unavailable_error=ToolUnavailableError,
+            logger=logger,
+            audio_file_path=audio_file_path,
+            timeout=self.transcription_timeout,
         )
 
     def run_text_to_speech_analysis(
@@ -845,6 +1091,11 @@ class AIOrchestrator:
             ),
             "codex": self._resolve_model_for_tool(
                 tool=AIProvider.CODEX,
+                agent_name=mapped_agent or None,
+                project_name=project_name,
+            ),
+            "ollama": self._resolve_model_for_tool(
+                tool=AIProvider.OLLAMA,
                 agent_name=mapped_agent or None,
                 project_name=project_name,
             ),
@@ -878,6 +1129,7 @@ class AIOrchestrator:
         analysis_kwargs["_gemini_model_override"] = model_overrides["gemini"]
         analysis_kwargs["_copilot_model_override"] = model_overrides["copilot"]
         analysis_kwargs["_codex_model_override"] = model_overrides["codex"]
+        analysis_kwargs["_ollama_model_override"] = model_overrides["ollama"]
         logger.info(
             "🧾 Analysis prompt metrics: input_chars=%s history_chars=%s prefix_fp=%s task=%s",
             len(text),
@@ -943,27 +1195,27 @@ class AIOrchestrator:
                         return normalized
             return ""
 
-        operation_agents = self._resolved_operation_agents(project_name)
-        if not isinstance(operation_agents, Mapping):
-            operation_agents = {}
+        system_operations = self._resolved_system_operations(project_name)
+        if not isinstance(system_operations, Mapping):
+            system_operations = {}
 
         task_key = str(task or "").strip().lower()
         if task_key == "chat":
-            mapped_agent = _coerce_chat_agent_type(operation_agents.get(task_key))
+            mapped_agent = _coerce_chat_agent_type(system_operations.get(task_key))
             if not mapped_agent:
                 mapped_agent = self._default_chat_agent_type(project_name)
             if not mapped_agent:
-                mapped_agent = str(operation_agents.get("default") or "").strip()
+                mapped_agent = str(system_operations.get("default") or "").strip()
         else:
             mapped_agent = str(
-                operation_agents.get(task_key) or operation_agents.get("default") or ""
+                system_operations.get(task_key) or system_operations.get("default") or ""
             ).strip()
 
         mapped_agent = self._resolve_issue_override_agent(
             task_key=task_key,
             mapped_agent=mapped_agent,
             text=text,
-            operation_agents=operation_agents,
+            system_operations=system_operations,
         )
         return mapped_agent
 
@@ -1033,6 +1285,32 @@ class AIOrchestrator:
             kwargs=prompt_kwargs,
         )
 
+    def _run_ollama_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
+        timeout = (
+            self.refine_description_timeout
+            if task == "refine_description"
+            else self.analysis_timeout
+        )
+        ollama_model = (
+            str(kwargs.get("_ollama_model_override") or "").strip()
+            or str(self.config.get("ollama_model", "")).strip()
+        )
+        prompt_kwargs = {k: v for k, v in kwargs.items() if not str(k).startswith("_")}
+        return run_ollama_analysis_cli_impl(
+            check_tool_available=self.check_tool_available,
+            ollama_provider=AIProvider.OLLAMA,
+            ollama_cli_path=self.ollama_cli_path,
+            ollama_model=ollama_model,
+            build_analysis_prompt=self._build_analysis_prompt,
+            parse_analysis_result=self._parse_analysis_result,
+            tool_unavailable_error=ToolUnavailableError,
+            rate_limited_error=RateLimitedError,
+            text=text,
+            task=task,
+            timeout=timeout,
+            kwargs=prompt_kwargs,
+        )
+
     def _build_analysis_prompt(self, text: str, task: str, **kwargs) -> str:
         return build_analysis_prompt_impl(text, task, **kwargs)
 
@@ -1082,5 +1360,5 @@ def register_plugins(registry) -> None:
         name="ai-runtime-orchestrator",
         version="0.1.0",
         factory=lambda config: AIOrchestrator(config),
-        description="Copilot/Gemini/Codex orchestration with fallback and cooldown handling",
+        description="Copilot/Gemini/Codex/Ollama orchestration with fallback and cooldown handling",
     )

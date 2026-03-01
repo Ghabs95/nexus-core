@@ -1,0 +1,1990 @@
+import asyncio
+import contextlib
+import logging
+import os
+import time
+from typing import Any
+
+from alerting import init_alerting_system
+from analytics import get_stats_report
+from audit_store import AuditStore
+from commands.workflow import (
+    pause_handler as workflow_pause_handler,
+)
+from commands.workflow import (
+    resume_handler as workflow_resume_handler,
+)
+from commands.workflow import (
+    stop_handler as workflow_stop_handler,
+)
+
+# Import configuration from centralized config module
+from config import (
+    AI_PERSONA,
+    BASE_DIR,
+    LOGS_DIR,
+    NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY,
+    NEXUS_FEATURE_REGISTRY_ENABLED,
+    NEXUS_FEATURE_REGISTRY_MAX_ITEMS_PER_PROJECT,
+    NEXUS_CORE_STORAGE_DIR,
+    NEXUS_STORAGE_DSN,
+    NEXUS_STORAGE_BACKEND,
+    NEXUS_WORKFLOW_BACKEND,
+    ORCHESTRATOR_CONFIG,
+    PROJECT_CONFIG,
+    TELEGRAM_ALLOWED_USER_IDS,
+    TELEGRAM_BOT_LOG_FILE,
+    TELEGRAM_CHAT_ID,
+    TELEGRAM_TOKEN,
+    get_default_repo,
+    get_repo,
+    get_repos,
+    get_inbox_storage_backend,
+    get_inbox_dir,
+    get_nexus_dir_name,
+    get_tasks_active_dir,
+    get_tasks_closed_dir,
+    get_tasks_logs_dir,
+    get_track_short_projects,
+)
+from error_handling import format_error_for_user
+from handlers.audio_transcription_handler import (
+    AudioTranscriptionDeps,
+    transcribe_telegram_voice,
+)
+from handlers.bug_report_handler import handle_report_bug
+from handlers.callback_command_handlers import (
+    CallbackHandlerDeps,
+)
+from handlers.callback_command_handlers import (
+    close_flow_handler as callback_close_flow_handler,
+)
+from handlers.callback_command_handlers import (
+    flow_close_handler as callback_flow_close_handler,
+)
+from handlers.callback_command_handlers import (
+    inline_keyboard_handler as callback_inline_keyboard_handler,
+)
+from handlers.callback_command_handlers import (
+    issue_picker_handler as callback_issue_picker_handler,
+)
+from handlers.callback_command_handlers import (
+    menu_callback_handler as callback_menu_callback_handler,
+)
+from handlers.callback_command_handlers import (
+    monitor_project_picker_handler as callback_monitor_project_picker_handler,
+)
+from handlers.callback_command_handlers import (
+    project_picker_handler as callback_project_picker_handler,
+)
+from handlers.chat_command_handlers import (
+    chat_agents_handler as core_chat_agents_handler,
+    chat_callback_handler as core_chat_callback_handler,
+    chat_menu_handler as core_chat_menu_handler,
+)
+from handlers.common_routing import extract_json_dict, route_task_with_context
+from handlers.feature_ideation_handlers import (
+    FeatureIdeationHandlerDeps,
+    handle_feature_ideation_request,
+    is_feature_ideation_request,
+)
+from handlers.feature_ideation_handlers import (
+    feature_callback_handler as core_feature_callback_handler,
+)
+from handlers.feature_registry_command_handlers import (
+    FeatureRegistryCommandDeps,
+    feature_done_handler as core_feature_done_handler,
+    feature_forget_handler as core_feature_forget_handler,
+    feature_list_handler as core_feature_list_handler,
+)
+from handlers.hands_free_routing_handler import (
+    HandsFreeRoutingDeps,
+    resolve_pending_project_selection,
+    route_hands_free_text,
+)
+from handlers.inbox_routing_handler import (
+    PROJECTS,
+    TYPES,
+    process_inbox_task,
+    save_resolved_task,
+)
+from handlers.issue_command_handlers import (
+    IssueHandlerDeps,
+)
+from handlers.issue_command_handlers import (
+    assign_handler as issue_assign_handler,
+)
+from handlers.issue_command_handlers import (
+    comments_handler as issue_comments_handler,
+)
+from handlers.issue_command_handlers import (
+    implement_handler as issue_implement_handler,
+)
+from handlers.issue_command_handlers import (
+    myissues_handler as issue_myissues_handler,
+)
+from handlers.issue_command_handlers import (
+    prepare_handler as issue_prepare_handler,
+)
+from handlers.issue_command_handlers import (
+    respond_handler as issue_respond_handler,
+)
+from handlers.issue_command_handlers import (
+    track_handler as issue_track_handler,
+)
+from handlers.issue_command_handlers import (
+    tracked_handler as issue_tracked_handler,
+)
+from handlers.issue_command_handlers import (
+    untrack_handler as issue_untrack_handler,
+)
+from handlers.monitoring_command_handlers import (
+    MonitoringHandlersDeps,
+)
+from handlers.monitoring_command_handlers import (
+    active_handler as monitoring_active_handler,
+)
+from handlers.monitoring_command_handlers import (
+    fuse_handler as monitoring_fuse_handler,
+)
+from handlers.monitoring_command_handlers import (
+    logs_handler as monitoring_logs_handler,
+)
+from handlers.monitoring_command_handlers import (
+    logsfull_handler as monitoring_logsfull_handler,
+)
+from handlers.monitoring_command_handlers import (
+    status_handler as monitoring_status_handler,
+)
+from handlers.monitoring_command_handlers import (
+    tail_handler as monitoring_tail_handler,
+)
+from handlers.monitoring_command_handlers import (
+    tailstop_handler as monitoring_tailstop_handler,
+)
+from handlers.ops_command_handlers import (
+    OpsHandlerDeps,
+)
+from handlers.ops_command_handlers import (
+    agents_handler as ops_agents_handler,
+)
+from handlers.ops_command_handlers import (
+    audit_handler as ops_audit_handler,
+)
+from handlers.ops_command_handlers import (
+    direct_handler as ops_direct_handler,
+)
+from handlers.ops_command_handlers import (
+    inboxq_handler as ops_inboxq_handler,
+)
+from handlers.ops_command_handlers import (
+    stats_handler as ops_stats_handler,
+)
+from handlers.visualize_command_handlers import (
+    VisualizeHandlerDeps,
+)
+from handlers.visualize_command_handlers import (
+    visualize_handler as workflow_visualize_handler,
+)
+from handlers.watch_command_handlers import (
+    WatchHandlerDeps,
+)
+from handlers.watch_command_handlers import (
+    watch_handler as workflow_watch_handler,
+)
+from handlers.workflow_command_handlers import (
+    WorkflowHandlerDeps,
+)
+from handlers.workflow_command_handlers import (
+    continue_handler as workflow_continue_handler,
+)
+from handlers.workflow_command_handlers import (
+    forget_handler as workflow_forget_handler,
+)
+from handlers.workflow_command_handlers import (
+    kill_handler as workflow_kill_handler,
+)
+from handlers.workflow_command_handlers import (
+    pause_handler as workflow_pause_picker_handler,
+)
+from handlers.workflow_command_handlers import (
+    reconcile_handler as workflow_reconcile_handler,
+)
+from handlers.workflow_command_handlers import (
+    reprocess_handler as workflow_reprocess_handler,
+)
+from handlers.workflow_command_handlers import (
+    resume_handler as workflow_resume_picker_handler,
+)
+from handlers.workflow_command_handlers import (
+    stop_handler as workflow_stop_picker_handler,
+)
+from handlers.workflow_command_handlers import (
+    wfstate_handler as workflow_wfstate_handler,
+)
+from inbox_processor import _normalize_agent_reference, get_sop_tier
+from nexus.adapters.git.utils import build_issue_url, resolve_repo
+from nexus.core.completion import scan_for_completions
+from nexus.core.utils.logging_filters import install_secret_redaction
+from nexus.plugins.builtin.ai_runtime_plugin import AIProvider
+from orchestration.ai_orchestrator import get_orchestrator
+from orchestration.nexus_core_helpers import get_workflow_definition_path
+from orchestration.plugin_runtime import (
+    get_profiled_plugin,
+    get_runtime_ops_plugin,
+    get_workflow_state_plugin,
+)
+from orchestration.telegram_callback_router import (
+    call_core_callback_handler as _router_call_core_callback_handler,
+)
+from orchestration.telegram_callback_router import (
+    call_core_chat_handler as _router_call_core_chat_handler,
+)
+from orchestration.telegram_command_router import dispatch_command as _router_dispatch_command
+from orchestration.telegram_update_bridge import (
+    build_telegram_interactive_ctx as _bridge_build_telegram_interactive_ctx,
+)
+from orchestration.telegram_update_bridge import (
+    buttons_to_reply_markup as _bridge_buttons_to_reply_markup,
+)
+from project_key_utils import normalize_project_key_optional as _normalize_project_key
+from rate_limiter import RateLimit, get_rate_limiter
+from report_scheduler import ReportScheduler
+from runtime.agent_launcher import get_sop_tier_from_issue, invoke_copilot_agent
+from services.command_contract import (
+    validate_command_parity,
+    validate_required_command_interface,
+)
+from services.feature_registry_service import FeatureRegistryService
+from services.memory_service import (
+    append_message,
+    create_chat,
+    get_active_chat,
+    get_chat,
+    get_chat_history,
+    rename_chat,
+)
+from services.telegram.telegram_bootstrap_ui_service import (
+    build_menu_keyboard as _svc_build_menu_keyboard,
+)
+from services.telegram.telegram_bootstrap_ui_service import (
+    check_tool_health as _svc_check_tool_health,
+)
+from services.telegram.telegram_bootstrap_ui_service import (
+    handle_help as _svc_handle_help,
+)
+from services.telegram.telegram_bootstrap_ui_service import (
+    handle_menu as _svc_handle_menu,
+)
+from services.telegram.telegram_bootstrap_ui_service import (
+    handle_start as _svc_handle_start,
+)
+from services.telegram.telegram_bootstrap_ui_service import (
+    on_startup as _svc_on_startup,
+)
+from services.telegram.telegram_chat_misc_service import (
+    call_core_chat_wrapper as _svc_call_core_chat_wrapper,
+)
+from services.telegram.telegram_chat_misc_service import (
+    handle_rename_chat as _svc_handle_rename_chat,
+)
+from services.telegram.telegram_command_runtime_service import (
+    handle_progress_command as _svc_handle_progress_command,
+)
+from services.telegram.telegram_command_runtime_service import (
+    rate_limited as _svc_rate_limited,
+)
+from services.telegram.telegram_handler_deps_service import (
+    build_audio_transcription_handler_deps as _svc_build_audio_transcription_handler_deps,
+)
+from services.telegram.telegram_handler_deps_service import (
+    build_callback_action_handlers as _svc_build_callback_action_handlers,
+)
+from services.telegram.telegram_handler_deps_service import (
+    build_callback_handler_deps as _svc_build_callback_handler_deps,
+)
+from services.telegram.telegram_handler_deps_service import (
+    build_feature_ideation_handler_deps as _svc_build_feature_ideation_handler_deps,
+)
+from services.telegram.telegram_handler_deps_service import (
+    build_hands_free_routing_handler_deps as _svc_build_hands_free_routing_handler_deps,
+)
+from services.telegram.telegram_handler_deps_service import (
+    build_issue_handler_deps as _svc_build_issue_handler_deps,
+)
+from services.telegram.telegram_handler_deps_service import (
+    build_monitoring_handler_deps as _svc_build_monitoring_handler_deps,
+)
+from services.telegram.telegram_handler_deps_service import (
+    build_ops_handler_deps as _svc_build_ops_handler_deps,
+)
+from services.telegram.telegram_handler_deps_service import (
+    build_visualize_handler_deps as _svc_build_visualize_handler_deps,
+)
+from services.telegram.telegram_handler_deps_service import (
+    build_watch_handler_deps as _svc_build_watch_handler_deps,
+)
+from services.telegram.telegram_handler_deps_service import (
+    build_workflow_handler_deps as _svc_build_workflow_handler_deps,
+)
+from services.telegram.telegram_hands_free_service import handle_hands_free_message
+from services.telegram.telegram_interactive_ctx_service import (
+    ctx_call_telegram_handler as _svc_ctx_call_telegram_handler,
+)
+from services.telegram.telegram_interactive_ctx_service import (
+    ctx_dispatch_command as _svc_ctx_dispatch_command,
+)
+from services.telegram.telegram_interactive_ctx_service import (
+    ctx_ensure_project as _svc_ctx_ensure_project,
+)
+from services.telegram.telegram_interactive_ctx_service import (
+    ctx_ensure_project_issue as _svc_ctx_ensure_project_issue,
+)
+from services.telegram.telegram_interactive_ctx_service import (
+    ctx_prompt_issue_selection as _svc_ctx_prompt_issue_selection,
+)
+from services.telegram.telegram_interactive_ctx_service import (
+    ctx_prompt_project_selection as _svc_ctx_prompt_project_selection,
+)
+from services.telegram.telegram_interactive_ctx_service import (
+    ctx_telegram_runtime as _svc_ctx_telegram_runtime,
+)
+from services.telegram.telegram_issue_selection_service import (
+    ensure_project_issue as _svc_ensure_project_issue,
+)
+from services.telegram.telegram_issue_selection_service import (
+    handle_pending_issue_input as _svc_handle_pending_issue_input,
+)
+from services.telegram.telegram_issue_selection_service import (
+    list_project_issues as _svc_list_project_issues,
+)
+from services.telegram.telegram_issue_selection_service import (
+    parse_project_issue_args as _svc_parse_project_issue_args,
+)
+from services.telegram.telegram_main_bootstrap_service import (
+    alerting_enabled as _svc_alerting_enabled,
+)
+from services.telegram.telegram_main_bootstrap_service import (
+    allowed_updates_all_types as _svc_allowed_updates_all_types,
+)
+from services.telegram.telegram_main_bootstrap_service import (
+    build_command_handler_map as _svc_build_command_handler_map,
+)
+from services.telegram.telegram_main_bootstrap_service import (
+    build_post_init_with_scheduler as _svc_build_post_init_with_scheduler,
+)
+from services.telegram.telegram_main_bootstrap_service import (
+    register_application_handlers as _svc_register_application_handlers,
+)
+from services.telegram.telegram_main_bootstrap_service import (
+    reports_enabled as _svc_reports_enabled,
+)
+from services.telegram.telegram_project_logs_service import (
+    extract_issue_number_from_file as _svc_extract_issue_number_from_file,
+)
+from services.telegram.telegram_project_logs_service import (
+    extract_project_from_nexus_path as _svc_extract_project_from_nexus_path,
+)
+from services.telegram.telegram_project_logs_service import (
+    find_issue_log_files as _svc_find_issue_log_files,
+)
+from services.telegram.telegram_project_logs_service import (
+    find_task_logs as _svc_find_task_logs,
+)
+from services.telegram.telegram_project_logs_service import (
+    get_project_logs_dir as _svc_get_project_logs_dir,
+)
+from services.telegram.telegram_project_logs_service import (
+    get_project_root as _svc_get_project_root,
+)
+from services.telegram.telegram_project_logs_service import (
+    get_single_project_key as _svc_get_single_project_key,
+)
+from services.telegram.telegram_project_logs_service import (
+    iter_project_keys as _svc_iter_project_keys,
+)
+from services.telegram.telegram_project_logs_service import (
+    read_latest_log_full as _svc_read_latest_log_full,
+)
+from services.telegram.telegram_project_logs_service import (
+    read_latest_log_tail as _svc_read_latest_log_tail,
+)
+from services.telegram.telegram_project_logs_service import (
+    read_log_matches as _svc_read_log_matches,
+)
+from services.telegram.telegram_project_logs_service import (
+    resolve_project_config_from_task as _svc_resolve_project_config_from_task,
+)
+from services.telegram.telegram_project_logs_service import (
+    resolve_project_root_from_task_path as _svc_resolve_project_root_from_task_path,
+)
+from services.telegram.telegram_project_logs_service import (
+    search_logs_for_issue as _svc_search_logs_for_issue,
+)
+from services.telegram.telegram_selection_flow_service import (
+    cancel_selection_flow as _svc_cancel_selection_flow,
+)
+from services.telegram.telegram_selection_flow_service import (
+    project_selected_flow as _svc_project_selected_flow,
+)
+from services.telegram.telegram_selection_flow_service import (
+    start_selection_flow as _svc_start_selection_flow,
+)
+from services.telegram.telegram_selection_flow_service import (
+    type_selected_flow as _svc_type_selected_flow,
+)
+from services.telegram.telegram_task_capture_service import (
+    handle_save_task_selection,
+    handle_task_confirmation_callback,
+)
+from services.telegram.telegram_ui_prompts_service import (
+    prompt_issue_selection as _svc_prompt_issue_selection,
+)
+from services.telegram.telegram_ui_prompts_service import (
+    prompt_project_selection as _svc_prompt_project_selection,
+)
+from services.telegram.telegram_workflow_probe_service import (
+    get_expected_running_agent_from_workflow as _svc_get_expected_running_agent_from_workflow,
+)
+from services.workflow.workflow_control_service import (
+    kill_issue_agent,
+    prepare_continue_context,
+)
+from services.workflow.workflow_ops_service import (
+    build_workflow_snapshot,
+    fetch_workflow_state_snapshot,
+    reconcile_issue_from_signals,
+)
+from services.workflow_signal_sync import (
+    extract_structured_completion_signals,
+    read_latest_local_completion,
+    write_local_completion_from_signal,
+)
+from services.workflow_watch_service import get_workflow_watch_service
+from state_manager import HostStateManager
+from telegram import (
+    BotCommand,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    Update,
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
+from user_manager import get_user_manager
+from utils.task_utils import find_task_file_by_issue
+
+# --- LOGGING ---
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    force=True,
+    handlers=[logging.StreamHandler(), logging.FileHandler(TELEGRAM_BOT_LOG_FILE)],
+)
+
+
+install_secret_redaction([TELEGRAM_TOKEN or ""], logging.getLogger())
+
+# Long-polling calls Telegram getUpdates repeatedly by design.
+# Keep these transport logs at WARNING to avoid noisy INFO output.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+# Initialize AI Orchestrator (CLI-only: gemini-cli + copilot-cli)
+orchestrator = get_orchestrator(ORCHESTRATOR_CONFIG)
+
+# Initialize rate limiter
+rate_limiter = get_rate_limiter()
+
+# Initialize user manager
+user_manager = get_user_manager()
+
+feature_registry_service = FeatureRegistryService(
+    enabled=NEXUS_FEATURE_REGISTRY_ENABLED,
+    backend=NEXUS_STORAGE_BACKEND,
+    state_dir=os.path.join(BASE_DIR, get_nexus_dir_name(), "state"),
+    postgres_dsn=NEXUS_STORAGE_DSN,
+    max_items_per_project=NEXUS_FEATURE_REGISTRY_MAX_ITEMS_PER_PROJECT,
+    dedup_similarity=NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY,
+)
+
+DEFAULT_REPO = get_default_repo()
+from integrations.workflow_state_factory import get_workflow_state as _get_wf_state
+
+_WORKFLOW_STATE_PLUGIN_KWARGS = {
+    "storage_dir": NEXUS_CORE_STORAGE_DIR,
+    "storage_type": "postgres" if NEXUS_WORKFLOW_BACKEND == "postgres" else "file",
+    "storage_config": (
+        {"connection_string": NEXUS_STORAGE_DSN}
+        if NEXUS_WORKFLOW_BACKEND == "postgres" and NEXUS_STORAGE_DSN
+        else {}
+    ),
+    "issue_to_workflow_id": lambda n: _get_wf_state().get_workflow_id(n),
+    "issue_to_workflow_map_setter": lambda n, w: _get_wf_state().map_issue(n, w),
+    "workflow_definition_path_resolver": get_workflow_definition_path,
+    "clear_pending_approval": lambda n: _get_wf_state().clear_pending_approval(n),
+    "audit_log": AuditStore.audit_log,
+}
+
+
+def _workflow_handler_deps() -> WorkflowHandlerDeps:
+    return _svc_build_workflow_handler_deps(
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        base_dir=BASE_DIR,
+        default_repo=DEFAULT_REPO,
+        project_config=PROJECT_CONFIG,
+        workflow_state_plugin_kwargs=_WORKFLOW_STATE_PLUGIN_KWARGS,
+        prompt_project_selection=_ctx_prompt_project_selection,
+        ensure_project_issue=_ctx_ensure_project_issue,
+        find_task_file_by_issue=find_task_file_by_issue,
+        project_repo=_project_repo,
+        get_issue_details=get_issue_details,
+        resolve_project_config_from_task=resolve_project_config_from_task,
+        invoke_copilot_agent=invoke_copilot_agent,
+        get_sop_tier_from_issue=get_sop_tier_from_issue,
+        get_sop_tier=get_sop_tier,
+        get_last_tier_for_issue=HostStateManager.get_last_tier_for_issue,
+        prepare_continue_context=prepare_continue_context,
+        kill_issue_agent=kill_issue_agent,
+        get_runtime_ops_plugin=get_runtime_ops_plugin,
+        get_workflow_state_plugin=get_workflow_state_plugin,
+        fetch_workflow_state_snapshot=fetch_workflow_state_snapshot,
+        scan_for_completions=scan_for_completions,
+        normalize_agent_reference=_normalize_agent_reference,
+        get_expected_running_agent_from_workflow=_get_expected_running_agent_from_workflow,
+        reconcile_issue_from_signals=reconcile_issue_from_signals,
+        get_direct_issue_plugin=_get_direct_issue_plugin,
+        extract_structured_completion_signals=_extract_structured_completion_signals,
+        write_local_completion_from_signal=_write_local_completion_from_signal,
+        build_workflow_snapshot=build_workflow_snapshot,
+        read_latest_local_completion=_read_latest_local_completion,
+        workflow_pause_handler=workflow_pause_handler,
+        workflow_resume_handler=workflow_resume_handler,
+        workflow_stop_handler=workflow_stop_handler,
+    )
+
+
+def _visualize_handler_deps() -> VisualizeHandlerDeps:
+    return _svc_build_visualize_handler_deps(
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        prompt_project_selection=_ctx_prompt_project_selection,
+        ensure_project_issue=_ctx_ensure_project_issue,
+    )
+
+
+def _fetch_workflow_snapshot(issue_num: str, project_key: str) -> dict[str, Any]:
+    """Helper for /watch to fetch current state without passing all deps manually."""
+    repo = _project_repo(project_key)
+    expected_running = _normalize_agent_reference(
+        _get_expected_running_agent_from_workflow(issue_num) or ""
+    )
+    return build_workflow_snapshot(
+        issue_num=issue_num,
+        repo=repo,
+        get_issue_plugin=_get_direct_issue_plugin,
+        expected_running_agent=expected_running,
+        find_task_file_by_issue=find_task_file_by_issue,
+        read_latest_local_completion=_read_latest_local_completion,
+        extract_structured_completion_signals=_extract_structured_completion_signals,
+    )
+
+
+def _watch_handler_deps() -> WatchHandlerDeps:
+    return _svc_build_watch_handler_deps(
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        prompt_project_selection=_ctx_prompt_project_selection,
+        ensure_project_issue=_ctx_ensure_project_issue,
+        get_watch_service=get_workflow_watch_service,
+    )
+
+
+def _monitoring_handler_deps() -> MonitoringHandlersDeps:
+    from runtime.nexus_agent_runtime import get_retry_fuse_status
+
+    return _svc_build_monitoring_handler_deps(
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        base_dir=BASE_DIR,
+        project_config=PROJECT_CONFIG,
+        types_map=TYPES,
+        ensure_project=_ctx_ensure_project,
+        ensure_project_issue=_ctx_ensure_project_issue,
+        normalize_project_key=_normalize_project_key,
+        iter_project_keys=_iter_project_keys,
+        get_project_label=_get_project_label,
+        get_project_root=_get_project_root,
+        get_project_logs_dir=_get_project_logs_dir,
+        get_inbox_storage_backend=get_inbox_storage_backend,
+        get_inbox_queue_overview=_get_inbox_queue_overview,
+        project_repo=_project_repo,
+        get_issue_details=get_issue_details,
+        get_inbox_dir=get_inbox_dir,
+        get_tasks_active_dir=get_tasks_active_dir,
+        get_tasks_closed_dir=get_tasks_closed_dir,
+        extract_issue_number_from_file=extract_issue_number_from_file,
+        build_issue_url=build_issue_url,
+        find_task_file_by_issue=find_task_file_by_issue,
+        find_issue_log_files=find_issue_log_files,
+        read_latest_log_tail=read_latest_log_tail,
+        search_logs_for_issue=search_logs_for_issue,
+        read_latest_log_full=read_latest_log_full,
+        read_log_matches=read_log_matches,
+        active_tail_sessions=active_tail_sessions,
+        active_tail_tasks=active_tail_tasks,
+        get_retry_fuse_status=get_retry_fuse_status,
+        normalize_agent_reference=_normalize_agent_reference,
+        get_expected_running_agent_from_workflow=_get_expected_running_agent_from_workflow,
+        get_direct_issue_plugin=_get_direct_issue_plugin,
+        extract_structured_completion_signals=_extract_structured_completion_signals,
+        read_latest_local_completion=_read_latest_local_completion,
+        build_workflow_snapshot=build_workflow_snapshot,
+    )
+
+
+def _issue_handler_deps() -> IssueHandlerDeps:
+    return _svc_build_issue_handler_deps(
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        base_dir=BASE_DIR,
+        default_repo=DEFAULT_REPO,
+        project_config=PROJECT_CONFIG,
+        prompt_project_selection=_ctx_prompt_project_selection,
+        ensure_project_issue=_ctx_ensure_project_issue,
+        project_repo=_project_repo,
+        project_issue_url=_project_issue_url,
+        get_issue_details=get_issue_details,
+        get_direct_issue_plugin=_get_direct_issue_plugin,
+        resolve_project_config_from_task=resolve_project_config_from_task,
+        invoke_copilot_agent=invoke_copilot_agent,
+        get_sop_tier=get_sop_tier,
+        find_task_file_by_issue=find_task_file_by_issue,
+        resolve_repo=resolve_repo,
+        build_issue_url=build_issue_url,
+        user_manager=user_manager,
+        save_tracked_issues=save_tracked_issues,
+        tracked_issues_ref=tracked_issues,
+        default_issue_url=_default_issue_url,
+        get_project_label=_get_project_label,
+        track_short_projects=get_track_short_projects(),
+    )
+
+
+def _get_inbox_queue_overview(limit: int) -> dict[str, Any]:
+    from integrations.inbox_queue import get_queue_overview
+
+    return get_queue_overview(limit=limit)
+
+
+def _enqueue_inbox_task(
+    *, project_key: str, workspace: str, filename: str, markdown_content: str
+) -> int:
+    from integrations.inbox_queue import enqueue_task
+
+    return enqueue_task(
+        project_key=project_key,
+        workspace=workspace,
+        filename=filename,
+        markdown_content=markdown_content,
+    )
+
+
+def _ops_handler_deps() -> OpsHandlerDeps:
+    return _svc_build_ops_handler_deps(
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        base_dir=BASE_DIR,
+        nexus_dir_name=get_nexus_dir_name(),
+        project_config=PROJECT_CONFIG,
+        prompt_project_selection=_ctx_prompt_project_selection,
+        ensure_project_issue=_ctx_ensure_project_issue,
+        get_project_label=_get_project_label,
+        get_stats_report=get_stats_report,
+        get_inbox_storage_backend=get_inbox_storage_backend,
+        get_inbox_queue_overview=_get_inbox_queue_overview,
+        format_error_for_user=format_error_for_user,
+        get_audit_history=lambda issue_num, limit: AuditStore.get_audit_history(
+            int(issue_num), limit
+        ),
+        get_repo=get_repo,
+        get_direct_issue_plugin=_get_direct_issue_plugin,
+        orchestrator=orchestrator,
+        ai_persona=AI_PERSONA,
+        get_chat_history=get_chat_history,
+        append_message=append_message,
+        create_chat=create_chat,
+    )
+
+
+def _callback_handler_deps() -> CallbackHandlerDeps:
+    return _svc_build_callback_handler_deps(
+        logger=logger,
+        prompt_issue_selection=_ctx_prompt_issue_selection,
+        dispatch_command=_ctx_dispatch_command,
+        get_project_label=_get_project_label,
+        get_repo=get_repo,
+        get_direct_issue_plugin=_get_direct_issue_plugin,
+        get_workflow_state_plugin=get_workflow_state_plugin,
+        workflow_state_plugin_kwargs=_WORKFLOW_STATE_PLUGIN_KWARGS,
+        action_handlers=_svc_build_callback_action_handlers(
+            ctx_call_telegram_handler=_ctx_call_telegram_handler,
+            logs_handler=logs_handler,
+            logsfull_handler=logsfull_handler,
+            status_handler=status_handler,
+            pause_handler=pause_handler,
+            resume_handler=resume_handler,
+            stop_handler=stop_handler,
+            audit_handler=audit_handler,
+            active_handler=active_handler,
+            reprocess_handler=reprocess_handler,
+        ),
+        report_bug_action=_report_bug_action_wrapper,
+    )
+
+
+def _feature_ideation_handler_deps() -> FeatureIdeationHandlerDeps:
+    return _svc_build_feature_ideation_handler_deps(
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        projects=PROJECTS,
+        get_project_label=_get_project_label,
+        orchestrator=orchestrator,
+        base_dir=BASE_DIR,
+        project_config=PROJECT_CONFIG,
+        process_inbox_task=process_inbox_task,
+        feature_registry_service=feature_registry_service,
+        dedup_similarity=NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY,
+    )
+
+
+def _feature_registry_command_deps() -> FeatureRegistryCommandDeps:
+    return FeatureRegistryCommandDeps(
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        iter_project_keys=_iter_project_keys,
+        normalize_project_key=_normalize_project_key,
+        get_project_label=_get_project_label,
+        feature_registry=feature_registry_service,
+    )
+
+
+def _audio_transcription_handler_deps() -> AudioTranscriptionDeps:
+    return _svc_build_audio_transcription_handler_deps(
+        logger=logger,
+        transcribe_audio=orchestrator.transcribe_audio,
+    )
+
+
+def _hands_free_routing_handler_deps() -> HandsFreeRoutingDeps:
+    return _svc_build_hands_free_routing_handler_deps(
+        logger=logger,
+        orchestrator=orchestrator,
+        ai_persona=AI_PERSONA,
+        projects=PROJECTS,
+        extract_json_dict=extract_json_dict,
+        get_chat_history=get_chat_history,
+        append_message=append_message,
+        get_chat=get_chat,
+        process_inbox_task=process_inbox_task,
+        feature_ideation_deps=_feature_ideation_handler_deps(),
+        normalize_project_key=_normalize_project_key,
+        save_resolved_task=save_resolved_task,
+        task_confirmation_mode=TASK_CONFIRMATION_MODE,
+        base_dir=BASE_DIR,
+        project_config=PROJECT_CONFIG,
+    )
+
+
+def _get_direct_issue_plugin(repo: str):
+    """Return issue plugin for direct Telegram operations."""
+    overrides = {"repo": repo}
+    cache_key = f"git:telegram:{repo}"
+    try:
+        return get_profiled_plugin(
+            "git_telegram",
+            overrides=overrides,
+            cache_key=cache_key,
+        )
+    except Exception:
+        # Legacy profile was never registered in some deployments; fall back to
+        # the shared GitHub issue CLI profile used by agent launch/recovery.
+        return get_profiled_plugin(
+            "git_agent_launcher",
+            overrides=overrides,
+            cache_key=cache_key,
+        )
+
+
+# --- RATE LIMITING DECORATOR ---
+def rate_limited(action: str, limit: RateLimit = None):
+    return _svc_rate_limited(rate_limiter=rate_limiter, logger=logger, action=action, limit=limit)
+
+
+def load_tracked_issues():
+    """Load tracked issues from file."""
+    return HostStateManager.load_tracked_issues()
+
+
+def save_tracked_issues(data):
+    """Save tracked issues to file."""
+    HostStateManager.save_tracked_issues(data)
+
+
+# Moved `_refine_task_description` to inbox_routing_handler.py
+
+
+def get_issue_details(issue_num, repo: str = None):
+    """Query GitHub API for issue details."""
+    try:
+        repo = repo or DEFAULT_REPO
+        plugin = _get_direct_issue_plugin(repo)
+        if not plugin:
+            return None
+        return plugin.get_issue(
+            str(issue_num),
+            ["number", "title", "state", "labels", "body", "updatedAt"],
+        )
+    except Exception as e:
+        logger.error(f"Failed to fetch issue {issue_num}: {e}")
+        return None
+
+
+def _get_expected_running_agent_from_workflow(issue_num: str) -> str | None:
+    """Return the current RUNNING workflow agent for an issue, if available."""
+    workflow_plugin = get_workflow_state_plugin(
+        **_WORKFLOW_STATE_PLUGIN_KWARGS,
+        cache_key="workflow:state-engine:expected-agent:telegram",
+    )
+    return _svc_get_expected_running_agent_from_workflow(
+        issue_num=str(issue_num),
+        get_workflow_id=lambda n: _get_wf_state().get_workflow_id(n),
+        workflow_plugin=workflow_plugin,
+    )
+
+
+def _extract_structured_completion_signals(comments: list[dict]) -> list[dict[str, str]]:
+    return extract_structured_completion_signals(comments)
+
+
+def _write_local_completion_from_signal(
+    project_key: str, issue_num: str, signal: dict[str, str]
+) -> str:
+    return write_local_completion_from_signal(
+        BASE_DIR,
+        get_nexus_dir_name(),
+        project_key,
+        issue_num,
+        signal,
+        key_findings=[
+            "Workflow/comment/local completion drift reconciled via /reconcile",
+            f"Source comment id: {signal.get('comment_id', 'n/a')}",
+        ],
+    )
+
+
+def _read_latest_local_completion(issue_num: str) -> dict[str, Any] | None:
+    return read_latest_local_completion(BASE_DIR, get_nexus_dir_name(), issue_num)
+
+
+def _resolve_project_root_from_task_path(task_file: str) -> str:
+    return _svc_resolve_project_root_from_task_path(task_file)
+
+
+def find_task_logs(task_file):
+    return _svc_find_task_logs(
+        task_file=task_file,
+        logger=logger,
+        resolve_project_root_from_task_path_fn=_resolve_project_root_from_task_path,
+        extract_project_from_nexus_path=_extract_project_from_nexus_path,
+        get_tasks_logs_dir=get_tasks_logs_dir,
+    )
+
+
+def read_log_matches(log_path, issue_num, issue_url=None, max_lines=20):
+    return _svc_read_log_matches(
+        log_path=str(log_path) if log_path is not None else "",
+        issue_num=str(issue_num),
+        issue_url=issue_url,
+        max_lines=max_lines,
+        logger=logger,
+    )
+
+
+def search_logs_for_issue(issue_num):
+    return _svc_search_logs_for_issue(
+        issue_num=str(issue_num),
+        telegram_bot_log_file=TELEGRAM_BOT_LOG_FILE,
+        logs_dir=LOGS_DIR,
+        logger=logger,
+        read_log_matches_fn=read_log_matches,
+    )
+
+
+def read_latest_log_tail(task_file, max_lines=20):
+    return _svc_read_latest_log_tail(
+        task_file=task_file,
+        max_lines=max_lines,
+        logger=logger,
+        find_task_logs_fn=find_task_logs,
+    )
+
+
+def find_issue_log_files(issue_num, task_file=None):
+    return _svc_find_issue_log_files(
+        issue_num=str(issue_num),
+        task_file=task_file,
+        base_dir=BASE_DIR,
+        nexus_dir_name=get_nexus_dir_name(),
+        extract_project_from_nexus_path=_extract_project_from_nexus_path,
+        resolve_project_root_from_task_path_fn=_resolve_project_root_from_task_path,
+        get_tasks_logs_dir=get_tasks_logs_dir,
+    )
+
+
+def read_latest_log_full(task_file):
+    return _svc_read_latest_log_full(
+        task_file=task_file,
+        logger=logger,
+        find_task_logs_fn=find_task_logs,
+    )
+
+
+def resolve_project_config_from_task(task_file):
+    return _svc_resolve_project_config_from_task(
+        task_file=task_file,
+        project_config=PROJECT_CONFIG,
+        base_dir=BASE_DIR,
+    )
+
+
+def _iter_project_keys() -> list[str]:
+    return _svc_iter_project_keys(project_config=PROJECT_CONFIG)
+
+
+def _get_single_project_key() -> str | None:
+    return _svc_get_single_project_key(project_config=PROJECT_CONFIG)
+
+
+def _get_project_label(project_key: str) -> str:
+    return PROJECTS.get(project_key, project_key)
+
+
+def _get_project_root(project_key: str) -> str | None:
+    return _svc_get_project_root(
+        project_key=project_key,
+        project_config=PROJECT_CONFIG,
+        base_dir=BASE_DIR,
+    )
+
+
+def _get_project_logs_dir(project_key: str) -> str | None:
+    return _svc_get_project_logs_dir(
+        project_key=project_key,
+        project_config=PROJECT_CONFIG,
+        base_dir=BASE_DIR,
+        get_tasks_logs_dir=get_tasks_logs_dir,
+    )
+
+
+def _project_repo(project_key: str) -> str:
+    config = PROJECT_CONFIG.get(project_key)
+    return resolve_repo(config if isinstance(config, dict) else None, DEFAULT_REPO)
+
+
+def _project_issue_url(project_key: str, issue_num: str) -> str:
+    config = PROJECT_CONFIG.get(project_key)
+    cfg = config if isinstance(config, dict) else None
+    return build_issue_url(_project_repo(project_key), issue_num, cfg)
+
+
+def _default_issue_url(issue_num: str) -> str:
+    try:
+        project_key = get_default_project()
+        return _project_issue_url(project_key, issue_num)
+    except Exception:
+        # This is strictly for the /link command, we should ideally resolve this from the repo platform
+        return f"https://github.com/{DEFAULT_REPO}/issues/{issue_num}"
+
+
+def _extract_project_from_nexus_path(path: str) -> str | None:
+    return _svc_extract_project_from_nexus_path(
+        path=path,
+        normalize_project_key=_normalize_project_key,
+        iter_project_keys_fn=_iter_project_keys,
+    )
+
+
+async def _prompt_monitor_project_selection(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    command: str,
+) -> None:
+    keyboard = [[InlineKeyboardButton("All Projects", callback_data=f"pickmonitor:{command}:all")]]
+    keyboard.extend(
+        [
+            InlineKeyboardButton(
+                _get_project_label(key), callback_data=f"pickmonitor:{command}:{key}"
+            )
+        ]
+        for key in _iter_project_keys()
+    )
+    keyboard.append([InlineKeyboardButton("❌ Close", callback_data="flow:close")])
+
+    text = f"Select a project for /{command}:"
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        await update.effective_message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+def _list_project_issues(project_key: str, state: str = "open", limit: int = 10) -> list[dict]:
+    return _svc_list_project_issues(
+        project_key=project_key,
+        project_config=PROJECT_CONFIG,
+        get_repos=get_repos,
+        get_direct_issue_plugin=_get_direct_issue_plugin,
+        logger=logger,
+        state=state,
+        limit=limit,
+    )
+
+
+async def _prompt_issue_selection(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    command: str,
+    project_key: str,
+    *,
+    edit_message: bool = False,
+    issue_state: str = "open",
+) -> None:
+    await _svc_prompt_issue_selection(
+        update=update,
+        command=command,
+        project_key=project_key,
+        list_project_issues=_list_project_issues,
+        get_project_label=_get_project_label,
+        inline_keyboard_button_cls=InlineKeyboardButton,
+        inline_keyboard_markup_cls=InlineKeyboardMarkup,
+        edit_message=edit_message,
+        issue_state=issue_state,
+    )
+
+
+async def _prompt_project_selection(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, command: str
+) -> None:
+    await _svc_prompt_project_selection(
+        update=update,
+        context=context,
+        command=command,
+        get_single_project_key=_get_single_project_key,
+        dispatch_command=lambda u, c, cmd, proj, issue: _dispatch_command(u, c, cmd, proj, issue),
+        prompt_issue_selection=lambda u, c, cmd, proj: _prompt_issue_selection(u, c, cmd, proj),
+        iter_project_keys=_iter_project_keys,
+        get_project_label=_get_project_label,
+        inline_keyboard_button_cls=InlineKeyboardButton,
+        inline_keyboard_markup_cls=InlineKeyboardMarkup,
+    )
+
+
+def _parse_project_issue_args(args: list[str]) -> tuple[str | None, str | None, list[str]]:
+    return _svc_parse_project_issue_args(args=args, normalize_project_key=_normalize_project_key)
+
+
+async def _ensure_project_issue(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, command: str
+) -> tuple[str | None, str | None, list[str]]:
+    return await _svc_ensure_project_issue(
+        update=update,
+        context=context,
+        command=command,
+        iter_project_keys=_iter_project_keys,
+        normalize_project_key=_normalize_project_key,
+        parse_project_issue_args_fn=_parse_project_issue_args,
+        prompt_project_selection=_prompt_project_selection,
+        prompt_issue_selection=_prompt_issue_selection,
+    )
+
+
+async def _handle_pending_issue_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    return await _svc_handle_pending_issue_input(
+        update=update,
+        context=context,
+        is_feature_ideation_request=is_feature_ideation_request,
+        dispatch_command=_dispatch_command,
+    )
+
+
+def _command_handler_map():
+    return _svc_build_command_handler_map(
+        status_handler=status_handler,
+        active_handler=active_handler,
+        inboxq_handler=inboxq_handler,
+        stats_handler=stats_handler,
+        logs_handler=logs_handler,
+        logsfull_handler=logsfull_handler,
+        tail_handler=tail_handler,
+        fuse_handler=fuse_handler,
+        audit_handler=audit_handler,
+        comments_handler=comments_handler,
+        wfstate_handler=wfstate_handler,
+        visualize_handler=visualize_handler,
+        watch_handler=watch_handler,
+        reprocess_handler=reprocess_handler,
+        reconcile_handler=reconcile_handler,
+        continue_handler=continue_handler,
+        forget_handler=forget_handler,
+        respond_handler=respond_handler,
+        kill_handler=kill_handler,
+        assign_handler=assign_handler,
+        implement_handler=implement_handler,
+        prepare_handler=prepare_handler,
+        pause_handler=pause_handler,
+        resume_handler=resume_handler,
+        stop_handler=stop_handler,
+        track_handler=track_handler,
+        tracked_handler=tracked_handler,
+        untrack_handler=untrack_handler,
+        agents_handler=agents_handler,
+        feature_done_handler=feature_done_handler,
+        feature_list_handler=feature_list_handler,
+        feature_forget_handler=feature_forget_handler,
+    )
+
+
+def _buttons_to_reply_markup(buttons):
+    return _bridge_buttons_to_reply_markup(buttons, InlineKeyboardButton, InlineKeyboardMarkup)
+
+
+def _build_telegram_interactive_ctx(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return _bridge_build_telegram_interactive_ctx(
+        update,
+        context,
+        buttons_to_reply_markup_fn=_buttons_to_reply_markup,
+    )
+
+
+def _ctx_telegram_runtime(ctx) -> tuple[Update, ContextTypes.DEFAULT_TYPE]:
+    return _svc_ctx_telegram_runtime(ctx)
+
+
+async def _ctx_call_telegram_handler(ctx, handler) -> None:
+    await _svc_ctx_call_telegram_handler(
+        ctx=ctx,
+        handler=handler,
+        ctx_telegram_runtime=_ctx_telegram_runtime,
+    )
+
+
+async def _ctx_prompt_issue_selection(
+    ctx,
+    command: str,
+    project_key: str,
+    *,
+    edit_message: bool = False,
+    issue_state: str = "open",
+) -> None:
+    await _svc_ctx_prompt_issue_selection(
+        ctx=ctx,
+        command=command,
+        project_key=project_key,
+        prompt_issue_selection=_prompt_issue_selection,
+        ctx_telegram_runtime=_ctx_telegram_runtime,
+        edit_message=edit_message,
+        issue_state=issue_state,
+    )
+
+
+async def _ctx_prompt_project_selection(ctx, command: str) -> None:
+    await _svc_ctx_prompt_project_selection(
+        ctx=ctx,
+        command=command,
+        prompt_project_selection=_prompt_project_selection,
+        ctx_telegram_runtime=_ctx_telegram_runtime,
+    )
+
+
+async def _ctx_ensure_project_issue(
+    ctx,
+    command: str,
+) -> tuple[str | None, str | None, list[str]]:
+    return await _svc_ctx_ensure_project_issue(
+        ctx=ctx,
+        command=command,
+        ensure_project_issue=_ensure_project_issue,
+        ctx_telegram_runtime=_ctx_telegram_runtime,
+    )
+
+
+async def _ctx_ensure_project(ctx, command: str) -> str | None:
+    return await _svc_ctx_ensure_project(
+        ctx=ctx,
+        command=command,
+        get_single_project_key=_get_single_project_key,
+        normalize_project_key=_normalize_project_key,
+        iter_project_keys=_iter_project_keys,
+        ctx_prompt_project_selection=_ctx_prompt_project_selection,
+    )
+
+
+async def _ctx_dispatch_command(
+    ctx,
+    command: str,
+    project_key: str,
+    issue_num: str,
+    rest: list[str] | None = None,
+) -> None:
+    await _svc_ctx_dispatch_command(
+        ctx=ctx,
+        command=command,
+        project_key=project_key,
+        issue_num=issue_num,
+        dispatch_command=_dispatch_command,
+        ctx_telegram_runtime=_ctx_telegram_runtime,
+        rest=rest,
+    )
+
+
+async def _call_core_callback_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, handler
+) -> None:
+    await _router_call_core_callback_handler(
+        update,
+        context,
+        handler,
+        build_ctx=_build_telegram_interactive_ctx,
+        deps_factory=_callback_handler_deps,
+    )
+
+
+async def _call_core_chat_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, handler
+) -> None:
+    await _router_call_core_chat_handler(
+        update,
+        context,
+        handler,
+        build_ctx=_build_telegram_interactive_ctx,
+    )
+
+
+async def _dispatch_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    command: str,
+    project_key: str,
+    issue_num: str,
+    rest: list[str] | None = None,
+) -> None:
+    async def _reply_unsupported(_update):
+        await _update.effective_message.reply_text("Unsupported command.")
+
+    await _router_dispatch_command(
+        update=update,
+        context=context,
+        command=command,
+        project_key=project_key,
+        issue_num=issue_num,
+        rest=rest,
+        command_handler_map=_command_handler_map,
+        reply_unsupported=_reply_unsupported,
+    )
+
+
+async def project_picker_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _call_core_callback_handler(update, context, callback_project_picker_handler)
+
+
+async def issue_picker_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _call_core_callback_handler(update, context, callback_issue_picker_handler)
+
+
+async def monitor_project_picker_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _call_core_callback_handler(update, context, callback_monitor_project_picker_handler)
+
+
+async def close_flow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _call_core_callback_handler(update, context, callback_close_flow_handler)
+
+
+# --- STATES ---
+SELECT_PROJECT, SELECT_TYPE, INPUT_TASK = range(3)
+
+tracked_issues = load_tracked_issues()  # Load on startup
+active_tail_sessions: dict[tuple[int, int], str] = {}
+active_tail_tasks: dict[tuple[int, int], asyncio.Task] = {}
+TASK_CONFIRMATION_MODE = os.getenv("TASK_CONFIRMATION_MODE", "smart").strip().lower()
+_watch_sender_bot = None
+
+
+# --- 0. HELP & INFO ---
+async def rename_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _svc_handle_rename_chat(
+        update=update,
+        context=context,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        get_active_chat=get_active_chat,
+        rename_chat=rename_chat,
+    )
+
+
+async def chat_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _svc_call_core_chat_wrapper(
+        update=update,
+        context=context,
+        call_core_chat_handler=_call_core_chat_handler,
+        handler=core_chat_menu_handler,
+    )
+
+
+async def chat_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _svc_call_core_chat_wrapper(
+        update=update,
+        context=context,
+        call_core_chat_handler=_call_core_chat_handler,
+        handler=core_chat_callback_handler,
+    )
+
+
+async def chat_agents_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _svc_call_core_chat_wrapper(
+        update=update,
+        context=context,
+        call_core_chat_handler=_call_core_chat_handler,
+        handler=core_chat_agents_handler,
+    )
+
+
+async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _svc_handle_help(
+        update=update,
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+    )
+
+
+def build_menu_keyboard(button_rows, include_back=True):
+    return _svc_build_menu_keyboard(
+        button_rows=button_rows,
+        include_back=include_back,
+        inline_keyboard_button_cls=InlineKeyboardButton,
+        inline_keyboard_markup_cls=InlineKeyboardMarkup,
+    )
+
+
+async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _svc_handle_menu(
+        update=update,
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        inline_keyboard_button_cls=InlineKeyboardButton,
+        inline_keyboard_markup_cls=InlineKeyboardMarkup,
+    )
+
+
+async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _call_core_callback_handler(update, context, callback_menu_callback_handler)
+
+
+async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _svc_handle_start(
+        update=update,
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        reply_keyboard_markup_cls=ReplyKeyboardMarkup,
+    )
+
+
+async def on_startup(application):
+    global _watch_sender_bot
+    await _svc_on_startup(
+        application=application,
+        logger=logger,
+        validate_required_command_interface=validate_required_command_interface,
+        validate_command_parity=validate_command_parity,
+        bot_command_cls=BotCommand,
+        check_tool_health_fn=_check_tool_health,
+    )
+    _watch_sender_bot = application.bot
+    watch_service = get_workflow_watch_service()
+    watch_service.bind_runtime(loop=asyncio.get_running_loop(), sender=_send_watch_message)
+    watch_service.bind_snapshot_fetcher(fetcher=_fetch_workflow_snapshot)
+    watch_service.ensure_started()
+
+
+async def _check_tool_health(application):
+    await _svc_check_tool_health(
+        application=application,
+        orchestrator=orchestrator,
+        ai_providers=[AIProvider.COPILOT, AIProvider.GEMINI, AIProvider.CODEX],
+        logger=logger,
+        telegram_chat_id=TELEGRAM_CHAT_ID,
+    )
+
+
+async def _send_watch_message(chat_id: int, text: str) -> None:
+    if _watch_sender_bot is None:
+        return
+    await _watch_sender_bot.send_message(chat_id=chat_id, text=text)
+
+
+async def feature_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await core_feature_callback_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _feature_ideation_handler_deps(),
+    )
+
+
+async def task_confirmation_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await handle_task_confirmation_callback(
+        update=update,
+        context=context,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        logger=logger,
+        route_task_with_context=route_task_with_context,
+        orchestrator=orchestrator,
+        get_chat=get_chat,
+        process_inbox_task=process_inbox_task,
+    )
+
+
+async def _transcribe_voice_message(
+    voice_file_id: str, context: ContextTypes.DEFAULT_TYPE
+) -> str | None:
+    return await transcribe_telegram_voice(
+        voice_file_id, context, _audio_transcription_handler_deps()
+    )
+
+
+# --- 1. HANDS-FREE MODE (Auto-Router) ---
+async def hands_free_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await handle_hands_free_message(
+        update=update,
+        context=context,
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        get_active_chat=get_active_chat,
+        rename_chat=rename_chat,
+        chat_menu_handler=chat_menu_handler,
+        handle_pending_issue_input=_handle_pending_issue_input,
+        transcribe_voice_message=_transcribe_voice_message,
+        inline_keyboard_button_cls=InlineKeyboardButton,
+        inline_keyboard_markup_cls=InlineKeyboardMarkup,
+        resolve_pending_project_selection=resolve_pending_project_selection,
+        build_ctx=_build_telegram_interactive_ctx,
+        hands_free_routing_deps_factory=_hands_free_routing_handler_deps,
+        get_chat=get_chat,
+        handle_feature_ideation_request=handle_feature_ideation_request,
+        feature_ideation_deps_factory=_feature_ideation_handler_deps,
+        route_hands_free_text=route_hands_free_text,
+    )
+
+
+# --- 2. SELECTION MODE (Menu) ---
+# (Steps 1 & 2 are purely Telegram UI, no AI needed)
+
+
+async def start_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await _svc_start_selection_flow(
+        update=update,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        projects=PROJECTS,
+        inline_keyboard_button_cls=InlineKeyboardButton,
+        inline_keyboard_markup_cls=InlineKeyboardMarkup,
+        select_project_state=SELECT_PROJECT,
+    )
+
+
+async def project_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await _svc_project_selected_flow(
+        update=update,
+        context=context,
+        projects=PROJECTS,
+        types_map=TYPES,
+        inline_keyboard_button_cls=InlineKeyboardButton,
+        inline_keyboard_markup_cls=InlineKeyboardMarkup,
+        select_type_state=SELECT_TYPE,
+    )
+
+
+async def type_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await _svc_type_selected_flow(
+        update=update,
+        context=context,
+        input_task_state=INPUT_TASK,
+    )
+
+
+# --- 3. SAVING THE TASK (Uses Gemini only if Voice) ---
+async def save_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await handle_save_task_selection(
+        update=update,
+        context=context,
+        logger=logger,
+        orchestrator=orchestrator,
+        projects=PROJECTS,
+        types_map=TYPES,
+        project_config=PROJECT_CONFIG,
+        base_dir=BASE_DIR,
+        get_inbox_storage_backend=get_inbox_storage_backend,
+        enqueue_task=_enqueue_inbox_task,
+        get_inbox_dir=get_inbox_dir,
+        transcribe_voice_message=_transcribe_voice_message,
+        conversation_end=ConversationHandler.END,
+    )
+
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await _svc_cancel_selection_flow(
+        update=update,
+        conversation_end=ConversationHandler.END,
+    )
+
+
+async def flow_close_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle Close button for the /new flow."""
+    return await _call_core_callback_handler(update, context, callback_flow_close_handler)
+
+
+# --- MONITORING COMMANDS ---
+def extract_issue_number_from_file(file_path):
+    return _svc_extract_issue_number_from_file(file_path=file_path, logger=logger)
+
+
+async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Shows pending tasks in inbox folders."""
+    await monitoring_status_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _monitoring_handler_deps(),
+    )
+
+
+async def progress_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show active issues with current workflow step, agent type, tool, and duration."""
+    await _svc_handle_progress_command(
+        update=update,
+        logger=logger,
+        allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
+        load_launched_agents=HostStateManager.load_launched_agents,
+        time_module=time,
+    )
+
+
+async def active_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Shows active tasks being worked on."""
+    await monitoring_active_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _monitoring_handler_deps(),
+    )
+
+
+async def assign_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Assigns a GitHub issue to the user."""
+    await issue_assign_handler(
+        _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
+    )
+
+
+@rate_limited("implement")
+async def implement_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Requests Copilot agent implementation for an issue (approval workflow).
+
+    Adds an `agent:requested` label and notifies `@ProjectLead` with a comment
+    so they can approve (add `agent:approved`) or click "Code with agent mode".
+    """
+    await issue_implement_handler(
+        _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
+    )
+
+
+async def prepare_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Augments an issue with Copilot-friendly instructions and acceptance criteria."""
+    await issue_prepare_handler(
+        _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
+    )
+
+
+async def track_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Subscribe to issue updates and track status changes.
+
+    Usage:
+      /track <project> <issue#>    - Track issue in specific project
+
+    Examples:
+      /track nxs 456
+    """
+    await issue_track_handler(
+        _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
+    )
+
+
+async def tracked_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show active globally tracked issues."""
+    await issue_tracked_handler(
+        _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
+    )
+
+
+async def untrack_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stop tracking an issue.
+
+    Usage:
+      /untrack <issue#>              - Stop global tracking
+      /untrack <project> <issue#>    - Stop per-project tracking
+    """
+    await issue_untrack_handler(
+        _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
+    )
+
+
+async def myissues_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show all issues tracked by the user across projects."""
+    await issue_myissues_handler(
+        _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
+    )
+
+
+@rate_limited("logs")
+async def logs_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show combined timeline of GitHub activity and bot/processor logs for an issue."""
+    await monitoring_logs_handler(
+        _build_telegram_interactive_ctx(update, context), _monitoring_handler_deps()
+    )
+
+
+@rate_limited("logs")
+async def logsfull_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show combined timeline of GitHub activity and full log lines for an issue."""
+    await monitoring_logsfull_handler(
+        _build_telegram_interactive_ctx(update, context), _monitoring_handler_deps()
+    )
+
+
+@rate_limited("logs")
+async def tail_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show a short tail of the latest task log for an issue."""
+    await monitoring_tail_handler(
+        _build_telegram_interactive_ctx(update, context), _monitoring_handler_deps()
+    )
+
+
+@rate_limited("logs")
+async def tailstop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stop an active live tail session for the current user/chat."""
+    await monitoring_tailstop_handler(
+        _build_telegram_interactive_ctx(update, context),
+        _monitoring_handler_deps(),
+    )
+
+
+@rate_limited("logs")
+async def fuse_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show retry-fuse status for an issue."""
+    await monitoring_fuse_handler(
+        _build_telegram_interactive_ctx(update, context), _monitoring_handler_deps()
+    )
+
+
+async def audit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display workflow audit trail for an issue (timeline of state changes, agent launches, etc)."""
+    await ops_audit_handler(_build_telegram_interactive_ctx(update, context), _ops_handler_deps())
+
+
+@rate_limited("stats")
+async def stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display system analytics and performance statistics."""
+    await ops_stats_handler(_build_telegram_interactive_ctx(update, context), _ops_handler_deps())
+
+
+@rate_limited("stats")
+async def inboxq_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Inspect inbox queue summary for postgres backend."""
+    await ops_inboxq_handler(_build_telegram_interactive_ctx(update, context), _ops_handler_deps())
+
+
+@rate_limited("reprocess")
+async def reprocess_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Re-run agent processing for an open issue."""
+    await workflow_reprocess_handler(
+        _build_telegram_interactive_ctx(update, context), _workflow_handler_deps()
+    )
+
+
+async def continue_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Continue/resume agent processing for an issue with a continuation prompt."""
+    await workflow_continue_handler(
+        _build_telegram_interactive_ctx(update, context), _workflow_handler_deps()
+    )
+
+
+async def forget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Permanently forget local workflow/tracker state for an issue."""
+    await workflow_forget_handler(
+        _build_telegram_interactive_ctx(update, context), _workflow_handler_deps()
+    )
+
+
+async def kill_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Kill a running Copilot agent process."""
+    await workflow_kill_handler(
+        _build_telegram_interactive_ctx(update, context), _workflow_handler_deps()
+    )
+
+
+async def reconcile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reconcile workflow and local completion from structured GitHub comments."""
+    await workflow_reconcile_handler(
+        _build_telegram_interactive_ctx(update, context), _workflow_handler_deps()
+    )
+
+
+async def wfstate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show workflow state + signal drift snapshot for an issue."""
+    await workflow_wfstate_handler(
+        _build_telegram_interactive_ctx(update, context), _workflow_handler_deps()
+    )
+
+
+async def visualize_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Render a Mermaid workflow diagram for an issue."""
+    await workflow_visualize_handler(
+        _build_telegram_interactive_ctx(update, context), _visualize_handler_deps()
+    )
+
+
+async def watch_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stream live workflow updates for an issue."""
+    await workflow_watch_handler(
+        _build_telegram_interactive_ctx(update, context), _watch_handler_deps()
+    )
+
+
+async def pause_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pause auto-chaining with project picker support."""
+    await workflow_pause_picker_handler(
+        _build_telegram_interactive_ctx(update, context), _workflow_handler_deps()
+    )
+
+
+async def resume_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Resume auto-chaining with project picker support."""
+    await workflow_resume_picker_handler(
+        _build_telegram_interactive_ctx(update, context), _workflow_handler_deps()
+    )
+
+
+async def stop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stop workflow with project picker support."""
+    await workflow_stop_picker_handler(
+        _build_telegram_interactive_ctx(update, context), _workflow_handler_deps()
+    )
+
+
+# pause_handler, resume_handler, and stop_handler now wrap commands.workflow handlers
+
+
+async def agents_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List all agents for a specific project."""
+    await ops_agents_handler(_build_telegram_interactive_ctx(update, context), _ops_handler_deps())
+
+
+@rate_limited("direct")
+async def direct_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a direct request to a specific agent for a project."""
+    await ops_direct_handler(_build_telegram_interactive_ctx(update, context), _ops_handler_deps())
+
+
+async def feature_done_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mark a feature as implemented for a project."""
+    await core_feature_done_handler(
+        _build_telegram_interactive_ctx(update, context), _feature_registry_command_deps()
+    )
+
+
+async def feature_list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List implemented features for a project."""
+    await core_feature_list_handler(
+        _build_telegram_interactive_ctx(update, context), _feature_registry_command_deps()
+    )
+
+
+async def feature_forget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Forget a previously implemented feature by id or title."""
+    await core_feature_forget_handler(
+        _build_telegram_interactive_ctx(update, context), _feature_registry_command_deps()
+    )
+
+
+async def comments_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """View recent comments on an issue."""
+    await issue_comments_handler(
+        _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
+    )
+
+
+async def respond_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Post a response to an issue and automatically continue the agent."""
+    await issue_respond_handler(
+        _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
+    )
+
+
+async def inline_keyboard_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle inline keyboard button presses from notifications."""
+    await _call_core_callback_handler(update, context, callback_inline_keyboard_handler)
+
+
+async def _report_bug_action_wrapper(ctx, issue_num: str, project_key: str):
+    repo_key = get_repo(project_key)
+    await handle_report_bug(
+        ctx,
+        issue_num,
+        repo_key=repo_key,
+        get_direct_issue_plugin=_get_direct_issue_plugin,
+    )
+
+
+async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global Telegram error handler for uncaught update exceptions."""
+    logger.exception("Unhandled exception while processing update", exc_info=context.error)
+
+    # Truncate and format
+    user_msg = format_error_for_user(context.error, "Internal error")
+
+    # Bug Reporting Button
+    buttons = []
+    # If we have an issue context in user_data, add a report button
+    pending_issue = context.user_data.get("pending_issue")
+    pending_project = context.user_data.get("pending_project")
+    if pending_issue and pending_project:
+        buttons = [
+            [Button("🐞 Report Bug", callback_data=f"report_bug_{pending_issue}|{pending_project}")]
+        ]
+
+    if isinstance(update, Update) and update.effective_message:
+        with contextlib.suppress(Exception):
+            await update.effective_message.reply_text(
+                f"❌ {user_msg}",
+                reply_markup=_buttons_to_reply_markup(buttons) if buttons else None,
+            )
+
+
+# --- MAIN ---
+def main():
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    report_scheduler = None
+    if _svc_reports_enabled():
+        report_scheduler = ReportScheduler()
+        logger.info("📊 Scheduled reports will be enabled after startup")
+
+    alerting_system = None
+    if _svc_alerting_enabled():
+        alerting_system = init_alerting_system()
+        logger.info("🚨 Alerting system will be enabled after startup")
+
+    app.post_init = _svc_build_post_init_with_scheduler(
+        original_post_init=on_startup,
+        report_scheduler=report_scheduler,
+        alerting_system=alerting_system,
+        logger=logger,
+    )
+
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("new", start_selection)],
+        states={
+            SELECT_PROJECT: [
+                CallbackQueryHandler(project_selected, pattern=r"^[a-z_]+$"),
+                CallbackQueryHandler(flow_close_handler, pattern=r"^flow:close$"),
+            ],
+            SELECT_TYPE: [
+                CallbackQueryHandler(type_selected, pattern=r"^[a-z-]+$"),
+                CallbackQueryHandler(flow_close_handler, pattern=r"^flow:close$"),
+            ],
+            INPUT_TASK: [MessageHandler(filters.TEXT | filters.VOICE, save_task)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+    )
+
+    _svc_register_application_handlers(
+        app=app,
+        conv_handler=conv_handler,
+        filters_module=filters,
+        handlers={
+            "start_handler": start_handler,
+            "help_handler": help_handler,
+            "menu_handler": menu_handler,
+            "rename_handler": rename_handler,
+            "cancel": cancel,
+            "status_handler": status_handler,
+            "inboxq_handler": inboxq_handler,
+            "active_handler": active_handler,
+            "progress_handler": progress_handler,
+            "track_handler": track_handler,
+            "tracked_handler": tracked_handler,
+            "untrack_handler": untrack_handler,
+            "myissues_handler": myissues_handler,
+            "logs_handler": logs_handler,
+            "logsfull_handler": logsfull_handler,
+            "tail_handler": tail_handler,
+            "tailstop_handler": tailstop_handler,
+            "fuse_handler": fuse_handler,
+            "audit_handler": audit_handler,
+            "wfstate_handler": wfstate_handler,
+            "visualize_handler": visualize_handler,
+            "watch_handler": watch_handler,
+            "stats_handler": stats_handler,
+            "comments_handler": comments_handler,
+            "reprocess_handler": reprocess_handler,
+            "reconcile_handler": reconcile_handler,
+            "continue_handler": continue_handler,
+            "forget_handler": forget_handler,
+            "kill_handler": kill_handler,
+            "pause_handler": pause_handler,
+            "resume_handler": resume_handler,
+            "stop_handler": stop_handler,
+            "agents_handler": agents_handler,
+            "direct_handler": direct_handler,
+            "respond_handler": respond_handler,
+            "assign_handler": assign_handler,
+            "implement_handler": implement_handler,
+            "prepare_handler": prepare_handler,
+            "feature_done_handler": feature_done_handler,
+            "feature_list_handler": feature_list_handler,
+            "feature_forget_handler": feature_forget_handler,
+            "chat_menu_handler": chat_menu_handler,
+            "chat_agents_handler": chat_agents_handler,
+            "chat_callback_handler": chat_callback_handler,
+            "menu_callback_handler": menu_callback_handler,
+            "project_picker_handler": project_picker_handler,
+            "issue_picker_handler": issue_picker_handler,
+            "monitor_project_picker_handler": monitor_project_picker_handler,
+            "close_flow_handler": close_flow_handler,
+            "feature_callback_handler": feature_callback_handler,
+            "task_confirmation_callback_handler": task_confirmation_callback_handler,
+            "inline_keyboard_handler": inline_keyboard_handler,
+            "hands_free_handler": hands_free_handler,
+            "telegram_error_handler": telegram_error_handler,
+        },
+    )
+
+    print("Nexus Online...")
+    app.run_polling(drop_pending_updates=True, allowed_updates=_svc_allowed_updates_all_types())
+
+
+if __name__ == "__main__":
+    main()

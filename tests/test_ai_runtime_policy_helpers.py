@@ -15,7 +15,6 @@ from nexus.plugins.builtin.ai_runtime.fallback_policy import (
     fallback_order_from_preferences,
     resolve_analysis_tool_order,
 )
-from nexus.plugins.builtin.ai_runtime.operation_agent_policy import resolve_issue_override_agent
 from nexus.plugins.builtin.ai_runtime.provider_invokers.agent_invokers import (
     invoke_copilot_agent_cli,
     invoke_gemini_agent_cli,
@@ -41,6 +40,7 @@ from nexus.plugins.builtin.ai_runtime.provider_registry import (
     supports_analysis,
     unique_tools,
 )
+from nexus.plugins.builtin.ai_runtime.system_operation_policy import resolve_issue_override_agent
 from nexus.plugins.builtin.ai_runtime.transcription_service import (
     is_non_transcription_artifact,
     is_transcription_refusal,
@@ -60,12 +60,18 @@ def _noop_rate_limit(tool, exc: Exception, context: str) -> None:
 
 
 def test_fallback_order_from_preferences_dedupes_and_parses():
-    prefs = {"triage": "gemini", "designer": "copilot", "writer": "gemini", "x": "invalid"}
+    prefs = {
+        "triage": {"provider": "gemini", "profile": "small"},
+        "designer": {"provider": "copilot", "profile": "large"},
+        "writer": {"provider": "gemini", "profile": "small"},
+        "x": {"provider": "unknown", "profile": "small"},
+    }
     order = fallback_order_from_preferences(
         resolved_tool_preferences=prefs,
-        parse_provider=lambda v: {"gemini": AIProvider.GEMINI, "copilot": AIProvider.COPILOT}.get(
-            v
-        ),
+        parse_provider=lambda v: {
+            "gemini": AIProvider.GEMINI,
+            "copilot": AIProvider.COPILOT,
+        }.get(v.get("provider")),
     )
     assert order == [AIProvider.GEMINI, AIProvider.COPILOT]
 
@@ -81,7 +87,7 @@ def test_resolve_issue_override_agent_uses_issue_override_for_bug_text():
         task_key="refine_description",
         mapped_agent="designer",
         text="Bug: traceback and exception",
-        operation_agents={"overrides": {"issue": {"refine_description": "triage"}}},
+        system_operations={"overrides": {"issue": {"refine_description": "triage"}}},
         looks_like_bug_issue=lambda text: "bug" in text.lower(),
     )
     assert result == "triage"
@@ -93,7 +99,7 @@ def test_resolve_analysis_tool_order_prefers_mapped_agent_and_filters():
         text="feature request",
         project_name="nexus",
         fallback_enabled=True,
-        operation_agents={"default": "triage", "refine_description": "designer"},
+        system_operations={"default": "triage", "refine_description": "designer"},
         default_chat_agent_type="triage",
         resolve_issue_override_agent=lambda **kwargs: kwargs["mapped_agent"],
         get_primary_tool=lambda agent, project: (
@@ -102,8 +108,7 @@ def test_resolve_analysis_tool_order_prefers_mapped_agent_and_filters():
         fallback_order_from_preferences_fn=lambda project: [AIProvider.GEMINI, AIProvider.COPILOT],
         unique_tools=lambda items: list(dict.fromkeys(items)),
         supports_analysis=lambda tool: tool in {AIProvider.GEMINI, AIProvider.COPILOT},
-        gemini_provider=AIProvider.GEMINI,
-        copilot_provider=AIProvider.COPILOT,
+        default_tools=[AIProvider.GEMINI, AIProvider.COPILOT],
     )
     assert order == [AIProvider.COPILOT, AIProvider.GEMINI]
 
@@ -114,7 +119,7 @@ def test_resolve_analysis_tool_order_chat_uses_default_chat_agent():
         text="hello",
         project_name="nexus",
         fallback_enabled=False,
-        operation_agents={"default": "triage"},
+        system_operations={"default": "triage"},
         default_chat_agent_type="designer",
         resolve_issue_override_agent=lambda **kwargs: kwargs["mapped_agent"],
         get_primary_tool=lambda agent, project: (
@@ -123,8 +128,7 @@ def test_resolve_analysis_tool_order_chat_uses_default_chat_agent():
         fallback_order_from_preferences_fn=lambda project: [AIProvider.GEMINI, AIProvider.COPILOT],
         unique_tools=lambda items: list(dict.fromkeys(items)),
         supports_analysis=lambda tool: True,
-        gemini_provider=AIProvider.GEMINI,
-        copilot_provider=AIProvider.COPILOT,
+        default_tools=[AIProvider.GEMINI, AIProvider.COPILOT],
     )
     assert order == [AIProvider.COPILOT]
 
@@ -132,14 +136,13 @@ def test_resolve_analysis_tool_order_chat_uses_default_chat_agent():
 def test_resolve_transcription_attempts_uses_mapped_agent_primary():
     attempts = resolve_transcription_attempts(
         project_name="nexus",
-        operation_agents={"transcribe_audio": "triage"},
+        system_operations={"transcribe_audio": "triage"},
         fallback_enabled=True,
-        transcription_primary="gemini",
+        fallback_provider="gemini",
         get_primary_tool=lambda agent, project: AIProvider.COPILOT,
         fallback_order_from_preferences_fn=lambda project: [AIProvider.GEMINI, AIProvider.COPILOT],
         unique_tools=lambda items: list(dict.fromkeys(items)),
-        gemini_provider=AIProvider.GEMINI,
-        copilot_provider=AIProvider.COPILOT,
+        supported_providers=[AIProvider.GEMINI, AIProvider.COPILOT],
     )
     assert attempts == ["copilot", "gemini"]
 
@@ -147,14 +150,13 @@ def test_resolve_transcription_attempts_uses_mapped_agent_primary():
 def test_resolve_transcription_attempts_falls_back_to_primary_modes():
     assert resolve_transcription_attempts(
         project_name=None,
-        operation_agents={},
+        system_operations={},
         fallback_enabled=False,
-        transcription_primary="whisper",
+        fallback_provider="whisper",
         get_primary_tool=lambda agent, project: AIProvider.GEMINI,
         fallback_order_from_preferences_fn=lambda project: [],
         unique_tools=lambda items: items,
-        gemini_provider=AIProvider.GEMINI,
-        copilot_provider=AIProvider.COPILOT,
+        supported_providers=[AIProvider.GEMINI, AIProvider.COPILOT],
     ) == ["whisper"]
 
 
@@ -166,28 +168,31 @@ def test_transcription_filters_and_whisper_model_normalization():
 
 
 def test_provider_registry_helpers():
-    assert parse_provider("gemini", AIProvider) == AIProvider.GEMINI
-    assert parse_provider('copilot["gpt-5-mini"]', AIProvider) == AIProvider.COPILOT
-    assert parse_provider({"provider": "codex", "model": "gpt-5"}, AIProvider) == AIProvider.CODEX
+    assert (
+        parse_provider({"provider": "gemini", "profile": "small"}, AIProvider) == AIProvider.GEMINI
+    )
+    assert (
+        parse_provider({"provider": "copilot", "profile": "large"}, AIProvider)
+        == AIProvider.COPILOT
+    )
+    assert parse_provider({"provider": "codex", "profile": "large"}, AIProvider) == AIProvider.CODEX
     assert parse_provider("unknown", AIProvider) is None
-    assert parse_provider('gemini[gpt-5-mini]', AIProvider) is None
-    parsed = parse_tool_preference('gemini["gemini-2.0-flash"]', AIProvider)
+    assert parse_provider({"provider": "auto", "profile": "small"}, AIProvider) is None
+    parsed = parse_tool_preference({"provider": "gemini", "profile": "small"}, AIProvider)
     assert parsed.valid is True
     assert parsed.provider == AIProvider.GEMINI
-    assert parsed.model == "gemini-2.0-flash"
+    assert parsed.profile == "small"
     assert (
         supports_analysis(
             AIProvider.GEMINI,
-            gemini_provider=AIProvider.GEMINI,
-            copilot_provider=AIProvider.COPILOT,
+            supported_tools=[AIProvider.GEMINI, AIProvider.COPILOT],
         )
         is True
     )
     assert (
         supports_analysis(
             AIProvider.CODEX,
-            gemini_provider=AIProvider.GEMINI,
-            copilot_provider=AIProvider.COPILOT,
+            supported_tools=[AIProvider.GEMINI, AIProvider.COPILOT],
         )
         is False
     )
@@ -200,10 +205,10 @@ def test_provider_registry_helpers():
 def test_run_analysis_with_provider_dispatch():
     result = run_analysis_with_provider(
         tool=AIProvider.GEMINI,
-        gemini_provider=AIProvider.GEMINI,
-        copilot_provider=AIProvider.COPILOT,
-        run_gemini_cli_analysis=lambda text, task, **kwargs: {"tool": "gemini"},
-        run_copilot_analysis=lambda text, task, **kwargs: {"tool": "copilot"},
+        providers_map={
+            AIProvider.GEMINI: lambda text, task, **kwargs: {"tool": "gemini"},
+            AIProvider.COPILOT: lambda text, task, **kwargs: {"tool": "copilot"},
+        },
         text="x",
         task="classify",
         kwargs={},
@@ -306,6 +311,16 @@ def test_build_analysis_prompt_helpers_cover_chat_and_classify():
     assert chat_prompt.startswith("You are triage.")
     assert "Recent Conversation History" in chat_prompt
     assert "What should we do next?" in chat_prompt
+
+
+def test_detect_intent_prompt_disambiguates_single_integration_from_ideation():
+    prompt = build_analysis_prompt(
+        "Do you think we could integrate Ollama (https://ollama.com/) in Nexus ARC?",
+        "detect_intent",
+    )
+    assert "single concrete change/integration feasibility questions" in prompt
+    assert "can we integrate X?" in prompt
+    assert 'prefer "feature_ideation": false' in prompt
 
 
 def test_gemini_analysis_invoker_rate_limit_and_timeout(monkeypatch):
@@ -454,7 +469,7 @@ def test_codex_invoker_unavailable_and_success(monkeypatch, tmp_path):
     non_empty_rollout = codex_home / "sessions" / "2026" / "02" / "28" / "rollout-ok.jsonl"
     empty_rollout.parent.mkdir(parents=True, exist_ok=True)
     empty_rollout.write_text("")
-    non_empty_rollout.write_text("{\"ok\":true}\n", encoding="utf-8")
+    non_empty_rollout.write_text('{"ok":true}\n', encoding="utf-8")
     os.utime(empty_rollout, (946684800, 946684800))
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
@@ -842,15 +857,19 @@ def test_run_transcription_attempts_fallback_and_rate_limit_recording():
     out = run_transcription_attempts(
         attempts=["gemini", "copilot"],
         audio_file_path="/tmp/audio.ogg",
-        transcribe_with_whisper=lambda p: "unused",
-        transcribe_with_gemini=lambda p: (_ for _ in ()).throw(_RateLimited("429")),
-        transcribe_with_copilot=lambda p: "hello",
+        transcribers_map={
+            "whisper": lambda p: "unused",
+            "gemini": lambda p: (_ for _ in ()).throw(_RateLimited("429")),
+            "copilot": lambda p: "hello",
+        },
         rate_limited_error_type=_RateLimited,
         record_rate_limit_with_context=lambda tool, exc, context: events.append(
             ("rate", (tool, context))
         ),
-        gemini_provider="gemini-provider",
-        copilot_provider="copilot-provider",
+        provider_to_tool={
+            "gemini": "gemini-provider",
+            "copilot": "copilot-provider",
+        },
         logger=_Logger(),
     )
     assert out == "hello"
@@ -859,13 +878,17 @@ def test_run_transcription_attempts_fallback_and_rate_limit_recording():
     out_none = run_transcription_attempts(
         attempts=["whisper"],
         audio_file_path="/tmp/audio.ogg",
-        transcribe_with_whisper=lambda p: (_ for _ in ()).throw(Exception("fail")),
-        transcribe_with_gemini=lambda p: None,
-        transcribe_with_copilot=lambda p: None,
+        transcribers_map={
+            "whisper": lambda p: (_ for _ in ()).throw(Exception("fail")),
+            "gemini": lambda p: None,
+            "copilot": lambda p: None,
+        },
         rate_limited_error_type=_RateLimited,
         record_rate_limit_with_context=_noop_rate_limit,
-        gemini_provider="gemini-provider",
-        copilot_provider="copilot-provider",
+        provider_to_tool={
+            "gemini": "gemini-provider",
+            "copilot": "copilot-provider",
+        },
         logger=_Logger(),
     )
     assert out_none is None

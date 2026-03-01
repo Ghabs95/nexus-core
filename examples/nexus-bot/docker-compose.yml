@@ -1,0 +1,77 @@
+name: nexus-telegram
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nexus-nexus-bot:local
+    command: [ "nexus-bot" ]
+    working_dir: /app
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      PROJECT_CONFIG_PATH: /nexus-config/project_config.yaml
+      BASE_DIR: /opt
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - /opt/nexus/config:/nexus-config:ro
+
+  processor:
+    image: nexus-nexus-bot:local
+    depends_on:
+      - bot
+    command: [ "nexus-processor" ]
+    working_dir: /app
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      PROJECT_CONFIG_PATH: /nexus-config/project_config.yaml
+      BASE_DIR: /opt
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - /opt/nexus/config:/nexus-config:ro
+
+  webhook:
+    image: nexus-nexus-bot:local
+    command: [ "nexus-webhook" ]
+    working_dir: /app
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      PROJECT_CONFIG_PATH: /nexus-config/project_config.yaml
+      BASE_DIR: /opt
+      WEBHOOK_PORT: "8081"
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - /opt/nexus/config:/nexus-config:ro
+
+  health:
+    image: nexus-nexus-bot:local
+    depends_on:
+      - bot
+      - processor
+    command: [ "nexus-health" ]
+    working_dir: /app
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      PROJECT_CONFIG_PATH: /nexus-config/project_config.yaml
+      BASE_DIR: /opt
+      HEALTH_CHECK_PORT: "8080"
+      HEALTH_CHECK_HOST: "0.0.0.0"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - /opt/nexus/config:/nexus-config:ro

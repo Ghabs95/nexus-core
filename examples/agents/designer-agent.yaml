@@ -1,9 +1,9 @@
-apiVersion: "nexus-core/v1"
+apiVersion: "nexus-arc/v1"
 kind: "Agent"
 metadata:
   name: "Designer"
   description: "Creates technical design proposals for feature requests"
-  author: "Nexus Core Team"
+  author: "Nexus ARC Team"
   version: "0.1.0"
 
 spec:
@@ -72,7 +72,7 @@ spec:
     Explicit scope boundaries
     
     ## Architecture & Implementation Approach
-    How would this integrate with Nexus Core?
+    How would this integrate with Nexus ARC?
     What components need changes?
     
     ## API/Integration Points

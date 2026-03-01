@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from nexus.adapters.storage.file import FileStorage
 from nexus.adapters.storage.workflow_state_adapter import StorageWorkflowStateStore
 

@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-
 from nexus.plugins.builtin.workflow_state_engine_plugin import WorkflowStateEnginePlugin
 
 

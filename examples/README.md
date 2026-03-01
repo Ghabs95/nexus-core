@@ -1,12 +1,12 @@
-# Nexus Core Examples
+# Nexus ARC Examples
 
-This folder demonstrates how to use Nexus Core with real examples.
+This folder demonstrates how to use Nexus ARC with real examples.
 
 ## Structure
 
 ```
 examples/
-├── telegram-bot/              # Full Telegram bot runtime example (migrated)
+├── nexus-bot/              # Full Telegram bot runtime example (migrated)
 │   ├── src/                   # Bot + processor + webhook + handlers
 │   ├── config/                # Example project config
 │   └── README.md              # Setup/run instructions
@@ -25,7 +25,7 @@ examples/
 
 ## Agent Types & Use Cases
 
-### Nexus Core Task Agents (This Framework)
+### Nexus ARC Task Agents (This Framework)
 
 **What:** Workflow agents that execute specific tasks in orchestrated sequences.
 
@@ -66,7 +66,7 @@ examples/
 ### 0. Telegram Bot Runtime Example
 
 ```bash
-cd examples/telegram-bot
+cd examples/nexus-bot
 cat README.md
 ```
 
@@ -101,7 +101,7 @@ python examples/translator/to_copilot.py examples/agents/triage-agent.yaml
 
 ## Agent Framework
 
-Agents are autonomous tools that handle specific tasks in your workflow. Nexus Core provides a standard way to define
+Agents are autonomous tools that handle specific tasks in your workflow. Nexus ARC provides a standard way to define
 and orchestrate them.
 
 ### Agent Anatomy
@@ -118,7 +118,7 @@ Every agent is defined in YAML with:
 
 ```yaml
 # examples/agents/triage-agent.yaml
-apiVersion: "nexus-core/v1"
+apiVersion: "nexus-arc/v1"
 kind: "Agent"
 metadata:
   name: "triage"
@@ -195,7 +195,7 @@ Workflows coordinate multiple agents. See `development_workflow.yaml` for an exa
 
 ```yaml
 # examples/workflows/development_workflow.yaml
-name: "Nexus Core Development Workflow"
+name: "Nexus ARC Development Workflow"
 
 steps:
   - id: "triage"
@@ -236,7 +236,7 @@ This workflow:
 Create `examples/agents/my-agent.yaml`:
 
 ```yaml
-apiVersion: "nexus-core/v1"
+apiVersion: "nexus-arc/v1"
 kind: "Agent"
 metadata:
   name: "my-agent"
@@ -291,7 +291,7 @@ result = await engine.run(workflow=..., inputs={...})
 
 ---
 
-## Real-World Example: Nexus Core Development
+## Real-World Example: Nexus ARC Development
 
 This repo uses agents for its own development!
 

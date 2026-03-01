@@ -1,9 +1,9 @@
-apiVersion: "nexus-core/v1"
+apiVersion: "nexus-arc/v1"
 kind: "Agent"
 metadata:
   name: "Developer"
   description: "Implements code changes based on debug analysis or design proposals"
-  author: "Nexus Core Team"
+  author: "Nexus ARC Team"
   version: "0.1.0"
 
 spec:
@@ -75,7 +75,7 @@ spec:
     ## If starting fresh (no existing PR)
 
     3. Implement the required changes based on the analysis
-    4. For Nexus Core repositories, use the low-token local loop first:
+    4. For Nexus ARC repositories, use the low-token local loop first:
        - `make lint-file FILE=<changed_file.py>`
        - `make type-file FILE=<changed_file.py>`
        - Optional smoke check only when needed to unblock implementation:

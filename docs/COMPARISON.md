@@ -1,25 +1,27 @@
-# Nexus Core vs Other AI Frameworks
+# Nexus ARC (Agentic Runtime Core) vs Other AI Frameworks
 
 ## TL;DR
 
-**Nexus Core is Git-native.** Every agent action creates permanent, traceable artifacts in your Git platform (GitHub, GitLab, Bitbucket). Other frameworks log to files or databases — Nexus writes to your development history.
+**Nexus ARC (Agentic Runtime Core) is Git-native.** Every agent action creates permanent, traceable artifacts in your
+Git platform (GitHub, GitLab, Bitbucket). Other frameworks log to files or databases — Nexus writes to your development
+history.
 
 ---
 
 ## Comparison Matrix
 
-| Feature | Nexus Core | Google ADK | LangChain | CrewAI | Temporal |
-|---------|------------|------------|-----------|---------|----------|
-| **Agent Orchestration** | ✅ Multi-agent workflows | ✅ Multi-agent teams | ✅ Chains & agents | ✅ Crew coordination | ✅ Workflows |
-| **Git Platform Integration** | ✅ **Native** (Issues, PRs, Comments) | ❌ Not built-in | ❌ Not built-in | ❌ Not built-in | ❌ Not built-in |
-| **Traceable Artifacts** | ✅ **All actions in Git** | ⚠️ Logs only | ⚠️ Logs only | ⚠️ Logs only | ⚠️ Database only |
-| **AI Provider Flexibility** | ✅ Any provider | ⚠️ Gemini-first | ✅ Multiple LLMs | ✅ Multiple LLMs | ⚠️ Not AI-specific |
-| **Production Reliability** | ✅ Retry, timeout, fallback | ⚠️ Limited | ⚠️ Limited | ⚠️ Limited | ✅ Strong |
-| **State Persistence** | ✅ Multiple backends | ⚠️ Unknown | ⚠️ Limited | ⚠️ Limited | ✅ Strong |
-| **Workflow Pause/Resume** | ✅ Built-in | ❌ Unknown | ❌ Not documented | ❌ Not documented | ✅ Built-in |
-| **Audit Trail** | ✅ **Git history** | ⚠️ Logs | ⚠️ Logs | ⚠️ Logs | ✅ Database |
-| **Human-in-Loop** | ✅ **PR reviews, approvals** | ❌ Unknown | ⚠️ Manual | ⚠️ Manual | ✅ Manual activities |
-| **License** | ✅ Apache 2.0 | ⚠️ Unknown | ✅ MIT | ✅ MIT | ⚠️ Proprietary |
+| Feature                      | Nexus ARC                            | Google ADK          | LangChain         | CrewAI              | Temporal            |
+|------------------------------|--------------------------------------|---------------------|-------------------|---------------------|---------------------|
+| **Agent Orchestration**      | ✅ Multi-agent workflows              | ✅ Multi-agent teams | ✅ Chains & agents | ✅ Crew coordination | ✅ Workflows         |
+| **Git Platform Integration** | ✅ **Native** (Issues, PRs, Comments) | ❌ Not built-in      | ❌ Not built-in    | ❌ Not built-in      | ❌ Not built-in      |
+| **Traceable Artifacts**      | ✅ **All actions in Git**             | ⚠️ Logs only        | ⚠️ Logs only      | ⚠️ Logs only        | ⚠️ Database only    |
+| **AI Provider Flexibility**  | ✅ Any provider                       | ⚠️ Gemini-first     | ✅ Multiple LLMs   | ✅ Multiple LLMs     | ⚠️ Not AI-specific  |
+| **Production Reliability**   | ✅ Retry, timeout, fallback           | ⚠️ Limited          | ⚠️ Limited        | ⚠️ Limited          | ✅ Strong            |
+| **State Persistence**        | ✅ Multiple backends                  | ⚠️ Unknown          | ⚠️ Limited        | ⚠️ Limited          | ✅ Strong            |
+| **Workflow Pause/Resume**    | ✅ Built-in                           | ❌ Unknown           | ❌ Not documented  | ❌ Not documented    | ✅ Built-in          |
+| **Audit Trail**              | ✅ **Git history**                    | ⚠️ Logs             | ⚠️ Logs           | ⚠️ Logs             | ✅ Database          |
+| **Human-in-Loop**            | ✅ **PR reviews, approvals**          | ❌ Unknown           | ⚠️ Manual         | ⚠️ Manual           | ✅ Manual activities |
+| **License**                  | ✅ Apache 2.0                         | ⚠️ Unknown          | ✅ MIT             | ✅ MIT               | ⚠️ Proprietary      |
 
 **Legend:**  
 ✅ = Excellent support  
@@ -33,6 +35,7 @@
 ### The Problem with Log-Based Workflows
 
 **Traditional frameworks (ADK, LangChain, CrewAI):**
+
 ```
 User Request
     ↓
@@ -44,13 +47,14 @@ Lost after 30 days 💀
 ```
 
 **Issues:**
+
 - ❌ Logs rotate and disappear
 - ❌ No traceability to code changes
 - ❌ Can't link decisions to implementation
 - ❌ Hard to search/reference later
 - ❌ No integration with development workflow
 
-### Nexus Core's Git-Native Approach
+### Nexus ARC's Git-Native Approach
 
 ```
 User Request
@@ -67,6 +71,7 @@ Searchable forever in Git ✅
 ```
 
 **Benefits:**
+
 - ✅ **Permanent record** - Never lost, always searchable
 - ✅ **Linked artifacts** - Issue → PR → Commit → Deploy
 - ✅ **Team visibility** - Everyone sees agent decisions
@@ -81,11 +86,13 @@ Searchable forever in Git ✅
 ### vs Google ADK
 
 **Google ADK Strengths:**
+
 - First-party Gemini integration
 - Google Cloud ecosystem
 - Strong agent reasoning patterns
 
-**Nexus Core Differentiators:**
+**Nexus ARC Differentiators:**
+
 - ✅ **Git-native workflows** - All actions create traceable artifacts
 - ✅ **Platform agnostic** - Not locked to Google Cloud
 - ✅ **Production reliability** - Battle-tested retry/timeout/fallback
@@ -99,11 +106,13 @@ Searchable forever in Git ✅
 ### vs LangChain
 
 **LangChain Strengths:**
+
 - Massive ecosystem (1000+ integrations)
 - Rich documentation
 - Large community
 
-**Nexus Core Differentiators:**
+**Nexus ARC Differentiators:**
+
 - ✅ **Git integration** - Issues, PRs, comments as first-class citizens
 - ✅ **Workflow state management** - Pause/resume/rollback
 - ✅ **Production focus** - Reliability over flexibility
@@ -117,11 +126,13 @@ Searchable forever in Git ✅
 ### vs CrewAI
 
 **CrewAI Strengths:**
+
 - Simple multi-agent setup
 - Role-based agent patterns
 - Good for prototyping
 
-**Nexus Core Differentiators:**
+**Nexus ARC Differentiators:**
+
 - ✅ **Git-native** - Agent work persists in development history
 - ✅ **Enterprise features** - Audit logs, compliance, SLAs
 - ✅ **Pluggable architecture** - Swap any component
@@ -135,11 +146,13 @@ Searchable forever in Git ✅
 ### vs Temporal
 
 **Temporal Strengths:**
+
 - Extremely robust workflow engine
 - Distributed execution
 - Strong consistency guarantees
 
-**Nexus Core Differentiators:**
+**Nexus ARC Differentiators:**
+
 - ✅ **Built for AI agents** - Temporal is general-purpose
 - ✅ **Git integration** - Native GitHub/GitLab workflows
 - ✅ **AI provider orchestration** - Automatic fallback, rate limits
@@ -153,6 +166,7 @@ Searchable forever in Git ✅
 ## Architecture Comparison
 
 ### Google ADK Architecture
+
 ```
 ┌─────────────┐
 │   Your App  │
@@ -175,7 +189,8 @@ Searchable forever in Git ✅
    (logs only)
 ```
 
-### Nexus Core Architecture
+### Nexus ARC Architecture
+
 ```
 ┌─────────────┐
 │   Trigger   │
@@ -214,6 +229,7 @@ Searchable forever in Git ✅
 ### Scenario: Feature Request Workflow
 
 **With Google ADK:**
+
 ```
 1. User files issue #123
 2. ADK agent analyzes request
@@ -225,7 +241,8 @@ Searchable forever in Git ✅
 5. 30 days later: Logs rotated, no trace 😞
 ```
 
-**With Nexus Core:**
+**With Nexus ARC:**
+
 ```
 1. User files issue #123
 2. ProjectLead agent analyzes
@@ -241,13 +258,15 @@ Searchable forever in Git ✅
 7. Forever: Complete trail from request → design → code → deploy ✅
 ```
 
-**Search "feature #123" in 2 years:** You see the entire history — why it was built, how it was designed, what code changed, who approved it.
+**Search "feature #123" in 2 years:** You see the entire history — why it was built, how it was designed, what code
+changed, who approved it.
 
 ---
 
-## When to Choose Nexus Core
+## When to Choose Nexus ARC
 
 ✅ **Choose Nexus if:**
+
 - You're building workflows for software development teams
 - You need permanent, searchable audit trails
 - You want agent actions integrated with Git workflows
@@ -256,6 +275,7 @@ Searchable forever in Git ✅
 - You need production reliability (retry, timeout, fallback)
 
 ❌ **Consider alternatives if:**
+
 - You're building experimental AI apps (→ LangChain)
 - You need quick prototyping (→ CrewAI)
 - You're all-in on Google ecosystem (→ ADK)
@@ -268,6 +288,7 @@ Searchable forever in Git ✅
 > **"AI workflows should be part of your development history, not ephemeral logs."**
 
 We believe:
+
 1. **Traceability matters** - Every decision should be searchable
 2. **Git is the system of record** - Not databases, not log files
 3. **Humans and AI collaborate** - Through PR reviews, approvals, comments
@@ -279,18 +300,21 @@ We believe:
 ## Roadmap: Where Nexus is Going
 
 **v0.2 (Q2 2026):**
+
 - [ ] GitLab, Bitbucket adapters (beyond GitHub)
 - [ ] Linear, Jira integration (issue tracking)
 - [ ] Web dashboard for workflow monitoring
 - [ ] OpenAI, Anthropic provider implementations
 
 **v0.3 (Q3 2026):**
+
 - [ ] Workflow versioning & rollback
 - [ ] GraphQL API for workflow management
 - [ ] Distributed execution (Celery/RQ)
 - [ ] SLA guarantees & monitoring
 
 **v1.0 (Q4 2026):**
+
 - [ ] Multi-tenancy
 - [ ] RBAC & compliance features
 - [ ] Workflow marketplace
@@ -301,6 +325,7 @@ We believe:
 ## Contributing
 
 We welcome contributions! Especially:
+
 - New Git platform adapters (GitLab, Bitbucket)
 - AI provider integrations (Anthropic, local models)
 - Example workflows for specific use cases
@@ -318,4 +343,5 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines.
 
 ---
 
-**The choice is clear: If you need AI workflows with permanent traceability integrated into your development process, choose Nexus Core.**
+**The choice is clear: If you need AI workflows with permanent traceability integrated into your development process,
+choose Nexus ARC.**

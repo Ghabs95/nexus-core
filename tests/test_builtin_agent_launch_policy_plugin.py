@@ -119,13 +119,15 @@ def test_initial_prompt_is_role_specific_without_hardcoded_triage_rules():
     assert "You are the launch agent." in prompt
     assert "**Assigned Workflow Step:** `triage`" in prompt
     assert "Execute the `triage` workflow step" in prompt
-    assert "Perform your role-specific work for this step according to the agent definition" in prompt
+    assert (
+        "Perform your role-specific work for this step according to the agent definition" in prompt
+    )
     assert "classification, severity, routing" not in prompt
     assert "Implement code changes during triage" not in prompt
 
 
-def test_initial_prompt_uses_operation_agents_launch_mapping():
-    plugin = AgentLaunchPolicyPlugin({"operation_agents": {"launch": "triage"}})
+def test_initial_prompt_uses_system_operations_launch_mapping():
+    plugin = AgentLaunchPolicyPlugin({"system_operations": {"launch": "triage"}})
     prompt = plugin.build_agent_prompt(
         issue_url="https://github.com/org/repo/issues/22",
         tier_name="full",
@@ -139,7 +141,7 @@ def test_initial_prompt_uses_operation_agents_launch_mapping():
     assert "**Assigned Workflow Step:** `triage`" in prompt
 
 
-def test_initial_prompt_uses_project_operation_agents_launch_resolver():
+def test_initial_prompt_uses_project_system_operations_launch_resolver():
     def _resolver(project_name: str) -> dict:
         if project_name == "acme":
             return {"launch": "triage"}
@@ -147,8 +149,8 @@ def test_initial_prompt_uses_project_operation_agents_launch_resolver():
 
     plugin = AgentLaunchPolicyPlugin(
         {
-            "operation_agents": {"launch": "launch"},
-            "operation_agents_resolver": _resolver,
+            "system_operations": {"launch": "launch"},
+            "system_operations_resolver": _resolver,
         }
     )
     prompt = plugin.build_agent_prompt(
@@ -165,7 +167,7 @@ def test_initial_prompt_uses_project_operation_agents_launch_resolver():
     assert "**Assigned Workflow Step:** `developer`" in prompt
 
 
-def test_initial_prompt_uses_default_project_for_operation_agents_resolution():
+def test_initial_prompt_uses_default_project_for_system_operations_resolution():
     calls: list[str] = []
 
     def _resolver(project_name: str) -> dict:
@@ -176,8 +178,8 @@ def test_initial_prompt_uses_default_project_for_operation_agents_resolution():
 
     plugin = AgentLaunchPolicyPlugin(
         {
-            "operation_agents": {"launch": "launch"},
-            "operation_agents_resolver": _resolver,
+            "system_operations": {"launch": "launch"},
+            "system_operations_resolver": _resolver,
             "default_project_name": "default-project",
         }
     )

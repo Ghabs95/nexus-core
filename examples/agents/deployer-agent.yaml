@@ -1,9 +1,9 @@
-apiVersion: "nexus-core/v1"
+apiVersion: "nexus-arc/v1"
 kind: "Agent"
 metadata:
   name: "Deployer"
   description: "Merges approved PRs, creates releases, and manages deployments"
-  author: "Nexus Core Team"
+  author: "Nexus ARC Team"
   version: "0.1.0"
 
 spec:

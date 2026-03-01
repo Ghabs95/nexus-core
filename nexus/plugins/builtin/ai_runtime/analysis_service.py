@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from nexus.core.prompt_budget import apply_prompt_budget
 
@@ -8,24 +8,16 @@ from nexus.core.prompt_budget import apply_prompt_budget
 def run_analysis_with_provider(
     *,
     tool: Any,
-    gemini_provider: Any,
-    copilot_provider: Any,
-    codex_provider: Any | None = None,
-    run_gemini_cli_analysis: Callable[..., dict[str, Any]],
-    run_copilot_analysis: Callable[..., dict[str, Any]],
-    run_codex_analysis: Callable[..., dict[str, Any]] | None = None,
+    providers_map: Mapping[Any, Callable[..., dict[str, Any]]],
     text: str,
     task: str,
     kwargs: dict[str, Any],
     tool_unavailable_error: type[Exception],
 ) -> dict[str, Any]:
     """Dispatch an analysis task to the provider-specific implementation."""
-    if tool == gemini_provider:
-        return run_gemini_cli_analysis(text, task, **kwargs)
-    if tool == copilot_provider:
-        return run_copilot_analysis(text, task, **kwargs)
-    if codex_provider is not None and tool == codex_provider and callable(run_codex_analysis):
-        return run_codex_analysis(text, task, **kwargs)
+    handler = providers_map.get(tool)
+    if handler and callable(handler):
+        return handler(text, task, **kwargs)
     raise tool_unavailable_error(f"{getattr(tool, 'value', tool)} does not support analysis tasks")
 
 
@@ -204,8 +196,10 @@ Return ONLY valid JSON with this shape:
 Rules:
 - Set "intent" to "task" for concrete implementation requests (feature, bug, chore) that should go to developer inbox.
 - Set "intent" to "conversation" for advisory questions, brainstorming, analysis, or discussion.
-- Set "feature_ideation" to true only when the user explicitly asks for new feature ideas/proposals/roadmap suggestions.
+- Set "feature_ideation" to true only when the user explicitly asks to generate multiple new feature ideas/proposals/roadmap suggestions.
+- Set "feature_ideation" to false for single concrete change/integration feasibility questions (e.g., "can we integrate X?", "should we add Y?").
 - Set "feature_ideation" to false for implementation/status/history questions (including "what was already implemented").
+- If uncertain between ideation and a concrete single-change request, prefer "feature_ideation": false.
 - Support multilingual input; do not assume English-only phrasing.
 
 Return ONLY valid JSON.

@@ -1,3 +1,3 @@
 """
-Translators package for Nexus Core.
+Translators package for Nexus ARC.
 """

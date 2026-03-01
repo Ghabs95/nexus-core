@@ -464,11 +464,14 @@ class TestGitLabPlatform:
             "web_url": "https://gitlab.com/mygroup/myproject/-/merge_requests/12",
         }
 
-        with patch("subprocess.run", side_effect=fake_run), patch.object(
-            platform,
-            "_post",
-            new=AsyncMock(return_value=mr_response),
-        ) as mock_post:
+        with (
+            patch("subprocess.run", side_effect=fake_run),
+            patch.object(
+                platform,
+                "_post",
+                new=AsyncMock(return_value=mr_response),
+            ) as mock_post,
+        ):
             pr = asyncio.run(
                 platform.create_pr_from_changes(
                     repo_dir=str(repo_dir),
@@ -513,11 +516,14 @@ class TestGitLabPlatform:
             "web_url": "https://gitlab.com/mygroup/myproject/-/merge_requests/13",
         }
 
-        with patch("subprocess.run", side_effect=fake_run), patch.object(
-            platform,
-            "_post",
-            new=AsyncMock(return_value=mr_response),
-        ) as mock_post:
+        with (
+            patch("subprocess.run", side_effect=fake_run),
+            patch.object(
+                platform,
+                "_post",
+                new=AsyncMock(return_value=mr_response),
+            ) as mock_post,
+        ):
             pr = asyncio.run(
                 platform.create_pr_from_changes(
                     repo_dir=str(repo_dir),
@@ -768,7 +774,7 @@ class TestCodexCLIProvider:
         empty_rollout = sessions / "rollout-empty.jsonl"
         non_empty_rollout = sessions / "rollout-ok.jsonl"
         empty_rollout.write_text("")
-        non_empty_rollout.write_text("{\"ok\":true}\n", encoding="utf-8")
+        non_empty_rollout.write_text('{"ok":true}\n', encoding="utf-8")
         os.utime(empty_rollout, (946684800, 946684800))
         monkeypatch.setenv("CODEX_HOME", str(codex_home))
 

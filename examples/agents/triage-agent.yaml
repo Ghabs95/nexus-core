@@ -1,9 +1,9 @@
-apiVersion: "nexus-core/v1"
+apiVersion: "nexus-arc/v1"
 kind: "Agent"
 metadata:
   name: "Triage"
   description: "Analyzes git-platform issues and classifies them by type and priority"
-  author: "Nexus Core Team"
+  author: "Nexus ARC Team"
   version: "0.1.0"
 
 spec:
@@ -63,7 +63,7 @@ spec:
   
   # The AI prompt to use
   ai_instructions: |
-    Analyze this issue for the Nexus Core framework.
+    Analyze this issue for the Nexus ARC framework.
     
     Issue Title: {issue_title}
     Issue Body: {issue_body}

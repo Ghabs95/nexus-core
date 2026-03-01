@@ -1,4 +1,4 @@
-# Nexus Core
+# Nexus ARC (Agentic Runtime Core)
 
 **Production-grade framework for orchestrating AI agents in multi-step workflows**
 
@@ -7,9 +7,9 @@
 
 ---
 
-## What is Nexus Core?
+## What is Nexus ARC?
 
-Nexus Core is the **Git-native AI orchestration framework**. Unlike other frameworks that log agent actions to ephemeral files, Nexus creates permanent, traceable artifacts in your Git platform (GitHub, GitLab, Bitbucket).
+Nexus ARC (Agentic Runtime Core) is the **Git-native AI orchestration framework**. Unlike other frameworks that log agent actions to ephemeral files, Nexus creates permanent, traceable artifacts in your Git platform (GitHub, GitLab, Bitbucket).
 
 ### Why Git-Native?
 
@@ -33,7 +33,7 @@ Every agent action becomes part of your development history:
 **Think of it as Temporal meets GitHub Actions for AI agents** — workflows that integrate seamlessly with your development process.
 
 > 📖 **Documentation:**
-> - [Usage Guide & Examples](docs/USAGE.md) - How to use nexus-core in your project
+> - [Usage Guide & Examples](docs/USAGE.md) - How to use nexus-arc in your project
 > - [Plugin Architecture](docs/PLUGINS.md) - Build and load Telegram/GitHub/AI integrations as plugins
 > - [Comparison with Google ADK, LangChain, and others](docs/COMPARISON.md)
 > - [Positioning & Messaging](docs/POSITIONING.md)
@@ -46,16 +46,16 @@ Every agent action becomes part of your development history:
 
 ```bash
 # Coming soon to PyPI!
-# pip install nexus-core
+# pip install nexus-arc
 
 # For now, install from source:
-git clone https://github.com/Ghabs95/nexus-core
-cd nexus-core
+git clone https://github.com/Ghabs95/nexus-arc
+cd nexus-arc
 pip install -e .
 ```
 
 # With optional adapters
-pip install nexus-core[telegram,postgres,openai]
+pip install nexus-arc[telegram,postgres,openai]
 ```
 
 ### Your First Workflow
@@ -205,13 +205,13 @@ engine.add_observer(exporter)
                      │
                      ▼
 ┌──────────────────────────────────────────────────────┐
-│                Workflow Engine                       │
+│                Workflow Engine (ARC)                 │
 │  ┌────────────────────────────────────────────────┐  │
-│  │  Step Manager → State Machine → Audit Logger  │  │
+│  │  Step Manager → State Machine → Audit Logger   │  │
 │  └────────────────────────────────────────────────┘  │
 └────────────┬──────────────────────┬──────────────────┘
              │                      │
-    ┌────────▼────────┐    ┌───────▼───────┐
+    ┌────────▼────────┐    ┌───────▼────────┐
     │ AI Orchestrator │    │ Storage Backend│
     │  - Provider     │    │  - State       │
     │    Selection    │    │  - Audit Log   │
@@ -414,11 +414,11 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 
 ## Support
 
-- **Documentation**: https://nexus-core.readthedocs.io *(Coming Soon! For now, see the `docs/` directory)*
+- **Documentation**: https://nexus-arc.readthedocs.io *(Coming Soon! For now, see the `docs/` directory)*
 - **Comparison Guide**: [vs Google ADK, LangChain, CrewAI](docs/COMPARISON.md)
-- **Issues**: https://github.com/Ghabs95/nexus-core/issues
-- **Discord**: https://discord.gg/nexus-core
-- **Email**: support@nexus-core.dev
+- **Issues**: https://github.com/Ghabs95/nexus-arc/issues
+- **Discord**: https://discord.gg/nexus-arc
+- **Email**: support@nexus-arc.dev
 
 ---
 

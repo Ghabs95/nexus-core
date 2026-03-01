@@ -1,6 +1,8 @@
-# Nexus Core Architecture
+# Nexus ARC (Agentic Runtime Core) Architecture
 
-> **About this document:** This shows the evolution from the original Nexus Telegram bot (coupled architecture) to the generic Nexus Core framework (pluggable architecture). The migration sections are specific to that project but demonstrate how to adopt the framework.
+> **About this document:** This shows the evolution from the original Nexus Telegram bot (coupled architecture) to the
+> generic Nexus ARC (Agentic Runtime Core) framework (pluggable architecture). The migration sections are specific to that
+> project but demonstrate how to adopt the framework.
 
 ## Original Nexus (Coupled Architecture)
 
@@ -32,6 +34,7 @@
 ```
 
 **Problems:**
+
 - ❌ Can't use Slack, Discord, web interface
 - ❌ Can't switch from GitHub to GitLab
 - ❌ Can't use Claude API, Codex API
@@ -41,7 +44,7 @@
 
 ---
 
-## Nexus Core (Pluggable Architecture)
+## Nexus ARC (Pluggable Architecture)
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -102,6 +105,7 @@
 ```
 
 **Benefits:**
+
 - ✅ **Multi-channel input**: Telegram, Slack, Webhook, CLI
 - ✅ **Storage flexibility**: File → Postgres → Redis as you grow
 - ✅ **Git platform agnostic**: GitHub, GitLab, Bitbucket
@@ -208,9 +212,11 @@
 ## Key Abstractions
 
 ### 1. StorageBackend
+
 **Why**: Decouple state persistence from storage technology
 
 **Interface**:
+
 ```python
 class StorageBackend(ABC):
     async def save_workflow(workflow: Workflow) -> None
@@ -220,15 +226,18 @@ class StorageBackend(ABC):
 ```
 
 **Implementations**:
+
 - `FileStorage` - JSON files (MVP)
 - `PostgreSQLStorage` - Relational DB (production)
 - `RedisStorage` - Fast cache (ephemeral workflows)
 - `S3Storage` - Serverless (AWS Lambda)
 
 ### 2. GitPlatform
+
 **Why**: Support GitHub, GitLab, Bitbucket interchangeably
 
 **Interface**:
+
 ```python
 class GitPlatform(ABC):
     async def create_issue(title, body, labels) -> Issue
@@ -238,14 +247,17 @@ class GitPlatform(ABC):
 ```
 
 **Implementations**:
+
 - `GitHubPlatform` - gh CLI
 - `GitLabPlatform` - GitLab API
 - `BitbucketPlatform` - Bitbucket API
 
 ### 3. AIProvider
+
 **Why**: Choose best AI tool for each task, automatic fallback
 
 **Interface**:
+
 ```python
 class AIProvider(ABC):
     async def execute_agent(context: ExecutionContext) -> AgentResult
@@ -255,6 +267,7 @@ class AIProvider(ABC):
 ```
 
 **Implementations**:
+
 - `CopilotCLIProvider` - GitHub Copilot CLI
 - `OpenAIProvider` - GPT-4 API (Coming soon)
 - `AnthropicProvider` - Claude API (Coming soon)
@@ -262,9 +275,11 @@ class AIProvider(ABC):
 - `LocalModelProvider` - Ollama, LM Studio
 
 ### 4. NotificationChannel
+
 **Why**: Send updates via user's preferred platform
 
 **Interface**:
+
 ```python
 class NotificationChannel(ABC):
     async def send_message(user_id, message: Message) -> str
@@ -273,6 +288,7 @@ class NotificationChannel(ABC):
 ```
 
 **Implementations**:
+
 - `TelegramNotifier` - Telegram bot
 - `SlackNotifier` - Slack webhooks
 - `EmailNotifier` - SMTP
@@ -324,27 +340,31 @@ adapters:
 
 ## Migration Path: From Monolithic to Pluggable
 
-This section shows a typical migration from a coupled system to nexus-core (based on a real migration from a Telegram bot).
+This section shows a typical migration from a coupled system to nexus-arc (based on a real migration from a Telegram
+bot).
 
 **Phase 1**: Run in parallel
+
 ```
 your-app/        (existing application, unchanged)
-nexus-core/      (new framework, integrated gradually)
+nexus-arc/      (new framework, integrated gradually)
 ```
 
 **Phase 2**: Gradual adoption
+
 ```python
 # In your existing codebase
 from nexus.adapters.storage import FileStorage
 from nexus.core.workflow import WorkflowEngine
 
-# Replace your custom workflow code with nexus-core
+# Replace your custom workflow code with nexus-arc
 engine = WorkflowEngine(storage=FileStorage("./data"))
 workflow = await engine.create_workflow(your_workflow_definition)
 ```
 
 **Phase 3**: Full migration
-- Migrate all workflows to nexus-core
+
+- Migrate all workflows to nexus-arc
 - Use YAML workflow definitions
 - Deploy new version
 
@@ -362,7 +382,7 @@ workflow = await engine.create_workflow(your_workflow_definition)
         │
         ▼
 ┌─────────────────────────┐
-│   Nexus Core API        │
+│   Nexus ARC API        │
 │  (FastAPI + GraphQL)    │
 └───────┬─────────────────┘
         │
@@ -381,7 +401,7 @@ workflow = await engine.create_workflow(your_workflow_definition)
 │  Customer's K8s Cluster │
 │                         │
 │  ┌───────────────────┐  │
-│  │ Nexus Core        │  │
+│  │ Nexus ARC        │  │
 │  │ (Docker image)    │  │
 │  └─────┬─────────────┘  │
 │        │                │
@@ -398,7 +418,7 @@ workflow = await engine.create_workflow(your_workflow_definition)
 ```
 ┌─────────────────────────┐
 │   GitHub (Public Repo)  │
-│   nexus-core (MIT)      │
+│   nexus-arc (MIT)      │
 └───────┬─────────────────┘
         │
         ▼ Download
@@ -422,21 +442,25 @@ workflow = await engine.create_workflow(your_workflow_definition)
 ## What Makes This Architecture Special
 
 ### 1. **Battle-Tested**
+
 Extracted from production Nexus with real users, real workflows.
 
 ### 2. **Reliability First**
+
 - Auto-retry with exponential backoff
 - Timeout detection and recovery
 - Audit trail for debugging
 - State persistence across crashes
 
 ### 3. **Developer Experience**
+
 - Clean abstractions
 - Type hints throughout
 - Async/await
 - Comprehensive docs
 
 ### 4. **Production Ready**
+
 - Horizontal scaling (Celery, RQ)
 - Multi-tenancy ready
 - Observability built-in

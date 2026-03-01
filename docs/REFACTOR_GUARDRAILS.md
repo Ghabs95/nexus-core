@@ -1,14 +1,15 @@
 # Refactor Guardrails
 
-This document defines lightweight guardrails for large-file refactors. The goal is to keep orchestration files thin and move business logic into testable services/modules.
+This document defines lightweight guardrails for large-file refactors. The goal is to keep orchestration files thin and
+move business logic into testable services/modules.
 
 ## Scope
 
 Primary hotspots:
 
-- `examples/telegram-bot/src/inbox_processor.py`
-- `examples/telegram-bot/src/telegram_bot.py`
-- `examples/telegram-bot/src/webhook_server.py`
+- `examples/nexus-bot/src/inbox_processor.py`
+- `examples/nexus-bot/src/telegram_bot.py`
+- `examples/nexus-bot/src/webhook_server.py`
 - `nexus/core/workflow.py`
 - `nexus/plugins/builtin/ai_runtime_plugin.py`
 
@@ -38,8 +39,8 @@ For every extraction:
 
 Examples in this repo:
 
-- `examples/telegram-bot/tests/test_*_service.py` (direct service tests)
-- `examples/telegram-bot/tests/test_inbox_processor_dispatch.py` (wiring smoke test)
+- `examples/nexus-bot/tests/test_*_service.py` (direct service tests)
+- `examples/nexus-bot/tests/test_inbox_processor_dispatch.py` (wiring smoke test)
 - `tests/test_ai_runtime_policy_helpers.py` (core helper extraction regression coverage)
 
 ## Hotspot Check Script
@@ -57,4 +58,3 @@ Optional strict mode:
 ```
 
 Default mode is non-blocking and prints warnings only.
-

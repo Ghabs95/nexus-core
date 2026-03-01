@@ -1,4 +1,3 @@
-import os
 from typing import Any, Callable
 
 from nexus.core.models import Agent, WorkflowStep
@@ -218,26 +217,20 @@ def build_prompt_context_text(
     """Render workflow steps and next-agent constraints as prompt context text."""
     if not steps:
         return ""
-    if os.getenv("NEXUS_FULL_WORKFLOW_CONTEXT", "false").lower() == "true":
-        tier_label = f" [{workflow_type}]" if workflow_type else ""
-        lines: list[str] = [f"**Workflow Steps{tier_label} (from {yaml_basename}):**\n"]
-        for idx, step_data in enumerate(steps, 1):
-            agent_type = step_data.get("agent_type", "unknown")
-            name = step_data.get("name", step_data.get("id", f"Step {idx}"))
-            desc = step_data.get("description", "")
-            if agent_type == "router":
-                continue
-            lines.append(f"- {idx}. **{name}** — `{agent_type}` : {desc}")
-    
-        lines.append(
-            "\n**CRITICAL:** Use ONLY the agent_type names listed above. "
-            "DO NOT use old agent names or reference other workflow YAML files."
-        )
-    else:
-        lines: list[str] = [
-            "**CRITICAL:** Use ONLY the agent names listed below for routing. "
-            "DO NOT use old agent names or reference other workflow files."
-        ]
+    tier_label = f" [{workflow_type}]" if workflow_type else ""
+    lines: list[str] = [f"**Workflow Steps{tier_label} (from {yaml_basename}):**\n"]
+    for idx, step_data in enumerate(steps, 1):
+        agent_type = step_data.get("agent_type", "unknown")
+        name = step_data.get("name", step_data.get("id", f"Step {idx}"))
+        desc = step_data.get("description", "")
+        if agent_type == "router":
+            continue
+        lines.append(f"- {idx}. **{name}** — `{agent_type}` : {desc}")
+
+    lines.append(
+        "\n**CRITICAL:** Use ONLY the agent_type names listed above. "
+        "DO NOT use old agent names or reference other workflow YAML files."
+    )
 
     seen: set[str] = set()
     display_pairs: list[str] = []

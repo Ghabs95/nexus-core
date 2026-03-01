@@ -87,7 +87,9 @@ def test_find_issue_processes_skips_ide_extension_host(monkeypatch):
 
     matches = plugin.find_issue_processes("42")
 
-    assert matches == [{"pid": 2222, "command": "codex exec --issue https://github.com/acme/repo/issues/42"}]
+    assert matches == [
+        {"pid": 2222, "command": "codex exec --issue https://github.com/acme/repo/issues/42"}
+    ]
 
 
 def test_find_issue_processes_accepts_wrapped_cli_invocation(monkeypatch):
@@ -102,5 +104,8 @@ def test_find_issue_processes_accepts_wrapped_cli_invocation(monkeypatch):
     matches = plugin.find_issue_processes("42")
 
     assert matches == [
-        {"pid": 3333, "command": "bash -lc codex exec --issue https://github.com/acme/repo/issues/42"}
+        {
+            "pid": 3333,
+            "command": "bash -lc codex exec --issue https://github.com/acme/repo/issues/42",
+        }
     ]

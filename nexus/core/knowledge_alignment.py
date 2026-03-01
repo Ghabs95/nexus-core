@@ -214,5 +214,7 @@ def _build_recommendations(score: float, query_tokens: set[str], gaps: list[str]
     if gaps:
         actions.append(f"Clarify unresolved terms in the issue: {', '.join(gaps[:5])}.")
     if query_tokens:
-        actions.append("Reference matched artifacts explicitly in the design or implementation comment.")
+        actions.append(
+            "Reference matched artifacts explicitly in the design or implementation comment."
+        )
     return actions

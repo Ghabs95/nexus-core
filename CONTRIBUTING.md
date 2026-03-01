@@ -1,14 +1,14 @@
-# Contributing to Nexus Core
+# Contributing to Nexus ARC (Agentic Runtime Core)
 
-Thank you for your interest in contributing to Nexus Core! We welcome contributions from the community.
+Thank you for your interest in contributing to Nexus ARC! We welcome contributions from the community.
 
 ## Getting Started
 
 1. **Fork the repository** on GitHub
 2. **Clone your fork** locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/nexus-core
-   cd nexus-core
+   git clone https://github.com/YOUR_USERNAME/nexus-arc
+   cd nexus-arc
    ```
 3. **Create a virtual environment**:
    ```bash
@@ -239,7 +239,7 @@ class AnthropicProvider(AIProvider):
 
 ## Community
 
-- **Discord**: [Join our Discord](https://discord.gg/nexus-core)
+- **Discord**: [Join our Discord](https://discord.gg/nexus-arc)
 - **GitHub Discussions**: Ask questions, share ideas
 - **Issue Tracker**: Report bugs, request features
 

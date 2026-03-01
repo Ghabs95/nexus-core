@@ -58,46 +58,45 @@ def resolve_analysis_tool_order(
     text: str,
     project_name: str | None,
     fallback_enabled: bool,
-    operation_agents: Mapping[str, Any],
+    system_operations: Mapping[str, Any],
     default_chat_agent_type: str,
     resolve_issue_override_agent: Callable[..., str],
     get_primary_tool: Callable[[str | None, str | None], Any],
     fallback_order_from_preferences_fn: Callable[[str | None], list[Any]],
     unique_tools: Callable[[list[Any]], list[Any]],
     supports_analysis: Callable[[Any], bool],
-    gemini_provider: Any,
-    copilot_provider: Any,
+    default_tools: list[Any],
 ) -> list[Any]:
     """Resolve ordered provider attempts for analysis tasks."""
     task_key = str(task or "").strip().lower()
     mapped_agent = ""
     if task_key == "chat":
-        mapped_agent = _coerce_chat_agent_type(operation_agents.get(task_key))
+        mapped_agent = _coerce_chat_agent_type(system_operations.get(task_key))
         if not mapped_agent:
             mapped_agent = default_chat_agent_type
         if not mapped_agent:
-            mapped_agent = str(operation_agents.get("default") or "").strip()
+            mapped_agent = str(system_operations.get("default") or "").strip()
     else:
         mapped_agent = str(
-            operation_agents.get(task_key) or operation_agents.get("default") or ""
+            system_operations.get(task_key) or system_operations.get("default") or ""
         ).strip()
 
     mapped_agent = resolve_issue_override_agent(
         task_key=task_key,
         mapped_agent=mapped_agent,
         text=text,
-        operation_agents=operation_agents,
+        system_operations=system_operations,
     )
 
     preferred = get_primary_tool(mapped_agent or None, project_name)
     base_order = fallback_order_from_preferences_fn(project_name)
     if not base_order:
-        base_order = [gemini_provider, copilot_provider]
+        base_order = default_tools
 
     ordered = [preferred] + [tool for tool in base_order if tool != preferred]
     filtered = [tool for tool in unique_tools(ordered) if supports_analysis(tool)]
     if not filtered:
-        filtered = [gemini_provider, copilot_provider]
+        filtered = default_tools[:2] if len(default_tools) >= 2 else default_tools
 
     if not fallback_enabled:
         return filtered[:1]

@@ -1,0 +1,131 @@
+# Global workflow definition path (YAML workflow file - single source of truth)
+workflow_definition_path: nexus-core/examples/workflows/enterprise_workflow.yaml
+
+# Shared agent YAML definitions (org-level agents used across all projects)
+# Searched as fallback when agent_type is not found in project-specific agents_dir
+shared_agents_dir: nexus-core/examples/agents
+
+# VCS-agnostic inbox/tasks directory (can be .nexus, .gitlab, .gitea, etc.)
+# Relative to project workspace root
+nexus_dir: .nexus
+
+# Project key registry (single source of truth for short keys and aliases)
+projects:
+  nxs:
+    code: nexus
+    aliases:
+      - nexus core
+      - nexus-core
+
+# Merge queue behavior (project-level enforcement)
+# review_mode:
+#   - manual: PR merge requires human approval
+#   - auto: PR can be merged automatically by the queue worker when ready
+merge_queue:
+  review_mode: manual
+
+# Global model profiles and AI tool preferences.
+# model_profiles define concrete model IDs per provider for each profile.
+# ai_tool_preferences map agent_type -> {profile, provider}.
+# provider can be: copilot, gemini, codex, auto.
+#
+# Architecture:
+# 1. Agent YAML files define: spec.agent_type (e.g., "triage", "debug", "escalation")
+# 2. Tasks are routed to agent types (not specific agent names)
+# 3. The first available agent with that type handles the task
+# 4. This config maps type → AI tool, so all agents of that type use the same tool
+#
+# Example:
+# model_profiles:
+#   fast: {copilot: gpt-4o-mini, gemini: gemini-2.0-flash}
+# ai_tool_preferences:
+#   triage: {profile: fast, provider: auto}
+model_profiles:
+  fast:
+    copilot: gpt-4o-mini
+    gemini: gemini-2.0-flash
+    codex: gpt-5-mini
+  reasoning:
+    copilot: gpt-5.3-codex
+    gemini: gemini-2.5-pro
+    codex: gpt-5.3-codex
+
+# Optional: profile-specific provider order used when provider=auto
+profile_provider_priority:
+  fast: [ gemini, copilot, codex ]
+  reasoning: [ codex, copilot, gemini ]
+
+ai_tool_preferences:
+  triage: { profile: fast, provider: auto }
+  designer: { profile: fast, provider: gemini }
+  debug: { profile: fast, provider: copilot }
+  developer: { profile: reasoning, provider: codex }
+  reviewer: { profile: fast, provider: copilot }
+  compliance: { profile: fast, provider: copilot }
+  deployer: { profile: fast, provider: copilot }
+  docs: { profile: fast, provider: gemini }
+  writer: { profile: fast, provider: gemini }
+  finalizer: { profile: fast, provider: gemini }
+
+# Global operation task -> agent type mapping.
+# Provider is selected through ai_tool_preferences for that agent type.
+system_operations:
+  launch: triage
+  default: triage
+  classify: triage
+  route: triage
+  detect_intent: triage
+  generate_name: triage
+  refine_description: triage
+  transcribe_audio: triage
+
+# Project configurations
+nexus:
+  agents_dir: ghabs/nexus-core/examples/agents
+  workspace: nexus
+  git_repo: Ghabs95/nexus-core
+  # git_repos:
+  #  - Ghabs95/nexus-core
+  system_operations:
+    default: triage
+    launch: triage
+    refine_description: designer
+    overrides:
+      issue:
+        refine_description: triage
+    inbox: triage
+    chat:
+      designer:
+        context_path: nexus-core/examples/nexus-bot/docs
+        context_files:
+          - AGENTS.md
+        feature_ideation_context_mode: index
+        feature_ideation_context_max_chars: 6000
+      triage: { }
+      compliance: { }
+      writer: { }
+  # Uses the enterprise workflow (multi-tier: full/shortened/fast-track)
+  workflow_definition_path: nexus/nexus-core/examples/workflows/enterprise_workflow.yaml
+  # AI tool preferences for enterprise workflow agent types
+  model_profiles:
+    fast:
+      copilot: gpt-4o-mini
+      gemini: gemini-2.0-flash
+      codex: gpt-5-mini
+    reasoning:
+      copilot: gpt-5.3-codex
+      gemini: gemini-2.5-pro
+      codex: gpt-5.3-codex
+  profile_provider_priority:
+    fast: [ gemini, copilot, codex ]
+    reasoning: [ codex, copilot, gemini ]
+  ai_tool_preferences:
+    triage: { profile: fast, provider: auto }
+    designer: { profile: fast, provider: gemini }
+    debug: { profile: fast, provider: copilot }
+    developer: { profile: reasoning, provider: codex }
+    reviewer: { profile: fast, provider: copilot }
+    compliance: { profile: fast, provider: copilot }
+    deployer: { profile: fast, provider: copilot }
+    writer: { profile: fast, provider: gemini }
+    finalizer: { profile: fast, provider: gemini }

@@ -1,9 +1,9 @@
-apiVersion: "nexus-core/v1"
+apiVersion: "nexus-arc/v1"
 kind: "Agent"
 metadata:
   name: "Writer"
   description: "Updates and maintains project documentation"
-  author: "Nexus Core Team"
+  author: "Nexus ARC Team"
   version: "0.1.0"
 
 spec:

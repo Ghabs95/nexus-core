@@ -1,11 +1,11 @@
 """
-Nexus Core - Production-grade AI workflow orchestration framework.
+Nexus ARC (Agentic Runtime Core) - Production-grade AI workflow orchestration framework.
 
 Copyright (c) 2026 Nexus Team
-Licensed under MIT License
+Licensed under Apache 2.0
 """
 
-__version__ = "0.2.0"
+__version__ = "0.1.0"
 
 from nexus.adapters.git import GitHubPlatform
 

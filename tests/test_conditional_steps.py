@@ -5,7 +5,6 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-
 from nexus.adapters.storage.base import StorageBackend
 from nexus.core.models import (
     Agent,

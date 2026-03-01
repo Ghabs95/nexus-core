@@ -14,7 +14,6 @@ import logging
 from pathlib import Path
 
 import yaml
-
 from nexus.adapters.ai.base import AIProvider
 
 logger = logging.getLogger(__name__)

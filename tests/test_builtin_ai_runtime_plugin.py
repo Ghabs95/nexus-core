@@ -36,10 +36,10 @@ def test_analysis_uses_operation_agent_mapping_for_primary_tool(monkeypatch):
     orchestrator = AIOrchestrator(
         {
             "tool_preferences": {
-                "triage": "copilot",
-                "designer": "gemini",
+                "triage": {"provider": "copilot", "profile": "small"},
+                "designer": {"provider": "gemini", "profile": "small"},
             },
-            "operation_agents": {
+            "system_operations": {
                 "default": "triage",
                 "refine_description": "designer",
             },
@@ -69,10 +69,10 @@ def test_analysis_fallback_order_comes_from_tool_preferences(monkeypatch):
     orchestrator = AIOrchestrator(
         {
             "tool_preferences": {
-                "triage": "copilot",
-                "designer": "gemini",
+                "triage": {"provider": "copilot", "profile": "small"},
+                "designer": {"provider": "gemini", "profile": "small"},
             },
-            "operation_agents": {
+            "system_operations": {
                 "default": "triage",
             },
         }
@@ -100,10 +100,10 @@ def test_refine_description_bug_report_prefers_triage_over_designer(monkeypatch)
     orchestrator = AIOrchestrator(
         {
             "tool_preferences": {
-                "triage": "copilot",
-                "designer": "gemini",
+                "triage": {"provider": "copilot", "profile": "small"},
+                "designer": {"provider": "gemini", "profile": "small"},
             },
-            "operation_agents": {
+            "system_operations": {
                 "default": "triage",
                 "refine_description": "designer",
                 "overrides": {
@@ -141,10 +141,10 @@ def test_refine_description_bug_report_without_issue_override_keeps_mapped_agent
     orchestrator = AIOrchestrator(
         {
             "tool_preferences": {
-                "triage": "copilot",
-                "designer": "gemini",
+                "triage": {"provider": "copilot", "profile": "small"},
+                "designer": {"provider": "gemini", "profile": "small"},
             },
-            "operation_agents": {
+            "system_operations": {
                 "default": "triage",
                 "refine_description": "designer",
             },
@@ -177,10 +177,10 @@ def test_chat_defaults_to_project_chat_agent(monkeypatch):
     orchestrator = AIOrchestrator(
         {
             "tool_preferences": {
-                "triage": "copilot",
-                "designer": "gemini",
+                "triage": {"provider": "copilot", "profile": "small"},
+                "designer": {"provider": "gemini", "profile": "small"},
             },
-            "operation_agents": {
+            "system_operations": {
                 "default": "triage",
             },
             "chat_agent_types_resolver": lambda project: (
@@ -457,7 +457,7 @@ def test_copilot_transcription_uses_add_dir(monkeypatch):
     assert "--add-file" not in captured["cmd"]
 
 
-def test_transcription_primary_uses_gemini_by_default(monkeypatch):
+def test_transcript_provider_env_uses_gemini_by_default(monkeypatch):
     orchestrator = AIOrchestrator()
     called = {"copilot": False, "gemini": False}
 
@@ -479,8 +479,9 @@ def test_transcription_primary_uses_gemini_by_default(monkeypatch):
     assert called["gemini"] is True
 
 
-def test_transcription_primary_uses_whisper_when_configured(monkeypatch):
-    orchestrator = AIOrchestrator({"transcription_primary": "whisper", "fallback_enabled": False})
+def test_transcript_provider_uses_whisper_when_configured(monkeypatch):
+    monkeypatch.setenv("TRANSCRIPT_PROVIDER", "whisper")
+    orchestrator = AIOrchestrator({"fallback_enabled": False})
     called = {"whisper": False, "gemini": False, "copilot": False}
 
     def _whisper(_path):
@@ -507,8 +508,8 @@ def test_transcription_primary_uses_whisper_when_configured(monkeypatch):
     assert called["copilot"] is False
 
 
-def test_copilot_transcription_timeout_respects_config(monkeypatch):
-    orchestrator = AIOrchestrator({"copilot_transcription_timeout": 150})
+def test_transcription_timeout_respects_config(monkeypatch):
+    orchestrator = AIOrchestrator({"transcription_timeout": 150})
     captured = {"timeout": None}
 
     monkeypatch.setattr(orchestrator, "check_tool_available", lambda _tool: True)
@@ -527,15 +528,15 @@ def test_copilot_transcription_timeout_respects_config(monkeypatch):
     assert captured["timeout"] == 150
 
 
-def test_transcription_operation_mapping_overrides_transcription_primary(monkeypatch):
+def test_transcription_operation_mapping_overrides_transcript_provider(monkeypatch):
+    monkeypatch.setenv("TRANSCRIPT_PROVIDER", "gemini")
     orchestrator = AIOrchestrator(
         {
-            "transcription_primary": "gemini",
             "tool_preferences": {
-                "triage": "copilot",
-                "designer": "gemini",
+                "triage": {"provider": "copilot", "profile": "small"},
+                "designer": {"provider": "gemini", "profile": "small"},
             },
-            "operation_agents": {
+            "system_operations": {
                 "transcribe_audio": "triage",
             },
         }
@@ -564,10 +565,10 @@ def test_transcription_operation_mapping_uses_global_fallback_order(monkeypatch)
     orchestrator = AIOrchestrator(
         {
             "tool_preferences": {
-                "triage": "copilot",
-                "designer": "gemini",
+                "triage": {"provider": "copilot", "profile": "small"},
+                "designer": {"provider": "gemini", "profile": "small"},
             },
-            "operation_agents": {
+            "system_operations": {
                 "transcribe_audio": "triage",
             },
             "fallback_enabled": True,
@@ -596,8 +597,8 @@ def test_primary_tool_parses_model_wrapped_preferences():
     orchestrator = AIOrchestrator(
         {
             "tool_preferences": {
-                "triage": 'copilot["gpt-5-mini"]',
-                "writer": 'gemini["gemini-2.0-flash"]',
+                "triage": {"provider": "copilot", "profile": "large"},
+                "writer": {"provider": "gemini", "profile": "small"},
             }
         }
     )
@@ -621,7 +622,8 @@ def test_copilot_model_override_is_capability_gated(monkeypatch, tmp_path):
         {
             "copilot_model": "global-model",
             "copilot_supports_model": False,
-            "tool_preferences": {"triage": 'copilot["agent-model"]'},
+            "tool_preferences": {"triage": {"provider": "copilot", "profile": "small"}},
+            "model_profiles": {"small": {"copilot": "agent-model"}},
         }
     )
 
@@ -638,3 +640,62 @@ def test_copilot_model_override_is_capability_gated(monkeypatch, tmp_path):
     assert pid == 111
     assert captured["copilot_model"] == "global-model"
     assert captured["copilot_supports_model"] is False
+
+
+def test_auto_provider_fast_profile_prefers_available_provider(monkeypatch):
+    orchestrator = AIOrchestrator(
+        {
+            "tool_preferences": {"triage": {"provider": "auto", "profile": "fast"}},
+            "model_profiles": {
+                "fast": {
+                    "gemini": "gemini-2.0-flash",
+                    "copilot": "gpt-4o-mini",
+                }
+            },
+        }
+    )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "check_tool_available",
+        lambda tool: tool != AIProvider.GEMINI,
+    )
+    assert orchestrator.get_primary_tool("triage") == AIProvider.COPILOT
+
+
+def test_profile_tool_order_keeps_same_profile_fallback_chain(monkeypatch):
+    orchestrator = AIOrchestrator(
+        {
+            "tool_preferences": {"triage": {"provider": "auto", "profile": "reasoning"}},
+            "model_profiles": {
+                "reasoning": {
+                    "codex": "gpt-5.3-codex",
+                    "copilot": "gpt-5.3-codex",
+                }
+            },
+        }
+    )
+
+    monkeypatch.setattr(orchestrator, "check_tool_available", lambda _tool: True)
+    order = orchestrator._get_tool_order(agent_name="triage", project_name=None)
+    assert order == [AIProvider.CODEX, AIProvider.COPILOT]
+
+
+def test_custom_profile_provider_priority_overrides_default_order(monkeypatch):
+    orchestrator = AIOrchestrator(
+        {
+            "tool_preferences": {"triage": {"provider": "auto", "profile": "fast"}},
+            "model_profiles": {
+                "fast": {
+                    "gemini": "gemini-2.0-flash",
+                    "copilot": "gpt-4o-mini",
+                    "codex": "gpt-5-mini",
+                }
+            },
+            "profile_provider_priority": {"fast": ["codex", "copilot", "gemini"]},
+        }
+    )
+
+    monkeypatch.setattr(orchestrator, "check_tool_available", lambda _tool: True)
+    order = orchestrator._get_tool_order(agent_name="triage", project_name=None)
+    assert order == [AIProvider.CODEX, AIProvider.COPILOT, AIProvider.GEMINI]

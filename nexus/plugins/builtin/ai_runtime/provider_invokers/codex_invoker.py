@@ -34,11 +34,13 @@ def _cleanup_empty_rollout_files(*, logger: Any, codex_home: str | None = None) 
                 continue
 
     if removed:
-        logger.warning(
-            "Removed %s empty Codex rollout session file(s) from %s",
-            removed,
-            sessions_dir,
-        )
+        log_warning = getattr(logger, "warning", None) or getattr(logger, "info", None)
+        if callable(log_warning):
+            log_warning(
+                "Removed %s empty Codex rollout session file(s) from %s",
+                removed,
+                sessions_dir,
+            )
     return removed
 
 

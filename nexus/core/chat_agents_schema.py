@@ -340,7 +340,7 @@ class HandoffDispatcher:
 
 
 def normalize_chat_agents(raw_chat_agents: Any) -> list[dict[str, Any]]:
-    """Normalize ``operation_agents.chat`` payload into ordered entries."""
+    """Normalize ``system_operations.chat`` payload into ordered entries."""
     entries: list[dict[str, Any]] = []
 
     if isinstance(raw_chat_agents, dict):
@@ -383,17 +383,17 @@ def normalize_chat_agents(raw_chat_agents: Any) -> list[dict[str, Any]]:
 
 
 def get_project_chat_agents(project_cfg: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return normalized chat entries from ``operation_agents.chat``."""
+    """Return normalized chat entries from ``system_operations.chat``."""
     if not isinstance(project_cfg, dict):
         return []
-    operation_agents = project_cfg.get("operation_agents")
-    if not isinstance(operation_agents, dict):
+    system_operations = project_cfg.get("system_operations")
+    if not isinstance(system_operations, dict):
         return []
-    return normalize_chat_agents(operation_agents.get("chat"))
+    return normalize_chat_agents(system_operations.get("chat"))
 
 
 def get_project_chat_agent_types(project_cfg: dict[str, Any]) -> list[str]:
-    """Return ordered agent_type values from project ``operation_agents.chat``."""
+    """Return ordered agent_type values from project ``system_operations.chat``."""
     return [entry["agent_type"] for entry in get_project_chat_agents(project_cfg)]
 
 

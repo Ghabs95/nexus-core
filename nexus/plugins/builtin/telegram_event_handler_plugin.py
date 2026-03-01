@@ -23,14 +23,13 @@ from typing import Any
 from nexus.core.events import (
     AlertAction,
     AgentTimeout,
-    EventBus,
     NexusEvent,
     StepCompleted,
     StepFailed,
     SystemAlert,
     WorkflowFailed,
 )
-from nexus.plugins.base import PluginHealthStatus
+from nexus.plugins.builtin.base_chat_event_handler import BaseChatEventHandler
 
 logger = logging.getLogger(__name__)
 
@@ -88,43 +87,20 @@ def _build_alert_keyboard(
     return {"inline_keyboard": rows}
 
 
-class TelegramEventHandler:
+class TelegramEventHandler(BaseChatEventHandler):
     """Sends Telegram messages when workflow events fire.
 
-    Implements :class:`PluginLifecycle` so the registry can perform
-    health checks against the Telegram Bot API.
+    Implements :class:`PluginLifecycle` via BaseChatEventHandler.
     """
 
     def __init__(self, config: dict[str, Any]):
+        super().__init__("telegram-event-handler")
         from nexus.plugins.builtin.telegram_notification_plugin import (
             TelegramNotificationPlugin,
         )
 
         self._telegram = TelegramNotificationPlugin(config)
         self._chat_id = str(config.get("chat_id", ""))
-        self._subscriptions: list[str] = []
-        self._last_send_ok: bool = True
-
-    # -- EventBus wiring ---------------------------------------------------
-
-    def attach(self, bus: EventBus) -> None:
-        """Subscribe to relevant events on *bus*."""
-        self._subscriptions.append(bus.subscribe("workflow.started", self._handle))
-        self._subscriptions.append(bus.subscribe("workflow.completed", self._handle))
-        self._subscriptions.append(bus.subscribe("workflow.failed", self._handle))
-        self._subscriptions.append(bus.subscribe("workflow.cancelled", self._handle))
-        self._subscriptions.append(bus.subscribe("step.failed", self._handle))
-        self._subscriptions.append(bus.subscribe("agent.timeout", self._handle))
-        self._subscriptions.append(bus.subscribe("system.alert", self._handle))
-        logger.info(
-            "TelegramEventHandler attached to EventBus (%d subscriptions)", len(self._subscriptions)
-        )
-
-    def detach(self, bus: EventBus) -> None:
-        """Unsubscribe all subscriptions from *bus*."""
-        for sub_id in self._subscriptions:
-            bus.unsubscribe(sub_id)
-        self._subscriptions.clear()
 
     # -- Handler ------------------------------------------------------------
 
@@ -178,21 +154,6 @@ class TelegramEventHandler:
         except Exception as exc:
             self._last_send_ok = False
             logger.error("TelegramEventHandler send failed: %s", exc)
-
-    # -- PluginLifecycle ----------------------------------------------------
-
-    async def on_load(self, registry: Any) -> None:
-        logger.info("TelegramEventHandler loaded")
-
-    async def on_unload(self) -> None:
-        logger.info("TelegramEventHandler unloaded")
-
-    async def health_check(self) -> PluginHealthStatus:
-        return PluginHealthStatus(
-            healthy=self._last_send_ok,
-            name="telegram-event-handler",
-            details="Last send OK" if self._last_send_ok else "Last send failed",
-        )
 
 
 # -- Plugin registration ---------------------------------------------------

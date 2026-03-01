@@ -3,7 +3,7 @@
 ## Installation
 
 ```bash
-cd nexus-core
+cd nexus-arc
 pip install -e .
 ```
 
@@ -37,7 +37,7 @@ cat data/audit/demo-workflow-001.jsonl
 1. Check out the [main README](README.md) for overview and features
 2. Review [Usage Guide](docs/USAGE.md) for detailed examples and integration patterns
 3. See [Architecture](docs/ARCHITECTURE.md) for system design
-4. Read [Comparison](docs/COMPARISON.md) to see how nexus-core differs from other frameworks
+4. Read [Comparison](docs/COMPARISON.md) to see how nexus-arc differs from other frameworks
 
 ## Key Concepts
 

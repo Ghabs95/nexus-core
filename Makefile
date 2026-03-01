@@ -6,7 +6,7 @@ RUFF ?= $(VENV_BIN)/ruff
 MYPY ?= $(VENV_BIN)/mypy
 
 FAST_PYTEST_ADDOPTS ?= -q -x --disable-warnings
-EXAMPLE_SRC ?= examples/telegram-bot/src
+EXAMPLE_SRC ?= examples/nexus-bot/src
 
 .PHONY: help lint-file type-file test-file test-example-file test-changed-core \
 	test-changed-telegram premerge-core premerge-telegram premerge-all
@@ -16,7 +16,7 @@ help:
 	@echo "  make lint-file FILE=path/to/file.py"
 	@echo "  make type-file FILE=path/to/file.py"
 	@echo "  make test-file TEST=tests/test_module.py"
-	@echo "  make test-example-file TEST=examples/telegram-bot/tests/test_module.py"
+	@echo "  make test-example-file TEST=examples/nexus-bot/tests/test_module.py"
 	@echo "  make test-changed-core"
 	@echo "  make test-changed-telegram"
 	@echo "  make premerge-core"
@@ -36,7 +36,7 @@ test-file:
 	@$(PYTEST) -o addopts='$(FAST_PYTEST_ADDOPTS)' "$(TEST)"
 
 test-example-file:
-	@test -n "$(TEST)" || (echo "Usage: make test-example-file TEST=examples/telegram-bot/tests/test_module.py" && exit 2)
+	@test -n "$(TEST)" || (echo "Usage: make test-example-file TEST=examples/nexus-bot/tests/test_module.py" && exit 2)
 	@PYTHONPATH="$(EXAMPLE_SRC)" $(PYTEST) -o addopts='$(FAST_PYTEST_ADDOPTS)' "$(TEST)"
 
 test-changed-core:
@@ -59,7 +59,7 @@ test-changed-telegram:
 	@set -eu; \
 	TESTS="$$( \
 		{ git diff --name-only --diff-filter=ACMR; git diff --name-only --diff-filter=ACMR --cached; } \
-		| grep -E '^examples/telegram-bot/tests/test_.*\.py$$' \
+		| grep -E '^examples/nexus-bot/tests/test_.*\.py$$' \
 		| sort -u \
 	)"; \
 	if [ -z "$$TESTS" ]; then \
@@ -75,7 +75,7 @@ premerge-core:
 	@$(PYTEST) -o addopts='$(FAST_PYTEST_ADDOPTS)' tests
 
 premerge-telegram:
-	@PYTHONPATH="$(EXAMPLE_SRC)" $(PYTEST) -o addopts='$(FAST_PYTEST_ADDOPTS)' examples/telegram-bot/tests
+	@PYTHONPATH="$(EXAMPLE_SRC)" $(PYTEST) -o addopts='$(FAST_PYTEST_ADDOPTS)' examples/nexus-bot/tests
 
 premerge-all:
 	@$(MAKE) premerge-core

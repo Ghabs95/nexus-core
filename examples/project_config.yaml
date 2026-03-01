@@ -25,32 +25,6 @@ nexus_dir: .nexus
 merge_queue:
   review_mode: manual  # Overrideable per project
 
-# GitHub Issue Triage Configuration (optional)
-# Maps incoming GitHub issues to agent types based on labels and repository
-#
-# Agent types are abstract roles that workflows implement:
-#   - triage: Initial issue analysis and classification
-#   - escalation: High-priority/urgent issues (escalate to senior agent)
-#   - debug: Bug analysis and root cause analysis
-#
-# Each project's workflow defines which actual agent implements each type.
-issue_triage:
-  # Default agent type for issues with no matching labels
-  default_agent_type: "triage"
-  
-  # Per-repository override (use different agent type for specific repos)
-  per_repo:
-  # "your-org/important-repo": "escalation"  # All issues in this repo → escalation
-  
-  # Label-based routing to agent types
-  label_based:
-    "triage": "triage"              # Triage workflow
-    "good first issue": "triage"    # Beginner-friendly → triage
-    "bug": "debug"                   # Bugs → debug agent
-    "urgent": "escalation"          # Urgent → escalation agent
-    "critical": "escalation"        # Critical → escalation agent
-    # "enhancement": "design"       # Features → design agent (optional)
-
 # Global AI tool preferences: which AI tool (and optionally model) to use
 # for each AGENT TYPE.
 # Options: copilot, gemini, codex
@@ -70,7 +44,7 @@ issue_triage:
 ai_tool_preferences:
   # ===== SYSTEM AGENT TYPES (abstract roles used by workflows) =====
   # These types are used by:
-  # - issue_triage config (routes issues to agent types)
+  # - system_operations.inbox (routes issues to agent types)
   # - workflow YAML (assigns work to agent types)
   # - task assignment (looks for agents with matching system_type)
   
@@ -88,7 +62,7 @@ ai_tool_preferences:
 # Global operation task -> agent type mapping.
 # These are non-agent orchestration tasks (classification, naming, refinement);
 # provider is resolved via ai_tool_preferences for the selected agent type.
-operation_agents:
+system_operations:
   launch: triage
   default: triage
   classify: triage
@@ -138,7 +112,7 @@ custom_project:
   git_repo: acme/custom-project
 
   # Optional per-project overrides for operation task routing.
-  operation_agents:
+  system_operations:
     launch: triage
     default: triage
     refine_description: designer

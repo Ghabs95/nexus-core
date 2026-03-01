@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-telegram-bot"
+version = "0.2.0"
+description = "Nexus Telegram Bot – production deployment of nexus-core with Telegram adapters"
+requires-python = ">=3.11"
+dependencies = [
+    "nexus-core[telegram-bot]",
+]
+
+[project.scripts]
+nexus-bot = "src.telegram_bot:main"
+nexus-processor = "src.inbox_processor:main"
+nexus-webhook = "src.webhook_server:main"
+nexus-health = "src.health_check:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

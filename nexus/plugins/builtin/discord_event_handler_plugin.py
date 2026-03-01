@@ -27,7 +27,6 @@ from nexus.adapters.notifications.base import Button, Message
 from nexus.core.events import (
     AlertAction,
     AgentTimeout,
-    EventBus,
     NexusEvent,
     StepCompleted,
     StepFailed,
@@ -36,7 +35,7 @@ from nexus.core.events import (
     WorkflowFailed,
 )
 from nexus.core.models import Severity
-from nexus.plugins.base import PluginHealthStatus
+from nexus.plugins.builtin.base_chat_event_handler import BaseChatEventHandler
 
 logger = logging.getLogger(__name__)
 
@@ -60,15 +59,16 @@ _SEVERITY_MAP: dict[str, Severity] = {
 }
 
 
-class DiscordEventHandler:
+class DiscordEventHandler(BaseChatEventHandler):
     """Sends Discord embed notifications when workflow events fire.
 
     Wraps :class:`DiscordNotificationChannel` and subscribes to the
-    EventBus for reactive dispatch. Implements ``PluginLifecycle`` for
+    EventBus via BaseChatEventHandler. Implements ``PluginLifecycle`` for
     health checks.
     """
 
     def __init__(self, config: dict[str, Any]):
+        super().__init__("discord-event-handler")
         from nexus.adapters.notifications.discord import DiscordNotificationChannel
 
         self._discord = DiscordNotificationChannel(
@@ -77,29 +77,6 @@ class DiscordEventHandler:
             alert_channel_id=config.get("alert_channel_id"),
         )
         self._alert_channel_id = config.get("alert_channel_id", "")
-        self._subscriptions: list[str] = []
-        self._last_send_ok: bool = True
-
-    # -- EventBus wiring ---------------------------------------------------
-
-    def attach(self, bus: EventBus) -> None:
-        """Subscribe to relevant events on *bus*."""
-        self._subscriptions.append(bus.subscribe("workflow.started", self._handle))
-        self._subscriptions.append(bus.subscribe("workflow.completed", self._handle))
-        self._subscriptions.append(bus.subscribe("workflow.failed", self._handle))
-        self._subscriptions.append(bus.subscribe("workflow.cancelled", self._handle))
-        self._subscriptions.append(bus.subscribe("step.failed", self._handle))
-        self._subscriptions.append(bus.subscribe("agent.timeout", self._handle))
-        self._subscriptions.append(bus.subscribe("system.alert", self._handle))
-        logger.info(
-            "DiscordEventHandler attached to EventBus (%d subscriptions)", len(self._subscriptions)
-        )
-
-    def detach(self, bus: EventBus) -> None:
-        """Unsubscribe all subscriptions from *bus*."""
-        for sub_id in self._subscriptions:
-            bus.unsubscribe(sub_id)
-        self._subscriptions.clear()
 
     # -- Handler ------------------------------------------------------------
 
@@ -197,19 +174,9 @@ class DiscordEventHandler:
 
     # -- PluginLifecycle ----------------------------------------------------
 
-    async def on_load(self, registry: Any) -> None:
-        logger.info("DiscordEventHandler loaded")
-
     async def on_unload(self) -> None:
         await self._discord.aclose()
-        logger.info("DiscordEventHandler unloaded")
-
-    async def health_check(self) -> PluginHealthStatus:
-        return PluginHealthStatus(
-            healthy=self._last_send_ok,
-            name="discord-event-handler",
-            details="Last send OK" if self._last_send_ok else "Last send failed",
-        )
+        await super().on_unload()
 
 
 # -- Plugin registration ---------------------------------------------------

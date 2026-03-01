@@ -5,7 +5,6 @@ import time
 from unittest.mock import MagicMock
 
 import pytest
-
 from nexus.plugins.base import PluginKind, make_plugin_spec
 from nexus.plugins.registry import (
     PluginNotFoundError,

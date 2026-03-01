@@ -6,7 +6,7 @@ from nexus.translators.to_python import translate_agent_to_python
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Nexus Core CLI")
+    parser = argparse.ArgumentParser(description="Nexus ARC CLI")
     subparsers = parser.add_subparsers(dest="command")
 
     # Translate

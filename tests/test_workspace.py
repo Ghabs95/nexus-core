@@ -131,7 +131,9 @@ class TestCleanupWorktreeSafety:
 
     @mock.patch("nexus.core.workspace.WorkspaceManager.cleanup_worktree", return_value=True)
     @mock.patch("nexus.core.workspace.WorkspaceManager._is_worktree_clean_dir", return_value=True)
-    def test_cleanup_worktree_safe_runs_when_idle_and_clean(self, mock_clean, mock_cleanup, tmp_path):
+    def test_cleanup_worktree_safe_runs_when_idle_and_clean(
+        self, mock_clean, mock_cleanup, tmp_path
+    ):
         issue_dir = tmp_path / ".nexus" / "worktrees" / "issue-42"
         issue_dir.mkdir(parents=True)
 
@@ -149,7 +151,9 @@ class TestCleanupWorktreeSafety:
 class TestCleanupStaleWorktrees:
     @mock.patch("nexus.core.workspace.WorkspaceManager.cleanup_worktree", return_value=True)
     @mock.patch("nexus.core.workspace.WorkspaceManager._is_worktree_clean_dir", return_value=True)
-    def test_cleanup_stale_worktrees_removes_old_clean_idle(self, mock_clean, mock_cleanup, tmp_path):
+    def test_cleanup_stale_worktrees_removes_old_clean_idle(
+        self, mock_clean, mock_cleanup, tmp_path
+    ):
         root = tmp_path / ".nexus" / "worktrees"
         old = root / "issue-11"
         recent = root / "issue-12"

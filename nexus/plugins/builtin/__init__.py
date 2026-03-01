@@ -15,6 +15,9 @@ from nexus.plugins.builtin.ai_runtime_plugin import (
 from nexus.plugins.builtin.ai_runtime_plugin import (
     register_plugins as register_ai_runtime_plugins,
 )
+from nexus.plugins.builtin.base_chat_event_handler import (
+    BaseChatEventHandler,
+)
 from nexus.plugins.builtin.discord_event_handler_plugin import (
     DiscordEventHandler,
 )
@@ -27,23 +30,23 @@ from nexus.plugins.builtin.discord_interactive_plugin import (
 from nexus.plugins.builtin.discord_interactive_plugin import (
     register_plugins as register_discord_interactive_plugins,
 )
+from nexus.plugins.builtin.git_webhook_policy_plugin import (
+    GitWebhookPolicyPlugin,
+)
+from nexus.plugins.builtin.git_webhook_policy_plugin import (
+    register_plugins as register_git_webhook_policy_plugins,
+)
 from nexus.plugins.builtin.github_issue_plugin import (
     GitHubIssueCLIPlugin,
 )
 from nexus.plugins.builtin.github_issue_plugin import (
     register_plugins as register_github_issue_plugins,
 )
-from nexus.plugins.builtin.github_webhook_policy_plugin import (
-    GithubWebhookPolicyPlugin,
+from nexus.plugins.builtin.gitlab_issue_plugin import (
+    GitLabIssueCLIPlugin,
 )
-from nexus.plugins.builtin.github_webhook_policy_plugin import (
-    register_plugins as register_github_webhook_policy_plugins,
-)
-from nexus.plugins.builtin.github_workflow_policy_plugin import (
-    WorkflowMonitorPolicyPlugin as GithubWorkflowPolicyPlugin,
-)
-from nexus.plugins.builtin.github_workflow_policy_plugin import (
-    register_plugins as register_github_workflow_policy_plugins,
+from nexus.plugins.builtin.gitlab_issue_plugin import (
+    register_plugins as register_gitlab_issue_plugins,
 )
 from nexus.plugins.builtin.json_state_plugin import (
     JsonStateStorePlugin,
@@ -79,6 +82,12 @@ from nexus.plugins.builtin.workflow_monitor_policy_plugin import (
     WorkflowMonitorPolicyPlugin,
 )
 from nexus.plugins.builtin.workflow_monitor_policy_plugin import (
+    WorkflowMonitorPolicyPlugin as GithubWorkflowPolicyPlugin,
+)
+from nexus.plugins.builtin.workflow_monitor_policy_plugin import (
+    register_plugins as register_workflow_monitor_policy_plugins,
+)
+from nexus.plugins.builtin.workflow_monitor_policy_plugin import (
     register_plugins as register_workflow_monitor_policy_plugins,
 )
 from nexus.plugins.builtin.workflow_policy_plugin import (
@@ -99,8 +108,10 @@ __all__ = [
     "AIProvider",
     "AgentLaunchPolicyPlugin",
     "RateLimitedError",
+    "BaseChatEventHandler",
     "ToolUnavailableError",
     "GitHubIssueCLIPlugin",
+    "GitLabIssueCLIPlugin",
     "JsonStateStorePlugin",
     "TelegramNotificationPlugin",
     "TelegramInteractivePlugin",
@@ -108,7 +119,7 @@ __all__ = [
     "WorkflowPolicyPlugin",
     "WorkflowStateEnginePlugin",
     "WorkflowMonitorPolicyPlugin",
-    "GithubWebhookPolicyPlugin",
+    "GitWebhookPolicyPlugin",
     "GithubWorkflowPolicyPlugin",
     "TelegramEventHandler",
     "DiscordEventHandler",
@@ -116,6 +127,7 @@ __all__ = [
     "register_ai_runtime_plugins",
     "register_agent_launch_policy_plugins",
     "register_github_issue_plugins",
+    "register_gitlab_issue_plugins",
     "register_json_state_plugins",
     "register_telegram_notification_plugins",
     "register_telegram_interactive_plugins",
@@ -126,6 +138,6 @@ __all__ = [
     "register_workflow_policy_plugins",
     "register_workflow_state_engine_plugins",
     "register_workflow_monitor_policy_plugins",
-    "register_github_webhook_policy_plugins",
-    "register_github_workflow_policy_plugins",
+    "register_git_webhook_policy_plugins",
+    "register_workflow_monitor_policy_plugins",
 ]

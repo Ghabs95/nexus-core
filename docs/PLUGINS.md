@@ -1,6 +1,6 @@
 # Plugin Architecture
 
-Nexus Core supports plugin-driven integrations so product-specific components can live outside the framework.
+Nexus ARC supports plugin-driven integrations so product-specific components can live outside the framework.
 
 ## Goals
 
@@ -65,7 +65,7 @@ telegram_integration = "nexus_telegram_plugin:register_plugins"
 
 ## Migration Guidance
 
-### Move into nexus-core (contracts only)
+### Move into nexus-arc (contracts only)
 
 - Plugin contracts and registry
 - Provider orchestration policies
@@ -94,6 +94,7 @@ telegram_integration = "nexus_telegram_plugin:register_plugins"
 
 - AI runtime orchestrator plugin: `nexus.plugins.builtin.ai_runtime_plugin`
     - Classes: `AIOrchestrator`, `AIProvider`
+    - Description: Copilot/Gemini/Codex/Ollama orchestration with fallback and cooldown handling
     - Registration entry: `register_plugins(registry)`
 - Agent launch policy plugin: `nexus.plugins.builtin.agent_launch_policy_plugin`
     - Class: `AgentLaunchPolicyPlugin`
@@ -101,7 +102,7 @@ telegram_integration = "nexus_telegram_plugin:register_plugins"
 - GitHub issue creation plugin: `nexus.plugins.builtin.github_issue_plugin`
     - Class: `GitHubIssueCLIPlugin`
     - Registration entry: `register_plugins(registry)`
-- GitHub workflow policy plugin: `nexus.plugins.builtin.github_workflow_policy_plugin`
+- GitHub workflow policy plugin: `nexus.plugins.builtin.workflow_monitor_policy_plugin`
     - Class: `GithubWorkflowPolicyPlugin`
     - Registration entry: `register_plugins(registry)`
 - Telegram notification plugin: `nexus.plugins.builtin.telegram_notification_plugin`
@@ -128,8 +129,8 @@ telegram_integration = "nexus_telegram_plugin:register_plugins"
 - Slack event handler plugin: `nexus.plugins.builtin.slack_event_handler_plugin`
     - Class: `SlackEventHandler`
     - Registration entry: `register_plugins(registry)`
-    - Requires: `slack-sdk` optional dependency (`pip install nexus-core[slack]`)
+    - Requires: `slack-sdk` optional dependency (`pip install nexus-arc[slack]`)
 - Slack interactive client plugin: `nexus.plugins.builtin.slack_interactive_plugin`
     - Class: `SlackInteractivePlugin`
     - Registration entry: `register_plugins(registry)`
-    - Requires: `slack-bolt>=1.18` optional dependency (`pip install nexus-core[slack]`)
+    - Requires: `slack-bolt>=1.18` optional dependency (`pip install nexus-arc[slack]`)

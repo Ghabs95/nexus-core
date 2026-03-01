@@ -170,14 +170,14 @@ class AgentLaunchPolicyPlugin:
         return prompt
 
     def _resolve_launch_agent_identity(self, *, project_name: str = "") -> str:
-        """Resolve launch prompt identity from operation_agents config."""
-        operation_agents = self._resolve_operation_agents(project_name=project_name)
-        configured_identity = str(operation_agents.get("launch") or "").strip()
+        """Resolve launch prompt identity from system_operations config."""
+        system_operations = self._resolve_system_operations(project_name=project_name)
+        configured_identity = str(system_operations.get("launch") or "").strip()
         return configured_identity or "launch"
 
-    def _resolve_operation_agents(self, *, project_name: str = "") -> dict:
-        """Resolve operation_agents from static config or project resolver."""
-        resolver = self.config.get("operation_agents_resolver")
+    def _resolve_system_operations(self, *, project_name: str = "") -> dict:
+        """Resolve system_operations from static config or project resolver."""
+        resolver = self.config.get("system_operations_resolver")
         normalized_project = str(project_name or "").strip()
         default_project = str(self.config.get("default_project_name") or "").strip()
         project_for_resolution = normalized_project or default_project
@@ -189,12 +189,14 @@ class AgentLaunchPolicyPlugin:
             if isinstance(resolved, dict):
                 return resolved
 
-        configured = self.config.get("operation_agents")
+        configured = self.config.get("system_operations")
         if isinstance(configured, dict):
             return configured
         return {}
 
-    def _build_alignment_context(self, *, task_content: str, workflow_type: str, repo_path: str) -> str:
+    def _build_alignment_context(
+        self, *, task_content: str, workflow_type: str, repo_path: str
+    ) -> str:
         """Build repository-backed feature-alignment context block."""
         root = str(repo_path or "").strip() or "."
         try:

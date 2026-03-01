@@ -1,9 +1,9 @@
-apiVersion: "nexus-core/v1"
+apiVersion: "nexus-arc/v1"
 kind: "Agent"
 metadata:
   name: "Reviewer"
   description: "Reviews pull requests for code quality and best practices"
-  author: "Nexus Core Team"
+  author: "Nexus ARC Team"
   version: "0.1.0"
 
 spec:
@@ -77,9 +77,9 @@ spec:
        - Consistency with project conventions (PEP 8, type hints, 100-char lines)
 
     4. Run regression checks before approving:
-       - For Nexus Core, run `make premerge-core` and record the pass/fail summary.
+       - For Nexus ARC, run `make premerge-core` and record the pass/fail summary.
        - Keep Telegram example regression separate: if changes touch
-         `examples/telegram-bot/`, run `make premerge-telegram`.
+         `examples/nexus-bot/`, run `make premerge-telegram`.
        - Prefer CI status checks as additional evidence, but do not approve without
          executed regression evidence (local or CI) for the current head SHA.
        - Do NOT paste raw test logs — only record the summary line

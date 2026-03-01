@@ -152,6 +152,7 @@ if _SA_AVAILABLE:
         approval_timeout: sa.orm.Mapped[int] = sa.orm.mapped_column(sa.Integer)
         requested_at: sa.orm.Mapped[float] = sa.orm.mapped_column(sa.Float)
 
+
 # ---------------------------------------------------------------------------
 # Storage backend
 # ---------------------------------------------------------------------------

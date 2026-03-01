@@ -83,7 +83,7 @@ def _normalize_findings(value: Any) -> list[str]:
 
     if len(findings) > _COMPLETION_FINDINGS_MAX_ITEMS:
         omitted = len(findings) - _COMPLETION_FINDINGS_MAX_ITEMS
-        findings = findings[: _COMPLETION_FINDINGS_MAX_ITEMS]
+        findings = findings[:_COMPLETION_FINDINGS_MAX_ITEMS]
         findings.append(f"... {omitted} additional finding(s) omitted for budget.")
     return findings
 
@@ -215,13 +215,13 @@ class CompletionSummary:
         """Serialize back to a plain dict."""
         d: dict[str, Any] = budget_completion_payload(
             {
-            "status": self.status,
-            "agent_type": self.agent_type,
-            "summary": self.summary,
-            "key_findings": self.key_findings,
-            "next_agent": self.next_agent,
-            "verdict": self.verdict,
-            "effort_breakdown": self.effort_breakdown,
+                "status": self.status,
+                "agent_type": self.agent_type,
+                "summary": self.summary,
+                "key_findings": self.key_findings,
+                "next_agent": self.next_agent,
+                "verdict": self.verdict,
+                "effort_breakdown": self.effort_breakdown,
             }
         )
         if not d.get("verdict"):

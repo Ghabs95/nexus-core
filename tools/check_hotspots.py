@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -36,7 +35,9 @@ def count_loc(path: Path) -> int:
     return sum(1 for _ in path.open("r", encoding="utf-8"))
 
 
-def iter_functions(module: ast.Module) -> Iterable[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]:
+def iter_functions(
+    module: ast.Module,
+) -> Iterable[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]:
     for node in module.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             yield node.name, node
@@ -57,7 +58,9 @@ def function_lengths(path: Path) -> dict[str, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Non-blocking hotspot budget checker")
-    parser.add_argument("--fail-on-targets", action="store_true", help="Exit non-zero on target violations")
+    parser.add_argument(
+        "--fail-on-targets", action="store_true", help="Exit non-zero on target violations"
+    )
     args = parser.parse_args()
 
     violations: list[str] = []
@@ -109,4 +112,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

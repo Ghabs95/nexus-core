@@ -337,7 +337,6 @@ class GitHubPlatform(GitPlatform):
         - cross repo: ``Closes <owner/repo>#<issue_number>``
         Returns None if no changes are detected.
         """
-        import os
         import re as _re
 
         git_repo_probe = subprocess.run(
