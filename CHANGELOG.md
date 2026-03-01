@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Telegram Live Workflow Watch (`/watch`)** — Added a `/watch` command to the Telegram bot that subscribes to live workflow events from the `/visualizer` Socket.IO namespace and relays them to chat in real time. Supports `step_status_changed`, `workflow_completed`, and optional `mermaid_diagram` digest events. Includes exponential-backoff reconnect, dedup/throttle controls, and backend-safe subscription persistence for both `filesystem` and `postgres` storage modes. Feature is gated behind `NEXUS_TELEGRAM_WATCH_ENABLED`. Documented in ADR-089 ([#106](https://github.com/Ghabs95/nexus-core/issues/106)).
 - **Universal Nexus Identity (UNI)** — Refactored `UserManager` to use a platform-agnostic identity system. Users are now assigned a unique `nexus_id` (UUID4) and can link multiple platform identities (Telegram, Discord, etc.) to a single profile. This enables seamless profile synchronization and task history tracking across all supported chat platforms ([#86](https://github.com/Ghabs95/nexus-core/issues/86)).
 - **UNI Account Linking Safety** — `UserManager.link_identity` now prevents "identity hijacking" by rejecting re-binding attempts if a platform identity is already linked to a different `nexus_id`.
 - **UNI Migration Logic** — Added automatic migration for legacy `telegram_id`-keyed user data to the new UNI format, ensuring no loss of tracking history during the transition.
