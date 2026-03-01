@@ -8,6 +8,7 @@ from handlers.issue_command_handlers import IssueHandlerDeps
 from handlers.monitoring_command_handlers import MonitoringHandlersDeps
 from handlers.ops_command_handlers import OpsHandlerDeps
 from handlers.visualize_command_handlers import VisualizeHandlerDeps
+from handlers.watch_command_handlers import WatchHandlerDeps
 from handlers.workflow_command_handlers import WorkflowHandlerDeps
 
 
@@ -55,6 +56,10 @@ def build_callback_action_handlers(
 
 def build_visualize_handler_deps(**kwargs) -> VisualizeHandlerDeps:
     return VisualizeHandlerDeps(**kwargs)
+
+
+def build_watch_handler_deps(**kwargs) -> WatchHandlerDeps:
+    return WatchHandlerDeps(**kwargs)
 
 
 def build_issue_handler_deps(**kwargs) -> IssueHandlerDeps:
