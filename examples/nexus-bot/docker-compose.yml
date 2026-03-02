@@ -2,10 +2,7 @@ name: nexus-telegram
 
 services:
   bot:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: nexus-nexus-bot:local
+    image: ghcr.io/ghabs95/nexus-bot:latest
     command: [ "nexus-bot" ]
     working_dir: /app
     restart: unless-stopped
@@ -20,7 +17,7 @@ services:
       - /opt/nexus/config:/nexus-config:ro
 
   processor:
-    image: nexus-nexus-bot:local
+    image: ghcr.io/ghabs95/nexus-bot:latest
     depends_on:
       - bot
     command: [ "nexus-processor" ]
@@ -37,7 +34,7 @@ services:
       - /opt/nexus/config:/nexus-config:ro
 
   webhook:
-    image: nexus-nexus-bot:local
+    image: ghcr.io/ghabs95/nexus-bot:latest
     command: [ "nexus-webhook" ]
     working_dir: /app
     restart: unless-stopped
@@ -55,7 +52,7 @@ services:
       - /opt/nexus/config:/nexus-config:ro
 
   health:
-    image: nexus-nexus-bot:local
+    image: ghcr.io/ghabs95/nexus-bot:latest
     depends_on:
       - bot
       - processor
@@ -75,3 +72,30 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - /opt/nexus/config:/nexus-config:ro
+
+  postgres:
+    profiles: [ "enterprise" ]
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus
+      POSTGRES_DB: nexus
+    ports:
+      - "5432:5432"
+    volumes:
+      - nexus-pg-data:/var/lib/postgresql/data
+
+  redis:
+    profiles: [ "enterprise" ]
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - nexus-redis-data:/data
+
+volumes:
+  nexus-pg-data:
+  nexus-redis-data:

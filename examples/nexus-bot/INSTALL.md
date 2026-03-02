@@ -55,7 +55,8 @@ After installation, four commands become available:
 
 ## 2. Configure (Interactive Setup)
 
-The easiest way to configure the bot, generate the `.env` file, and install external CLIs (like Copilot, Gemini, Ollama, etc.) is to use our interactive setup wizard:
+The easiest way to configure the bot, generate the `.env` file, and install external CLIs (like Copilot, Gemini, Ollama,
+etc.) is to use our interactive setup wizard:
 
 ```bash
 # If you cloned the repository (from step 1):
@@ -69,7 +70,8 @@ The easiest way to configure the bot, generate the `.env` file, and install exte
 > ```
 > *(A Python version `install.py` is also available if preferred).*
 
-The wizard will ask you for your Storage preferences (Lite vs Enterprise), ask to setup Postgres/Redis for you, and securely configure your Tokens.
+The wizard will ask you for your Storage preferences (Lite vs Enterprise), ask to setup Postgres/Redis for you, and
+securely configure your Tokens.
 
 Alternatively, you can configure it manually by copying the `.env`:
 

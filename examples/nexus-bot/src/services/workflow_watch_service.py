@@ -257,7 +257,9 @@ class WorkflowWatchService:
             import websocket  # type: ignore  # noqa: F401
         except Exception:
             transports = ["polling"]
-            logger.warning("websocket-client not installed; workflow watch will use polling transport")
+            logger.warning(
+                "websocket-client not installed; workflow watch will use polling transport"
+            )
 
         @client.on("connect", namespace=namespace)
         def _on_connect() -> None:
