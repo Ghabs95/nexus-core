@@ -3,7 +3,6 @@ import logging
 from config import get_chat_agent_types, get_chat_agents
 from handlers.inbox_routing_handler import PROJECTS
 from interactive_context import InteractiveContext
-from nexus.adapters.notifications.base import Button
 from services.memory_service import (
     create_chat,
     delete_chat,
@@ -13,6 +12,8 @@ from services.memory_service import (
     set_active_chat,
     update_chat_metadata,
 )
+
+from nexus.adapters.notifications.base import Button
 
 logger = logging.getLogger(__name__)
 

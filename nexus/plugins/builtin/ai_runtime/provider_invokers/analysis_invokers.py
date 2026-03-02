@@ -108,3 +108,41 @@ def run_codex_analysis_cli(
         return parse_analysis_result(result.stdout or "", task)
     except subprocess.TimeoutExpired as exc:
         raise wrap_timeout_error(exc, provider_name="Codex", timeout=timeout) from exc
+
+
+def run_claude_analysis_cli(
+    *,
+    check_tool_available: Callable[[Any], bool],
+    claude_provider: Any,
+    claude_cli_path: str,
+    claude_model: str,
+    build_analysis_prompt: Callable[..., str],
+    parse_analysis_result: Callable[[str, str], dict[str, Any]],
+    tool_unavailable_error: type[Exception],
+    rate_limited_error: type[Exception],
+    text: str,
+    task: str,
+    timeout: int,
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    if not check_tool_available(claude_provider):
+        raise tool_unavailable_error("Claude CLI not available")
+
+    prompt = build_analysis_prompt(text, task, **kwargs)
+    cmd = [claude_cli_path, "exec"]
+    if claude_model:
+        cmd.extend(["--model", claude_model])
+    cmd.append(prompt)
+
+    try:
+        result = run_cli_prompt(cmd, timeout=timeout)
+        if result.returncode != 0:
+            stderr = result.stderr or ""
+            stdout = result.stdout or ""
+            combined = f"{stderr}\n{stdout}".lower()
+            if "rate limit" in combined or "quota" in combined:
+                raise rate_limited_error(f"Claude rate-limited: {stderr or stdout}")
+            raise Exception(f"Claude error: {stderr or stdout}")
+        return parse_analysis_result(result.stdout or "", task)
+    except subprocess.TimeoutExpired as exc:
+        raise wrap_timeout_error(exc, provider_name="Claude", timeout=timeout) from exc

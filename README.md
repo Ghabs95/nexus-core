@@ -45,17 +45,16 @@ Every agent action becomes part of your development history:
 ### Installation
 
 ```bash
-# Coming soon to PyPI!
-# pip install nexus-arc
+# Install the core framework
+pip install nexus-arc
 
-# For now, install from source:
-git clone https://github.com/Ghabs95/nexus-arc
-cd nexus-arc
-pip install -e .
+# Install with Telegram, Discord bots, and database support
+pip install "nexus-arc[nexus-bot]"
 ```
 
-# With optional adapters
-pip install nexus-arc[telegram,postgres,openai]
+For setting up the fully-featured interactive bot, see the [nexus-bot example](examples/nexus-bot/README.md) or run the installer:
+```bash
+bash <(curl -s https://raw.githubusercontent.com/Ghabs95/nexus-arc/main/examples/nexus-bot/install.sh)
 ```
 
 ### Your First Workflow

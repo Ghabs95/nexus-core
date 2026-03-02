@@ -5,6 +5,8 @@ import os
 import sys
 from typing import Any
 
+from dotenv import load_dotenv
+
 from config_chat_agents import (
     get_chat_agent_types as _svc_get_chat_agent_types,
     get_chat_agents as _svc_get_chat_agents,
@@ -40,7 +42,6 @@ from config_repos import (
     get_repos as _svc_get_repos,
 )
 from config_validators import validate_project_config as _svc_validate_project_config
-from dotenv import load_dotenv
 
 # Load secrets from local file if exists
 SECRET_FILE = ".env"
@@ -440,6 +441,8 @@ def _get_orchestrator_config():
             "gemini_model": os.getenv("GEMINI_MODEL", "").strip(),
             "codex_cli_path": os.getenv("CODEX_CLI_PATH", "codex"),
             "codex_model": os.getenv("CODEX_MODEL", "").strip(),
+            "claude_cli_path": os.getenv("CLAUDE_CLI_PATH", "claude"),
+            "claude_model": os.getenv("CLAUDE_MODEL", "").strip(),
             "ai_tool_preferences_strict": os.getenv("AI_TOOL_PREFERENCES_STRICT", "false").lower()
             == "true",
             "tool_preferences": AI_TOOL_PREFERENCES._ensure_loaded(),

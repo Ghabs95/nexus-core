@@ -3,8 +3,10 @@
 ## Installation
 
 ```bash
-cd nexus-arc
-pip install -e .
+pip install nexus-arc
+
+# Or if you want to include Telegram/Discord integrations:
+# pip install "nexus-arc[nexus-bot]"
 ```
 
 ## Run the Example

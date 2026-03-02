@@ -250,7 +250,7 @@ def get_workflow_state_plugin(
 
 def get_runtime_ops_plugin(
     *,
-    process_name: str = "copilot|codex|gemini",
+    process_name: str = "copilot|codex|gemini|claude",
     pgrep_timeout: int = 5,
     kill_timeout: int = 5,
     cache_key: str = "runtime-ops:process-guard",

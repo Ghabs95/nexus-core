@@ -8,8 +8,9 @@ import re
 from typing import Any, Sequence
 
 from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, get_repo, PROJECT_CONFIG
-from nexus.adapters.git.utils import build_issue_url
 from orchestration.plugin_runtime import get_profiled_plugin
+
+from nexus.adapters.git.utils import build_issue_url
 
 logger = logging.getLogger(__name__)
 

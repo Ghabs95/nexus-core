@@ -6,7 +6,6 @@ from typing import Any
 from nexus.plugins.builtin.ai_runtime_plugin import (
     AIOrchestrator,
 )
-
 from .plugin_runtime import clear_cached_plugin, get_profiled_plugin
 
 _orchestrator: AIOrchestrator | None = None
@@ -37,6 +36,8 @@ def get_orchestrator(config: Any | None = None) -> AIOrchestrator:
                 "gemini_model",
                 "codex_cli_path",
                 "codex_model",
+                "claude_cli_path",
+                "claude_model",
                 "tool_preferences",
                 "tool_preferences_resolver",
                 "model_profiles",

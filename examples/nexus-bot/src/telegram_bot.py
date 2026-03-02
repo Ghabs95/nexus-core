@@ -5,6 +5,23 @@ import os
 import time
 from typing import Any
 
+from telegram import (
+    BotCommand,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    Update,
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
+
 from alerting import init_alerting_system
 from analytics import get_stats_report
 from audit_store import AuditStore
@@ -234,17 +251,19 @@ from orchestration.plugin_runtime import (
     get_runtime_ops_plugin,
     get_workflow_state_plugin,
 )
-from orchestration.telegram_callback_router import (
+from orchestration.telegram.telegram_callback_router import (
     call_core_callback_handler as _router_call_core_callback_handler,
 )
-from orchestration.telegram_callback_router import (
+from orchestration.telegram.telegram_callback_router import (
     call_core_chat_handler as _router_call_core_chat_handler,
 )
-from orchestration.telegram_command_router import dispatch_command as _router_dispatch_command
-from orchestration.telegram_update_bridge import (
+from orchestration.telegram.telegram_command_router import (
+    dispatch_command as _router_dispatch_command,
+)
+from orchestration.telegram.telegram_update_bridge import (
     build_telegram_interactive_ctx as _bridge_build_telegram_interactive_ctx,
 )
-from orchestration.telegram_update_bridge import (
+from orchestration.telegram.telegram_update_bridge import (
     buttons_to_reply_markup as _bridge_buttons_to_reply_markup,
 )
 from project_key_utils import normalize_project_key_optional as _normalize_project_key
@@ -462,22 +481,6 @@ from services.workflow_signal_sync import (
 )
 from services.workflow_watch_service import get_workflow_watch_service
 from state_manager import HostStateManager
-from telegram import (
-    BotCommand,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
-    Update,
-)
-from telegram.ext import (
-    ApplicationBuilder,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-    ConversationHandler,
-    MessageHandler,
-    filters,
-)
 from user_manager import get_user_manager
 from utils.task_utils import find_task_file_by_issue
 
@@ -1429,7 +1432,7 @@ async def _check_tool_health(application):
     await _svc_check_tool_health(
         application=application,
         orchestrator=orchestrator,
-        ai_providers=[AIProvider.COPILOT, AIProvider.GEMINI, AIProvider.CODEX],
+        ai_providers=list(AIProvider),
         logger=logger,
         telegram_chat_id=TELEGRAM_CHAT_ID,
     )

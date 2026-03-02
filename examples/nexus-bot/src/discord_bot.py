@@ -8,6 +8,7 @@ from typing import Any
 
 import discord
 from discord.ext import commands
+
 from nexus.core.utils.logging_filters import install_secret_redaction
 
 # Setup logging

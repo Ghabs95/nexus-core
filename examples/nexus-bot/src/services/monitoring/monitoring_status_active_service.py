@@ -5,8 +5,9 @@ import re
 import time
 from typing import Any
 
-from nexus.adapters.notifications.base import Button
 from utils.log_utils import log_unauthorized_access
+
+from nexus.adapters.notifications.base import Button
 
 
 async def handle_status(ctx: Any, deps: Any) -> None:

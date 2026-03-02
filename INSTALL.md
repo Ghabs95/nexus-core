@@ -12,7 +12,7 @@ You can install the core framework directly using `pip`:
 ```bash
 pip install nexus-arc
 ```
-*(Note: Once published to PyPI, this command will work. For local development, use `pip install -e .`)*
+*(Note: For local development from source, use `pip install -e .`)*
 
 ## Optional Dependencies (Extras)
 
@@ -29,16 +29,16 @@ pip install nexus-arc[redis]
 pip install nexus-arc[slack]
 
 # Add Telegram and Discord Bot capabilities (includes webhooks and interactive UI)
-pip install nexus-arc[nexus-bot]
+pip install "nexus-arc[nexus-bot]"
 
 # Add AI/LLM providers (e.g. OpenAI)
-pip install nexus-arc[ai]
+pip install "nexus-arc[ai]"
 
 # Add Whisper for Audio/Voice processing
-pip install nexus-arc[whisper]
+pip install "nexus-arc[whisper]"
 
 # Install multiple extras at once
-pip install nexus-arc[postgres,redis,nexus-bot,ai]
+pip install "nexus-arc[postgres,redis,nexus-bot,ai]"
 ```
 
 ## Using Nexus ARC in your project

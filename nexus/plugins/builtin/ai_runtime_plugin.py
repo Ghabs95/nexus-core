@@ -1,4 +1,4 @@
-"""Built-in plugin: AI runtime orchestration for Copilot/Gemini/Codex CLIs."""
+"""Built-in plugin: AI runtime orchestration for Copilot/Gemini/Codex/Claude CLIs."""
 
 import logging
 import os
@@ -31,6 +31,10 @@ from nexus.plugins.builtin.ai_runtime.provider_invokers.analysis_invokers import
     run_copilot_analysis_cli as run_copilot_analysis_cli_impl,
     run_codex_analysis_cli as run_codex_analysis_cli_impl,
     run_gemini_analysis_cli as run_gemini_analysis_cli_impl,
+    run_claude_analysis_cli as run_claude_analysis_cli_impl,
+)
+from nexus.plugins.builtin.ai_runtime.provider_invokers.claude_invoker import (
+    invoke_claude_cli as invoke_claude_cli_impl,
 )
 from nexus.plugins.builtin.ai_runtime.provider_invokers.codex_invoker import (
     invoke_codex_cli as invoke_codex_cli_impl,
@@ -73,6 +77,7 @@ class AIProvider(Enum):
     COPILOT = "copilot"
     GEMINI = "gemini"
     CODEX = "codex"
+    CLAUDE = "claude"
     OLLAMA = "ollama"
 
 
@@ -107,6 +112,8 @@ class AIOrchestrator:
         self.gemini_model = str(self.config.get("gemini_model", "")).strip()
         self.codex_cli_path = self.config.get("codex_cli_path", "codex")
         self.codex_model = str(self.config.get("codex_model", "")).strip()
+        self.claude_cli_path = self.config.get("claude_cli_path", "claude")
+        self.claude_model = str(self.config.get("claude_model", "")).strip()
         self.ollama_cli_path = self.config.get("ollama_cli_path", "ollama")
         self.ollama_model = str(self.config.get("ollama_model", "")).strip()
         self.copilot_model = str(self.config.get("copilot_model", "")).strip()
@@ -207,6 +214,7 @@ class AIOrchestrator:
                 AIProvider.GEMINI,
                 AIProvider.COPILOT,
                 AIProvider.CODEX,
+                AIProvider.CLAUDE,
                 AIProvider.OLLAMA,
             ],
         )
@@ -339,10 +347,28 @@ class AIOrchestrator:
                 return parsed
 
         if normalized in {"fast", "flash", "small", "low"}:
-            return [AIProvider.GEMINI, AIProvider.COPILOT, AIProvider.CODEX, AIProvider.OLLAMA]
+            return [
+                AIProvider.GEMINI,
+                AIProvider.COPILOT,
+                AIProvider.CLAUDE,
+                AIProvider.CODEX,
+                AIProvider.OLLAMA,
+            ]
         if normalized in {"reasoning", "pro", "large", "high"}:
-            return [AIProvider.CODEX, AIProvider.COPILOT, AIProvider.GEMINI, AIProvider.OLLAMA]
-        return [AIProvider.COPILOT, AIProvider.GEMINI, AIProvider.CODEX, AIProvider.OLLAMA]
+            return [
+                AIProvider.CLAUDE,
+                AIProvider.CODEX,
+                AIProvider.COPILOT,
+                AIProvider.GEMINI,
+                AIProvider.OLLAMA,
+            ]
+        return [
+            AIProvider.COPILOT,
+            AIProvider.GEMINI,
+            AIProvider.CLAUDE,
+            AIProvider.CODEX,
+            AIProvider.OLLAMA,
+        ]
 
     def _providers_for_profile(
         self,
@@ -511,6 +537,8 @@ class AIOrchestrator:
                 path = self.gemini_cli_path
             elif tool == AIProvider.CODEX:
                 path = self.codex_cli_path
+            elif tool == AIProvider.CLAUDE:
+                path = self.claude_cli_path
             elif tool == AIProvider.OLLAMA:
                 path = self.ollama_cli_path
             else:
@@ -605,6 +633,7 @@ class AIOrchestrator:
             default_tools=[
                 AIProvider.GEMINI,
                 AIProvider.COPILOT,
+                AIProvider.CLAUDE,
                 AIProvider.CODEX,
                 AIProvider.OLLAMA,
             ],
@@ -642,6 +671,7 @@ class AIOrchestrator:
                 AIProvider.GEMINI: self._run_gemini_cli_analysis,
                 AIProvider.COPILOT: self._run_copilot_analysis,
                 AIProvider.CODEX: self._run_codex_analysis,
+                AIProvider.CLAUDE: self._run_claude_analysis,
                 AIProvider.OLLAMA: self._run_ollama_analysis,
             },
             text=text,
@@ -729,6 +759,17 @@ class AIOrchestrator:
             )
         if tool == AIProvider.CODEX:
             return self._invoke_codex(
+                agent_prompt,
+                workspace_dir,
+                agents_dir,
+                base_dir,
+                model_override=model_override,
+                issue_num=issue_num,
+                log_subdir=log_subdir,
+                env=env,
+            )
+        if tool == AIProvider.CLAUDE:
+            return self._invoke_claude(
                 agent_prompt,
                 workspace_dir,
                 agents_dir,
@@ -946,6 +987,34 @@ class AIOrchestrator:
             env=env,
         )
 
+    def _invoke_claude(
+        self,
+        agent_prompt: str,
+        workspace_dir: str,
+        agents_dir: str,
+        base_dir: str,
+        model_override: str = "",
+        issue_num: str | None = None,
+        log_subdir: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> int | None:
+        return invoke_claude_cli_impl(
+            check_tool_available=self.check_tool_available,
+            claude_provider=AIProvider.CLAUDE,
+            claude_cli_path=self.claude_cli_path,
+            claude_model=model_override or self.claude_model,
+            get_tasks_logs_dir=self.get_tasks_logs_dir,
+            tool_unavailable_error=ToolUnavailableError,
+            rate_limited_error=RateLimitedError,
+            logger=logger,
+            agent_prompt=agent_prompt,
+            workspace_dir=workspace_dir,
+            agents_dir=agents_dir,
+            issue_num=issue_num,
+            log_subdir=log_subdir,
+            env=env,
+        )
+
     def _invoke_ollama(
         self,
         agent_prompt: str,
@@ -1094,6 +1163,11 @@ class AIOrchestrator:
                 agent_name=mapped_agent or None,
                 project_name=project_name,
             ),
+            "claude": self._resolve_model_for_tool(
+                tool=AIProvider.CLAUDE,
+                agent_name=mapped_agent or None,
+                project_name=project_name,
+            ),
             "ollama": self._resolve_model_for_tool(
                 tool=AIProvider.OLLAMA,
                 agent_name=mapped_agent or None,
@@ -1129,6 +1203,7 @@ class AIOrchestrator:
         analysis_kwargs["_gemini_model_override"] = model_overrides["gemini"]
         analysis_kwargs["_copilot_model_override"] = model_overrides["copilot"]
         analysis_kwargs["_codex_model_override"] = model_overrides["codex"]
+        analysis_kwargs["_claude_model_override"] = model_overrides["claude"]
         analysis_kwargs["_ollama_model_override"] = model_overrides["ollama"]
         logger.info(
             "🧾 Analysis prompt metrics: input_chars=%s history_chars=%s prefix_fp=%s task=%s",
@@ -1275,6 +1350,29 @@ class AIOrchestrator:
             codex_provider=AIProvider.CODEX,
             codex_cli_path=self.codex_cli_path,
             codex_model=codex_model,
+            build_analysis_prompt=self._build_analysis_prompt,
+            parse_analysis_result=self._parse_analysis_result,
+            tool_unavailable_error=ToolUnavailableError,
+            rate_limited_error=RateLimitedError,
+            text=text,
+            task=task,
+            timeout=timeout,
+            kwargs=prompt_kwargs,
+        )
+
+    def _run_claude_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
+        timeout = (
+            self.refine_description_timeout
+            if task == "refine_description"
+            else self.analysis_timeout
+        )
+        claude_model = str(kwargs.get("_claude_model_override") or "").strip() or self.claude_model
+        prompt_kwargs = {k: v for k, v in kwargs.items() if not str(k).startswith("_")}
+        return run_claude_analysis_cli_impl(
+            check_tool_available=self.check_tool_available,
+            claude_provider=AIProvider.CLAUDE,
+            claude_cli_path=self.claude_cli_path,
+            claude_model=claude_model,
             build_analysis_prompt=self._build_analysis_prompt,
             parse_analysis_result=self._parse_analysis_result,
             tool_unavailable_error=ToolUnavailableError,

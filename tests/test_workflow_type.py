@@ -4,6 +4,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from nexus.adapters.git.github import GitHubPlatform
 from nexus.core.workflow import WorkflowDefinition
 

@@ -19,13 +19,14 @@ from config import (
     get_gitlab_base_url,
     get_project_platform,
 )
+from orchestration.plugin_runtime import get_workflow_state_plugin
+from services.mermaid_render_service import build_mermaid_diagram
+
 from nexus.adapters.git.github import GitHubPlatform
 from nexus.adapters.git.gitlab import GitLabPlatform
 from nexus.adapters.storage.file import FileStorage
 from nexus.core.events import EventBus, NexusEvent
 from nexus.core.workflow import WorkflowEngine
-from orchestration.plugin_runtime import get_workflow_state_plugin
-from services.mermaid_render_service import build_mermaid_diagram
 
 logger = logging.getLogger(__name__)
 

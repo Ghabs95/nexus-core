@@ -1,8 +1,9 @@
 import types
 from unittest.mock import patch
 
-from nexus.adapters.git.base import PullRequest
 from services import issue_finalize_service as svc
+
+from nexus.adapters.git.base import PullRequest
 
 
 class _FakePlatform:

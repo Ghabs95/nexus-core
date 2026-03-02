@@ -31,6 +31,9 @@ from config import (
     get_tasks_logs_dir,
 )
 from integrations.notifications import notify_agent_completed, emit_alert
+from orchestration.ai_orchestrator import get_orchestrator
+from orchestration.plugin_runtime import get_profiled_plugin
+from state_manager import HostStateManager
 
 # Nexus Core framework imports
 from nexus.core.guards import LaunchGuard
@@ -41,9 +44,6 @@ from nexus.core.project.repo_utils import (
     project_repos_from_config as _project_repos,
 )
 from nexus.plugins.builtin.ai_runtime_plugin import ToolUnavailableError
-from orchestration.ai_orchestrator import get_orchestrator
-from orchestration.plugin_runtime import get_profiled_plugin
-from state_manager import HostStateManager
 
 logger = logging.getLogger(__name__)
 _git_platform_cache = {}
@@ -1070,7 +1070,7 @@ def _pgrep_and_logfile_guard(issue_id: str, agent_type: str) -> bool:
     """
     # Check 1: Running processes
     try:
-        tool_pattern = "(copilot|codex|gemini)"
+        tool_pattern = "(copilot|codex|gemini|claude)"
         check_result = subprocess.run(
             [
                 "pgrep",
@@ -1090,7 +1090,7 @@ def _pgrep_and_logfile_guard(issue_id: str, agent_type: str) -> bool:
     # Check 2: Recent log files (within last 2 minutes)
     nexus_dir_name = get_nexus_dir_name()
     recent_logs: list[str] = []
-    for tool_name in ("copilot", "codex", "gemini"):
+    for tool_name in ("copilot", "codex", "gemini", "claude"):
         recent_logs.extend(
             glob.glob(
                 os.path.join(

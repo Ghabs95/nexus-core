@@ -5,6 +5,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from nexus.adapters.git.github import GitHubPlatform
 
 

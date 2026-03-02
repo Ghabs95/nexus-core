@@ -5,8 +5,9 @@ import re
 from typing import Any
 
 from handlers.agent_resolution_handler import resolve_agents_for_project
-from nexus.core.chat_agents_schema import get_project_chat_agent_types
 from utils.log_utils import log_unauthorized_access
+
+from nexus.core.chat_agents_schema import get_project_chat_agent_types
 
 
 async def handle_direct_request(

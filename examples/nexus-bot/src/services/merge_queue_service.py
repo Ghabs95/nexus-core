@@ -8,9 +8,10 @@ from urllib.parse import urlparse
 
 from config import PROJECT_CONFIG, get_project_platform, get_repo
 from integrations.notifications import emit_alert
-from nexus.adapters.git.utils import build_issue_url
 from orchestration.nexus_core_helpers import get_git_platform
 from state_manager import HostStateManager
+
+from nexus.adapters.git.utils import build_issue_url
 
 logger = logging.getLogger(__name__)
 
