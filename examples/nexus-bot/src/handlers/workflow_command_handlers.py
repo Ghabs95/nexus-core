@@ -448,7 +448,7 @@ async def forget_handler(
     except Exception as exc:
         deps.logger.debug("completion_comments cleanup skipped for issue #%s: %s", issue_num, exc)
 
-    await update.effective_message.reply_text(
+    await ctx.reply_text(
         "🧹 **Issue state forgotten**\n\n"
         f"Issue: #{issue_num}\n"
         f"Project: {project_key}\n"

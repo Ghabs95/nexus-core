@@ -75,6 +75,7 @@ class DiscordEventHandler(BaseChatEventHandler):
             webhook_url=config.get("webhook_url"),
             bot_token=config.get("bot_token"),
             alert_channel_id=config.get("alert_channel_id"),
+            guild_id=config.get("guild_id"),
         )
         self._alert_channel_id = config.get("alert_channel_id", "")
 

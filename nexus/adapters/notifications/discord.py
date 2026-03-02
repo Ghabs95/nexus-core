@@ -72,6 +72,7 @@ class DiscordNotificationChannel(NotificationChannel):
         webhook_url: str | None = None,
         bot_token: str | None = None,
         alert_channel_id: str | None = None,
+        guild_id: str | None = None,
     ):
         _require_aiohttp()
         normalized_bot_token: str | None = None
@@ -94,6 +95,7 @@ class DiscordNotificationChannel(NotificationChannel):
         self._webhook_url = webhook_url
         self._bot_token = normalized_bot_token
         self._alert_channel_id = alert_channel_id
+        self._guild_id = str(guild_id or "").strip() or None
 
     # ------------------------------------------------------------------
     # NotificationChannel interface
@@ -159,9 +161,64 @@ class DiscordNotificationChannel(NotificationChannel):
             await self._post_webhook(payload)
             return
 
+        if not self._alert_channel_id and self._guild_id and self._bot_token:
+            self._alert_channel_id = await self._resolve_default_alert_channel(self._guild_id)
+
         if not self._alert_channel_id:
-            raise ValueError("alert_channel_id is required to send alerts without a webhook_url.")
+            raise ValueError(
+                "alert_channel_id is required to send alerts without a webhook_url. "
+                "Set DISCORD_ALERT_CHANNEL_ID or DISCORD_GUILD_ID."
+            )
         await self._post_channel(self._alert_channel_id, payload)
+
+    async def _resolve_default_alert_channel(self, guild_id: str) -> str | None:
+        """Resolve best-effort default channel for alerts in a guild."""
+        if not self._bot_token:
+            return None
+
+        session = self._get_session()
+        headers = {
+            "Authorization": f"Bot {self._bot_token}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with session.get(
+                f"{self._BASE}/guilds/{guild_id}",
+                headers=headers,
+            ) as resp:
+                if resp.status < 400:
+                    guild_payload = await resp.json()
+                    system_channel_id = str(guild_payload.get("system_channel_id") or "").strip()
+                    if system_channel_id:
+                        return system_channel_id
+                else:
+                    logger.warning(
+                        "Discord guild lookup failed for %s: status=%s",
+                        guild_id,
+                        resp.status,
+                    )
+        except Exception as exc:
+            logger.warning("Discord guild lookup error for %s: %s", guild_id, exc)
+
+        try:
+            async with session.get(
+                f"{self._BASE}/guilds/{guild_id}/channels",
+                headers=headers,
+            ) as resp:
+                resp.raise_for_status()
+                channels = await resp.json()
+        except Exception as exc:
+            logger.warning("Discord channel listing failed for guild %s: %s", guild_id, exc)
+            return None
+
+        for channel in channels:
+            channel_type = int(channel.get("type", -1))
+            if channel_type in {0, 5}:
+                channel_id = str(channel.get("id") or "").strip()
+                if channel_id:
+                    return channel_id
+        return None
 
     async def request_input(
         self, user_id: str, prompt: str, timeout: float = 60.0, poll_interval: float = 3.0

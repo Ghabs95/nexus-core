@@ -2,11 +2,13 @@ import glob
 import io
 import logging
 import os
+import shlex
 import sys
 from datetime import datetime
 from typing import Any
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from nexus.core.utils.logging_filters import install_secret_redaction
@@ -30,13 +32,15 @@ from config import (
     DISCORD_TOKEN,
     ORCHESTRATOR_CONFIG,
     PROJECT_CONFIG,
+    get_chat_agent_types,
     get_inbox_dir,
 )
 from project_key_utils import normalize_project_key_str as _normalize_project_key
+from services.telegram.telegram_issue_selection_service import (
+    parse_project_issue_args as _parse_project_issue_args,
+)
 
 install_secret_redaction([DISCORD_TOKEN or ""], logging.getLogger())
-
-from utils.voice_utils import transcribe_audio
 
 from handlers.common_routing import (
     extract_json_dict,
@@ -52,7 +56,60 @@ from handlers.feature_ideation_handlers import (
 )
 from handlers.inbox_routing_handler import PROJECTS as ROUTING_PROJECTS
 from handlers.inbox_routing_handler import process_inbox_task, save_resolved_task
+from handlers.monitoring_command_handlers import (
+    active_handler as monitoring_active_handler,
+)
+from handlers.monitoring_command_handlers import (
+    fuse_handler as monitoring_fuse_handler,
+)
+from handlers.monitoring_command_handlers import (
+    logs_handler as monitoring_logs_handler,
+)
+from handlers.monitoring_command_handlers import (
+    logsfull_handler as monitoring_logsfull_handler,
+)
+from handlers.monitoring_command_handlers import (
+    status_handler as monitoring_status_handler,
+)
+from handlers.monitoring_command_handlers import (
+    tail_handler as monitoring_tail_handler,
+)
+from handlers.monitoring_command_handlers import (
+    tailstop_handler as monitoring_tailstop_handler,
+)
+from handlers.ops_command_handlers import inboxq_handler as ops_inboxq_handler
+from handlers.ops_command_handlers import audit_handler as ops_audit_handler
+from handlers.ops_command_handlers import agents_handler as ops_agents_handler
+from handlers.ops_command_handlers import direct_handler as ops_direct_handler
+from handlers.ops_command_handlers import stats_handler as ops_stats_handler
+from handlers.issue_command_handlers import assign_handler as issue_assign_handler
+from handlers.issue_command_handlers import comments_handler as issue_comments_handler
+from handlers.issue_command_handlers import implement_handler as issue_implement_handler
+from handlers.issue_command_handlers import prepare_handler as issue_prepare_handler
+from handlers.issue_command_handlers import respond_handler as issue_respond_handler
+from handlers.issue_command_handlers import untrack_handler as issue_untrack_handler
+from handlers.workflow_command_handlers import continue_handler as workflow_continue_handler
+from handlers.workflow_command_handlers import forget_handler as workflow_forget_handler
+from handlers.workflow_command_handlers import kill_handler as workflow_kill_handler
+from handlers.workflow_command_handlers import pause_handler as workflow_pause_handler
+from handlers.workflow_command_handlers import reconcile_handler as workflow_reconcile_handler
+from handlers.workflow_command_handlers import reprocess_handler as workflow_reprocess_handler
+from handlers.workflow_command_handlers import resume_handler as workflow_resume_handler
+from handlers.workflow_command_handlers import stop_handler as workflow_stop_handler
+from handlers.workflow_command_handlers import wfstate_handler as workflow_wfstate_handler
+from handlers.visualize_command_handlers import visualize_handler as workflow_visualize_handler
+from handlers.watch_command_handlers import watch_handler as workflow_watch_handler
+from handlers.feature_registry_command_handlers import (
+    feature_done_handler as feature_done_command_handler,
+)
+from handlers.feature_registry_command_handlers import (
+    feature_forget_handler as feature_forget_command_handler,
+)
+from handlers.feature_registry_command_handlers import (
+    feature_list_handler as feature_list_command_handler,
+)
 from orchestration.ai_orchestrator import get_orchestrator
+from services.telegram.telegram_bootstrap_ui_service import build_help_text
 from services.command_contract import (
     validate_command_parity,
     validate_required_command_interface,
@@ -66,14 +123,17 @@ from services.memory_service import (
     get_chat_history,
     list_chats,
     rename_chat,
-    switch_chat,
 )
 from state_manager import HostStateManager
 from user_manager import get_user_manager
 
+import telegram_bot as _telegram_bridge
+
 # --- SETUP BOT ---
 intents = discord.Intents.default()
-intents.message_content = True  # Required to read text messages
+intents.message_content = str(
+    os.getenv("DISCORD_ENABLE_MESSAGE_CONTENT_INTENT", "false")
+).strip().lower() in {"1", "true", "yes", "on"}
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Initialize Orchestrator
@@ -81,6 +141,820 @@ orchestrator = get_orchestrator(ORCHESTRATOR_CONFIG)
 user_manager = get_user_manager()
 _pending_project_resolution: dict[int, dict] = {}
 _pending_feature_ideation: dict[int, dict] = {}
+_discord_user_state: dict[int, dict[str, Any]] = {}
+
+
+class DiscordInteractiveCtx:
+    _DISCORD_MAX_MESSAGE_LEN = 2000
+
+    def __init__(
+        self,
+        interaction: discord.Interaction,
+        *,
+        text: str,
+        args: list[str],
+    ) -> None:
+        self.interaction = interaction
+        self.user_id = str(interaction.user.id)
+        self.chat_id = int(interaction.channel_id or 0)
+        self.text = text
+        self.args = list(args)
+        self.raw_event = interaction
+        self.user_state = _discord_user_state.setdefault(interaction.user.id, {})
+        self.client = type("_Client", (), {"name": "discord"})()
+        self.query = None
+
+    async def reply_text(
+        self,
+        text: str,
+        buttons=None,
+        parse_mode: str | None = "Markdown",
+        disable_web_page_preview: bool = True,
+    ) -> str:
+        content = str(text or "")
+        if buttons:
+            option_lines: list[str] = []
+            for row in buttons:
+                labels = [str(getattr(btn, "label", "")).strip() for btn in row]
+                labels = [label for label in labels if label]
+                if labels:
+                    option_lines.append(" • " + " | ".join(labels))
+            if option_lines:
+                content = f"{content}\n\nOptions:\n" + "\n".join(option_lines)
+
+        chunks = [
+            content[i : i + self._DISCORD_MAX_MESSAGE_LEN]
+            for i in range(0, len(content), self._DISCORD_MAX_MESSAGE_LEN)
+        ] or [""]
+
+        if not self.interaction.response.is_done():
+            await self.interaction.response.send_message(chunks[0])
+            sent = await self.interaction.original_response()
+            for part in chunks[1:]:
+                await self.interaction.followup.send(part)
+            return str(sent.id)
+
+        sent = await self.interaction.followup.send(chunks[0], wait=True)
+        for part in chunks[1:]:
+            await self.interaction.followup.send(part)
+        return str(sent.id)
+
+    async def edit_message_text(
+        self,
+        message_id: str,
+        text: str,
+        buttons=None,
+        parse_mode: str | None = "Markdown",
+        disable_web_page_preview: bool = True,
+    ) -> None:
+        content = str(text or "")
+        chunks = [
+            content[i : i + self._DISCORD_MAX_MESSAGE_LEN]
+            for i in range(0, len(content), self._DISCORD_MAX_MESSAGE_LEN)
+        ] or [""]
+        try:
+            if self.interaction.channel and str(message_id).isdigit():
+                target = await self.interaction.channel.fetch_message(int(message_id))
+                await target.edit(content=chunks[0])
+                for part in chunks[1:]:
+                    await self.interaction.followup.send(part)
+                return
+        except Exception:
+            pass
+        await self.interaction.followup.send(chunks[0])
+        for part in chunks[1:]:
+            await self.interaction.followup.send(part)
+
+    async def answer_callback_query(self, text: str | None = None) -> None:
+        return
+
+
+def _iter_project_keys() -> list[str]:
+    return sorted(_iter_configured_projects())
+
+
+def _get_single_project_key() -> str | None:
+    projects = _iter_project_keys()
+    return projects[0] if len(projects) == 1 else None
+
+
+async def _ctx_prompt_project_selection_discord(ctx: DiscordInteractiveCtx, command: str) -> None:
+    options = ", ".join(_iter_project_keys()) or "(none)"
+    await ctx.reply_text(
+        f"Usage: `/{command} <project> <issue#>`\nAvailable projects: {options}",
+        parse_mode=None,
+    )
+
+
+async def _ctx_ensure_project_discord(ctx: DiscordInteractiveCtx, command: str) -> str | None:
+    args = list(ctx.args or [])
+    if not args:
+        single = _get_single_project_key()
+        if single:
+            return single
+        await _ctx_prompt_project_selection_discord(ctx, command)
+        return None
+    candidate = _normalize_project_key(str(args[0]))
+    if candidate in _iter_project_keys():
+        return candidate
+    await ctx.reply_text(f"❌ Unknown project '{args[0]}'.")
+    return None
+
+
+async def _ctx_ensure_project_issue_discord(
+    ctx: DiscordInteractiveCtx, command: str
+) -> tuple[str | None, str | None, list[str]]:
+    args = list(ctx.args or [])
+    project_key, issue_num, rest = _parse_project_issue_args(
+        args=args,
+        normalize_project_key=_normalize_project_key,
+    )
+    if not project_key or not issue_num:
+        await _ctx_prompt_project_selection_discord(ctx, command)
+        return None, None, []
+    if project_key not in _iter_project_keys():
+        await ctx.reply_text(f"❌ Unknown project '{project_key}'.")
+        return None, None, []
+    if not str(issue_num).isdigit():
+        await ctx.reply_text("❌ Invalid issue number.")
+        return None, None, []
+    return project_key, issue_num, rest
+
+
+def _monitoring_bridge_deps():
+    deps = _telegram_bridge._monitoring_handler_deps()
+    deps.allowed_user_ids = DISCORD_ALLOWED_USER_IDS
+    deps.ensure_project = _ctx_ensure_project_discord
+    deps.ensure_project_issue = _ctx_ensure_project_issue_discord
+    return deps
+
+
+def _ops_bridge_deps():
+    deps = _telegram_bridge._ops_handler_deps()
+    deps.allowed_user_ids = DISCORD_ALLOWED_USER_IDS
+    deps.prompt_project_selection = _ctx_prompt_project_selection_discord
+    deps.ensure_project_issue = _ctx_ensure_project_issue_discord
+    return deps
+
+
+def _issue_bridge_deps():
+    deps = _telegram_bridge._issue_handler_deps()
+    deps.allowed_user_ids = DISCORD_ALLOWED_USER_IDS
+    deps.prompt_project_selection = _ctx_prompt_project_selection_discord
+    deps.ensure_project_issue = _ctx_ensure_project_issue_discord
+    return deps
+
+
+def _visualize_bridge_deps():
+    deps = _telegram_bridge._visualize_handler_deps()
+    deps.allowed_user_ids = DISCORD_ALLOWED_USER_IDS
+    deps.prompt_project_selection = _ctx_prompt_project_selection_discord
+    deps.ensure_project_issue = _ctx_ensure_project_issue_discord
+    return deps
+
+
+def _watch_bridge_deps():
+    deps = _telegram_bridge._watch_handler_deps()
+    deps.allowed_user_ids = DISCORD_ALLOWED_USER_IDS
+    deps.prompt_project_selection = _ctx_prompt_project_selection_discord
+    deps.ensure_project_issue = _ctx_ensure_project_issue_discord
+    return deps
+
+
+def _workflow_bridge_deps():
+    deps = _telegram_bridge._workflow_handler_deps()
+    deps.allowed_user_ids = DISCORD_ALLOWED_USER_IDS
+    deps.prompt_project_selection = _ctx_prompt_project_selection_discord
+    deps.ensure_project_issue = _ctx_ensure_project_issue_discord
+    return deps
+
+
+def _feature_registry_bridge_deps():
+    deps = _telegram_bridge._feature_registry_command_deps()
+    deps.allowed_user_ids = DISCORD_ALLOWED_USER_IDS
+    return deps
+
+
+async def _run_bridge_handler(
+    interaction: discord.Interaction,
+    *,
+    command_name: str,
+    args: str,
+    handler,
+    deps_factory,
+) -> None:
+    parsed_args = shlex.split(str(args or "").strip()) if str(args or "").strip() else []
+    await _run_bridge_handler_args(
+        interaction,
+        command_name=command_name,
+        parsed_args=parsed_args,
+        handler=handler,
+        deps_factory=deps_factory,
+    )
+
+
+async def _run_bridge_handler_args(
+    interaction: discord.Interaction,
+    *,
+    command_name: str,
+    parsed_args: list[str],
+    handler,
+    deps_factory,
+) -> None:
+    if not check_permission(interaction.user.id):
+        await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+        return
+
+    if not interaction.response.is_done():
+        await interaction.response.defer(thinking=True)
+
+    ctx = DiscordInteractiveCtx(
+        interaction,
+        text=f"/{command_name} {' '.join(parsed_args)}".strip(),
+        args=list(parsed_args),
+    )
+    try:
+        await handler(ctx, deps_factory())
+    except Exception as exc:
+        logging.getLogger(__name__).exception(
+            "Discord command /%s failed for user %s", command_name, interaction.user.id
+        )
+        message = f"⚠️ /{command_name} failed: {exc}"
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+
+
+def _chunk_text(text: str, limit: int = 1800) -> list[str]:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return [""]
+
+    lines = normalized.splitlines(keepends=True)
+    chunks: list[str] = []
+    current = ""
+    for line in lines:
+        if len(current) + len(line) <= limit:
+            current += line
+            continue
+        if current:
+            chunks.append(current.rstrip())
+            current = ""
+        if len(line) <= limit:
+            current = line
+            continue
+
+        start = 0
+        while start < len(line):
+            end = min(start + limit, len(line))
+            chunks.append(line[start:end].rstrip())
+            start = end
+
+    if current:
+        chunks.append(current.rstrip())
+
+    return chunks or [normalized[:limit]]
+
+
+async def _send_long_interaction_text(
+    interaction: discord.Interaction,
+    text: str,
+    *,
+    ephemeral: bool = True,
+) -> None:
+    chunks = _chunk_text(text)
+    if not interaction.response.is_done():
+        await interaction.response.send_message(chunks[0], ephemeral=ephemeral)
+    else:
+        await interaction.followup.send(chunks[0], ephemeral=ephemeral)
+
+    for chunk in chunks[1:]:
+        await interaction.followup.send(chunk, ephemeral=ephemeral)
+
+
+def _menu_category_text(category: str) -> str:
+    sections: dict[str, str] = {
+        "chat": (
+            "🗣️ **Chat & Strategy**\n"
+            "/chat - Open chat threads and context controls\n"
+            "/chatagents [project] - Show effective ordered chat agent types\n"
+            "/help - Show full command list"
+        ),
+        "tasks": (
+            "✨ **Task Creation**\n"
+            "/menu - Open command menu\n"
+            "/new - Start a menu-driven task creation\n"
+            "/cancel - Abort the current guided process\n"
+            "\n"
+            "Hands-free:\n"
+            "Send voice note or text for automatic routing (when intent is enabled)."
+        ),
+        "monitor": (
+            "📊 **Monitoring & Tracking**\n"
+            "/status [project|all], /inboxq [limit], /active [project|all]\n"
+            "/track, /tracked, /untrack, /myissues\n"
+            "/logs, /logsfull, /tail, /tailstop, /fuse, /audit\n"
+            "/stats, /comments"
+        ),
+        "workflow": (
+            "🔁 **Recovery & Control**\n"
+            "/reprocess, /wfstate, /visualize, /watch\n"
+            "/reconcile, /continue, /forget, /kill\n"
+            "/pause, /resume, /stop, /respond"
+        ),
+        "agents": (
+            "🤝 **Agent Management**\n"
+            "/agents <project>\n"
+            "/direct <project> <@agent> <message>\n"
+            "/direct <project> <@agent> --new-chat <message>\n"
+            "\n"
+            "🧾 **Feature Registry**\n"
+            "/feature_done, /feature_list, /feature_forget"
+        ),
+        "git": (
+            "🔧 **Git Platform Management**\n"
+            "/assign <project> <issue#>\n"
+            "/implement <project> <issue#>\n"
+            "/prepare <project> <issue#>"
+        ),
+        "help": build_help_text(),
+    }
+    return sections.get(category, "⚠️ Unknown menu category.")
+
+
+class CategoryMenuView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="⬅️ Back", style=discord.ButtonStyle.secondary, row=0)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not check_permission(interaction.user.id):
+            await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            content="📍 **Nexus Menu**\nChoose a category:",
+            view=RootMenuView(),
+        )
+
+    @discord.ui.button(label="❌ Close", style=discord.ButtonStyle.danger, row=0)
+    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not check_permission(interaction.user.id):
+            await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+            return
+        await interaction.response.edit_message(content="✅ Menu closed.", view=None)
+
+
+class RootMenuView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    async def _show_category(self, interaction: discord.Interaction, category: str):
+        if not check_permission(interaction.user.id):
+            await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+            return
+        chunks = _chunk_text(_menu_category_text(category), limit=1800)
+        await interaction.response.edit_message(
+            content=chunks[0],
+            view=CategoryMenuView(),
+        )
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk, ephemeral=True)
+
+    @discord.ui.button(label="🗣️ Chat", style=discord.ButtonStyle.primary, row=0)
+    async def chat_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show_category(interaction, "chat")
+
+    @discord.ui.button(label="✨ Task Creation", style=discord.ButtonStyle.primary, row=0)
+    async def tasks_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show_category(interaction, "tasks")
+
+    @discord.ui.button(label="📊 Monitoring", style=discord.ButtonStyle.secondary, row=1)
+    async def monitor_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show_category(interaction, "monitor")
+
+    @discord.ui.button(label="🔁 Workflow", style=discord.ButtonStyle.secondary, row=1)
+    async def workflow_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show_category(interaction, "workflow")
+
+    @discord.ui.button(label="🤝 Agents", style=discord.ButtonStyle.secondary, row=2)
+    async def agents_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show_category(interaction, "agents")
+
+    @discord.ui.button(label="🔧 Git Platform", style=discord.ButtonStyle.secondary, row=2)
+    async def git_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show_category(interaction, "git")
+
+    @discord.ui.button(label="ℹ️ Help", style=discord.ButtonStyle.success, row=3)
+    async def help_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._show_category(interaction, "help")
+
+    @discord.ui.button(label="❌ Close", style=discord.ButtonStyle.danger, row=3)
+    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not check_permission(interaction.user.id):
+            await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+            return
+        await interaction.response.edit_message(content="✅ Menu closed.", view=None)
+
+
+def _command_issue_state(command_name: str) -> str:
+    if command_name in {"logs", "logsfull", "tail"}:
+        return "closed"
+    if command_name in {"wfstate"}:
+        return "any"
+    return "open"
+
+
+def _list_issue_options_for_project(
+    project_key: str,
+    *,
+    issue_state: str = "open",
+    limit: int = 25,
+) -> list[dict[str, str]]:
+    options: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    if issue_state == "open":
+        states = ["open", "closed"]
+    elif issue_state == "closed":
+        states = ["closed", "open"]
+    else:
+        states = ["open", "closed"]
+    for state in states:
+        try:
+            rows = _telegram_bridge._list_project_issues(project_key, state=state, limit=limit)
+        except Exception:
+            rows = []
+        for row in rows:
+            number = str(row.get("number") or "").strip()
+            if not number or number in seen:
+                continue
+            seen.add(number)
+            title = str(row.get("title") or "").strip()
+            row_state = str(row.get("state") or state).strip().lower() or state
+            options.append({"number": number, "title": title, "state": row_state})
+            if len(options) >= limit:
+                return options
+
+    return options
+
+
+class CommandIssueSelect(discord.ui.Select):
+    def __init__(
+        self,
+        project_key: str,
+        command_name: str,
+        handler,
+        deps_factory,
+        extra_args: list[str] | None = None,
+        text_modal: dict[str, Any] | None = None,
+        issue_state: str = "any",
+    ):
+        self.project_key = project_key
+        self.command_name = command_name
+        self.handler = handler
+        self.deps_factory = deps_factory
+        self.extra_args = list(extra_args or [])
+        self.text_modal = dict(text_modal or {})
+        self.issue_state = issue_state
+
+        rows = _list_issue_options_for_project(project_key, issue_state=issue_state)
+        select_options: list[discord.SelectOption] = []
+        for row in rows[:25]:
+            issue_num = row["number"]
+            issue_title = row["title"] or "Issue"
+            row_state = str(row.get("state") or issue_state).strip().lower()
+            state_prefix = "🟢" if row_state == "open" else "⚫"
+            label = f"{state_prefix} #{issue_num}"
+            description = f"[{row_state}] {issue_title}"[:95] if issue_title else f"[{row_state}]"
+            select_options.append(
+                discord.SelectOption(label=label, value=issue_num, description=description)
+            )
+
+        if not select_options:
+            select_options.append(
+                discord.SelectOption(
+                    label="No issues found", value="__none__", description="Type issue manually"
+                )
+            )
+
+        super().__init__(
+            placeholder="Select issue…",
+            min_values=1,
+            max_values=1,
+            options=select_options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not check_permission(interaction.user.id):
+            await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+            return
+
+        issue_value = str(self.values[0])
+        if issue_value == "__none__":
+            await interaction.response.send_message(
+                f"No issue choices available. Run `/{self.command_name} project:{self.project_key} issue:<number>`.",
+                ephemeral=True,
+            )
+            return
+
+        if self.text_modal:
+            await interaction.response.send_modal(
+                CommandTextModal(
+                    command_name=self.command_name,
+                    handler=self.handler,
+                    deps_factory=self.deps_factory,
+                    prefix_args=[self.project_key, issue_value, *self.extra_args],
+                    title=str(self.text_modal.get("title") or f"/{self.command_name}"),
+                    field_label=str(self.text_modal.get("label") or "Value"),
+                    placeholder=str(self.text_modal.get("placeholder") or ""),
+                    multiline=bool(self.text_modal.get("multiline", True)),
+                    parse_mode=str(self.text_modal.get("parse_mode") or "append"),
+                )
+            )
+            return
+
+        await _run_bridge_handler_args(
+            interaction,
+            command_name=self.command_name,
+            parsed_args=[self.project_key, issue_value, *self.extra_args],
+            handler=self.handler,
+            deps_factory=self.deps_factory,
+        )
+
+
+class CommandIssueSelectView(discord.ui.View):
+    def __init__(
+        self,
+        project_key: str,
+        command_name: str,
+        handler,
+        deps_factory,
+        extra_args: list[str] | None = None,
+        text_modal: dict[str, Any] | None = None,
+        issue_state: str = "any",
+    ):
+        super().__init__(timeout=120)
+        self.add_item(
+            CommandIssueSelect(
+                project_key,
+                command_name,
+                handler,
+                deps_factory,
+                extra_args=extra_args,
+                text_modal=text_modal,
+                issue_state=issue_state,
+            )
+        )
+
+
+class CommandProjectSelect(discord.ui.Select):
+    def __init__(
+        self,
+        command_name: str,
+        handler,
+        deps_factory,
+        *,
+        require_issue: bool,
+        extra_args: list[str] | None = None,
+        text_modal: dict[str, Any] | None = None,
+        issue_state: str = "any",
+    ):
+        self.command_name = command_name
+        self.handler = handler
+        self.deps_factory = deps_factory
+        self.require_issue = require_issue
+        self.extra_args = list(extra_args or [])
+        self.text_modal = dict(text_modal or {})
+        self.issue_state = issue_state
+
+        projects = _iter_project_keys()[:25]
+        select_options = [
+            discord.SelectOption(
+                label=_get_project_label(project_key)[:100],
+                value=project_key,
+                description=project_key,
+            )
+            for project_key in projects
+        ]
+
+        super().__init__(
+            placeholder="Select project…",
+            min_values=1,
+            max_values=1,
+            options=select_options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not check_permission(interaction.user.id):
+            await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+            return
+
+        project_key = str(self.values[0])
+        if not self.require_issue:
+            if self.text_modal:
+                await interaction.response.send_modal(
+                    CommandTextModal(
+                        command_name=self.command_name,
+                        handler=self.handler,
+                        deps_factory=self.deps_factory,
+                        prefix_args=[project_key, *self.extra_args],
+                        title=str(self.text_modal.get("title") or f"/{self.command_name}"),
+                        field_label=str(self.text_modal.get("label") or "Value"),
+                        placeholder=str(self.text_modal.get("placeholder") or ""),
+                        multiline=bool(self.text_modal.get("multiline", True)),
+                        parse_mode=str(self.text_modal.get("parse_mode") or "append"),
+                    )
+                )
+                return
+            await _run_bridge_handler_args(
+                interaction,
+                command_name=self.command_name,
+                parsed_args=[project_key, *self.extra_args],
+                handler=self.handler,
+                deps_factory=self.deps_factory,
+            )
+            return
+
+        await interaction.response.edit_message(
+            content=f"📁 Project selected: `{project_key}`. Now choose an issue:",
+            view=CommandIssueSelectView(
+                project_key,
+                self.command_name,
+                self.handler,
+                self.deps_factory,
+                extra_args=self.extra_args,
+                text_modal=self.text_modal,
+                issue_state=self.issue_state,
+            ),
+        )
+
+
+class CommandProjectSelectView(discord.ui.View):
+    def __init__(
+        self,
+        command_name: str,
+        handler,
+        deps_factory,
+        *,
+        require_issue: bool,
+        extra_args: list[str] | None = None,
+        text_modal: dict[str, Any] | None = None,
+        issue_state: str = "any",
+    ):
+        super().__init__(timeout=120)
+        self.add_item(
+            CommandProjectSelect(
+                command_name,
+                handler,
+                deps_factory,
+                require_issue=require_issue,
+                extra_args=extra_args,
+                text_modal=text_modal,
+                issue_state=issue_state,
+            )
+        )
+
+
+class CommandTextModal(discord.ui.Modal):
+    def __init__(
+        self,
+        *,
+        command_name: str,
+        handler,
+        deps_factory,
+        prefix_args: list[str],
+        title: str,
+        field_label: str,
+        placeholder: str,
+        multiline: bool,
+        parse_mode: str,
+    ):
+        super().__init__(title=title[:45] if title else f"/{command_name}")
+        self.command_name = command_name
+        self.handler = handler
+        self.deps_factory = deps_factory
+        self.prefix_args = list(prefix_args)
+        self.parse_mode = parse_mode
+
+        self.input_value = discord.ui.TextInput(
+            label=field_label[:45] if field_label else "Value",
+            placeholder=placeholder[:100] if placeholder else None,
+            style=discord.TextStyle.paragraph if multiline else discord.TextStyle.short,
+            required=True,
+            max_length=1500,
+        )
+        self.add_item(self.input_value)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.input_value.value or "").strip()
+        if not raw:
+            await interaction.response.send_message("❌ Input cannot be empty.", ephemeral=True)
+            return
+
+        parsed_args = list(self.prefix_args)
+        if self.parse_mode == "direct_pair":
+            parts = shlex.split(raw)
+            if len(parts) < 2:
+                await interaction.response.send_message(
+                    "❌ Format: `@agent your message`", ephemeral=True
+                )
+                return
+            parsed_args.extend([parts[0], " ".join(parts[1:])])
+        else:
+            parsed_args.append(raw)
+
+        await _run_bridge_handler_args(
+            interaction,
+            command_name=self.command_name,
+            parsed_args=parsed_args,
+            handler=self.handler,
+            deps_factory=self.deps_factory,
+        )
+
+
+async def _run_bridge_with_picker(
+    interaction: discord.Interaction,
+    *,
+    command_name: str,
+    handler,
+    deps_factory,
+    project: str | None,
+    issue: str | None = None,
+    require_issue: bool = True,
+    extra_args: list[str] | None = None,
+    text_modal: dict[str, Any] | None = None,
+    issue_state: str | None = None,
+) -> None:
+    if not check_permission(interaction.user.id):
+        await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+        return
+
+    if not project:
+        resolved_issue_state = issue_state or _command_issue_state(command_name)
+        await interaction.response.send_message(
+            f"📁 Select a project for `/{command_name}`:",
+            view=CommandProjectSelectView(
+                command_name,
+                handler,
+                deps_factory,
+                require_issue=require_issue,
+                extra_args=extra_args,
+                text_modal=text_modal,
+                issue_state=resolved_issue_state,
+            ),
+            ephemeral=True,
+        )
+        return
+
+    if require_issue and not issue:
+        resolved_issue_state = issue_state or _command_issue_state(command_name)
+        await interaction.response.send_message(
+            f"📋 Select an issue for `{project}`:",
+            view=CommandIssueSelectView(
+                project,
+                command_name,
+                handler,
+                deps_factory,
+                extra_args=extra_args,
+                text_modal=text_modal,
+                issue_state=resolved_issue_state,
+            ),
+            ephemeral=True,
+        )
+        return
+
+    if text_modal:
+        await interaction.response.send_modal(
+            CommandTextModal(
+                command_name=command_name,
+                handler=handler,
+                deps_factory=deps_factory,
+                prefix_args=[project, issue] if require_issue and issue else [project],
+                title=str(text_modal.get("title") or f"/{command_name}"),
+                field_label=str(text_modal.get("label") or "Value"),
+                placeholder=str(text_modal.get("placeholder") or ""),
+                multiline=bool(text_modal.get("multiline", True)),
+                parse_mode=str(text_modal.get("parse_mode") or "append"),
+            )
+        )
+        return
+
+    parsed_args: list[str] = [project]
+    if require_issue and issue:
+        parsed_args.append(issue)
+    parsed_args.extend(list(extra_args or []))
+    await _run_bridge_handler_args(
+        interaction,
+        command_name=command_name,
+        parsed_args=parsed_args,
+        handler=handler,
+        deps_factory=deps_factory,
+    )
+
+
+def transcribe_audio(audio_file_path: str) -> str | None:
+    return orchestrator.transcribe_audio(audio_file_path)
 
 
 def _get_project_label(project_key: str) -> str:
@@ -554,6 +1428,766 @@ async def send_chat_menu(interaction: discord.Interaction, user_id: int, notice:
 # --- SLASH COMMANDS ---
 
 
+@bot.tree.command(name="help", description="Show available Discord commands")
+async def help_command(interaction: discord.Interaction):
+    if not check_permission(interaction.user.id):
+        await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+        return
+
+    help_text = build_help_text()
+    await _send_long_interaction_text(interaction, help_text, ephemeral=True)
+
+
+@bot.tree.command(name="menu", description="Open the categorized Nexus command menu")
+async def menu_command(interaction: discord.Interaction):
+    if not check_permission(interaction.user.id):
+        await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+        return
+
+    await interaction.response.send_message(
+        content="📍 **Nexus Menu**\nChoose a category:",
+        view=RootMenuView(),
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="active", description="Show active tasks")
+@app_commands.describe(args="Optional: <project|all> [cleanup]")
+async def active_command(interaction: discord.Interaction, args: str = ""):
+    await _run_bridge_handler(
+        interaction,
+        command_name="active",
+        args=args,
+        handler=monitoring_active_handler,
+        deps_factory=_monitoring_bridge_deps,
+    )
+
+
+@bot.tree.command(name="inboxq", description="Inspect inbox queue (postgres mode)")
+@app_commands.describe(args="Optional: [limit]")
+async def inboxq_command(interaction: discord.Interaction, args: str = ""):
+    await _run_bridge_handler(
+        interaction,
+        command_name="inboxq",
+        args=args,
+        handler=ops_inboxq_handler,
+        deps_factory=_ops_bridge_deps,
+    )
+
+
+@bot.tree.command(name="stats", description="Show analytics report")
+@app_commands.describe(args="Optional: [days]")
+async def stats_command(interaction: discord.Interaction, args: str = ""):
+    await _run_bridge_handler(
+        interaction,
+        command_name="stats",
+        args=args,
+        handler=ops_stats_handler,
+        deps_factory=_ops_bridge_deps,
+    )
+
+
+@bot.tree.command(name="logs", description="Show issue logs")
+@app_commands.describe(project="Optional project key", issue="Optional issue number")
+async def logs_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="logs",
+        handler=monitoring_logs_handler,
+        deps_factory=_monitoring_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="logsfull", description="Show full issue logs")
+@app_commands.describe(project="Optional project key", issue="Optional issue number")
+async def logsfull_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="logsfull",
+        handler=monitoring_logsfull_handler,
+        deps_factory=_monitoring_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="tail", description="Follow issue logs live")
+@app_commands.describe(
+    project="Project key",
+    issue="Issue number",
+    lines="Optional line count",
+    seconds="Optional follow duration",
+)
+async def tail_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+    lines: int | None = None,
+    seconds: int | None = None,
+):
+    parsed_args: list[str] = []
+    if lines is not None:
+        parsed_args.append(str(lines))
+    if seconds is not None:
+        parsed_args.append(str(seconds))
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="tail",
+        handler=monitoring_tail_handler,
+        deps_factory=_monitoring_bridge_deps,
+        project=project,
+        issue=issue,
+        extra_args=parsed_args,
+    )
+
+
+@bot.tree.command(name="tailstop", description="Stop live log tail")
+async def tailstop_command(interaction: discord.Interaction):
+    await _run_bridge_handler(
+        interaction,
+        command_name="tailstop",
+        args="",
+        handler=monitoring_tailstop_handler,
+        deps_factory=_monitoring_bridge_deps,
+    )
+
+
+@bot.tree.command(name="fuse", description="Show retry fuse status")
+@app_commands.describe(project="Optional project key", issue="Optional issue number")
+async def fuse_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="fuse",
+        handler=monitoring_fuse_handler,
+        deps_factory=_monitoring_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="audit", description="Show workflow audit trail")
+@app_commands.describe(project="Optional project key", issue="Optional issue number")
+async def audit_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="audit",
+        handler=ops_audit_handler,
+        deps_factory=_monitoring_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="comments", description="Show issue comments")
+@app_commands.describe(project="Optional project key", issue="Optional issue number")
+async def comments_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="comments",
+        handler=issue_comments_handler,
+        deps_factory=_issue_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="visualize", description="Render Mermaid workflow diagram")
+@app_commands.describe(project="Optional project key", issue="Optional issue number")
+async def visualize_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="visualize",
+        handler=workflow_visualize_handler,
+        deps_factory=_visualize_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="watch", description="Watch workflow updates")
+@app_commands.describe(
+    mode="start | status | stop | mermaid",
+    project="Project key (required when mode=start)",
+    issue="Issue number (required when mode=start)",
+    mermaid="on|off (required when mode=mermaid)",
+)
+@app_commands.choices(
+    mode=[
+        app_commands.Choice(name="start", value="start"),
+        app_commands.Choice(name="status", value="status"),
+        app_commands.Choice(name="stop", value="stop"),
+        app_commands.Choice(name="mermaid", value="mermaid"),
+    ],
+    mermaid=[
+        app_commands.Choice(name="on", value="on"),
+        app_commands.Choice(name="off", value="off"),
+    ],
+)
+async def watch_command(
+    interaction: discord.Interaction,
+    mode: app_commands.Choice[str] | None = None,
+    project: str | None = None,
+    issue: str | None = None,
+    mermaid: app_commands.Choice[str] | None = None,
+):
+    selected_mode = (mode.value if mode else "start").strip().lower()
+    parsed_args: list[str]
+    if selected_mode == "status":
+        parsed_args = ["status"]
+    elif selected_mode == "stop":
+        parsed_args = ["stop"]
+    elif selected_mode == "mermaid":
+        if not mermaid:
+            await interaction.response.send_message(
+                "❌ `mermaid` mode requires `mermaid=on|off`.", ephemeral=True
+            )
+            return
+        parsed_args = ["mermaid", mermaid.value]
+    else:
+        await _run_bridge_with_picker(
+            interaction,
+            command_name="watch",
+            handler=workflow_watch_handler,
+            deps_factory=_watch_bridge_deps,
+            project=project,
+            issue=issue,
+        )
+        return
+
+    await _run_bridge_handler_args(
+        interaction,
+        command_name="watch",
+        parsed_args=parsed_args,
+        handler=workflow_watch_handler,
+        deps_factory=_watch_bridge_deps,
+    )
+
+
+@bot.tree.command(name="wfstate", description="Show workflow state snapshot")
+@app_commands.describe(project="Optional project key", issue="Optional issue number")
+async def wfstate_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="wfstate",
+        handler=workflow_wfstate_handler,
+        deps_factory=_workflow_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="reprocess", description="Re-run issue workflow")
+@app_commands.describe(project="Project key", issue="Issue number")
+async def reprocess_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="reprocess",
+        handler=workflow_reprocess_handler,
+        deps_factory=_workflow_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="reconcile", description="Reconcile workflow signals")
+@app_commands.describe(project="Project key", issue="Issue number")
+async def reconcile_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="reconcile",
+        handler=workflow_reconcile_handler,
+        deps_factory=_workflow_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="continue", description="Continue a stuck workflow")
+@app_commands.describe(project="Project key", issue="Issue number")
+async def continue_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="continue",
+        handler=workflow_continue_handler,
+        deps_factory=_workflow_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="forget", description="Forget local state for issue")
+@app_commands.describe(project="Optional project key", issue="Optional issue number")
+async def forget_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="forget",
+        handler=workflow_forget_handler,
+        deps_factory=_workflow_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="kill", description="Kill running agent for issue")
+@app_commands.describe(project="Optional project key", issue="Optional issue number")
+async def kill_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="kill",
+        handler=workflow_kill_handler,
+        deps_factory=_workflow_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="pause", description="Pause workflow auto-chaining")
+@app_commands.describe(project="Project key", issue="Issue number")
+async def pause_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="pause",
+        handler=workflow_pause_handler,
+        deps_factory=_workflow_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="resume", description="Resume workflow auto-chaining")
+@app_commands.describe(project="Project key", issue="Issue number")
+async def resume_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="resume",
+        handler=workflow_resume_handler,
+        deps_factory=_workflow_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="stop", description="Stop workflow for issue")
+@app_commands.describe(project="Project key", issue="Issue number")
+async def stop_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="stop",
+        handler=workflow_stop_handler,
+        deps_factory=_workflow_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="agents", description="List project agents")
+@app_commands.describe(project="Optional project key")
+async def agents_command(interaction: discord.Interaction, project: str | None = None):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="agents",
+        handler=ops_agents_handler,
+        deps_factory=_ops_bridge_deps,
+        project=project,
+        require_issue=False,
+    )
+
+
+@bot.tree.command(name="direct", description="Send direct agent request")
+@app_commands.describe(project="Project key", agent="Agent handle (e.g. @triage)", message="Message")
+async def direct_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    agent: str | None = None,
+    message: str | None = None,
+):
+    if agent and message and project:
+        await _run_bridge_handler_args(
+            interaction,
+            command_name="direct",
+            parsed_args=[project, agent, message],
+            handler=ops_direct_handler,
+            deps_factory=_ops_bridge_deps,
+        )
+        return
+
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="direct",
+        handler=ops_direct_handler,
+        deps_factory=_ops_bridge_deps,
+        project=project,
+        require_issue=False,
+        text_modal={
+            "title": "Direct Agent Request",
+            "label": "Agent and Message",
+            "placeholder": "@triage investigate issue behavior",
+            "multiline": True,
+            "parse_mode": "direct_pair",
+        },
+    )
+
+
+@bot.tree.command(name="assign", description="Assign issue")
+@app_commands.describe(project="Project key", issue="Issue number", assignee="Optional assignee")
+async def assign_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+    assignee: str | None = None,
+):
+    if project and issue:
+        parsed_args = [project, issue]
+        if assignee:
+            parsed_args.append(assignee)
+        await _run_bridge_handler_args(
+            interaction,
+            command_name="assign",
+            parsed_args=parsed_args,
+            handler=issue_assign_handler,
+            deps_factory=_issue_bridge_deps,
+        )
+        return
+
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="assign",
+        handler=issue_assign_handler,
+        deps_factory=_issue_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="implement", description="Request implementation")
+@app_commands.describe(project="Project key", issue="Issue number")
+async def implement_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="implement",
+        handler=issue_implement_handler,
+        deps_factory=_issue_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="prepare", description="Prepare issue instructions")
+@app_commands.describe(project="Project key", issue="Issue number")
+async def prepare_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="prepare",
+        handler=issue_prepare_handler,
+        deps_factory=_issue_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="respond", description="Respond to issue/agent")
+@app_commands.describe(project="Project key", issue="Issue number", message="Response text")
+async def respond_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+    message: str | None = None,
+):
+    if project and issue and message:
+        await _run_bridge_handler_args(
+            interaction,
+            command_name="respond",
+            parsed_args=[project, issue, message],
+            handler=issue_respond_handler,
+            deps_factory=_issue_bridge_deps,
+        )
+        return
+
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="respond",
+        handler=issue_respond_handler,
+        deps_factory=_issue_bridge_deps,
+        project=project,
+        issue=issue,
+        text_modal={
+            "title": "Respond to Issue",
+            "label": "Response Message",
+            "placeholder": "Type your response to the issue or agent",
+            "multiline": True,
+            "parse_mode": "append",
+        },
+    )
+    await _run_bridge_handler_args(
+        interaction,
+        command_name="direct",
+        parsed_args=[project, agent, message],
+        handler=ops_direct_handler,
+        deps_factory=_ops_bridge_deps,
+    )
+
+
+@bot.tree.command(name="untrack", description="Stop tracking issue")
+@app_commands.describe(project="Optional project key", issue="Optional issue number")
+async def untrack_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="untrack",
+        handler=issue_untrack_handler,
+        deps_factory=_issue_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="feature_done", description="Mark feature implemented")
+@app_commands.describe(project="Optional project key", title="Feature title")
+async def feature_done_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    title: str | None = None,
+):
+    if project and title:
+        await _run_bridge_handler_args(
+            interaction,
+            command_name="feature_done",
+            parsed_args=[project, title],
+            handler=feature_done_command_handler,
+            deps_factory=_feature_registry_bridge_deps,
+        )
+        return
+
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="feature_done",
+        handler=feature_done_command_handler,
+        deps_factory=_feature_registry_bridge_deps,
+        project=project,
+        require_issue=False,
+        text_modal={
+            "title": "Feature Done",
+            "label": "Feature Title",
+            "placeholder": "Describe implemented feature title",
+            "multiline": False,
+            "parse_mode": "append",
+        },
+    )
+
+
+@bot.tree.command(name="feature_list", description="List implemented features")
+@app_commands.describe(project="Optional project key")
+async def feature_list_command(interaction: discord.Interaction, project: str | None = None):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="feature_list",
+        handler=feature_list_command_handler,
+        deps_factory=_feature_registry_bridge_deps,
+        project=project,
+        require_issue=False,
+    )
+
+
+@bot.tree.command(name="feature_forget", description="Forget feature from registry")
+@app_commands.describe(project="Optional project key", feature="Feature id or title")
+async def feature_forget_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    feature: str | None = None,
+):
+    if project and feature:
+        await _run_bridge_handler_args(
+            interaction,
+            command_name="feature_forget",
+            parsed_args=[project, feature],
+            handler=feature_forget_command_handler,
+            deps_factory=_feature_registry_bridge_deps,
+        )
+        return
+
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="feature_forget",
+        handler=feature_forget_command_handler,
+        deps_factory=_feature_registry_bridge_deps,
+        project=project,
+        require_issue=False,
+        text_modal={
+            "title": "Forget Feature",
+            "label": "Feature ID or Title",
+            "placeholder": "feature_id or exact title",
+            "multiline": False,
+            "parse_mode": "append",
+        },
+    )
+
+
+@bot.tree.command(name="start", description="Show welcome and quick actions")
+async def start_command(interaction: discord.Interaction):
+    if not check_permission(interaction.user.id):
+        await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+        return
+    await interaction.response.send_message(
+        "👋 Welcome to Nexus Discord.\nUse `/menu` for categorized actions, `/chat` for threads, and `/help` for full command docs.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="new", description="Start task creation guidance")
+async def new_command(interaction: discord.Interaction):
+    if not check_permission(interaction.user.id):
+        await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+        return
+    await interaction.response.send_message(
+        "✨ Create tasks by sending plain text/voice (when intent is enabled), or use `/menu` → Task Creation.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="cancel", description="Cancel pending interactive flows")
+async def cancel_command(interaction: discord.Interaction):
+    if not check_permission(interaction.user.id):
+        await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+        return
+    _pending_project_resolution.pop(interaction.user.id, None)
+    _pending_feature_ideation.pop(interaction.user.id, None)
+    await interaction.response.send_message("❎ Pending Discord flow canceled.", ephemeral=True)
+
+
+@bot.tree.command(name="chatagents", description="Show effective chat agent types")
+@app_commands.describe(project="Optional project key")
+async def chatagents_command(interaction: discord.Interaction, project: str | None = None):
+    if not check_permission(interaction.user.id):
+        await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+        return
+
+    project_key = _normalize_project_key(project) if project else "nexus"
+    if project and project_key not in _iter_project_keys():
+        options = ", ".join(_iter_project_keys())
+        await interaction.response.send_message(
+            f"❌ Invalid project '{project}'. Valid: {options}", ephemeral=True
+        )
+        return
+
+    agents = get_chat_agent_types(project_key or "nexus") or []
+    if not agents:
+        await interaction.response.send_message("ℹ️ No chat agents configured.", ephemeral=True)
+        return
+
+    lines = [
+        f"🤖 Effective chat agent types for `{project_key}`:",
+        *[f"- `{agent}`" for agent in agents],
+        "",
+        f"Primary: `{agents[0]}`",
+    ]
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+
+@bot.tree.command(name="progress", description="Show running agent progress")
+async def progress_command(interaction: discord.Interaction):
+    if not check_permission(interaction.user.id):
+        await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+        return
+
+    launched = HostStateManager.load_launched_agents(recent_only=False) or {}
+    if not isinstance(launched, dict) or not launched:
+        await interaction.response.send_message("📊 No running agent progress found.", ephemeral=True)
+        return
+
+    lines = ["📊 **Running Agent Progress**", ""]
+    shown = 0
+    for issue_num, payload in sorted(launched.items(), key=lambda item: str(item[0])):
+        if not isinstance(payload, dict):
+            continue
+        pid = payload.get("pid")
+        agent = payload.get("agent_type") or payload.get("agent") or "unknown"
+        project = payload.get("project") or "unknown"
+        state = payload.get("status") or "running"
+        lines.append(f"- #{issue_num} · {project} · {agent} · {state} · pid={pid or 'n/a'}")
+        shown += 1
+        if shown >= 25:
+            break
+
+    if shown == 0:
+        await interaction.response.send_message("📊 No running agent progress found.", ephemeral=True)
+        return
+
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+
 @bot.tree.command(name="chat", description="Manage conversational chat threads")
 async def chat_command(interaction: discord.Interaction):
     if not check_permission(interaction.user.id):
@@ -731,8 +2365,10 @@ async def on_message(message: discord.Message):
     if not check_permission(message.author.id):
         return
 
+    raw_content = (message.content or "").strip()
+
     # Ignore slash commands or other prefix commands
-    if message.content.startswith("!") or message.content.startswith("/"):
+    if raw_content.startswith("!") or raw_content.startswith("/"):
         return
 
     text = ""
@@ -772,8 +2408,16 @@ async def on_message(message: discord.Message):
     if not text:
         text = message.content
 
+    text = (text or "").strip()
     if not text:
-        await status_msg.edit(content="I didn't understand that.")
+        await status_msg.edit(
+            content=(
+                "⚠️ I can't read plain message text right now. "
+                "Use `/help` and slash commands, or enable Message Content Intent "
+                "in Discord Developer Portal and set "
+                "`DISCORD_ENABLE_MESSAGE_CONTENT_INTENT=true`."
+            )
+        )
         return
 
     if await _handle_pending_feature_ideation(message, text):

@@ -188,6 +188,7 @@ def setup_event_handlers() -> None:
     dc_webhook = os.getenv("DISCORD_WEBHOOK_URL", "")
     dc_bot_token = os.getenv("DISCORD_TOKEN", "")
     dc_channel = os.getenv("DISCORD_ALERT_CHANNEL_ID", "")
+    dc_guild = os.getenv("DISCORD_GUILD_ID", "")
     if dc_webhook or dc_channel or dc_bot_token:
         try:
             from nexus.plugins.builtin.discord_event_handler_plugin import DiscordEventHandler
@@ -197,6 +198,7 @@ def setup_event_handlers() -> None:
                     "webhook_url": dc_webhook or None,
                     "bot_token": dc_bot_token or None,
                     "alert_channel_id": dc_channel or None,
+                    "guild_id": dc_guild or None,
                 }
             )
             handler.attach(bus)
