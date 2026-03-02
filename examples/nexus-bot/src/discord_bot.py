@@ -866,7 +866,9 @@ async def on_ready():
         logger.exception("Command parity strict check failed")
         raise
 
-    # Sync slash commands
+@bot.event
+async def setup_hook():
+    # Sync slash commands during setup properly
     if DISCORD_GUILD_ID:
         guild = discord.Object(id=DISCORD_GUILD_ID)
         bot.tree.copy_global_to(guild=guild)
