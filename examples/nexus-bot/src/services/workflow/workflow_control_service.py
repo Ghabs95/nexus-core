@@ -99,9 +99,10 @@ def prepare_continue_context(
     def _extract_repo_from_text(text: str) -> str | None:
         if not text:
             return None
-        gh_match = re.search(r"https?://github\.com/([^/]+/[^/]+)/issues/\d+", text)
-        if gh_match:
-            return gh_match.group(1)
+        # Generic Git platform issue URL pattern
+        git_match = re.search(r"https?://[^/]+/([^/]+/[^/]+)/(?:issues|merge_requests|pulls|pull)/\d+", text)
+        if git_match:
+            return git_match.group(1)
         gl_match = re.search(r"https?://[^/]+/([^\s]+)/-/issues/\d+", text)
         if gl_match:
             return gl_match.group(1)

@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 _event_bus: EventBus | None = None
 
 
-def get_github_repo(project_name: str) -> str:
-    """Compatibility wrapper retained for older call sites/tests."""
+def get_git_repo(project_name: str) -> str:
+    """Compatibility wrapper for repository lookup."""
     return get_repo(project_name)
 
 
@@ -233,7 +233,7 @@ def get_git_platform(repo: str = None, project_name: str = None):
     Returns either :class:`GitPlatform` or :class:`GitLabPlatform`.
     """
     project_key = project_name or get_default_project()
-    repo_name = repo or get_github_repo(project_key)
+    repo_name = repo or get_git_repo(project_key)
     platform_type = get_project_platform(project_key)
 
     project_config = _get_project_config().get(project_key, {})

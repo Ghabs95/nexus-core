@@ -1,7 +1,7 @@
 """NexusAgentRuntime — nexus-specific implementation of AgentRuntime.
 
 Bridges ProcessOrchestrator (nexus-arc) with the concrete nexus host:
-  - Copilot / Gemini CLI invocations (via agent_launcher.launch_next_agent)
+  - AI Agent CLI invocations (via agent_launcher.invoke_ai_agent)
   - HostStateManager-backed process tracking
   - AgentMonitor stuck/dead detection hooks
   - Telegram alerting

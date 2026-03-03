@@ -25,7 +25,7 @@ def find_task_file_by_issue(issue_num: str) -> str | None:
                     content = f.read()
                 # Match both full URLs and short references
                 if re.search(
-                    r"\*\*Issue:\*\*\s*https?://github.com/.+/issues/" + re.escape(issue_num),
+                    r"\*\*Issue:\*\*\s*https?://[^/]+/.+/(?:issues|/-/issues)/" + re.escape(issue_num),
                     content,
                 ) or re.search(
                     r"\*\*Issue:\*\*\s*#" + re.escape(issue_num) + r"(?!\d)",

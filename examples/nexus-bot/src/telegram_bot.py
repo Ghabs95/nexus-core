@@ -144,6 +144,9 @@ from handlers.issue_command_handlers import (
     prepare_handler as issue_prepare_handler,
 )
 from handlers.issue_command_handlers import (
+    plan_handler as issue_plan_handler,
+)
+from handlers.issue_command_handlers import (
     respond_handler as issue_respond_handler,
 )
 from handlers.issue_command_handlers import (
@@ -269,7 +272,7 @@ from orchestration.telegram.telegram_update_bridge import (
 from project_key_utils import normalize_project_key_optional as _normalize_project_key
 from rate_limiter import RateLimit, get_rate_limiter
 from report_scheduler import ReportScheduler
-from runtime.agent_launcher import get_sop_tier_from_issue, invoke_copilot_agent
+from runtime.agent_launcher import get_sop_tier_from_issue, invoke_ai_agent
 from services.command_contract import (
     validate_command_parity,
     validate_required_command_interface,
@@ -516,7 +519,7 @@ install_secret_redaction([TELEGRAM_TOKEN or ""], logging.getLogger())
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-# Initialize AI Orchestrator (CLI-only: gemini-cli + copilot-cli)
+# Initialize AI Orchestrator (configured AI providers)
 orchestrator = get_orchestrator(ORCHESTRATOR_CONFIG)
 
 # Initialize rate limiter
@@ -567,7 +570,7 @@ def _workflow_handler_deps() -> WorkflowHandlerDeps:
         project_repo=_project_repo,
         get_issue_details=get_issue_details,
         resolve_project_config_from_task=resolve_project_config_from_task,
-        invoke_copilot_agent=invoke_copilot_agent,
+        invoke_ai_agent=invoke_ai_agent,
         get_sop_tier_from_issue=get_sop_tier_from_issue,
         get_sop_tier=get_sop_tier,
         get_last_tier_for_issue=HostStateManager.get_last_tier_for_issue,
@@ -684,7 +687,7 @@ def _issue_handler_deps() -> IssueHandlerDeps:
         get_issue_details=get_issue_details,
         get_direct_issue_plugin=_get_direct_issue_plugin,
         resolve_project_config_from_task=resolve_project_config_from_task,
-        invoke_copilot_agent=invoke_copilot_agent,
+        invoke_ai_agent=invoke_ai_agent,
         get_sop_tier=get_sop_tier,
         find_task_file_by_issue=find_task_file_by_issue,
         resolve_repo=resolve_repo,
@@ -847,7 +850,7 @@ def save_tracked_issues(data):
 
 
 def get_issue_details(issue_num, repo: str = None):
-    """Query GitHub API for issue details."""
+    """Query Git API for issue details."""
     return _svc_get_issue_details(
         issue_num=str(issue_num),
         repo=repo,
@@ -1159,6 +1162,7 @@ def _command_handler_map():
         assign_handler=assign_handler,
         implement_handler=implement_handler,
         prepare_handler=prepare_handler,
+        plan_handler=plan_handler,
         pause_handler=pause_handler,
         resume_handler=resume_handler,
         stop_handler=stop_handler,
@@ -1599,7 +1603,7 @@ async def active_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def assign_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Assigns a GitHub issue to the user."""
+    """Assigns a Git issue to the user."""
     await issue_assign_handler(
         _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
     )
@@ -1607,10 +1611,10 @@ async def assign_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @rate_limited("implement")
 async def implement_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Requests Copilot agent implementation for an issue (approval workflow).
+    """Requests AI agent implementation for an issue (approval workflow).
 
-    Adds an `agent:requested` label and notifies `@ProjectLead` with a comment
-    so they can approve (add `agent:approved`) or click "Code with agent mode".
+    Adds an `agent:requested` label and leaves a comment on the Git platform
+    so it can be approved (add `agent:approved`) or triggered via agent mode.
     """
     await issue_implement_handler(
         _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
@@ -1618,8 +1622,19 @@ async def implement_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def prepare_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Augments an issue with Copilot-friendly instructions and acceptance criteria."""
+    """Augments an issue with AI-friendly instructions and acceptance criteria."""
     await issue_prepare_handler(
+        _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
+    )
+
+
+@rate_limited("plan")
+async def plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Requests AI agent to formulate a plan for an issue.
+
+    Adds an `agent:plan-requested` label.
+    """
+    await issue_plan_handler(
         _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
     )
 
@@ -1666,7 +1681,7 @@ async def myissues_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @rate_limited("logs")
 async def logs_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show combined timeline of GitHub activity and bot/processor logs for an issue."""
+    """Show combined timeline of Git activity and bot/processor logs for an issue."""
     await monitoring_logs_handler(
         _build_telegram_interactive_ctx(update, context), _monitoring_handler_deps()
     )
@@ -1674,7 +1689,7 @@ async def logs_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @rate_limited("logs")
 async def logsfull_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show combined timeline of GitHub activity and full log lines for an issue."""
+    """Show combined timeline of Git activity and full log lines for an issue."""
     await monitoring_logsfull_handler(
         _build_telegram_interactive_ctx(update, context), _monitoring_handler_deps()
     )
@@ -1745,14 +1760,14 @@ async def forget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def kill_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Kill a running Copilot agent process."""
+    """Kill a running AI agent process."""
     await workflow_kill_handler(
         _build_telegram_interactive_ctx(update, context), _workflow_handler_deps()
     )
 
 
 async def reconcile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Reconcile workflow and local completion from structured GitHub comments."""
+    """Reconcile workflow and local completion from structured Git comments."""
     await workflow_reconcile_handler(
         _build_telegram_interactive_ctx(update, context), _workflow_handler_deps()
     )
@@ -1972,6 +1987,7 @@ def main():
             "assign_handler": assign_handler,
             "implement_handler": implement_handler,
             "prepare_handler": prepare_handler,
+            "plan_handler": plan_handler,
             "feature_done_handler": feature_done_handler,
             "feature_list_handler": feature_list_handler,
             "feature_forget_handler": feature_forget_handler,

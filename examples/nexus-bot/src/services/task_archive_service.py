@@ -37,7 +37,7 @@ def archive_closed_task_files(
     )
 
     archived_count = 0
-    issue_pattern = re.compile(r"\*\*Issue:\*\*\s*https?://github\.com/[^/]+/[^/]+/issues/(\d+)")
+    issue_pattern = re.compile(r"\*\*Issue:\*\*\s*https?://[^/]+/.+/(?:issues|/-/issues)/(\d+)")
 
     for project_key in projects_to_scan:
         project_cfg = project_config.get(project_key, {})

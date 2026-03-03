@@ -14,7 +14,7 @@ def menu_root_buttons() -> list[list[Button]]:
         [Button("📊 Monitoring", callback_data="menu:monitor")],
         [Button("🔁 Workflow Control", callback_data="menu:workflow")],
         [Button("🤝 Agents", callback_data="menu:agents")],
-        [Button("🔧 Git Platform", callback_data="menu:github")],
+        [Button("🔧 Git Platform", callback_data="menu:git")],
         [Button("ℹ️ Help", callback_data="menu:help")],
         [Button("❌ Close", callback_data="menu:close")],
     ]
@@ -73,11 +73,11 @@ def menu_section_text(menu_key: str) -> str:
             "- /direct <project> <@agent> <message> — Send direct request\n"
             "- /direct <project> <@agent> --new-chat <message> — Strategic direct reply in a new chat"
         ),
-        "github": (
+        "git": (
             "🔧 **Git Platform**\n"
             "- /assign <project> <issue#> — Assign issue to yourself\n"
-            "- /implement <project> <issue#> — Request Copilot implementation\n"
-            "- /prepare <project> <issue#> — Add Copilot-friendly instructions"
+            "- /implement <project> <issue#> — Request AI Agent implementation\n"
+            "- /prepare <project> <issue#> — Add AI Agent-friendly instructions"
         ),
         "help": "ℹ️ Use /help for the full command list.",
     }

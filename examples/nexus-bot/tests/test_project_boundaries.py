@@ -213,7 +213,7 @@ def test_launch_next_agent_uses_issue_body_for_shared_active_task_file(monkeypat
         captured["task_content"] = kwargs.get("task_content", "")
         return 999, "copilot"
 
-    monkeypatch.setattr(agent_launcher, "invoke_copilot_agent", _fake_invoke)
+    monkeypatch.setattr(agent_launcher, "invoke_ai_agent", _fake_invoke)
 
     pid, tool = agent_launcher.launch_next_agent("86", "developer", "orphan-recovery")
 
@@ -297,7 +297,7 @@ def test_issue_body_resolution_skips_project_probe_failures(monkeypatch):
         "_project_repos",
         lambda _project_key, cfg, _get_repos: [cfg.get("git_repo")] if cfg.get("git_repo") else [],
     )
-    monkeypatch.setattr(agent_launcher, "_db_only_task_mode", lambda: True)
+    monkeypatch.setattr(agent_launcher, "is_postgres_backend", lambda _backend: True)
     monkeypatch.setattr(agent_launcher, "get_repos", lambda _project: [])
 
     def _fake_client(repo_name: str, project_name: str | None = None):

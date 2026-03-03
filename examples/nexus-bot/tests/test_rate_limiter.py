@@ -224,7 +224,7 @@ class TestRateLimiter:
         assert "user_global" in limiter.DEFAULT_LIMITS
         assert "logs" in limiter.DEFAULT_LIMITS
         assert "stats" in limiter.DEFAULT_LIMITS
-        assert "github_api" in limiter.DEFAULT_LIMITS
+        assert "git_api" in limiter.DEFAULT_LIMITS
 
         # Verify they have reasonable values
         assert limiter.DEFAULT_LIMITS["user_global"].max_requests > 0

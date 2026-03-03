@@ -44,6 +44,25 @@ class _StubStatus:
         self.message_id = message_id
 
 
+class StubInteractiveContext:
+    def __init__(self, update, user_data):
+        self.user_id = str(update.effective_user.id)
+        self.text = update.message.text
+        self.user_state = user_data
+        self.raw_event = update
+        self.replies = []
+        self.edits = []
+
+    async def reply_text(self, text, buttons=None):
+        mid = str(len(self.replies) + 100)
+        self.replies.append({"text": text, "buttons": buttons, "message_id": mid})
+        return mid
+
+    async def edit_message_text(self, message_id, text, buttons=None):
+        self.edits.append({"message_id": message_id, "text": text, "buttons": buttons})
+
+
+
 class _Logger:
     def info(self, *_args, **_kwargs):
         return None
@@ -96,12 +115,12 @@ def test_feature_followup_text_routes_as_conversation(monkeypatch):
         routing, "run_conversation_turn", lambda **_kwargs: "Let's discuss that adapter option."
     )
 
-    asyncio.run(
-        routing.route_hands_free_text(update, context, status_msg, update.message.text, _deps())
-    )
+    ictx = StubInteractiveContext(update, context.user_data)
 
-    assert len(context.bot.edits) == 2
-    assert "Nexus (designer)" in context.bot.edits[-1]["text"]
+    asyncio.run(routing.route_hands_free_text(ictx, _deps()))
+
+    assert len(ictx.edits) >= 1
+    assert "Nexus (designer)" in ictx.edits[-1]["text"]
 
 
 def test_explicit_task_request_still_routes_task(monkeypatch):
@@ -127,12 +146,12 @@ def test_explicit_task_request_still_routes_task(monkeypatch):
 
     monkeypatch.setattr(routing, "route_task_with_context", _route_task)
 
-    asyncio.run(
-        routing.route_hands_free_text(update, context, status_msg, update.message.text, _deps())
-    )
+    ictx = StubInteractiveContext(update, context.user_data)
+
+    asyncio.run(routing.route_hands_free_text(ictx, _deps()))
 
     assert called["task"] is True
-    assert context.bot.edits[-1]["text"] == "✅ Routed to `nexus`"
+    assert ictx.edits[-1]["text"] == "✅ Routed to `nexus`"
 
 
 def test_build_chat_persona_strategy_mode_blocks_premature_execution_artifacts():

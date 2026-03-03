@@ -1,7 +1,7 @@
 """Tests for provider-neutral repository keys in project config."""
 
 
-def test_get_github_repos_auto_discovers_from_workspace(monkeypatch, tmp_path):
+def test_get_git_repos_auto_discovers_from_workspace(monkeypatch, tmp_path):
     import config
     import config_repos
 

@@ -74,9 +74,9 @@ def build_help_text() -> str:
         "/feature_list <project> - List implemented features for dedup\n"
         "/feature_forget <project> <feature_id|title> - Remove an implemented feature\n\n"
         "🔧 **Git Platform Management:**\n"
-        "/assign <project> <issue#> - Assign issue to yourself\n"
-        "/implement <project> <issue#> - Request Copilot agent implementation\n"
-        "/prepare <project> <issue#> - Add Copilot-friendly instructions\n\n"
+        "• /assign <project> <issue#> - Assign issue to yourself\n"
+        "• /implement <project> <issue#> - Request AI Agent implementation\n"
+        "• /prepare <project> <issue#> - Add AI Agent instructions\n\n"
         "ℹ️ /help - Show this list"
     )
 
@@ -101,7 +101,7 @@ async def handle_menu(
         [inline_keyboard_button_cls("📊 Monitoring", callback_data="menu:monitor")],
         [inline_keyboard_button_cls("🔁 Workflow Control", callback_data="menu:workflow")],
         [inline_keyboard_button_cls("🤝 Agents", callback_data="menu:agents")],
-        [inline_keyboard_button_cls("🔧 Git Platform", callback_data="menu:github")],
+        [inline_keyboard_button_cls("🔧 Git Platform", callback_data="menu:git")],
         [inline_keyboard_button_cls("ℹ️ Help", callback_data="menu:help")],
         [inline_keyboard_button_cls("❌ Close", callback_data="menu:close")],
     ]

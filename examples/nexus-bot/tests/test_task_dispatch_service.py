@@ -35,7 +35,7 @@ def test_handle_webhook_task_reroutes_mismatched_project(tmp_path):
         get_initial_agent_from_workflow=lambda _p: "triage",
         get_repo_for_project=lambda _p: "acme/repo",
         resolve_tier_for_issue=lambda *args, **kwargs: "full",
-        invoke_copilot_agent=lambda **kwargs: (None, None),
+        invoke_ai_agent=lambda **kwargs: (None, None),
     )
 
     assert handled is True
@@ -83,7 +83,7 @@ def test_handle_new_task_happy_path_smoke(tmp_path):
 
     pid_tool = {"pid": None}
 
-    def _invoke_copilot_agent(**kwargs):
+    def _invoke_ai_agent(**kwargs):
         pid_tool["pid"] = 1234
         return 1234, "copilot"
 
@@ -112,7 +112,7 @@ def test_handle_new_task_happy_path_smoke(tmp_path):
         workflow_state_plugin_kwargs={},
         start_workflow=_start_workflow,
         get_initial_agent_from_workflow=lambda _p: "triage",
-        invoke_copilot_agent=_invoke_copilot_agent,
+        invoke_ai_agent=_invoke_ai_agent,
     )
 
     assert captured["create_issue_called"] is True

@@ -185,7 +185,7 @@ async def _launch_reprocess(
     project_key: str,
 ) -> None:
     msg_id = await ctx.reply_text(f"🔁 Reprocessing issue #{issue_num}...")
-    pid, tool_used = deps.invoke_copilot_agent(
+    pid, tool_used = deps.invoke_ai_agent(
         agents_dir=os.path.join(deps.base_dir, config["agents_dir"]),
         workspace_dir=os.path.join(deps.base_dir, config["workspace"]),
         issue_url=issue_url,
@@ -414,7 +414,7 @@ async def _launch_continue_agent(
         f"⏩ Continuing issue #{issue_num} with `{continue_ctx['agent_type']}`{resume_info}..."
     )
     try:
-        pid, tool_used = deps.invoke_copilot_agent(
+        pid, tool_used = deps.invoke_ai_agent(
             agents_dir=continue_ctx["agents_abs"],
             workspace_dir=continue_ctx["workspace_abs"],
             issue_url=continue_ctx["issue_url"],

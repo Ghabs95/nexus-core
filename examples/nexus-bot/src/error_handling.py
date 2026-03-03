@@ -1,7 +1,7 @@
 """Error handling utilities with retry logic and exponential backoff.
 
 This module provides reusable error handling patterns for external service calls
-like GitHub CLI, file I/O, and API requests.
+like CLI tools, file I/O, and API requests.
 """
 
 import logging
@@ -44,8 +44,8 @@ def retry_with_backoff(
 
     Example:
         @retry_with_backoff(max_attempts=5, base_delay=2.0)
-        def call_github_api():
-            return subprocess.run(["gh", "issue", "list"], check=True)
+        def call_service_api():
+            return subprocess.run(["tool", "action"], check=True)
     """
 
     def decorator(func: Callable) -> Callable:
@@ -118,7 +118,7 @@ def run_command_with_retry(
 
     Example:
         result = run_command_with_retry(
-            ["gh", "issue", "list", "--repo", "user/repo"],
+            ["tool", "command", "args"],
             max_attempts=5,
             timeout=60
         )
@@ -212,7 +212,7 @@ def validate_required_env_vars(required_vars: list[str]) -> None:
 
 
 def format_error_for_user(error: Exception, context: str = "") -> str:
-    """Format error message for end-user display (Telegram).
+    """Format error message for end-user display.
 
     Args:
         error: Exception object
@@ -239,7 +239,7 @@ def format_error_for_user(error: Exception, context: str = "") -> str:
         return f"⚙️ Configuration error: {error_msg}. Please contact administrator."
 
     elif "rate limit" in error_msg.lower():
-        return "⏳ GitHub rate limit reached. Please wait a few minutes and try again."
+        return "⏳ Rate limit reached for the platform. Please wait a few minutes and try again."
 
     elif "not found" in error_msg.lower() and "issue" in error_msg.lower():
         return "🔍 Issue not found. Please check the issue number and try again."

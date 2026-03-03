@@ -100,7 +100,14 @@ def handle_issue_opened_event(
 
     try:
         system_ops = project_config.get("system_operations", {})
-        agent_type = str(system_ops.get("inbox") or system_ops.get("default") or "").strip()
+        default_agent = str(system_ops.get("default") or "").strip()
+        
+        # Override agent_type if planning is requested
+        if "agent:plan-requested" in issue_labels:
+            agent_type = str(system_ops.get("plan") or default_agent).strip()
+            logger.info("📝 Routing issue #%s to %s agent based on plan label.", issue_number, agent_type)
+        else:
+            agent_type = str(system_ops.get("inbox") or default_agent).strip()
     except Exception as exc:
         logger.warning("⚠️ Could not load inbox config from system_operations: %s", exc)
         agent_type = ""
@@ -137,7 +144,7 @@ def handle_issue_opened_event(
                 "issue": issue_number,
             }
 
-        workspace_abs = os.path.join(base_dir, project_workspace)
+        workspace_abs = os.path.join(base_dir, str(project_workspace or ""))
         inbox_dir = get_inbox_dir(workspace_abs, project_key)
         task_filename = f"issue_{issue_number}.md"
 
@@ -166,7 +173,8 @@ The actual agent assignment depends on the current project's workflow configurat
 
         queue_id = None
         if inbox_backend == "postgres":
-            queue_id = enqueue_task(
+            # Pyre-ignore because enqueue_task is dynamically provided and kwargs aren't typed
+            queue_id = enqueue_task(  # pyre-ignore[28, 19, 21, 6]
                 project_key=str(project_key),
                 workspace=str(project_workspace),
                 filename=task_filename,

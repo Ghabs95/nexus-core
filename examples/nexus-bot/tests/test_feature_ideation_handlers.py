@@ -832,7 +832,7 @@ def test_build_feature_suggestions_logs_success_when_copilot_fallback_succeeds(t
     assert len(items) == 1
     assert items[0]["title"] == "Copilot-generated roadmap slice"
     assert any(
-        "Feature ideation success: provider=copilot primary_success=false fallback_used=true items=1"
+        "Feature ideation success: provider=fallback primary_success=false fallback_used=true items=1"
         in msg
         for msg in logger.messages
     )

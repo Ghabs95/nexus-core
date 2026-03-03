@@ -1,4 +1,4 @@
-"""Rate limiting and throttling for Telegram commands and Git API calls."""
+"""Rate limiting and throttling for chat commands and Git API calls."""
 
 import json
 import logging
@@ -50,7 +50,7 @@ class UserQuota:
 
 class RateLimiter:
     """
-    Sliding window rate limiter for Telegram commands and API calls.
+    Sliding window rate limiter for chat commands and Git API calls.
 
     Features:
     - Per-user rate limiting
@@ -72,8 +72,8 @@ class RateLimiter:
         "reprocess": RateLimit(2, 300, "2 reprocesses/5min"),
         "implement": RateLimit(5, 300, "5 implementations/5min"),
         # Git API limits
-        "github_api": RateLimit(100, 3600, "100 API calls/hour"),
-        "github_issue_create": RateLimit(10, 3600, "10 issue creates/hour"),
+        "git_api": RateLimit(100, 3600, "100 API calls/hour"),
+        "git_issue_create": RateLimit(10, 3600, "10 issue creates/hour"),
     }
 
     def __init__(self, state_file: str | None = None):
@@ -100,8 +100,8 @@ class RateLimiter:
         Check if a request is allowed under rate limits.
 
         Args:
-            user_id: Telegram user ID
-            action: Action being performed (e.g., "logs", "stats", "github_api")
+            user_id: Chat user ID
+            action: Action being performed (e.g., "logs", "stats", "git_api")
             limit: Optional custom rate limit (uses default if not provided)
 
         Returns:
@@ -148,7 +148,7 @@ class RateLimiter:
         quota.add_request()
 
         # Also record in global quota if applicable
-        if action in ["github_api", "github_issue_create"]:
+        if action in ["git_api", "git_issue_create"]:
             self.global_quota.add_request()
 
         # Periodic cleanup (every 100 requests)

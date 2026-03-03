@@ -23,7 +23,7 @@ def recover_unmapped_issues_from_completions(
     resolve_repo_for_issue: Callable[[str, str | None], str],
     build_issue_url: Callable[[str, str, dict[str, Any]], str],
     get_sop_tier: Callable[..., tuple[str, str, str]],
-    invoke_copilot_agent: Callable[..., tuple[Any, Any]],
+    invoke_ai_agent: Callable[..., tuple[Any, Any]],
     base_dir: str,
     orphan_recovery_last_attempt: dict[str, float],
     orphan_recovery_cooldown_seconds: float,
@@ -168,7 +168,7 @@ def recover_unmapped_issues_from_completions(
             tier_name, _, _ = get_sop_tier("issue", title=f"Issue #{issue_num}", body=task_content)
 
         orphan_recovery_last_attempt[issue_num] = now
-        pid, tool_used = invoke_copilot_agent(
+        pid, tool_used = invoke_ai_agent(
             agents_dir=os.path.join(base_dir, str(agents_dir)),
             workspace_dir=os.path.join(base_dir, str(workspace)),
             issue_url=issue_url,

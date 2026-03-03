@@ -1,4 +1,4 @@
-"""Issue-related command handlers extracted from telegram_bot."""
+"""Issue-related command handlers."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class IssueHandlerDeps:
     get_issue_details: Callable[..., dict[str, Any] | None]
     get_direct_issue_plugin: Callable[[str], Any]
     resolve_project_config_from_task: Callable[[str], tuple[str | None, dict[str, Any] | None]]
-    invoke_copilot_agent: Callable[..., tuple[int | None, str | None]]
+    invoke_ai_agent: Callable[..., tuple[int | None, str | None]]
     get_sop_tier: Callable[[str], tuple[str, Any, Any]]
     find_task_file_by_issue: Callable[[str], str | None]
     resolve_repo: Callable[[dict[str, Any] | None, str], str]
@@ -64,8 +64,9 @@ async def assign_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> Non
     assignee = "@me"
     if rest:
         raw_assignee = rest[0]
-        if raw_assignee.lower() == "copilot":
-            assignee = os.getenv("GITHUB_COPILOT_USER", "copilot")
+        # Allow generic "agent" or "bot" to refer to the default AI implementation
+        if raw_assignee.lower() in ("copilot", "agent", "bot", "ai"):
+            assignee = os.getenv("AI_AGENT_USER", os.getenv("GITHUB_COPILOT_USER", "copilot"))
         else:
             assignee = raw_assignee
 
@@ -112,7 +113,7 @@ async def implement_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> 
     issue_url = deps.project_issue_url(project_key, issue_number)
 
     msg_id = await ctx.reply_text(
-        f"🔔 Requesting Copilot implementation for issue #{issue_number}..."
+        f"🔔 Requesting AI Agent implementation for issue #{issue_number}..."
     )
 
     try:
@@ -127,7 +128,7 @@ async def implement_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> 
         plugin.ensure_label(
             "agent:requested",
             "E6E6FA",
-            "Requested Copilot implementation",
+            "Requested AI Agent implementation",
         )
         if not plugin.add_label(issue_number, "agent:requested"):
             await ctx.edit_message_text(
@@ -137,9 +138,8 @@ async def implement_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> 
             return
 
         comment = (
-            "@ProjectLead — Copilot implementation has been requested via Telegram.\n\n"
-            "Please review the issue and either click 'Code with agent mode' in the GitHub UI "
-            "or add the label `agent:approved` to start implementation.\n\n"
+            "🤖 **Implementation Request** — AI implementation has been requested via chat command.\n\n"
+            "Please review the issue and add the label `agent:approved` to start implementation.\n\n"
             f"Issue: {issue_url}"
         )
 
@@ -154,13 +154,81 @@ async def implement_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> 
             message_id=msg_id,
             text=(
                 f"✅ Requested implementation for issue #{issue_number}. "
-                f"ProjectLead has been notified.\n\n{issue_url}"
+                f"The assigned agent will process this upon approval.\n\n{issue_url}"
             ),
         )
     except Exception as exc:
         await ctx.edit_message_text(
             message_id=msg_id,
             text=f"❌ Failed to request implementation for issue #{issue_number}.\n\nError: {exc}",
+        )
+
+
+async def plan_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> None:
+    deps.logger.info(f"Plan requested by user: {ctx.user_id}")
+    if deps.allowed_user_ids and int(ctx.user_id) not in deps.allowed_user_ids:
+        log_unauthorized_access(getattr(deps, "logger", None), int(ctx.user_id))
+        return
+
+    if not ctx.args:
+        await deps.prompt_project_selection(ctx, "plan")
+        return
+
+    project_key, issue_number, _ = await deps.ensure_project_issue(ctx, "plan")
+    if not project_key:
+        return
+
+    repo = deps.project_repo(project_key)
+    issue_url = deps.project_issue_url(project_key, issue_number)
+
+    msg_id = await ctx.reply_text(
+        f"🔔 Requesting Plan formulation for issue #{issue_number}..."
+    )
+
+    try:
+        plugin = deps.get_direct_issue_plugin(repo)
+        if not plugin:
+            await ctx.edit_message_text(
+                message_id=msg_id,
+                text="❌ Failed to initialize Git issue plugin",
+            )
+            return
+
+        plugin.ensure_label(
+            "agent:plan-requested",
+            "B4A7E5",
+            "Requested Agent Planning",
+        )
+        if not plugin.add_label(issue_number, "agent:plan-requested"):
+            await ctx.edit_message_text(
+                message_id=msg_id,
+                text=f"❌ Failed to request plan for issue #{issue_number}.",
+            )
+            return
+
+        comment = (
+            "🤖 **Plan Request** — A technical plan has been requested via chat command.\n\n"
+            f"Issue: {issue_url}"
+        )
+
+        if not plugin.add_comment(issue_number, comment):
+            await ctx.edit_message_text(
+                message_id=msg_id,
+                text=f"❌ Failed to request plan for issue #{issue_number}.",
+            )
+            return
+
+        await ctx.edit_message_text(
+            message_id=msg_id,
+            text=(
+                f"✅ Requested technical plan for issue #{issue_number}. "
+                f"The planning agent will process this shortly.\n\n{issue_url}"
+            ),
+        )
+    except Exception as exc:
+        await ctx.edit_message_text(
+            message_id=msg_id,
+            text=f"❌ Failed to request plan for issue #{issue_number}.\n\nError: {exc}",
         )
 
 
@@ -181,7 +249,7 @@ async def prepare_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
     repo = deps.project_repo(project_key)
     issue_url = deps.project_issue_url(project_key, issue_number)
 
-    msg_id = await ctx.reply_text(f"🔧 Preparing issue #{issue_number} for Copilot...")
+    msg_id = await ctx.reply_text(f"🔧 Preparing issue #{issue_number} for AI implementation...")
 
     try:
         plugin = deps.get_direct_issue_plugin(repo)
@@ -208,7 +276,7 @@ async def prepare_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
         task_file = taskfile_match.group(1) if taskfile_match else None
 
         copilot_block = f"""
-## Copilot Instructions
+## AI Agent Instructions
 
 - Follow existing repository style and tests.
 - Create a branch: `{branch_name}` and open a PR against the appropriate base branch.
@@ -235,8 +303,8 @@ async def prepare_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
         await ctx.edit_message_text(
             message_id=msg_id,
             text=(
-                f"✅ Prepared issue #{issue_number} for Copilot. You can now click "
-                f"'Code with agent mode' in GitHub or ask ProjectLead to approve.\n\n{issue_url}"
+                f"✅ Prepared issue #{issue_number} for AI implementation. You can now add the "
+                f"`agent:approved` label to start the agent.\n\n{issue_url}"
             ),
         )
     except Exception as exc:
@@ -280,7 +348,7 @@ async def track_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> None
             return
 
         user = deps.user_manager.get_or_create_user_by_identity(
-            platform="telegram",
+            platform=ctx.platform,
             platform_user_id=str(ctx.user_id),
             username=f"user_{ctx.user_id}",
             first_name="User",
@@ -345,7 +413,7 @@ async def untrack_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
     if not project_key:
         return
 
-    nexus_id = deps.user_manager.resolve_nexus_id("telegram", str(ctx.user_id))
+    nexus_id = deps.user_manager.resolve_nexus_id(ctx.platform, str(ctx.user_id))
     success = (
         deps.user_manager.untrack_issue_by_nexus_id(
             nexus_id=nexus_id,
@@ -372,7 +440,7 @@ async def myissues_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> N
         log_unauthorized_access(getattr(deps, "logger", None), int(ctx.user_id))
         return
 
-    nexus_id = deps.user_manager.resolve_nexus_id("telegram", str(ctx.user_id))
+    nexus_id = deps.user_manager.resolve_nexus_id(ctx.platform, str(ctx.user_id))
     tracked = deps.user_manager.get_user_tracked_issues_by_nexus_id(nexus_id) if nexus_id else {}
 
     if not tracked:
@@ -663,7 +731,7 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
         )
 
         log_subdir = project_name
-        pid, tool_used = deps.invoke_copilot_agent(
+        pid, tool_used = deps.invoke_ai_agent(
             agents_dir=agents_abs,
             workspace_dir=workspace_abs,
             issue_url=issue_url,

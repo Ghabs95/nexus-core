@@ -25,7 +25,7 @@ class AlertingSystem:
     """Monitors system health and sends alerts for critical issues.
 
     Uses :func:`get_audit_query` for data and :func:`emit_alert`
-    for notification delivery (Telegram + Discord via EventBus).
+    for notification delivery (via EventBus).
     """
 
     def __init__(self) -> None:

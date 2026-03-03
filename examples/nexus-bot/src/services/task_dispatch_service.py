@@ -40,7 +40,7 @@ def handle_webhook_task(
     get_initial_agent_from_workflow: Callable[[str], str],
     get_repo_for_project: Callable[[str], str],
     resolve_tier_for_issue: Callable[..., str | None],
-    invoke_copilot_agent: Callable[..., tuple[int | None, str | None]],
+    invoke_ai_agent: Callable[..., tuple[int | None, str | None]],
 ) -> bool:
     """Handle webhook-origin task files. Returns True when consumed."""
     source_match = re.search(r"\*\*Source:\*\*\s*(.+)", content)
@@ -191,7 +191,7 @@ def handle_webhook_task(
         if not tier_name:
             return True
 
-        pid, tool_used = invoke_copilot_agent(
+        pid, tool_used = invoke_ai_agent(
             agents_dir=agents_abs,
             workspace_dir=workspace_abs,
             issue_url=issue_url,
@@ -243,7 +243,7 @@ def handle_new_task(
     workflow_state_plugin_kwargs: dict[str, Any],
     start_workflow: Callable[[str, str], Any],
     get_initial_agent_from_workflow: Callable[[str], str],
-    invoke_copilot_agent: Callable[..., tuple[int | None, str | None]],
+    invoke_ai_agent: Callable[..., tuple[int | None, str | None]],
 ) -> None:
     """Handle standard (non-webhook) inbox task end-to-end."""
     content = refine_issue_content(content, str(project_name))
@@ -369,6 +369,7 @@ def handle_new_task(
                     workflow_id,
                     issue_num,
                 )
+
             if new_filepath:
                 try:
                     with open(new_filepath, "a") as f:
@@ -416,7 +417,7 @@ def handle_new_task(
             )
             return
 
-        pid, tool_used = invoke_copilot_agent(
+        pid, tool_used = invoke_ai_agent(
             agents_dir=agents_abs,
             workspace_dir=workspace_abs,
             issue_url=issue_url,
@@ -435,6 +436,6 @@ def handle_new_task(
             except Exception as exc:
                 logger.error("Failed to append PID: %s", exc)
     else:
-        logger.info("ℹ️ No agents directory for %s, skipping Copilot CLI invocation.", project_name)
+        logger.info("ℹ️ No agents directory for %s, skipping agent invocation.", project_name)
 
     logger.info("✅ Dispatch complete for [%s] %s (Tier: %s)", project_name, slug, tier_name)

@@ -85,8 +85,15 @@ from handlers.ops_command_handlers import direct_handler as ops_direct_handler
 from handlers.ops_command_handlers import stats_handler as ops_stats_handler
 from handlers.issue_command_handlers import assign_handler as issue_assign_handler
 from handlers.issue_command_handlers import comments_handler as issue_comments_handler
-from handlers.issue_command_handlers import implement_handler as issue_implement_handler
-from handlers.issue_command_handlers import prepare_handler as issue_prepare_handler
+from handlers.issue_command_handlers import (
+    myissues_handler as issue_myissues_handler,
+)
+from handlers.issue_command_handlers import (
+    plan_handler as issue_plan_handler,
+)
+from handlers.issue_command_handlers import (
+    prepare_handler as issue_prepare_handler,
+)
 from handlers.issue_command_handlers import respond_handler as issue_respond_handler
 from handlers.issue_command_handlers import untrack_handler as issue_untrack_handler
 from handlers.workflow_command_handlers import continue_handler as workflow_continue_handler
@@ -474,7 +481,7 @@ def _menu_category_text(category: str) -> str:
     if category == "help":
         return build_help_text()
 
-    shared_key = "github" if category == "git" else category
+    shared_key = category
     shared_text = _shared_menu_section_text(shared_key)
     if shared_text != "Unknown menu option.":
         return shared_text
@@ -1947,6 +1954,23 @@ async def prepare_command(
         interaction,
         command_name="prepare",
         handler=issue_prepare_handler,
+        deps_factory=_issue_bridge_deps,
+        project=project,
+        issue=issue,
+    )
+
+
+@bot.tree.command(name="plan", description="Request an implementation plan")
+@app_commands.describe(project="Project key", issue="Issue number")
+async def plan_command(
+    interaction: discord.Interaction,
+    project: str | None = None,
+    issue: str | None = None,
+):
+    await _run_bridge_with_picker(
+        interaction,
+        command_name="plan",
+        handler=issue_plan_handler,
         deps_factory=_issue_bridge_deps,
         project=project,
         issue=issue,

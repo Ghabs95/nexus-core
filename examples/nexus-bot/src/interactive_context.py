@@ -28,6 +28,11 @@ class InteractiveContext:
     user_state: dict[str, Any]
     query: Optional["InteractiveQuery"] = None
 
+    @property
+    def platform(self) -> str:
+        """Returns the base platform name (e.g. 'telegram', 'discord')."""
+        return self.client.name.split("-")[0].lower()
+
     async def reply_text(self, text: str, buttons: list[list[Button]] | None = None) -> str:
         """
         Send a message back to the user in the current chat.

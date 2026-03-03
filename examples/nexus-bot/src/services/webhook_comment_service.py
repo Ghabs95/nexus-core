@@ -16,13 +16,11 @@ def _resolve_supported_agent_author(author: str) -> str | None:
     if not normalized:
         return None
 
-    # Match current and likely bot account variants used by Copilot/Codex/Gemini.
-    if "copilot" in normalized:
-        return "copilot"
-    if "codex" in normalized:
-        return "codex"
-    if "gemini" in normalized:
-        return "gemini"
+    # Match current and likely bot account variants used by AI agents.
+    agent_keywords = ["copilot", "codex", "gemini", "claude", "nexus-bot", "nexus-arc"]
+    for kw in agent_keywords:
+        if kw in normalized:
+            return kw
     return None
 
 

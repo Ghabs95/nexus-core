@@ -61,7 +61,7 @@ from orchestration.plugin_runtime import (
 )
 from project_key_utils import normalize_project_key_optional as _normalize_project_key
 from rate_limiter import get_rate_limiter
-from runtime.agent_launcher import get_sop_tier_from_issue, invoke_copilot_agent
+from runtime.agent_launcher import get_sop_tier_from_issue, invoke_ai_agent
 from services.memory_service import (
     append_message,
     create_chat,
@@ -136,7 +136,7 @@ def _workflow_handler_deps() -> WorkflowHandlerDeps:
         project_repo=_project_repo,
         get_issue_details=get_issue_details,
         resolve_project_config_from_task=resolve_project_config_from_task,
-        invoke_copilot_agent=invoke_copilot_agent,
+        invoke_ai_agent=invoke_ai_agent,
         get_sop_tier_from_issue=get_sop_tier_from_issue,
         get_sop_tier=get_sop_tier,
         get_last_tier_for_issue=HostStateManager.get_last_tier_for_issue,
@@ -221,7 +221,7 @@ def _issue_handler_deps() -> IssueHandlerDeps:
         get_issue_details=get_issue_details,
         get_direct_issue_plugin=_get_direct_issue_plugin,
         resolve_project_config_from_task=resolve_project_config_from_task,
-        invoke_copilot_agent=invoke_copilot_agent,
+        invoke_ai_agent=invoke_ai_agent,
         get_sop_tier=get_sop_tier,
         find_task_file_by_issue=find_task_file_by_issue,
         resolve_repo=resolve_repo,

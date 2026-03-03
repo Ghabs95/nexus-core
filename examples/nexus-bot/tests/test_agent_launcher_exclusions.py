@@ -27,7 +27,7 @@ def test_invoke_persists_gemini_exclusion_when_rate_limited(monkeypatch):
         agent_launcher.HostStateManager, "save_launched_agents", lambda data: state.update(data)
     )
 
-    pid, tool = agent_launcher.invoke_copilot_agent(
+    pid, tool = agent_launcher.invoke_ai_agent(
         agents_dir="/tmp/agents",
         workspace_dir="/tmp/workspace",
         issue_url="https://github.com/acme/repo/issues/55",
@@ -67,7 +67,7 @@ def test_tool_unavailable_persists_gemini_exclusion(monkeypatch):
         agent_launcher.HostStateManager, "save_launched_agents", lambda data: state.update(data)
     )
 
-    pid, tool = agent_launcher.invoke_copilot_agent(
+    pid, tool = agent_launcher.invoke_ai_agent(
         agents_dir="/tmp/agents",
         workspace_dir="/tmp/workspace",
         issue_url="https://github.com/acme/repo/issues/55",
@@ -83,7 +83,7 @@ def test_tool_unavailable_persists_gemini_exclusion(monkeypatch):
     assert state["55"]["exclude_tools"] == ["gemini"]
 
 
-def test_log_indicates_copilot_quota_failure_detects_session_summary():
+def test_log_indicates_any_quota_failure_detects_session_summary():
     from runtime import agent_launcher
 
     text = (
@@ -92,11 +92,11 @@ def test_log_indicates_copilot_quota_failure_detects_session_summary():
         "API time spent: 0s\n"
         "Total session time: 4s\n"
     )
-    assert agent_launcher._log_indicates_copilot_quota_failure(text) is True
+    assert agent_launcher._log_indicates_any_quota_failure(text) is True
 
 
-def test_log_indicates_copilot_quota_failure_false_without_summary():
+def test_log_indicates_any_quota_failure_false_without_summary():
     from runtime import agent_launcher
 
     text = "402 You have no quota"
-    assert agent_launcher._log_indicates_copilot_quota_failure(text) is False
+    assert agent_launcher._log_indicates_any_quota_failure(text) is False

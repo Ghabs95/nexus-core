@@ -146,18 +146,18 @@ def build_feature_suggestions(
                 truncate_for_log(raw_text),
             )
             logger.warning(
-                "Dynamic feature ideation returned non-JSON/empty output (primary path), retrying with Copilot"
+                "Dynamic feature ideation returned non-JSON/empty output (primary path), retrying with fallback AI agent"
             )
     except Exception as exc:
         if logger:
             logger.warning("Dynamic feature ideation failed on primary path: %s", exc)
 
     try:
-        run_copilot = getattr(orchestrator, "_run_copilot_analysis", None)
-        if callable(run_copilot):
-            copilot_result = run_copilot(text, task="chat", persona=persona)
+        run_fallback = getattr(orchestrator, "_run_fallback_analysis", None) or getattr(orchestrator, "_run_copilot_analysis", None)
+        if callable(run_fallback):
+            fallback_result = run_fallback(text, task="chat", persona=persona)
             generated = _extract_items_from_result(
-                copilot_result or {},
+                fallback_result or {},
                 feature_count=feature_count,
                 normalize_generated_features=normalize_generated_features,
                 extract_json_payload=extract_json_payload,
@@ -165,7 +165,7 @@ def build_feature_suggestions(
             if generated:
                 log_feature_ideation_success(
                     logger,
-                    provider="copilot",
+                    provider="fallback",
                     primary_success=False,
                     fallback_used=True,
                     item_count=len(generated),
@@ -175,10 +175,10 @@ def build_feature_suggestions(
                 return generated
             if logger:
                 logger.warning(
-                    "Dynamic feature ideation Copilot retry returned non-JSON/empty output"
+                    "Dynamic feature ideation fallback retry returned non-JSON/empty output"
                 )
     except Exception as exc:
         if logger:
-            logger.warning("Dynamic feature ideation failed on Copilot retry: %s", exc)
+            logger.warning("Dynamic feature ideation failed on fallback retry: %s", exc)
 
     return []

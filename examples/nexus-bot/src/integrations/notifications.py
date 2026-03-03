@@ -597,6 +597,14 @@ def notify_workflow_completed(
                 callback_data=_issue_callback("logsfull", issue_number, project),
             )
             .add_button(
+                "🚀 Implement",
+                callback_data=_issue_callback("implement", issue_number, project),
+            )
+            .add_button(
+                "📝 Draft Plan",
+                callback_data=_issue_callback("plan", issue_number, project),
+            )
+            .add_button(
                 "🔗 Issue",
                 url=build_issue_url(
                     get_repo(project),
@@ -705,8 +713,16 @@ def notify_approval_required(
         )
         .new_row()
         .add_button(
-            "🔗 GitHub",
-            url=f"https://github.com/{get_repo(project)}/issues/{issue_number}",
+            "🔗 View Issue",
+            url=build_issue_url(
+                get_repo(project),
+                issue_number,
+                (
+                    PROJECT_CONFIG.get(project)
+                    if isinstance(PROJECT_CONFIG.get(project), dict)
+                    else None
+                ),
+            ),
         )
     )
 
@@ -825,5 +841,7 @@ def emit_alert(
         except Exception as exc:
             logger.warning("Direct Telegram alert failed: %s", exc)
 
-    logger.warning("No alert channel available: %s", message[:120])
+    # Pyre-ignore because Pyre gets confused about slicing Local variable `message`
+    msg_sample = str(message)[:120] if message else ""  # pyre-ignore[16, 6]
+    logger.warning("No alert channel available: %s", msg_sample)
     return False

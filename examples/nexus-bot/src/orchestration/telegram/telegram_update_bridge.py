@@ -1,9 +1,13 @@
-"""Telegram update/context adapter bridge extracted from telegram_bot."""
-
 import logging
 import re
 from types import SimpleNamespace
 from typing import Any
+
+from orchestration.common.formatting import (
+    clip_message_text,
+    flatten_markdown_table,
+    normalize_markdown_headers,
+)
 
 logger = logging.getLogger(__name__)
 TELEGRAM_TEXT_LIMIT = 4096
@@ -37,88 +41,18 @@ def _normalize_telegram_markdown(text: str, parse_mode: str | None) -> str:
     if parse_mode != "Markdown" or not text:
         return text
 
-    def _is_table_separator(line: str) -> bool:
-        parts = [part.strip() for part in line.strip().strip("|").split("|")]
-        if not parts:
-            return False
-        return all(part and re.fullmatch(r"[:\- ]+", part) for part in parts)
+    text = flatten_markdown_table(text)
+    text = normalize_markdown_headers(text)
 
-    def _parse_table_row(line: str) -> list[str]:
-        return [part.strip() for part in line.strip().strip("|").split("|")]
-
-    def _table_to_text(block: list[str]) -> list[str]:
-        if len(block) < 2:
-            return block
-        headers = _parse_table_row(block[0])
-        rows = [_parse_table_row(row) for row in block[2:]]
-        if not headers or not rows:
-            return block
-        converted: list[str] = []
-        for row in rows:
-            pairs = []
-            for idx, value in enumerate(row):
-                header = headers[idx] if idx < len(headers) else f"col{idx + 1}"
-                if header and value:
-                    pairs.append(f"{header}: {value}")
-                elif value:
-                    pairs.append(value)
-            if pairs:
-                converted.append(f"- {' | '.join(pairs)}")
-        return converted or block
-
-    text = text.replace("\r\n", "\n")
-    text = re.sub(r"```([a-zA-Z0-9_+-]+)\n", "```\n", text)
-
-    out_lines: list[str] = []
-    lines = text.split("\n")
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
-
-        if i + 1 < len(lines) and "|" in line and _is_table_separator(lines[i + 1]):
-            table_block = [line, lines[i + 1]]
-            i += 2
-            while i < len(lines) and "|" in lines[i] and lines[i].strip():
-                table_block.append(lines[i])
-                i += 1
-            out_lines.extend(_table_to_text(table_block))
-            continue
-
-        heading_match = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", line)
-        if heading_match:
-            out_lines.append(f"*{heading_match.group(1)}*")
-            i += 1
-            continue
-
-        if re.match(r"^\s*[-*_]{3,}\s*$", stripped):
-            i += 1
-            continue
-
-        out_lines.append(line)
-        i += 1
-
-    normalized = "\n".join(out_lines)
-    normalized = re.sub(r"\*\*(.+?)\*\*", r"*\1*", normalized)
-    normalized = re.sub(r"__(.+?)__", r"*\1*", normalized)
-    return normalized
+    # Convert GFM bold/italic to Telegram legacy single-asterisk style
+    text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+    text = re.sub(r"__(.+?)__", r"*\1*", text)
+    return text
 
 
 def _clip_telegram_text(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> str:
     """Ensure outgoing Telegram text respects message length limits."""
-    if not text:
-        return text
-    if len(text) <= limit:
-        return text
-    suffix = "\n\n[truncated]"
-    budget = max(0, limit - len(suffix))
-    clipped = text[:budget].rstrip()
-    logger.warning(
-        "Clipping Telegram message from %d to %d chars",
-        len(text),
-        len(clipped) + len(suffix),
-    )
-    return f"{clipped}{suffix}"
+    return clip_message_text(text, limit)
 
 
 def _is_parse_entity_error(exc: Exception) -> bool:

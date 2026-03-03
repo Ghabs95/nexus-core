@@ -14,7 +14,7 @@ projects:
   nxs:
     code: nexus
     aliases:
-      - nexus core
+      - nexus arc
       - nexus-arc
 
 # Merge queue behavior (project-level enforcement)
@@ -70,14 +70,15 @@ ai_tool_preferences:
 # Global operation task -> agent type mapping.
 # Provider is selected through ai_tool_preferences for that agent type.
 system_operations:
-  launch: triage
   default: triage
+  launch: triage
   classify: triage
   route: triage
   detect_intent: triage
   generate_name: triage
   refine_description: triage
   transcribe_audio: triage
+  plan: designer
 
 # Project configurations
 nexus:
@@ -90,6 +91,7 @@ nexus:
     default: triage
     launch: triage
     refine_description: designer
+    plan: designer
     overrides:
       issue:
         refine_description: triage

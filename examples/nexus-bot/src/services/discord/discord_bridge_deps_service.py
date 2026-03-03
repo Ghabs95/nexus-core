@@ -49,7 +49,7 @@ from orchestration.plugin_runtime import (
     get_workflow_state_plugin,
 )
 from project_key_utils import normalize_project_key_optional as _normalize_project_key
-from runtime.agent_launcher import get_sop_tier_from_issue, invoke_copilot_agent
+from runtime.agent_launcher import get_sop_tier_from_issue, invoke_ai_agent
 from runtime.nexus_agent_runtime import get_retry_fuse_status
 from services.feature_registry_service import FeatureRegistryService
 from services.git.direct_issue_plugin_service import (
@@ -484,7 +484,7 @@ def issue_bridge_deps(*, allowed_user_ids, prompt_project_selection, ensure_proj
         get_issue_details=get_issue_details,
         get_direct_issue_plugin=_get_direct_issue_plugin,
         resolve_project_config_from_task=_resolve_project_config_from_task,
-        invoke_copilot_agent=invoke_copilot_agent,
+        invoke_ai_agent=invoke_ai_agent,
         get_sop_tier=get_sop_tier,
         find_task_file_by_issue=find_task_file_by_issue,
         resolve_repo=resolve_repo,
@@ -531,7 +531,7 @@ def workflow_bridge_deps(*, allowed_user_ids, prompt_project_selection, ensure_p
         project_repo=_project_repo,
         get_issue_details=get_issue_details,
         resolve_project_config_from_task=_resolve_project_config_from_task,
-        invoke_copilot_agent=invoke_copilot_agent,
+        invoke_ai_agent=invoke_ai_agent,
         get_sop_tier_from_issue=get_sop_tier_from_issue,
         get_sop_tier=get_sop_tier,
         get_last_tier_for_issue=HostStateManager.get_last_tier_for_issue,

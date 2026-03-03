@@ -39,7 +39,7 @@ def run_comment_monitor_cycle(
     notified_comments: set[Any],
     clear_polling_failures: Callable[[str], None],
     record_polling_failure: Callable[[str, Exception], None],
-    bot_author: str = "Ghabs95",
+    bot_author: str = "Ghabs",
 ) -> None:
     """Monitor issue comments and notify on agent blockers/questions."""
     loop_scope = "agent-comments:loop"
@@ -47,9 +47,9 @@ def run_comment_monitor_cycle(
         all_issue_nums: list[tuple[Any, str, str]] = []
         for project_name, _cfg in iter_projects():
             project_platform = (get_project_platform(project_name) or "github").lower().strip()
-            if project_platform != "github":
+            if project_platform not in {"github", "gitlab"}:
                 logger.debug(
-                    "Skipping Git issue polling for non-GitHub project %s (platform=%s)",
+                    "Skipping Git issue polling for non-supported project %s (platform=%s)",
                     project_name,
                     project_platform,
                 )

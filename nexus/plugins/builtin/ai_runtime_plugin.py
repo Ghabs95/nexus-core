@@ -683,7 +683,7 @@ class AIOrchestrator:
     def _get_tool_order(
         self,
         agent_name: str | None = None,
-        use_gemini: bool = False,
+        preferred_tool: str | AIProvider | None = None,
         project_name: str | None = None,
     ) -> list:
         """Return all known tools in priority order for this agent.
@@ -692,10 +692,19 @@ class AIOrchestrator:
         Adding a new provider (Claude, Codex, …) only requires extending AIProvider
         and implementing _invoke_tool dispatch — no other changes needed.
         """
-        if use_gemini:
-            preferred = AIProvider.GEMINI
-            all_tools = list(AIProvider)
-            return [preferred] + [t for t in all_tools if t != preferred]
+        if preferred_tool:
+            if isinstance(preferred_tool, str):
+                try:
+                    preferred = AIProvider(preferred_tool.lower().strip())
+                except ValueError:
+                    logger.warning("Invalid preferred tool: %s", preferred_tool)
+                    preferred = None
+            else:
+                preferred = preferred_tool
+
+            if preferred:
+                all_tools = list(AIProvider)
+                return [preferred] + [t for t in all_tools if t != preferred]
 
         spec = self._resolved_tool_spec(agent_name, project_name=project_name)
         spec_valid = bool(getattr(spec, "valid", False))
@@ -840,7 +849,7 @@ class AIOrchestrator:
         issue_url: str | None = None,
         agent_name: str | None = None,
         project_name: str | None = None,
-        use_gemini: bool = False,
+        preferred_tool: str | AIProvider | None = None,
         exclude_tools: list | None = None,
         log_subdir: str | None = None,
         env: dict[str, str] | None = None,
@@ -863,7 +872,7 @@ class AIOrchestrator:
             exclude_tools=exclude_tools,
             get_tool_order=lambda: self._get_tool_order(
                 agent_name,
-                use_gemini,
+                preferred_tool,
                 project_name,
             ),
             check_tool_available=self.check_tool_available,

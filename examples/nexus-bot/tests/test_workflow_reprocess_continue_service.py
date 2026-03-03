@@ -73,7 +73,7 @@ async def test_launch_continue_agent_replaces_progress_message_on_launch_error()
     ctx = _Ctx()
     deps = SimpleNamespace(
         logger=logging.getLogger("test"),
-        invoke_copilot_agent=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+        invoke_ai_agent=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     continue_ctx = {
         "resumed_from": "designer",
@@ -108,7 +108,7 @@ async def test_launch_continue_agent_falls_back_to_reply_when_edit_fails():
     ctx.telegram_context = SimpleNamespace(bot=SimpleNamespace(delete_message=_delete_message))
     deps = SimpleNamespace(
         logger=logging.getLogger("test"),
-        invoke_copilot_agent=lambda **kwargs: (123, "copilot"),
+        invoke_ai_agent=lambda **kwargs: (123, "copilot"),
     )
     continue_ctx = {
         "resumed_from": "designer",

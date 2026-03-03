@@ -77,7 +77,7 @@ def process_task_context(*, task_ctx: dict[str, object], filepath: str, deps) ->
         get_initial_agent_from_workflow=deps["get_initial_agent_from_workflow"],
         get_repo_for_project=deps["get_repo_for_project"],
         resolve_tier_for_issue=deps["resolve_tier_for_issue"],
-        invoke_copilot_agent=deps["invoke_copilot_agent"],
+        invoke_ai_agent=deps["invoke_ai_agent"],
     ):
         return True
 
@@ -106,6 +106,6 @@ def process_task_context(*, task_ctx: dict[str, object], filepath: str, deps) ->
         workflow_state_plugin_kwargs=deps["workflow_state_plugin_kwargs"],
         start_workflow=deps["start_workflow"],
         get_initial_agent_from_workflow=deps["get_initial_agent_from_workflow"],
-        invoke_copilot_agent=deps["invoke_copilot_agent"],
+        invoke_ai_agent=deps["invoke_ai_agent"],
     )
     return True

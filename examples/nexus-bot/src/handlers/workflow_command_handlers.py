@@ -36,7 +36,7 @@ class WorkflowHandlerDeps:
     project_repo: Callable[[str], str]
     get_issue_details: Callable[[str, str | None], dict[str, Any] | None]
     resolve_project_config_from_task: Callable[[str], tuple[str | None, dict[str, Any] | None]]
-    invoke_copilot_agent: Callable[..., tuple[int | None, str | None]]
+    invoke_ai_agent: Callable[..., tuple[int | None, str | None]]
     get_sop_tier_from_issue: Callable[[str, str | None], str | None]
     get_sop_tier: Callable[[str], tuple[str, Any, Any]]
     get_last_tier_for_issue: Callable[[str], str | None]

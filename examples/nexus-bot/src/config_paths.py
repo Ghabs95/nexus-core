@@ -9,7 +9,9 @@ def load_path_config_from_env() -> dict[str, str]:
     """Return path-related config values from environment with defaults."""
     base_dir = os.getenv("BASE_DIR", "/home/ubuntu/git")
     nexus_runtime_dir = os.getenv("NEXUS_RUNTIME_DIR", "/var/lib/nexus")
-    nexus_state_dir = os.path.join(nexus_runtime_dir, "state")
+    nexus_state_dir = os.getenv("DATA_DIR")
+    if not nexus_state_dir:
+        nexus_state_dir = os.path.join(nexus_runtime_dir, "state")
     logs_dir = os.getenv("LOGS_DIR", "/var/log/nexus")
     return {
         "BASE_DIR": base_dir,

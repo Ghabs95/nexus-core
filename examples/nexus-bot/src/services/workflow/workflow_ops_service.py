@@ -129,7 +129,7 @@ async def reconcile_issue_from_signals(
     """Reconcile workflow + local completion using structured Git comments."""
     plugin = get_issue_plugin(repo)
     if not plugin:
-        return {"ok": False, "error": f"Could not initialize GitHub plugin for {repo}."}
+        return {"ok": False, "error": f"Could not initialize Git platform plugin for {repo}."}
 
     data = plugin.get_issue(issue_num, ["comments", "title"])
     if not data:

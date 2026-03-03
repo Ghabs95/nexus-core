@@ -63,7 +63,7 @@ from orchestration.plugin_runtime import (
 )
 from runtime.agent_launcher import (
     clear_launch_guard,
-    invoke_copilot_agent,
+    invoke_ai_agent,
     is_recent_launch,
 )
 from services.comment_monitor_service import (
@@ -990,7 +990,7 @@ def _recover_unmapped_issues_from_completions(max_relaunches: int = 20) -> int:
         resolve_repo_for_issue=_resolve_repo_for_issue,
         build_issue_url=build_issue_url,
         get_sop_tier=get_sop_tier,
-        invoke_copilot_agent=invoke_copilot_agent,
+        invoke_ai_agent=invoke_ai_agent,
         base_dir=BASE_DIR,
         orphan_recovery_last_attempt=_orphan_recovery_last_attempt,
         orphan_recovery_cooldown_seconds=_ORPHAN_RECOVERY_COOLDOWN_SECONDS,
@@ -1012,7 +1012,7 @@ def check_agent_comments():
         get_bot_comments=_build_bot_comments_getter(
             get_workflow_monitor_policy_plugin=get_workflow_monitor_policy_plugin,
             get_git_platform=get_git_platform,
-            bot_author="Ghabs95",
+            bot_author="Ghabs",
         ),
         notify_agent_needs_input=notify_agent_needs_input,
         notified_comments=PROCESSOR_RUNTIME_STATE.notified_comments,
@@ -1176,7 +1176,7 @@ def _process_task_context(*, task_ctx: dict[str, object], filepath: str) -> bool
             "get_initial_agent_from_workflow": _get_initial_agent_from_workflow,
             "get_repo_for_project": get_repo,
             "resolve_tier_for_issue": _resolve_tier_for_issue,
-            "invoke_copilot_agent": invoke_copilot_agent,
+            "invoke_ai_agent": invoke_ai_agent,
             "handle_webhook_task": _handle_webhook_task,
             "handle_new_task": _handle_new_task,
             "refine_issue_content": _refine_issue_content,

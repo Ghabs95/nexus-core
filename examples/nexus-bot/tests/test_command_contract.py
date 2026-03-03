@@ -18,12 +18,19 @@ def test_validate_command_parity_non_strict_returns_report():
     assert "telegram_only" in report
 
 
+from unittest.mock import patch
+
+
 def test_validate_command_parity_strict_raises_on_mismatch():
-    try:
-        command_contract.validate_command_parity(strict=True)
-        assert False, "Expected strict parity mismatch to raise ValueError"
-    except ValueError as exc:
-        assert "Command parity mismatch detected" in str(exc)
+    mismatched = {"telegram": {"shared", "only_tg"}, "discord": {"shared", "only_dc"}}
+    with patch.dict("services.command_contract.PLATFORM_COMMANDS", mismatched):
+        try:
+            command_contract.validate_command_parity(strict=True)
+            assert False, "Expected strict parity mismatch to raise ValueError"
+        except ValueError as exc:
+            assert "Command parity mismatch detected" in str(exc)
+            assert "only_tg" in str(exc)
+            assert "only_dc" in str(exc)
 
 
 def test_validate_required_command_interface_passes_for_required_set():

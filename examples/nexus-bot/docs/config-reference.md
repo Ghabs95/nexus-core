@@ -11,7 +11,6 @@ All configuration lives in environment variables (loaded from `.env`) and `confi
 | `TELEGRAM_TOKEN`   | ✅        | —       | Telegram Bot API token                     |
 | `TELEGRAM_CHAT_ID` | ✅        | —       | Target Telegram chat ID                    |
 | `ALLOWED_USER`     | ✅        | —       | Authorized Telegram user ID                |
-| `AI_API_KEY`       | ✅        | —       | AI provider API key (Gemini, OpenAI, etc.) |
 
 ### Storage
 
