@@ -6,11 +6,11 @@ All configuration lives in environment variables (loaded from `.env`) and `confi
 
 ### Core
 
-| Variable           | Required | Default | Description                                |
-|--------------------|----------|---------|--------------------------------------------|
-| `TELEGRAM_TOKEN`   | ✅        | —       | Telegram Bot API token                     |
-| `TELEGRAM_CHAT_ID` | ✅        | —       | Target Telegram chat ID                    |
-| `ALLOWED_USER`     | ✅        | —       | Authorized Telegram user ID                |
+| Variable           | Required | Default | Description                 |
+|--------------------|----------|---------|-----------------------------|
+| `TELEGRAM_TOKEN`   | ✅        | —       | Telegram Bot API token      |
+| `TELEGRAM_CHAT_ID` | ✅        | —       | Target Telegram chat ID     |
+| `ALLOWED_USER`     | ✅        | —       | Authorized Telegram user ID |
 
 ### Storage
 

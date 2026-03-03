@@ -64,7 +64,6 @@ from integrations.notifications import (
     send_notification,
 )
 from orchestration.plugin_runtime import (
-    get_runtime_ops_plugin,
     get_webhook_policy_plugin,
     get_workflow_state_plugin,
 )

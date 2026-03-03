@@ -101,19 +101,17 @@ def build_workflow_steps(
         # Enforce workflow-level security limits
         workflow_tools = data.get("allowed_tools")
         
-        step_tools = step_data.get("tools")
-        if isinstance(step_tools, list) and isinstance(workflow_tools, list):
-            # Step requested specific tools; filter out any not in the global whitelist
+        # Default to fail-closed: if the step specifies no tools, it gets precisely zero tools.
+        step_tools = step_data.get("tools", [])
+        if not isinstance(step_tools, list):
+            step_tools = []
+
+        if isinstance(workflow_tools, list):
+            # Step requested specific tools; rigidly filter against the global whitelist boundary
             combined_tools = [t for t in step_tools if t in workflow_tools]
-        elif isinstance(step_tools, list):
-            # No global whitelist; step tools are accepted as-is
-            combined_tools = step_tools
-        elif isinstance(workflow_tools, list):
-            # Step declared no specific list; default to full global whitelist
-            combined_tools = workflow_tools
         else:
-            # Neither defined
-            combined_tools = []
+            # No global whitelist exists; step tools are accepted as-is
+            combined_tools = step_tools
             
         # Every step requires the ability to post status comments for observability
         if "vcs:add_comment" not in combined_tools:

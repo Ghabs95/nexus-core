@@ -69,7 +69,7 @@ When referencing agents in code or workflows, always use the `agent_type` field 
 When implementing agents:
 1. Check `examples/agents/` for the agent YAML definition
 2. Follow the input/output schema exactly
-3. Use the tools specified in `requires_tools`
+3. Use the tools specified in the workflow step definition
 4. Return structured output matching the schema
 5. Add error handling and retries as specified
 

@@ -7,6 +7,7 @@ import pytest
 
 from nexus.core.agents import find_agent_yaml, load_agent_definition, normalize_agent_key
 
+
 # ---------------------------------------------------------------------------
 # normalize_agent_key
 # ---------------------------------------------------------------------------

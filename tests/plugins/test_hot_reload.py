@@ -13,6 +13,7 @@ from nexus.plugins.registry import (
     PluginRegistry,
 )
 
+
 # ---------------------------------------------------------------------------
 # Registry thread-safety / unregister / force tests
 # ---------------------------------------------------------------------------

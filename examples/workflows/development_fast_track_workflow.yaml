@@ -7,6 +7,16 @@ metadata:
 
 workflow_type: "fast-track"
 timeout_seconds: 3600
+allowed_tools:
+  - "vcs:read_issue"
+  - "vcs:add_label"
+  - "vcs:add_comment"
+  - "vcs:create_branch"
+  - "vcs:edit_file"
+  - "vcs:create_pr"
+  - "vcs:review_pr"
+  - "vcs:approve_pr"
+  - "vcs:request_changes"
 
 steps:
   - id: "triage"

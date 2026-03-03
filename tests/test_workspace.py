@@ -6,6 +6,7 @@ from unittest import mock
 
 from nexus.core.workspace import WorkspaceManager
 
+
 # ---------------------------------------------------------------------------
 # provision_worktree – branch_name parameter
 # ---------------------------------------------------------------------------

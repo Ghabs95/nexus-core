@@ -5,7 +5,7 @@ layer).
 
 ## The Analogy
 
-| Concept      | Framework (nexus-arc)  | Integration (nexus-bot)             |
+| Concept      | Framework (nexus-arc)   | Integration (nexus-bot)             |
 |--------------|-------------------------|-------------------------------------|
 | Like…        | Django/Flask            | Your web application                |
 | Owns…        | Generic orchestration   | Your business logic                 |

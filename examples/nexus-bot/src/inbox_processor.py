@@ -191,13 +191,13 @@ from services.processor_runtime_state import (
 from services.repo_resolution_service import (
     resolve_repo_for_issue as _service_resolve_repo_for_issue,
 )
+from services.runtime_mode_service import is_issue_process_running, is_postgres_backend
 from services.startup_recovery_service import (
     build_startup_workflow_payload_loader as _build_startup_workflow_payload_loader,
 )
 from services.startup_recovery_service import (
     reconcile_completion_signals_on_startup as _startup_reconcile_completion_signals,
 )
-from services.runtime_mode_service import is_issue_process_running, is_postgres_backend
 from services.task_archive_service import (
     archive_closed_task_files as _svc_archive_closed_task_files,
 )

@@ -122,8 +122,6 @@ agent that provides AI-powered feature suggestions. It showcases:
 - **`agent_type`**: A unique identifier for the agent (e.g., `business`).
 - **`inputs` and `outputs`**: Clearly defined schema for data the agent expects and produces.
 - **`ai_instructions`**: A detailed prompt guiding the AI's behavior and desired output format.
-- **`requires_tools`**: Listing the external tools the agent needs to perform its task (e.g., `github:read_issue`,
-  `ai:completion`).
 
 This modular approach ensures that new agent capabilities can be seamlessly integrated and orchestrated within Nexus ARC
 workflows without modifying the core framework code.

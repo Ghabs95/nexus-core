@@ -92,9 +92,9 @@ class {class_name}:
         This is the main entry point. Implement your agent logic here.
 
         Available tools:
-{chr(10).join('        - {tool}' for tool in spec.get('requires_tools', []))}
-
-        The following prompt is provided as guidance for the LLM:
+        (Determined by workflow configuration)
+ 
+         The following prompt is provided as guidance for the LLM:
 
         {{{{AGENT_INSTRUCTIONS}}}}
 

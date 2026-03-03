@@ -7,6 +7,21 @@ metadata:
 
 workflow_type: "full"
 timeout_seconds: 10800
+allowed_tools:
+  - "vcs:read_issue"
+  - "vcs:add_comment"
+  - "vcs:add_label"
+  - "vcs:search_codebase"
+  - "vcs:create_branch"
+  - "vcs:create_file"
+  - "vcs:create_pr"
+  - "vcs:edit_file"
+  - "vcs:review_pr"
+  - "vcs:suggest_changes"
+  - "vcs:request_changes"
+  - "vcs:approve_pr"
+  - "vcs:read_file"
+  - "vcs:read_comments"
 
 steps:
   - id: "triage"

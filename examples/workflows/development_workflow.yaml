@@ -7,6 +7,9 @@ metadata:
 
 workflow_type: "orchestrator"
 timeout_seconds: 3600
+allowed_tools:
+  - "vcs:read_issue"
+  - "vcs:add_comment"
 
 require_approval_for:
   - "dispatch"
@@ -16,6 +19,8 @@ steps:
     name: "Development Tier Selection"
     description: "Classify the request and choose full, shortened, or fast-track"
     agent_type: "triage"
+    tools:
+      - vcs:read_issue
     inputs:
       - issue_url: "string"
       - request_context: "string"

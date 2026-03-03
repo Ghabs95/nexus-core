@@ -37,16 +37,6 @@ def translate_agent_to_markdown(yaml_path: str) -> str:
 
 ---
 
-## Tools Required
-
-The agent needs access to these tools:
-
-```
-{chr(10).join(f'- {tool}' for tool in spec.get('requires_tools', []))}
-```
-
----
-
 ## Input Schema
 
 | Parameter | Type | Required | Description |

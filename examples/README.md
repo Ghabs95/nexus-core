@@ -251,10 +251,6 @@ spec:
     result:
       type: string
 
-  requires_tools:
-    - tool1
-    - tool2
-
   ai_instructions: |
     Instructions for the LLM...
 ```

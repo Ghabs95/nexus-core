@@ -39,8 +39,6 @@ from handlers.feature_registry_command_handlers import FeatureRegistryCommandDep
 from handlers.inbox_routing_handler import TYPES
 from inbox_processor import _normalize_agent_reference, get_sop_tier
 from integrations.workflow_state_factory import get_workflow_state
-from nexus.adapters.git.utils import build_issue_url, resolve_repo
-from nexus.core.completion import scan_for_completions
 from orchestration.ai_orchestrator import get_orchestrator
 from orchestration.nexus_core_helpers import get_workflow_definition_path
 from orchestration.plugin_runtime import (
@@ -149,6 +147,9 @@ from services.workflow_watch_service import get_workflow_watch_service
 from state_manager import HostStateManager
 from user_manager import get_user_manager
 from utils.task_utils import find_task_file_by_issue
+
+from nexus.adapters.git.utils import build_issue_url, resolve_repo
+from nexus.core.completion import scan_for_completions
 
 logger = logging.getLogger(__name__)
 DEFAULT_REPO = get_default_repo()

@@ -35,8 +35,8 @@ from orchestration.ai_orchestrator import get_orchestrator
 from orchestration.plugin_runtime import get_profiled_plugin
 from services.runtime_mode_service import is_postgres_backend
 from state_manager import HostStateManager
-from nexus.adapters.git.utils import build_issue_url
 
+from nexus.adapters.git.utils import build_issue_url
 # Nexus Core framework imports
 from nexus.core.guards import LaunchGuard
 from nexus.core.project.repo_utils import (

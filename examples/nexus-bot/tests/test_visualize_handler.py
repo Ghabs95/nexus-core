@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from services.mermaid_render_service import build_mermaid_diagram
 
+
 # ---------------------------------------------------------------------------
 # build_mermaid_diagram
 # ---------------------------------------------------------------------------

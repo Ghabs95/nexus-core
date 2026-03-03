@@ -7,12 +7,17 @@ metadata:
 
 workflow_type: "orchestrator"
 timeout_seconds: 3600
+allowed_tools:
+  - "vcs:read_issue"
+  - "vcs:add_comment"
 
 steps:
   - id: "triage"
     name: "Enterprise Tier Selection"
     description: "Classify the request and choose full, shortened, or fast-track flow"
     agent_type: "triage"
+    tools:
+      - vcs:read_issue
     inputs:
       - issue_url: "string"
       - request_context: "string"

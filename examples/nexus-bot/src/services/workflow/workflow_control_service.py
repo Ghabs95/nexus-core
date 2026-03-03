@@ -12,8 +12,8 @@ from collections.abc import Callable
 from typing import Any
 
 from config import NEXUS_STORAGE_BACKEND
-from services.runtime_mode_service import is_postgres_backend
 from integrations.workflow_state_factory import get_storage_backend
+from services.runtime_mode_service import is_postgres_backend
 
 from nexus.adapters.git.utils import build_issue_url, resolve_repo
 from nexus.core.completion import budget_completion_payload

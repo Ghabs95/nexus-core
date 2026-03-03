@@ -14,6 +14,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
+
 # ---------------------------------------------------------------------------
 # AdapterRegistry
 # ---------------------------------------------------------------------------

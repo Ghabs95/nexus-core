@@ -34,7 +34,6 @@ from commands.workflow import (
 from commands.workflow import (
     stop_handler as workflow_stop_handler,
 )
-
 # Import configuration from centralized config module
 from config import (
     AI_PERSONA,
@@ -141,10 +140,10 @@ from handlers.issue_command_handlers import (
     myissues_handler as issue_myissues_handler,
 )
 from handlers.issue_command_handlers import (
-    prepare_handler as issue_prepare_handler,
+    plan_handler as issue_plan_handler,
 )
 from handlers.issue_command_handlers import (
-    plan_handler as issue_plan_handler,
+    prepare_handler as issue_prepare_handler,
 )
 from handlers.issue_command_handlers import (
     respond_handler as issue_respond_handler,
@@ -289,6 +288,24 @@ from services.memory_service import (
     get_chat_history,
     rename_chat,
 )
+from services.project.project_catalog_service import (
+    get_single_project_key as _svc_get_single_project_key,
+)
+from services.project.project_catalog_service import (
+    iter_project_keys as _svc_iter_project_keys,
+)
+from services.project.project_issue_command_deps_service import (
+    default_issue_url as _svc_default_issue_url,
+)
+from services.project.project_issue_command_deps_service import (
+    get_issue_details as _svc_get_issue_details,
+)
+from services.project.project_issue_command_deps_service import (
+    project_issue_url as _svc_project_issue_url,
+)
+from services.project.project_issue_command_deps_service import (
+    project_repo as _svc_project_repo,
+)
 from services.telegram.telegram_bootstrap_ui_service import (
     build_menu_keyboard as _svc_build_menu_keyboard,
 )
@@ -421,24 +438,6 @@ from services.telegram.telegram_project_logs_service import (
 )
 from services.telegram.telegram_project_logs_service import (
     get_project_root as _svc_get_project_root,
-)
-from services.project.project_catalog_service import (
-    get_single_project_key as _svc_get_single_project_key,
-)
-from services.project.project_catalog_service import (
-    iter_project_keys as _svc_iter_project_keys,
-)
-from services.project.project_issue_command_deps_service import (
-    default_issue_url as _svc_default_issue_url,
-)
-from services.project.project_issue_command_deps_service import (
-    get_issue_details as _svc_get_issue_details,
-)
-from services.project.project_issue_command_deps_service import (
-    project_issue_url as _svc_project_issue_url,
-)
-from services.project.project_issue_command_deps_service import (
-    project_repo as _svc_project_repo,
 )
 from services.telegram.telegram_project_logs_service import (
     read_latest_log_full as _svc_read_latest_log_full,

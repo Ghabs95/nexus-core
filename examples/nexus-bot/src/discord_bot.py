@@ -70,9 +70,6 @@ from handlers.monitoring_command_handlers import (
     logsfull_handler as monitoring_logsfull_handler,
 )
 from handlers.monitoring_command_handlers import (
-    status_handler as monitoring_status_handler,
-)
-from handlers.monitoring_command_handlers import (
     tail_handler as monitoring_tail_handler,
 )
 from handlers.monitoring_command_handlers import (
@@ -85,9 +82,6 @@ from handlers.ops_command_handlers import direct_handler as ops_direct_handler
 from handlers.ops_command_handlers import stats_handler as ops_stats_handler
 from handlers.issue_command_handlers import assign_handler as issue_assign_handler
 from handlers.issue_command_handlers import comments_handler as issue_comments_handler
-from handlers.issue_command_handlers import (
-    myissues_handler as issue_myissues_handler,
-)
 from handlers.issue_command_handlers import (
     plan_handler as issue_plan_handler,
 )

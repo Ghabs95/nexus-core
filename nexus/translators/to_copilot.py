@@ -34,13 +34,6 @@ You are implementing the `{metadata.get('name')}` agent for Nexus Core.
 
 {spec.get('purpose', '')}
 
-## Requirements
-
-### Required Tools (must be called/used)
-```
-{chr(10).join(f'- {tool}' for tool in spec.get('requires_tools', []))}
-```
-
 ### Input Schema
 You will receive:
 """

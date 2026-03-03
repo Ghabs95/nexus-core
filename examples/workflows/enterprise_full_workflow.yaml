@@ -12,13 +12,27 @@ allowed_tools:
   - "vcs:add_comment"
   - "vcs:add_label"
   - "vcs:search_codebase"
+  - "vcs:create_branch"
+  - "vcs:create_file"
+  - "vcs:create_pr"
+  - "vcs:commit_changes"
+  - "vcs:review_pr"
+  - "vcs:request_changes"
+  - "vcs:approve_pr"
+  - "vcs:merge_pr"
+  - "vcs:create_release"
+  - "vcs:edit_file"
+  - "vcs:close_issue"
 
 steps:
   - id: "triage"
     name: "Triage & Classification"
     description: "Classify the issue, assign priority, and decide the path"
     agent_type: "triage"
-    tools: []  # Inherits global tools but gets no special write access
+    tools:
+      - vcs:read_issue
+      - vcs:add_label
+      - vcs:search_codebase
     inputs:
       - issue_url: "string"
     outputs:
