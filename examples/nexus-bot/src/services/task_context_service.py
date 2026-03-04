@@ -53,10 +53,29 @@ def load_task_context(
     if not config:
         return None
 
+    requester_nexus_id = ""
+    requester_platform = ""
+    requester_platform_user_id = ""
+    requester_nexus_match = re.search(r"\*\*Requester Nexus ID:\*\*\s*`?([^`\n]+)`?", content)
+    requester_platform_match = re.search(r"\*\*Requester Platform:\*\*\s*([^\n]+)", content)
+    requester_platform_user_match = re.search(
+        r"\*\*Requester Platform User ID:\*\*\s*`?([^`\n]+)`?",
+        content,
+    )
+    if requester_nexus_match:
+        requester_nexus_id = str(requester_nexus_match.group(1) or "").strip()
+    if requester_platform_match:
+        requester_platform = str(requester_platform_match.group(1) or "").strip().lower()
+    if requester_platform_user_match:
+        requester_platform_user_id = str(requester_platform_user_match.group(1) or "").strip()
+
     return {
         "content": content,
         "task_type": task_type,
         "project_name": project_name,
         "project_root": project_root,
         "config": config,
+        "requester_nexus_id": requester_nexus_id or None,
+        "requester_platform": requester_platform or None,
+        "requester_platform_user_id": requester_platform_user_id or None,
     }

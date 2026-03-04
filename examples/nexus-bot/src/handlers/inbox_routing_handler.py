@@ -33,7 +33,23 @@ def _render_task_markdown(
     task_name: str,
     content: str,
     raw_text: str,
+    requester_context: dict[str, Any] | None = None,
 ) -> str:
+    requester_context = requester_context if isinstance(requester_context, dict) else {}
+    requester_nexus_id = str(requester_context.get("nexus_id") or "").strip()
+    requester_platform = str(requester_context.get("platform") or "").strip()
+    requester_platform_user_id = str(requester_context.get("platform_user_id") or "").strip()
+    requester_block = ""
+    if requester_nexus_id:
+        requester_lines = [f"**Requester Nexus ID:** `{requester_nexus_id}`"]
+        if requester_platform:
+            requester_lines.append(f"**Requester Platform:** {requester_platform}")
+        if requester_platform_user_id:
+            requester_lines.append(
+                f"**Requester Platform User ID:** `{requester_platform_user_id}`"
+            )
+        requester_block = "\n" + "\n".join(requester_lines)
+
     return (
         f"# {TYPES.get(task_type, 'Task')}\n"
         f"**Project:** {PROJECTS.get(project, project)}\n"
@@ -41,6 +57,9 @@ def _render_task_markdown(
         f"**Task Name:** {task_name}\n"
         f"**Status:** Pending\n\n"
         f"{content}\n\n"
+        f"{requester_block}\n"
+        f"---\n"
+        f"**Source:** inbox\n"
         f"---\n"
         f"**Raw Input:**\n{raw_text}"
     )
@@ -83,6 +102,8 @@ async def process_inbox_task(
     orchestrator,
     message_id_or_unique_id: str,
     project_hint: str | None = None,
+    requester_context: dict[str, Any] | None = None,
+    authorize_project=None,
 ) -> dict[str, Any]:
     """
     Core logic for processing a task from natural language text.
@@ -114,11 +135,17 @@ async def process_inbox_task(
         enqueue_task=enqueue_task,
         base_dir=BASE_DIR,
         get_inbox_dir=get_inbox_dir,
+        requester_context=requester_context,
+        authorize_project=authorize_project,
     )
 
 
 async def save_resolved_task(
-    pending_project: dict, selected_project: str, message_id_or_unique_id: str
+    pending_project: dict,
+    selected_project: str,
+    message_id_or_unique_id: str,
+    requester_context: dict[str, Any] | None = None,
+    authorize_project=None,
 ) -> dict[str, Any]:
     """Save a task that previously lacked a clear project after the user specifies one."""
     return save_resolved_inbox_task_request(
@@ -135,4 +162,6 @@ async def save_resolved_task(
         base_dir=BASE_DIR,
         get_inbox_dir=get_inbox_dir,
         logger=logger,
+        requester_context=requester_context,
+        authorize_project=authorize_project,
     )

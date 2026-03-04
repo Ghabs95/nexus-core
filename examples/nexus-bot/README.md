@@ -52,6 +52,16 @@ Set at minimum in `.env`:
 - `BASE_DIR=/home/ubuntu/git`
 - `DEPLOY_TYPE=compose` (or `systemd`)
 
+For production auth/BYOK deployments, validate your env before starting services:
+
+```bash
+# Generate a valid master key (32-byte base64url)
+python3 -c "import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('='))"
+
+# Validate required OAuth/auth/runtime values are not placeholders
+./scripts/check-prod-env.sh .env
+```
+
 Run the bot:
 
 ```bash

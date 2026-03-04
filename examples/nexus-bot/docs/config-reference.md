@@ -53,6 +53,13 @@ All configuration lives in environment variables (loaded from `.env`) and `confi
 
 ## Project Config (`project_config.yaml`)
 
+AI tool preference provider values support `copilot`, `gemini`, `codex`, and `claude`.
+This applies to:
+
+- `model_profiles.<profile>.<provider>`
+- `profile_provider_priority.<profile>[]`
+- `ai_tool_preferences.<agent>.provider`
+
 ```yaml
 # Each key is a project identifier (used in inbox routing)
 my_project:
@@ -70,6 +77,17 @@ another_project:
 
 # Global settings
 require_human_merge_approval: always  # always | workflow-based | never
+
+# Optional AI routing examples
+model_profiles:
+  balanced:
+    claude: "claude-sonnet-4"
+profile_provider_priority:
+  balanced: [ "claude", "codex", "gemini", "copilot" ]
+ai_tool_preferences:
+  writer:
+    provider: "claude"
+    profile: "balanced"
 ```
 
 ## State Files (filesystem backend)

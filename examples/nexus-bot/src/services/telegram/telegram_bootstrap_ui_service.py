@@ -19,6 +19,10 @@ def build_help_text() -> str:
     return (
         "🤖 **Nexus Commands**\n\n"
         "Use /menu for a categorized, button-driven view.\n\n"
+        "🔐 **Onboarding:**\n"
+        "/login [github|gitlab] - Link Git provider and configure AI credentials (Codex/Gemini/Claude/Copilot)\n"
+        "/setup_status - Show onboarding and project-access readiness\n"
+        "/whoami - Show your Telegram/Nexus identity mapping\n\n"
         "🗣️ **Chat & Strategy:**\n"
         "/rename <name> - Rename the active chat\n"
         "/chat - Open chat threads and context controls\n\n"
@@ -144,6 +148,9 @@ async def handle_start(
 
 def build_startup_commands(*, bot_command_cls) -> list[Any]:
     return [
+        bot_command_cls("login", "Start OAuth onboarding"),
+        bot_command_cls("setup_status", "Show auth/setup status"),
+        bot_command_cls("whoami", "Show identity mapping"),
         bot_command_cls("menu", "Open command menu"),
         bot_command_cls("chat", "Open chat menu"),
         bot_command_cls("new", "Start task creation"),

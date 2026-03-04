@@ -2,6 +2,11 @@ import logging
 import os
 from typing import Any, Callable
 
+AuthorizeProjectFn = (
+    Callable[[str, dict[str, Any] | None], tuple[bool, str]]
+    | Callable[[str], tuple[bool, str]]
+)
+
 
 def _write_inbox_markdown_file(
     *,
@@ -40,6 +45,8 @@ def process_inbox_task_request(
     enqueue_task: Callable[..., int],
     base_dir: str,
     get_inbox_dir: Callable[[str, str], str],
+    requester_context: dict[str, Any] | None = None,
+    authorize_project: AuthorizeProjectFn | None = None,
 ) -> dict[str, Any]:
     normalized_project_hint = (
         normalize_project_key(str(project_hint or "")) or str(project_hint or "").strip().lower()
@@ -93,6 +100,7 @@ def process_inbox_task_request(
                 "content": result.get("text", text or ""),
                 "task_type": task_type,
                 "task_name": result.get("task_name", ""),
+                "requester_context": requester_context if isinstance(requester_context, dict) else {},
             }
             options = ", ".join(sorted(projects.keys()))
             logger.error(
@@ -128,14 +136,35 @@ def process_inbox_task_request(
         logger.error("JSON parsing error: %s", exc, exc_info=True)
         return {"success": False, "message": "⚠️ JSON Error"}
 
+    if callable(authorize_project):
+        try:
+            allowed, error_message = authorize_project(str(project), requester_context)
+        except TypeError:
+            allowed, error_message = authorize_project(str(project))
+        if not allowed:
+            return {
+                "success": False,
+                "message": error_message or "🔒 Unauthorized project access.",
+            }
+
     inbox_backend = get_inbox_storage_backend()
-    markdown_content = render_task_markdown(
-        project=str(project),
-        task_type=str(task_type),
-        task_name=str(task_name),
-        content=str(content),
-        raw_text=str(text),
-    )
+    try:
+        markdown_content = render_task_markdown(
+            project=str(project),
+            task_type=str(task_type),
+            task_name=str(task_name),
+            content=str(content),
+            raw_text=str(text),
+            requester_context=requester_context,
+        )
+    except TypeError:
+        markdown_content = render_task_markdown(
+            project=str(project),
+            task_type=str(task_type),
+            task_name=str(task_name),
+            content=str(content),
+            raw_text=str(text),
+        )
 
     workspace = project
     if project in project_config:
@@ -202,6 +231,8 @@ def save_resolved_inbox_task_request(
     base_dir: str,
     get_inbox_dir: Callable[[str, str], str],
     logger: logging.Logger,
+    requester_context: dict[str, Any] | None = None,
+    authorize_project: AuthorizeProjectFn | None = None,
 ) -> dict[str, Any]:
     inbox_backend = get_inbox_storage_backend()
     project = normalize_project_key(selected_project) or selected_project
@@ -211,18 +242,46 @@ def save_resolved_inbox_task_request(
     text = str(pending_project.get("raw_text", "")).strip()
     content = refine_task_description(str(pending_project.get("content", text)).strip(), project)
     task_name = str(pending_project.get("task_name", "")).strip()
+    resolved_requester_context = (
+        requester_context
+        if isinstance(requester_context, dict)
+        else pending_project.get("requester_context")
+    )
+    if not isinstance(resolved_requester_context, dict):
+        resolved_requester_context = {}
+
+    if callable(authorize_project):
+        try:
+            allowed, error_message = authorize_project(str(project), resolved_requester_context)
+        except TypeError:
+            allowed, error_message = authorize_project(str(project))
+        if not allowed:
+            return {
+                "success": False,
+                "message": error_message or "🔒 Unauthorized project access.",
+            }
 
     workspace = str(project)
     if project in project_config:
         workspace = str(project_config[project].get("workspace", project))
     filename = f"task_{message_id_or_unique_id}.md"
-    markdown_content = render_task_markdown(
-        project=str(project),
-        task_type=str(task_type),
-        task_name=str(task_name),
-        content=str(content),
-        raw_text=str(text),
-    )
+    try:
+        markdown_content = render_task_markdown(
+            project=str(project),
+            task_type=str(task_type),
+            task_name=str(task_name),
+            content=str(content),
+            raw_text=str(text),
+            requester_context=resolved_requester_context,
+        )
+    except TypeError:
+        markdown_content = render_task_markdown(
+            project=str(project),
+            task_type=str(task_type),
+            task_name=str(task_name),
+            content=str(content),
+            raw_text=str(text),
+        )
 
     if inbox_backend == "postgres":
         try:

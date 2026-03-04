@@ -276,7 +276,15 @@ async def handle_feature_ideation_callback(
             if hasattr(ctx.raw_event, "message") and hasattr(ctx.raw_event.message, "message_id"):
                 trigger_message_id = str(ctx.raw_event.message.message_id)
             create_feature_task_fn = cast(_CreateFeatureTaskFn, create_feature_task)
-            result = await create_feature_task_fn(task_text, trigger_message_id, str(project_key))
+            try:
+                result = await create_feature_task_fn(
+                    task_text,
+                    trigger_message_id,
+                    str(project_key),
+                    str(ctx.user_id),
+                )
+            except TypeError:
+                result = await create_feature_task_fn(task_text, trigger_message_id, str(project_key))
             message = str(result.get("message") or "⚠️ Task processing completed.")
             project_locked = is_project_locked(feature_state)
             keyboard_rows: list[list[Button]] = []
@@ -328,5 +336,9 @@ async def handle_feature_ideation_callback(
 
 class _CreateFeatureTaskFn(Protocol):
     def __call__(
-        self, text: str, message_id: str, project_key: str
+        self,
+        text: str,
+        message_id: str,
+        project_key: str,
+        user_id: str | None = None,
     ) -> Awaitable[dict[str, Any]]: ...

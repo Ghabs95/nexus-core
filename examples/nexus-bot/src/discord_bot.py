@@ -30,6 +30,10 @@ from config import (
     DISCORD_ALLOWED_USER_IDS,
     DISCORD_GUILD_ID,
     DISCORD_TOKEN,
+    NEXUS_AUTH_ENABLED,
+    NEXUS_GITHUB_CLIENT_ID,
+    NEXUS_GITLAB_CLIENT_ID,
+    NEXUS_PUBLIC_BASE_URL,
     ORCHESTRATOR_CONFIG,
     PROJECT_CONFIG,
     get_chat_agent_types,
@@ -165,6 +169,16 @@ from services.discord.discord_bridge_deps_service import (
 from services.discord.discord_bridge_deps_service import (
     workflow_bridge_deps as _svc_workflow_bridge_deps,
 )
+from services.auth_session_service import create_login_session_for_user
+from services.project_access_service import (
+    check_project_access as _svc_check_project_access,
+)
+from services.project_access_service import (
+    get_setup_status as _svc_get_setup_status,
+)
+from services.project_access_service import (
+    has_project_access as _svc_has_project_access,
+)
 from services.memory_service import (
     append_message,
     create_chat,
@@ -296,6 +310,15 @@ async def _ctx_ensure_project_discord(ctx: DiscordInteractiveCtx, command: str) 
         return None
     candidate = _normalize_project_key(str(args[0]))
     if candidate in _svc_iter_project_keys(project_config=PROJECT_CONFIG):
+        if NEXUS_AUTH_ENABLED:
+            nexus_id = user_manager.resolve_nexus_id("discord", str(ctx.user_id))
+            if not nexus_id:
+                await ctx.reply_text("🔐 Run `/login` first.")
+                return None
+            allowed, error = _svc_check_project_access(str(nexus_id), str(candidate))
+            if not allowed:
+                await ctx.reply_text(error)
+                return None
         return candidate
     await ctx.reply_text(f"❌ Unknown project '{args[0]}'.")
     return None
@@ -315,6 +338,15 @@ async def _ctx_ensure_project_issue_discord(
     if project_key not in _svc_iter_project_keys(project_config=PROJECT_CONFIG):
         await ctx.reply_text(f"❌ Unknown project '{project_key}'.")
         return None, None, []
+    if NEXUS_AUTH_ENABLED:
+        nexus_id = user_manager.resolve_nexus_id("discord", str(ctx.user_id))
+        if not nexus_id:
+            await ctx.reply_text("🔐 Run `/login` first.")
+            return None, None, []
+        allowed, error = _svc_check_project_access(str(nexus_id), str(project_key))
+        if not allowed:
+            await ctx.reply_text(error)
+            return None, None, []
     if not str(issue_num).isdigit():
         await ctx.reply_text("❌ Invalid issue number.")
         return None, None, []
@@ -399,9 +431,24 @@ async def _run_bridge_handler_args(
     handler,
     deps_factory,
 ) -> None:
-    if not check_permission(interaction.user.id):
-        await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+    if not check_permission_for_action(interaction.user.id, action="execute"):
+        await interaction.response.send_message(
+            _permission_denied_message(interaction.user.id, action="execute"),
+            ephemeral=True,
+        )
         return
+
+    if NEXUS_AUTH_ENABLED and parsed_args:
+        candidate_project = _normalize_project_key(str(parsed_args[0]))
+        if candidate_project in _svc_iter_project_keys(project_config=PROJECT_CONFIG):
+            nexus_id = user_manager.resolve_nexus_id("discord", str(interaction.user.id))
+            if not nexus_id:
+                await interaction.response.send_message("🔐 Run `/login` first.", ephemeral=True)
+                return
+            allowed, error = _svc_check_project_access(str(nexus_id), str(candidate_project))
+            if not allowed:
+                await interaction.response.send_message(error, ephemeral=True)
+                return
 
     if not interaction.response.is_done():
         await interaction.response.defer(thinking=True)
@@ -873,8 +920,11 @@ async def _run_bridge_with_picker(
     text_modal: dict[str, Any] | None = None,
     issue_state: str | None = None,
 ) -> None:
-    if not check_permission(interaction.user.id):
-        await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+    if not check_permission_for_action(interaction.user.id, action="execute"):
+        await interaction.response.send_message(
+            _permission_denied_message(interaction.user.id, action="execute"),
+            ephemeral=True,
+        )
         return
 
     if not project:
@@ -893,6 +943,16 @@ async def _run_bridge_with_picker(
             ephemeral=True,
         )
         return
+
+    if NEXUS_AUTH_ENABLED:
+        normalized_project = _normalize_project_key(project)
+        nexus_id = user_manager.resolve_nexus_id("discord", str(interaction.user.id))
+        if not nexus_id or not _svc_has_project_access(str(nexus_id), str(normalized_project)):
+            await interaction.response.send_message(
+                f"🔒 You are not authorized for project `{normalized_project}`.",
+                ephemeral=True,
+            )
+            return
 
     if require_issue and not issue:
         resolved_issue_state = issue_state or _command_issue_state(command_name)
@@ -1034,6 +1094,11 @@ async def _begin_feature_ideation(message: discord.Message, text: str) -> bool:
     project_key = detect_feature_project(text, ROUTING_PROJECTS)
     if not project_key and preferred_project_key in ROUTING_PROJECTS:
         project_key = preferred_project_key
+    if NEXUS_AUTH_ENABLED and project_key in ROUTING_PROJECTS:
+        requester = _requester_context_for_discord_user(message.author)
+        allowed_project, _ = _authorize_project_for_requester(project_key, requester)
+        if not allowed_project:
+            project_key = None
 
     _pending_feature_ideation[user_id] = {
         "step": "awaiting_count",
@@ -1110,6 +1175,15 @@ async def _handle_pending_feature_ideation(message: discord.Message, text: str) 
             options = ", ".join(sorted(ROUTING_PROJECTS.keys()))
             await message.channel.send(f"⚠️ Invalid project key. Choose one of: {options}")
             return True
+        if NEXUS_AUTH_ENABLED:
+            requester = _requester_context_for_discord_user(message.author)
+            allowed_project, error_project = _authorize_project_for_requester(
+                project_key,
+                requester,
+            )
+            if not allowed_project:
+                await message.channel.send(error_project)
+                return True
 
         state["project"] = project_key
         deps = _discord_feature_ideation_handler_deps()
@@ -1147,6 +1221,15 @@ async def _handle_pending_feature_ideation(message: discord.Message, text: str) 
 
         project_candidate = _normalize_project_key(candidate_text)
         if project_candidate in ROUTING_PROJECTS:
+            if NEXUS_AUTH_ENABLED:
+                requester = _requester_context_for_discord_user(message.author)
+                allowed_project, error_project = _authorize_project_for_requester(
+                    project_candidate,
+                    requester,
+                )
+                if not allowed_project:
+                    await message.channel.send(error_project)
+                    return True
             state["project"] = project_candidate
             deps = _discord_feature_ideation_handler_deps()
             features = _build_feature_suggestions(
@@ -1188,6 +1271,8 @@ async def _handle_pending_feature_ideation(message: discord.Message, text: str) 
             orchestrator,
             str(message.id),
             project_hint=project_key,
+            requester_context=_requester_context_for_discord_user(message.author),
+            authorize_project=_authorize_project_for_requester,
         )
         _pending_feature_ideation.pop(message.author.id, None)
         await message.channel.send(str(result.get("message") or "⚠️ Task processing completed."))
@@ -1200,8 +1285,102 @@ async def _handle_pending_feature_ideation(message: discord.Message, text: str) 
 def check_permission(user_id: int) -> bool:
     """Check if the user is allowed to interact with the bot."""
     if not DISCORD_ALLOWED_USER_IDS:
+        base_allowed = True
+    else:
+        base_allowed = user_id in DISCORD_ALLOWED_USER_IDS
+    if not base_allowed:
+        return False
+    if not NEXUS_AUTH_ENABLED:
         return True
-    return user_id in DISCORD_ALLOWED_USER_IDS
+    nexus_id = user_manager.resolve_nexus_id("discord", str(user_id))
+    if not nexus_id:
+        return False
+    try:
+        setup = _svc_get_setup_status(str(nexus_id))
+    except Exception:
+        return False
+    return bool(setup.get("ready"))
+
+
+def check_permission_for_action(user_id: int, *, action: str = "execute") -> bool:
+    """Check user permission with explicit action scope."""
+    action_value = str(action or "execute").strip().lower()
+    if not DISCORD_ALLOWED_USER_IDS:
+        base_allowed = True
+    else:
+        base_allowed = user_id in DISCORD_ALLOWED_USER_IDS
+    if not base_allowed:
+        return False
+    if not NEXUS_AUTH_ENABLED:
+        return True
+    if action_value in {"readonly", "onboarding", "help"}:
+        return True
+    return check_permission(user_id)
+
+
+def _permission_denied_message(user_id: int, *, action: str = "execute") -> str:
+    if DISCORD_ALLOWED_USER_IDS and user_id not in DISCORD_ALLOWED_USER_IDS:
+        return "🔒 Unauthorized."
+    if not NEXUS_AUTH_ENABLED:
+        return "🔒 Unauthorized."
+    action_value = str(action or "execute").strip().lower()
+    if action_value in {"readonly", "onboarding", "help"}:
+        return "🔒 Unauthorized."
+    nexus_id = user_manager.resolve_nexus_id("discord", str(user_id))
+    if not nexus_id:
+        return "🔐 Complete setup with `/login` before using task/workflow commands."
+    try:
+        setup = _svc_get_setup_status(str(nexus_id))
+    except Exception:
+        return "🔐 Auth storage is unavailable. Ask an admin to check auth configuration."
+    missing: list[str] = []
+    if not setup.get("git_provider_linked"):
+        missing.append("Git provider login (GitHub or GitLab)")
+    if not setup.get("ai_provider_ready"):
+        missing.append(
+            "AI provider credentials (Codex/OpenAI, Gemini, Claude, or GitHub for Copilot)"
+        )
+    if not setup.get("org_verified"):
+        missing.append("allowed org/group membership")
+    if int(setup.get("project_access_count") or 0) <= 0:
+        missing.append("project team/group access")
+    if missing:
+        return (
+            "🔐 Setup incomplete: " + ", ".join(missing) + ". "
+            "Run `/login` then `/setup-status`."
+        )
+    return "🔒 Unauthorized."
+
+
+def _get_or_create_discord_user(discord_user: Any):
+    return user_manager.get_or_create_user_by_identity(
+        platform="discord",
+        platform_user_id=str(getattr(discord_user, "id", "")),
+        username=getattr(discord_user, "name", None),
+        first_name=getattr(discord_user, "display_name", None),
+    )
+
+
+def _requester_context_for_discord_user(discord_user: Any) -> dict[str, str]:
+    user = _get_or_create_discord_user(discord_user)
+    return {
+        "nexus_id": str(user.nexus_id),
+        "platform": "discord",
+        "platform_user_id": str(getattr(discord_user, "id", "")),
+    }
+
+
+def _authorize_project_for_requester(
+    project_key: str,
+    requester_context: dict[str, Any] | None,
+) -> tuple[bool, str]:
+    if not NEXUS_AUTH_ENABLED:
+        return True, ""
+    context = requester_context if isinstance(requester_context, dict) else {}
+    nexus_id = str(context.get("nexus_id") or "").strip()
+    if not nexus_id:
+        return False, "🔐 Missing requester identity. Run `/login` and retry."
+    return _svc_check_project_access(nexus_id, project_key)
 
 
 def _active_status(value: str) -> bool:
@@ -1429,12 +1608,151 @@ async def send_chat_menu(interaction: discord.Interaction, user_id: int, notice:
 
 @bot.tree.command(name="help", description="Show available Discord commands")
 async def help_command(interaction: discord.Interaction):
-    if not check_permission(interaction.user.id):
-        await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+    if not check_permission_for_action(interaction.user.id, action="help"):
+        await interaction.response.send_message(
+            _permission_denied_message(interaction.user.id, action="help"),
+            ephemeral=True,
+        )
         return
 
     help_text = build_help_text()
     await _send_long_interaction_text(interaction, help_text, ephemeral=True)
+
+
+@bot.tree.command(name="login", description="Link GitHub/GitLab and configure AI provider keys")
+@app_commands.describe(provider="OAuth provider (github or gitlab)")
+@app_commands.choices(
+    provider=[
+        app_commands.Choice(name="GitLab", value="gitlab"),
+        app_commands.Choice(name="GitHub", value="github"),
+    ]
+)
+async def login_command(
+    interaction: discord.Interaction,
+    provider: app_commands.Choice[str] | None = None,
+):
+    if not check_permission_for_action(interaction.user.id, action="onboarding"):
+        await interaction.response.send_message(
+            _permission_denied_message(interaction.user.id, action="onboarding"),
+            ephemeral=True,
+        )
+        return
+    if not NEXUS_AUTH_ENABLED:
+        await interaction.response.send_message(
+            "ℹ️ Auth onboarding is disabled in this environment.",
+            ephemeral=True,
+        )
+        return
+    if not NEXUS_PUBLIC_BASE_URL:
+        await interaction.response.send_message(
+            "⚠️ NEXUS_PUBLIC_BASE_URL is not configured. Ask an admin to configure auth.",
+            ephemeral=True,
+        )
+        return
+
+    selected_provider = str(provider.value if provider else "").strip().lower()
+    if not selected_provider:
+        selected_provider = "gitlab" if NEXUS_GITLAB_CLIENT_ID else "github"
+    if selected_provider == "github" and not NEXUS_GITHUB_CLIENT_ID:
+        await interaction.response.send_message(
+            "⚠️ GitHub OAuth is not configured. Use `/login provider:gitlab`.",
+            ephemeral=True,
+        )
+        return
+    if selected_provider == "gitlab" and not NEXUS_GITLAB_CLIENT_ID:
+        await interaction.response.send_message(
+            "⚠️ GitLab OAuth is not configured. Use `/login provider:github`.",
+            ephemeral=True,
+        )
+        return
+
+    user = _get_or_create_discord_user(interaction.user)
+    session_id = create_login_session_for_user(
+        nexus_id=str(user.nexus_id),
+        discord_user_id=str(interaction.user.id),
+        discord_username=getattr(interaction.user, "name", None),
+    )
+    login_url = (
+        f"{NEXUS_PUBLIC_BASE_URL}/auth/start?session={session_id}&provider={selected_provider}"
+    )
+    await interaction.response.send_message(
+        (
+            "🔐 Setup required before task execution.\n\n"
+            f"1. Open: {login_url}\n"
+            f"2. Sign in with {selected_provider.title()}\n"
+            "3. Add Codex/OpenAI, Gemini, and/or Claude key, or use Copilot with linked GitHub OAuth\n"
+            "4. Run `/setup-status`"
+        ),
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="setup-status", description="Show your onboarding and project access status")
+async def setup_status_command(interaction: discord.Interaction):
+    if not check_permission_for_action(interaction.user.id, action="readonly"):
+        await interaction.response.send_message(
+            _permission_denied_message(interaction.user.id, action="readonly"),
+            ephemeral=True,
+        )
+        return
+    user = _get_or_create_discord_user(interaction.user)
+    status = _svc_get_setup_status(str(user.nexus_id))
+    if not status.get("auth_enabled"):
+        await interaction.response.send_message(
+            "ℹ️ Auth onboarding is disabled in this environment.",
+            ephemeral=True,
+        )
+        return
+
+    projects = status.get("projects") or []
+    projects_line = ", ".join(projects) if projects else "(none)"
+    lines = [
+        "🧾 **Setup Status**",
+        f"- Nexus ID: `{user.nexus_id}`",
+        f"- GitHub linked: {'✅' if status.get('github_linked') else '❌'}",
+        f"- GitLab linked: {'✅' if status.get('gitlab_linked') else '❌'}",
+        f"- GitHub login: `{status.get('github_login') or 'n/a'}`",
+        f"- GitLab username: `{status.get('gitlab_username') or 'n/a'}`",
+        f"- Codex key set: {'✅' if status.get('codex_key_set') else '❌'}",
+        f"- Gemini key set: {'✅' if status.get('gemini_key_set') else '❌'}",
+        f"- Claude key set: {'✅' if status.get('claude_key_set') else '❌'}",
+        f"- Copilot ready (GitHub linked): {'✅' if status.get('copilot_ready') else '❌'}",
+        f"- Org verified: {'✅' if status.get('org_verified') else '❌'}",
+        f"- Project access: `{int(status.get('project_access_count') or 0)}`",
+        f"- Projects: {projects_line}",
+        f"- Ready: {'✅' if status.get('ready') else '❌'}",
+    ]
+    if not status.get("ready"):
+        lines.append("")
+        lines.append("Run `/login` to complete any missing steps.")
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+
+@bot.tree.command(name="whoami", description="Show your Discord/Nexus identity mapping")
+async def whoami_command(interaction: discord.Interaction):
+    if not check_permission_for_action(interaction.user.id, action="readonly"):
+        await interaction.response.send_message(
+            _permission_denied_message(interaction.user.id, action="readonly"),
+            ephemeral=True,
+        )
+        return
+    user = _get_or_create_discord_user(interaction.user)
+    setup = _svc_get_setup_status(str(user.nexus_id)) if NEXUS_AUTH_ENABLED else {}
+    identities = ", ".join(
+        f"{platform}:{value}" for platform, value in sorted((user.identities or {}).items())
+    )
+    lines = [
+        "👤 **Identity**",
+        f"- Nexus ID: `{user.nexus_id}`",
+        f"- Discord ID: `{interaction.user.id}`",
+        f"- Username: `{interaction.user.name}`",
+        f"- Linked identities: {identities or '(none)'}",
+    ]
+    if NEXUS_AUTH_ENABLED:
+        lines.append(f"- GitHub login: `{setup.get('github_login') or 'n/a'}`")
+        lines.append(f"- GitLab username: `{setup.get('gitlab_username') or 'n/a'}`")
+        lines.append(f"- Ready: {'✅' if setup.get('ready') else '❌'}")
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 
 @bot.tree.command(name="menu", description="Open the categorized Nexus command menu")
@@ -2252,13 +2570,20 @@ async def track_command(interaction: discord.Interaction, issue: str, project: s
                 ephemeral=True,
             )
             return
+        if NEXUS_AUTH_ENABLED:
+            user = _get_or_create_discord_user(interaction.user)
+            allowed_project, error_project = _svc_check_project_access(
+                str(user.nexus_id),
+                str(normalized_project),
+            )
+            if not allowed_project:
+                await interaction.response.send_message(
+                    error_project,
+                    ephemeral=True,
+                )
+                return
 
-        user = user_manager.get_or_create_user_by_identity(
-            platform="discord",
-            platform_user_id=str(interaction.user.id),
-            username=interaction.user.name,
-            first_name=getattr(interaction.user, "display_name", None),
-        )
+        user = _get_or_create_discord_user(interaction.user)
         user_manager.track_issue_by_nexus_id(
             nexus_id=user.nexus_id,
             project=normalized_project,
@@ -2346,6 +2671,16 @@ async def status_command(interaction: discord.Interaction, project: str | None =
         return
 
     projects = _svc_iter_project_keys(project_config=PROJECT_CONFIG)
+    if NEXUS_AUTH_ENABLED:
+        user = _get_or_create_discord_user(interaction.user)
+        status = _svc_get_setup_status(str(user.nexus_id))
+        allowed_projects = {
+            str(item).strip().lower()
+            for item in (status.get("projects") or [])
+            if str(item).strip()
+        }
+        projects = [p for p in projects if str(p).strip().lower() in allowed_projects]
+
     if project:
         requested = _normalize_project_key(project)
         if requested not in projects:
@@ -2384,9 +2719,18 @@ async def on_message(message: discord.Message):
         return
 
     # Ignore messages not from allowed user
-    if not check_permission(message.author.id):
+    if not check_permission_for_action(message.author.id, action="execute"):
+        if (
+            NEXUS_AUTH_ENABLED
+            and (not DISCORD_ALLOWED_USER_IDS or message.author.id in DISCORD_ALLOWED_USER_IDS)
+        ):
+            try:
+                await message.reply(_permission_denied_message(message.author.id, action="execute"))
+            except Exception:
+                pass
         return
 
+    requester_context = _requester_context_for_discord_user(message.author)
     raw_content = (message.content or "").strip()
 
     # Ignore slash commands or other prefix commands
@@ -2460,7 +2804,13 @@ async def on_message(message: discord.Message):
             return
 
         if candidate in ROUTING_PROJECTS:
-            result = await save_resolved_task(pending_resolution, candidate, str(message.id))
+            result = await save_resolved_task(
+                pending_resolution,
+                candidate,
+                str(message.id),
+                requester_context=requester_context,
+                authorize_project=_authorize_project_for_requester,
+            )
             _pending_project_resolution.pop(message.author.id, None)
             await status_msg.edit(content=result.get("message", "✅ Task routed."))
             return
@@ -2503,6 +2853,8 @@ async def on_message(message: discord.Message):
         message_id=str(message.id),
         get_chat=get_chat,
         process_inbox_task=process_inbox_task,
+        requester_context=requester_context,
+        authorize_project=_authorize_project_for_requester,
     )
 
     # Store pending_resolution state if manual project selection is needed

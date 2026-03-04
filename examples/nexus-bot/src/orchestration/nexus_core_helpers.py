@@ -227,7 +227,7 @@ def setup_event_handlers() -> None:
             logger.warning("Failed to setup Slack event handler: %s", exc)
 
 
-def get_git_platform(repo: str = None, project_name: str = None):
+def get_git_platform(repo: str = None, project_name: str = None, token_override: str | None = None):
     """Get initialized Git platform adapter for the project.
 
     Returns either :class:`GitPlatform` or :class:`GitLabPlatform`.
@@ -239,7 +239,7 @@ def get_git_platform(repo: str = None, project_name: str = None):
     project_config = _get_project_config().get(project_key, {})
     default_token_var = "GITLAB_TOKEN" if platform_type == "gitlab" else "GITHUB_TOKEN"
     token_var = project_config.get("git_token_var_name", default_token_var)
-    token = os.getenv(token_var)
+    token = str(token_override or "").strip() or os.getenv(token_var)
 
     if platform_type == "gitlab":
         if not token:

@@ -41,6 +41,7 @@ def handle_webhook_task(
     get_repo_for_project: Callable[[str], str],
     resolve_tier_for_issue: Callable[..., str | None],
     invoke_ai_agent: Callable[..., tuple[int | None, str | None]],
+    requester_nexus_id: str | None = None,
 ) -> bool:
     """Handle webhook-origin task files. Returns True when consumed."""
     source_match = re.search(r"\*\*Source:\*\*\s*(.+)", content)
@@ -200,6 +201,7 @@ def handle_webhook_task(
             log_subdir=project_name,
             agent_type=agent_type,
             project_name=project_name,
+            requester_nexus_id=requester_nexus_id,
         )
 
         if pid and new_filepath:
@@ -244,6 +246,9 @@ def handle_new_task(
     start_workflow: Callable[[str, str], Any],
     get_initial_agent_from_workflow: Callable[[str], str],
     invoke_ai_agent: Callable[..., tuple[int | None, str | None]],
+    requester_nexus_id: str | None = None,
+    bind_issue_requester: Callable[..., None] | None = None,
+    ensure_project_and_repo_access: Callable[[str, str, str], tuple[bool, str]] | None = None,
 ) -> None:
     """Handle standard (non-webhook) inbox task end-to-end."""
     content = refine_issue_content(content, str(project_name))
@@ -308,6 +313,27 @@ def handle_new_task(
 **Target Branch:** `{branch_name}`{task_file_line}"""
 
     repo_key = get_repo_for_project(project_name)
+    if callable(ensure_project_and_repo_access):
+        allowed, error_message = ensure_project_and_repo_access(
+            str(requester_nexus_id or ""),
+            str(project_name),
+            str(repo_key),
+        )
+        if not allowed:
+            logger.error(
+                "Requester access denied before issue creation for project=%s requester=%s: %s",
+                project_name,
+                requester_nexus_id,
+                error_message,
+            )
+            emit_alert(
+                f"🚫 Request denied for project '{project_name}': {error_message}",
+                severity="error",
+                source="inbox_processor",
+                project_key=str(project_name),
+            )
+            return
+
     issue_url = create_issue(
         title=issue_title,
         body=issue_body,
@@ -316,24 +342,58 @@ def handle_new_task(
         task_type=task_type,
         repo_key=repo_key,
         dedupe_key=dedupe_key,
+        requester_nexus_id=requester_nexus_id,
     )
 
     issue_num = ""
     workflow_id = ""
     if issue_url:
-        issue_num = issue_url.split("/")[-1]
+        issue_match = re.search(r"/issues/(\\d+)(?:$|[/?#])", str(issue_url))
+        if issue_match:
+            issue_num = str(issue_match.group(1))
+        else:
+            issue_num = (
+                str(issue_url).rstrip("/").split("/")[-1].split("?", 1)[0].split("#", 1)[0]
+            )
+        if requester_nexus_id and callable(bind_issue_requester):
+            try:
+                issue_num_int = int(str(issue_num))
+                bind_issue_requester(
+                    repo_key=str(repo_key),
+                    issue_number=issue_num_int,
+                    issue_url=str(issue_url),
+                    project_key=str(project_name),
+                    requester_nexus_id=str(requester_nexus_id),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to bind issue requester for issue=%s requester=%s: %s",
+                    issue_num,
+                    requester_nexus_id,
+                    exc,
+                )
         if new_filepath:
             old_basename = os.path.basename(new_filepath)
             new_basename = re.sub(r"_(\d+)\.md$", f"_{issue_num}.md", old_basename)
             if new_basename != old_basename:
                 try:
-                    new_filepath = rename_task_file_and_sync_issue_body(
-                        task_file_path=new_filepath,
-                        issue_url=issue_url,
-                        issue_body=issue_body,
-                        project_name=project_name,
-                        repo_key=repo_key,
-                    )
+                    try:
+                        new_filepath = rename_task_file_and_sync_issue_body(
+                            task_file_path=new_filepath,
+                            issue_url=issue_url,
+                            issue_body=issue_body,
+                            project_name=project_name,
+                            repo_key=repo_key,
+                            requester_nexus_id=requester_nexus_id,
+                        )
+                    except TypeError:
+                        new_filepath = rename_task_file_and_sync_issue_body(
+                            task_file_path=new_filepath,
+                            issue_url=issue_url,
+                            issue_body=issue_body,
+                            project_name=project_name,
+                            repo_key=repo_key,
+                        )
                 except Exception as exc:
                     logger.error("Failed to rename task file to issue-number name: %s", exc)
 
@@ -426,6 +486,7 @@ def handle_new_task(
             log_subdir=project_name,
             agent_type=initial_agent,
             project_name=project_name,
+            requester_nexus_id=requester_nexus_id,
         )
 
         if pid and new_filepath:

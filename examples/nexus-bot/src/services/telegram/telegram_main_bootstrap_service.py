@@ -1,5 +1,6 @@
 import os
 from collections.abc import Mapping
+from inspect import isawaitable
 from typing import Any
 
 from telegram import Update
@@ -38,81 +39,116 @@ def register_application_handlers(
     conv_handler,
     handlers: Mapping[str, Any],
     filters_module,
+    authorize_update=None,
 ) -> None:
-    app.add_handler(conv_handler)
-    for cmd, handler_name in (
-        ("start", "start_handler"),
-        ("help", "help_handler"),
-        ("menu", "menu_handler"),
-        ("rename", "rename_handler"),
-        ("cancel", "cancel"),
-        ("status", "status_handler"),
-        ("inboxq", "inboxq_handler"),
-        ("active", "active_handler"),
-        ("progress", "progress_handler"),
-        ("track", "track_handler"),
-        ("tracked", "tracked_handler"),
-        ("untrack", "untrack_handler"),
-        ("myissues", "myissues_handler"),
-        ("logs", "logs_handler"),
-        ("logsfull", "logsfull_handler"),
-        ("tail", "tail_handler"),
-        ("tailstop", "tailstop_handler"),
-        ("fuse", "fuse_handler"),
-        ("audit", "audit_handler"),
-        ("wfstate", "wfstate_handler"),
-        ("visualize", "visualize_handler"),
-        ("watch", "watch_handler"),
-        ("stats", "stats_handler"),
-        ("comments", "comments_handler"),
-        ("reprocess", "reprocess_handler"),
-        ("reconcile", "reconcile_handler"),
-        ("continue", "continue_handler"),
-        ("forget", "forget_handler"),
-        ("kill", "kill_handler"),
-        ("pause", "pause_handler"),
-        ("resume", "resume_handler"),
-        ("stop", "stop_handler"),
-        ("agents", "agents_handler"),
-        ("direct", "direct_handler"),
-        ("respond", "respond_handler"),
-        ("assign", "assign_handler"),
-        ("implement", "implement_handler"),
-        ("prepare", "prepare_handler"),
-        ("plan", "plan_handler"),
-        ("feature_done", "feature_done_handler"),
-        ("feature_list", "feature_list_handler"),
-        ("feature_forget", "feature_forget_handler"),
-        ("chat", "chat_menu_handler"),
-        ("chatagents", "chat_agents_handler"),
-    ):
-        app.add_handler(CommandHandler(cmd, handlers[handler_name]))
+    async def _is_allowed(update, *, command: str | None = None, action: str = "execute") -> bool:
+        if not callable(authorize_update):
+            return True
+        decision = authorize_update(update=update, command=command, action=action)
+        if isawaitable(decision):
+            decision = await decision
+        allowed = False
+        message = ""
+        if isinstance(decision, tuple):
+            allowed = bool(decision[0]) if len(decision) >= 1 else False
+            message = str(decision[1] or "") if len(decision) >= 2 else ""
+        else:
+            allowed = bool(decision)
+        if allowed:
+            return True
+        effective_message = getattr(update, "effective_message", None)
+        if message and effective_message is not None:
+            try:
+                await effective_message.reply_text(message)
+            except Exception:
+                pass
+        return False
 
-    app.add_handler(CallbackQueryHandler(handlers["chat_callback_handler"], pattern=r"^chat:"))
-    app.add_handler(CallbackQueryHandler(handlers["menu_callback_handler"], pattern=r"^menu:"))
-    app.add_handler(CallbackQueryHandler(handlers["project_picker_handler"], pattern=r"^pickcmd:"))
-    app.add_handler(CallbackQueryHandler(handlers["issue_picker_handler"], pattern=r"^pickissue"))
+    def _wrap(handler, *, command: str | None = None, action: str = "execute"):
+        async def wrapped(update, context):
+            if not await _is_allowed(update, command=command, action=action):
+                return
+            return await handler(update, context)
+
+        return wrapped
+
+    app.add_handler(conv_handler)
+    for cmd, handler_name, action in (
+        ("start", "start_handler", "onboarding"),
+        ("help", "help_handler", "help"),
+        ("menu", "menu_handler", "onboarding"),
+        ("login", "login_handler", "onboarding"),
+        ("setup_status", "setup_status_handler", "readonly"),
+        ("whoami", "whoami_handler", "readonly"),
+        ("rename", "rename_handler", "execute"),
+        ("cancel", "cancel", "execute"),
+        ("status", "status_handler", "execute"),
+        ("inboxq", "inboxq_handler", "execute"),
+        ("active", "active_handler", "execute"),
+        ("progress", "progress_handler", "execute"),
+        ("track", "track_handler", "execute"),
+        ("tracked", "tracked_handler", "execute"),
+        ("untrack", "untrack_handler", "execute"),
+        ("myissues", "myissues_handler", "execute"),
+        ("logs", "logs_handler", "execute"),
+        ("logsfull", "logsfull_handler", "execute"),
+        ("tail", "tail_handler", "execute"),
+        ("tailstop", "tailstop_handler", "execute"),
+        ("fuse", "fuse_handler", "execute"),
+        ("audit", "audit_handler", "execute"),
+        ("wfstate", "wfstate_handler", "execute"),
+        ("visualize", "visualize_handler", "execute"),
+        ("watch", "watch_handler", "execute"),
+        ("stats", "stats_handler", "execute"),
+        ("comments", "comments_handler", "execute"),
+        ("reprocess", "reprocess_handler", "execute"),
+        ("reconcile", "reconcile_handler", "execute"),
+        ("continue", "continue_handler", "execute"),
+        ("forget", "forget_handler", "execute"),
+        ("kill", "kill_handler", "execute"),
+        ("pause", "pause_handler", "execute"),
+        ("resume", "resume_handler", "execute"),
+        ("stop", "stop_handler", "execute"),
+        ("agents", "agents_handler", "execute"),
+        ("direct", "direct_handler", "execute"),
+        ("respond", "respond_handler", "execute"),
+        ("assign", "assign_handler", "execute"),
+        ("implement", "implement_handler", "execute"),
+        ("prepare", "prepare_handler", "execute"),
+        ("plan", "plan_handler", "execute"),
+        ("feature_done", "feature_done_handler", "execute"),
+        ("feature_list", "feature_list_handler", "execute"),
+        ("feature_forget", "feature_forget_handler", "execute"),
+        ("chat", "chat_menu_handler", "execute"),
+        ("chatagents", "chat_agents_handler", "execute"),
+    ):
+        app.add_handler(CommandHandler(cmd, _wrap(handlers[handler_name], command=cmd, action=action)))
+
+    app.add_handler(CallbackQueryHandler(_wrap(handlers["chat_callback_handler"]), pattern=r"^chat:"))
+    app.add_handler(CallbackQueryHandler(_wrap(handlers["menu_callback_handler"]), pattern=r"^menu:"))
+    app.add_handler(CallbackQueryHandler(_wrap(handlers["project_picker_handler"]), pattern=r"^pickcmd:"))
+    app.add_handler(CallbackQueryHandler(_wrap(handlers["issue_picker_handler"]), pattern=r"^pickissue"))
     app.add_handler(
-        CallbackQueryHandler(handlers["monitor_project_picker_handler"], pattern=r"^pickmonitor:")
+        CallbackQueryHandler(_wrap(handlers["monitor_project_picker_handler"]), pattern=r"^pickmonitor:")
     )
-    app.add_handler(CallbackQueryHandler(handlers["close_flow_handler"], pattern=r"^flow:close$"))
-    app.add_handler(CallbackQueryHandler(handlers["feature_callback_handler"], pattern=r"^feat:"))
+    app.add_handler(CallbackQueryHandler(_wrap(handlers["close_flow_handler"]), pattern=r"^flow:close$"))
+    app.add_handler(CallbackQueryHandler(_wrap(handlers["feature_callback_handler"]), pattern=r"^feat:"))
     app.add_handler(
         CallbackQueryHandler(
-            handlers["task_confirmation_callback_handler"],
+            _wrap(handlers["task_confirmation_callback_handler"]),
             pattern=r"^taskconfirm:",
         )
     )
     app.add_handler(
         CallbackQueryHandler(
-            handlers["inline_keyboard_handler"],
+            _wrap(handlers["inline_keyboard_handler"]),
             pattern=r"^(logs|logsfull|status|pause|resume|stop|audit|reprocess|respond|approve|reject|wfapprove|wfdeny|report_bug)_",
         )
     )
     app.add_handler(
         MessageHandler(
             (filters_module.TEXT | filters_module.VOICE) & (~filters_module.COMMAND),
-            handlers["hands_free_handler"],
+            _wrap(handlers["hands_free_handler"]),
         )
     )
     app.add_error_handler(handlers["telegram_error_handler"])

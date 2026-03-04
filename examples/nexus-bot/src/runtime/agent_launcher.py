@@ -33,6 +33,13 @@ from config import (
 from integrations.notifications import notify_agent_completed, emit_alert
 from orchestration.ai_orchestrator import get_orchestrator
 from orchestration.plugin_runtime import get_profiled_plugin
+from services.credential_store import get_issue_requester_by_url
+from services.project_access_service import (
+    auth_enabled,
+    build_execution_env,
+    check_project_access,
+    check_repo_access,
+)
 from services.runtime_mode_service import is_postgres_backend
 from state_manager import HostStateManager
 
@@ -940,6 +947,7 @@ def invoke_ai_agent(
     log_subdir=None,
     agent_type="triage",
     project_name=None,
+    requester_nexus_id=None,
 ):
     """Invokes an AI agent on the agents directory to process the task.
 
@@ -999,6 +1007,10 @@ def invoke_ai_agent(
     # Use orchestrator to launch agent
     orchestrator = get_orchestrator(ORCHESTRATOR_CONFIG)
 
+    effective_requester_nexus_id = str(requester_nexus_id or "").strip() or None
+    if auth_enabled() and not effective_requester_nexus_id and issue_url:
+        effective_requester_nexus_id = get_issue_requester_by_url(str(issue_url))
+
     # Resolve project-specific API token
     from orchestration.nexus_core_helpers import _get_project_config
 
@@ -1009,7 +1021,62 @@ def invoke_ai_agent(
     token = os.getenv(token_var)
 
     agent_env = None
-    if token:
+    if auth_enabled():
+        source_match = re.search(r"\*\*Source:\*\*\s*(.+)", str(task_content or ""))
+        source = source_match.group(1).strip().lower() if source_match else ""
+        if effective_requester_nexus_id:
+            if project_name:
+                allowed_project, error_project = check_project_access(
+                    str(effective_requester_nexus_id),
+                    str(project_name),
+                )
+                if not allowed_project:
+                    logger.error(
+                        "Requester project access denied: requester=%s project=%s error=%s",
+                        effective_requester_nexus_id,
+                        project_name,
+                        error_project,
+                    )
+                    return None, None
+                try:
+                    repo_name = get_repo(str(project_name))
+                except Exception:
+                    repo_name = ""
+                if repo_name:
+                    allowed_repo, error_repo = check_repo_access(
+                        str(effective_requester_nexus_id),
+                        repo_name,
+                        str(project_name or ""),
+                    )
+                    if not allowed_repo:
+                        logger.error(
+                            "Requester repo access denied: requester=%s repo=%s error=%s",
+                            effective_requester_nexus_id,
+                            repo_name,
+                            error_repo,
+                        )
+                        return None, None
+
+            resolved_env, env_error = build_execution_env(str(effective_requester_nexus_id))
+            if env_error:
+                logger.error(
+                    "Requester credential resolution failed for nexus_id=%s: %s",
+                    effective_requester_nexus_id,
+                    env_error,
+                )
+                return None, None
+            agent_env = resolved_env
+        elif source != "webhook":
+            logger.error(
+                "Auth is enabled but no requester identity is available for launch "
+                "(project=%s issue=%s).",
+                project_name,
+                issue_url,
+            )
+            return None, None
+
+    if agent_env is None and token:
+        # Backward-compat fallback for non-auth runtime paths.
         agent_env = {"GITHUB_TOKEN": token, "GITLAB_TOKEN": token}
 
     try:
@@ -1105,6 +1172,8 @@ def invoke_ai_agent(
                     {
                         "timestamp": time.time(),
                         "pid": pid,
+                        "project": project_name,
+                        "requester_nexus_id": effective_requester_nexus_id,
                         "tier": tier_name,
                         "mode": mode,
                         "tool": tool_name,

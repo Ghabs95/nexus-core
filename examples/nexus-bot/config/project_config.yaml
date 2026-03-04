@@ -16,6 +16,16 @@ projects:
     aliases:
       - nexus arc
       - nexus-arc
+  atl:
+    code: atlas
+    aliases:
+      - atlas
+      - alpha
+  orn:
+    code: orion
+    aliases:
+      - orion
+      - beta
 
 # Merge queue behavior (project-level enforcement)
 # review_mode:
@@ -84,9 +94,15 @@ system_operations:
 nexus:
   agents_dir: ghabs/nexus-arc/examples/agents
   workspace: nexus
+  git_platform: github
   git_repo: Ghabs95/nexus-arc
-  # git_repos:
-  #  - Ghabs95/nexus-arc
+  git_repos:
+    - Ghabs95/nexus-arc
+  access_control:
+    github_teams:
+      - Ghabs95/nexus-team
+    github_users:
+      - Ghabs95
   system_operations:
     default: triage
     launch: triage
@@ -131,3 +147,37 @@ nexus:
     deployer: { profile: fast, provider: copilot }
     writer: { profile: fast, provider: gemini }
     finalizer: { profile: fast, provider: gemini }
+
+# Fake sample project (example-only)
+atlas:
+  agents_dir: ghabs/nexus-arc/examples/agents
+  workspace: atlas
+  git_platform: gitlab
+  git_repo: demo-org/atlas
+  git_repos:
+    - demo-org/atlas
+    - demo-org/atlas-shared
+  access_control:
+    gitlab_groups:
+      - demo-org/atlas-team
+    gitlab_users:
+      - alice
+
+# Fake sample project (example-only)
+orion:
+  agents_dir: ghabs/nexus-arc/examples/agents
+  workspace: orion
+  git_platform: github
+  git_repo: demo-org/orion
+  git_repos:
+    - demo-org/orion
+    - demo-org/orion-shared
+  access_control:
+    github_teams:
+      - demo-org/orion-team
+    github_users:
+      - bob
+    gitlab_groups:
+      - demo-org/orion-team
+    gitlab_users:
+      - bob

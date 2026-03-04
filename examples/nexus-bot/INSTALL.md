@@ -16,7 +16,7 @@ This guide covers two deployment scenarios for the Nexus Telegram Bot:
 - Your Telegram User ID (from [@userinfobot](https://t.me/userinfobot))
 - A GitHub **or** GitLab Personal Access Token (for issue integration)
 - A Discord Bot Token (optional, if you want to use the Discord UI)
-- At least one AI provider CLI installed (`copilot`, `gemini`, or `codex`)
+- At least one AI provider CLI installed (`copilot`, `gemini`, `codex`, or `claude`)
 
 > **Note:** Nexus supports both **GitHub** and **GitLab** as first-class VCS platforms.
 > Each project can independently target either platform via `git_platform` in `project_config.yaml`.
@@ -96,7 +96,7 @@ Everything runs on the local filesystem. No database, no Redis.
 | Workflow orchestration & auto-chaining                   | ✅      |
 | GitHub issue integration (issues, PRs, comments, labels) | ✅      |
 | GitLab issue integration (issues, MRs, comments, labels) | ✅      |
-| Agent execution (Copilot, Gemini, Codex)                 | ✅      |
+| Agent execution (Copilot, Gemini, Codex, Claude)         | ✅      |
 | Inbox task queue (file-based)                            | ✅      |
 | Workflow state persistence (file-based)                  | ✅      |
 | Webhook processing                                       | ✅      |
@@ -188,18 +188,6 @@ GITHUB_TOKEN=ghp_your_token
 # GITLAB_TOKEN=glpat-your_token
 # GITLAB_BASE_URL=https://gitlab.com
 
-### `.env` (Key Variables)
-
-```bash
-# === Required ===
-TELEGRAM_TOKEN=your_bot_token
-TELEGRAM_ALLOWED_USER_IDS=your_user_id
-
-# Git platform tokens (set one or both depending on your projects)
-GITHUB_TOKEN=ghp_your_token
-# GITLAB_TOKEN=glpat-your_token
-# GITLAB_BASE_URL=https://gitlab.com
-
 # === Storage: PostgreSQL ===
 NEXUS_STORAGE_BACKEND=postgres
 NEXUS_HOST_STATE_BACKEND=postgres
@@ -212,18 +200,6 @@ REDIS_URL=redis://localhost:6379/0
 
 # === Project config ===
 PROJECT_CONFIG_PATH=/opt/nexus/config/project_config.yaml
-```
-
-NEXUS_RUNTIME_DIR=/var/lib/nexus
-
-# === Redis: Chat memory ===
-
-REDIS_URL=redis://localhost:6379/0
-
-# === Project config ===
-
-PROJECT_CONFIG_PATH=/opt/nexus/config/project_config.yaml
-
 ```
 
 ### Run with Docker Compose

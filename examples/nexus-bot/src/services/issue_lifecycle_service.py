@@ -7,7 +7,9 @@ import os
 import re
 from datetime import UTC, datetime, timedelta
 
+from config import get_project_platform
 from orchestration.nexus_core_helpers import get_git_platform
+from services.project_access_service import auth_enabled, build_execution_env
 
 logger = logging.getLogger(__name__)
 _SOURCE_MARKER_PREFIX = "nexus-inbox-source:"
@@ -90,6 +92,7 @@ def create_issue(
     task_type: str,
     repo_key: str,
     dedupe_key: str | None = None,
+    requester_nexus_id: str | None = None,
 ) -> str:
     """Create a provider-backed issue and apply labels with fallback behavior."""
     type_label = f"type:{task_type}"
@@ -103,7 +106,21 @@ def create_issue(
             issue_body = f"{issue_body}\n\n{source_marker}"
 
     try:
-        platform = get_git_platform(repo_key, project_name=project)
+        token_override = None
+        if auth_enabled() and requester_nexus_id:
+            user_env, env_error = build_execution_env(str(requester_nexus_id))
+            if env_error:
+                raise RuntimeError(f"Requester credentials unavailable: {env_error}")
+            platform = str(get_project_platform(project) or "").strip().lower()
+            token_override = (
+                user_env.get("GITLAB_TOKEN") if platform == "gitlab" else user_env.get("GITHUB_TOKEN")
+            )
+
+        platform = get_git_platform(
+            repo_key,
+            project_name=project,
+            token_override=token_override,
+        )
         issue_obj = None
         dedupe_hours = 24.0
         with contextlib.suppress(Exception):
@@ -174,6 +191,7 @@ def rename_task_file_and_sync_issue_body(
     issue_body: str,
     project_name: str,
     repo_key: str,
+    requester_nexus_id: str | None = None,
 ) -> str:
     """Rename local task file to include issue number and sync issue body task-file path."""
     issue_num = str(issue_url).rstrip("/").split("/")[-1]
@@ -188,7 +206,21 @@ def rename_task_file_and_sync_issue_body(
 
     corrected_body = issue_body.replace(task_file_path, renamed_path)
     try:
-        platform = get_git_platform(repo_key, project_name=project_name)
+        token_override = None
+        if auth_enabled() and requester_nexus_id:
+            user_env, env_error = build_execution_env(str(requester_nexus_id))
+            if env_error:
+                raise RuntimeError(f"Requester credentials unavailable: {env_error}")
+            platform = str(get_project_platform(project_name) or "").strip().lower()
+            token_override = (
+                user_env.get("GITLAB_TOKEN") if platform == "gitlab" else user_env.get("GITHUB_TOKEN")
+            )
+
+        platform = get_git_platform(
+            repo_key,
+            project_name=project_name,
+            token_override=token_override,
+        )
         asyncio.run(platform.update_issue(issue_num, body=corrected_body))
     except Exception as update_exc:
         logger.warning(

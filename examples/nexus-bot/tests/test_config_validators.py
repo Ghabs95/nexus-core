@@ -32,3 +32,41 @@ def test_validate_project_config_rejects_invalid_profile_priority_provider():
     }
     with pytest.raises(ValueError):
         validate_project_config(payload)
+
+
+def test_validate_project_config_accepts_claude_provider_in_profiles_and_priority():
+    payload = {
+        "model_profiles": {"balanced": {"claude": "claude-sonnet-4"}},
+        "profile_provider_priority": {"balanced": ["claude"]},
+        "ai_tool_preferences": {"writer": {"provider": "claude", "profile": "balanced"}},
+        "nexus": {"workspace": "x", "agents_dir": "a", "git_platform": "github"},
+    }
+    validate_project_config(payload)
+
+
+def test_validate_project_config_accepts_access_control_users():
+    payload = {
+        "nexus": {
+            "workspace": "x",
+            "agents_dir": "a",
+            "git_platform": "github",
+            "access_control": {
+                "github_users": ["octocat", "@alice-dev"],
+                "gitlab_users": ["john.doe", "@jane_doe"],
+            },
+        }
+    }
+    validate_project_config(payload)
+
+
+def test_validate_project_config_rejects_invalid_access_control_username():
+    payload = {
+        "nexus": {
+            "workspace": "x",
+            "agents_dir": "a",
+            "git_platform": "github",
+            "access_control": {"github_users": ["org/user"]},
+        }
+    }
+    with pytest.raises(ValueError):
+        validate_project_config(payload)

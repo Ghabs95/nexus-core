@@ -11,6 +11,7 @@ Includes post-hook broadcasting via SocketIO when configured.
 
 from __future__ import annotations
 
+import atexit
 import builtins
 import logging
 import time
@@ -173,3 +174,30 @@ def get_storage_backend() -> StorageBackend:
     logger.info("Using %s storage backend for host state", adapter_type)
     setattr(builtins, _BUILTINS_STORAGE_BACKEND_KEY, _storage_backend_instance)
     return _storage_backend_instance
+
+
+def _dispose_backend(backend: StorageBackend | None) -> None:
+    if backend is None:
+        return
+    close_fn = getattr(backend, "close", None)
+    if callable(close_fn):
+        try:
+            close_fn()
+        except Exception:
+            pass
+
+
+def _cleanup_storage_backends() -> None:
+    global _storage_backend_instance
+    _dispose_backend(_storage_backend_instance)
+    _storage_backend_instance = None
+    existing = getattr(builtins, _BUILTINS_STORAGE_BACKEND_KEY, None)
+    _dispose_backend(existing)
+    if hasattr(builtins, _BUILTINS_STORAGE_BACKEND_KEY):
+        try:
+            delattr(builtins, _BUILTINS_STORAGE_BACKEND_KEY)
+        except Exception:
+            pass
+
+
+atexit.register(_cleanup_storage_backends)

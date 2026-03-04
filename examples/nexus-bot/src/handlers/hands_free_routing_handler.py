@@ -42,10 +42,12 @@ class HandsFreeRoutingDeps:
     get_chat_history: Callable[[int], str]
     append_message: Callable[[int, str, str], None]
     get_chat: Callable[[int], dict[str, Any]]
-    process_inbox_task: Callable[[str, Any, str, str | None], Awaitable[dict[str, Any]]]
+    process_inbox_task: Callable[..., Awaitable[dict[str, Any]]]
     normalize_project_key: Callable[[str], str | None]
-    save_resolved_task: Callable[[dict, str, str], Awaitable[dict[str, Any]]]
+    save_resolved_task: Callable[..., Awaitable[dict[str, Any]]]
     task_confirmation_mode: str
+    requester_context_builder: Callable[[int], dict[str, Any]] | None = None
+    authorize_project: Callable[[str, dict[str, Any] | None], tuple[bool, str]] | None = None
     feature_ideation_deps: Any = None
     base_dir: str = ""
     project_config: dict[str, Any] | None = None
@@ -331,7 +333,18 @@ async def resolve_pending_project_selection(
     if hasattr(ctx.raw_event, "message") and hasattr(ctx.raw_event.message, "message_id"):
         trigger_message_id = str(ctx.raw_event.message.message_id)
 
-    result = await deps.save_resolved_task(pending_project, selected, str(trigger_message_id))
+    requester_context = (
+        deps.requester_context_builder(int(ctx.user_id))
+        if callable(deps.requester_context_builder)
+        else None
+    )
+    result = await deps.save_resolved_task(
+        pending_project,
+        selected,
+        str(trigger_message_id),
+        requester_context=requester_context,
+        authorize_project=deps.authorize_project,
+    )
     await ctx.reply_text(result["message"])
     return True
 
@@ -502,6 +515,11 @@ async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingD
         )
         return
 
+    requester_context = (
+        deps.requester_context_builder(user_numeric_id)
+        if callable(deps.requester_context_builder)
+        else None
+    )
     result = await route_task_with_context(
         user_id=user_numeric_id,
         text=text,
@@ -509,6 +527,8 @@ async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingD
         message_id=str(trigger_message_id),
         get_chat=deps.get_chat,
         process_inbox_task=deps.process_inbox_task,
+        requester_context=requester_context,
+        authorize_project=deps.authorize_project,
     )
 
     if not result["success"] and "pending_resolution" in result:
@@ -518,6 +538,8 @@ async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingD
                 result["pending_resolution"],
                 selected_project,
                 str(trigger_message_id),
+                requester_context=requester_context,
+                authorize_project=deps.authorize_project,
             )
             result = resolved
         else:

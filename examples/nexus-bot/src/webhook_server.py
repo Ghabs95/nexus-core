@@ -16,8 +16,9 @@ import asyncio
 import logging
 import os
 import sys
+import time
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_from_directory
 
 try:
     from flask_socketio import SocketIO
@@ -45,6 +46,8 @@ from nexus.core.workspace import WorkspaceManager
 from config import (
     BASE_DIR,
     LOGS_DIR,
+    NEXUS_ACCESS_SYNC_INTERVAL_MINUTES,
+    NEXUS_AUTH_ENABLED,
     NEXUS_STORAGE_BACKEND,
     NEXUS_CORE_STORAGE_DIR,
     NEXUS_STORAGE_DSN,
@@ -78,6 +81,27 @@ from services.webhook_pr_review_service import (
     handle_pull_request_review_event as _handle_pull_request_review_event,
 )
 from services.webhook_http_service import process_webhook_request as _process_webhook_request
+from services.auth_session_service import (
+    complete_github_oauth as _svc_complete_github_oauth,
+)
+from services.auth_session_service import (
+    complete_gitlab_oauth as _svc_complete_gitlab_oauth,
+)
+from services.auth_session_service import (
+    get_session_and_setup_status as _svc_get_session_and_setup_status,
+)
+from services.auth_session_service import (
+    start_oauth_flow as _svc_start_oauth_flow,
+)
+from services.auth_session_service import (
+    store_ai_provider_keys as _svc_store_ai_provider_keys,
+)
+from services.auth_session_service import (
+    store_codex_api_key as _svc_store_codex_api_key,
+)
+from services.project_access_service import (
+    refresh_stale_access_grants as _svc_refresh_stale_access_grants,
+)
 from services.runtime_mode_service import is_issue_process_running
 
 # Configure logging
@@ -104,10 +128,31 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), "static"))
-socketio = SocketIO(app, async_mode="eventlet", cors_allowed_origins="*")
+_socketio_async_mode = str(os.getenv("NEXUS_SOCKETIO_ASYNC_MODE", "threading")).strip().lower()
+if _socketio_async_mode not in {"threading", "eventlet", "gevent", "gevent_uwsgi"}:
+    _socketio_async_mode = "threading"
+socketio = SocketIO(app, async_mode=_socketio_async_mode, cors_allowed_origins="*")
 
 # Track processed events to avoid duplicates
 processed_events = set()
+_last_acl_sync_at = 0.0
+
+
+def _run_acl_sync_if_due() -> None:
+    global _last_acl_sync_at
+    if not NEXUS_AUTH_ENABLED:
+        return
+    interval_seconds = max(60, int(NEXUS_ACCESS_SYNC_INTERVAL_MINUTES) * 60)
+    now = time.time()
+    if _last_acl_sync_at and (now - _last_acl_sync_at) < interval_seconds:
+        return
+    try:
+        result = _svc_refresh_stale_access_grants(limit=200)
+        _last_acl_sync_at = now
+        if int(result.get("processed") or 0) > 0:
+            logger.info("Auth ACL sync: %s", result)
+    except Exception as exc:
+        logger.warning("Periodic ACL sync failed: %s", exc)
 
 
 def _collect_visualizer_snapshot() -> list[dict]:
@@ -389,9 +434,255 @@ def handle_pull_request_review(payload, event):
     return _handle_pull_request_review_event(event=event, logger=logger)
 
 
+def _render_auth_message(title: str, body: str, *, status_code: int = 200):
+    html = f"""<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <style>
+      body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #0f172a; }}
+      main {{ max-width: 720px; margin: 0 auto; }}
+      .card {{ border: 1px solid #cbd5e1; border-radius: 12px; padding: 1rem 1.2rem; background: #f8fafc; }}
+      code {{ background: #e2e8f0; padding: 0.1rem 0.3rem; border-radius: 4px; }}
+      input[type=text] {{ width: 100%; padding: 0.6rem; border-radius: 8px; border: 1px solid #94a3b8; }}
+      button {{ margin-top: 0.8rem; background: #0f766e; color: white; border: none; padding: 0.7rem 1rem; border-radius: 8px; cursor: pointer; }}
+      small {{ color: #475569; }}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>{title}</h1>
+      <div class="card">{body}</div>
+    </main>
+  </body>
+</html>"""
+    return html, status_code, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/auth/start", methods=["GET"])
+def auth_start():
+    if not NEXUS_AUTH_ENABLED:
+        return _render_auth_message(
+            "Auth Disabled",
+            "Auth onboarding is disabled in this environment.",
+            status_code=404,
+        )
+    session_id = str(request.args.get("session", "")).strip()
+    if not session_id:
+        return _render_auth_message("Invalid Request", "Missing <code>session</code> parameter.", status_code=400)
+    provider = str(request.args.get("provider", "")).strip().lower()
+    if not provider:
+        provider = "gitlab" if os.getenv("NEXUS_GITLAB_CLIENT_ID") else "github"
+    try:
+        oauth_url, _state = _svc_start_oauth_flow(session_id, provider=provider)
+    except Exception as exc:
+        return _render_auth_message("Login Error", f"Failed to start OAuth: <code>{exc}</code>", status_code=400)
+    return redirect(oauth_url, code=302)
+
+
+@app.route("/auth/github/callback", methods=["GET"])
+def auth_github_callback():
+    if not NEXUS_AUTH_ENABLED:
+        return _render_auth_message(
+            "Auth Disabled",
+            "Auth onboarding is disabled in this environment.",
+            status_code=404,
+        )
+    code = str(request.args.get("code", "")).strip()
+    state = str(request.args.get("state", "")).strip()
+    if not code or not state:
+        return _render_auth_message(
+            "OAuth Error",
+            "Missing <code>code</code> or <code>state</code> in callback.",
+            status_code=400,
+        )
+    try:
+        result = _svc_complete_github_oauth(code=code, state=state)
+    except Exception as exc:
+        return _render_auth_message("OAuth Error", f"{exc}", status_code=400)
+
+    session_id = str(result.get("session_id") or "").strip()
+    grants_count = int(result.get("grants_count") or 0)
+    github_login = str(result.get("github_login") or "").strip()
+    form_body = f"""
+<p>GitHub login linked successfully as <strong>{github_login or "unknown"}</strong>.</p>
+<p>Project grants resolved: <strong>{grants_count}</strong>.</p>
+<form method="post" action="/auth/ai-keys">
+  <input type="hidden" name="session_id" value="{session_id}" />
+  <label for="codex_api_key"><strong>Codex/OpenAI API Key</strong></label>
+  <input id="codex_api_key" name="codex_api_key" type="text" placeholder="sk-..." />
+  <label for="gemini_api_key"><strong>Gemini API Key (optional)</strong></label>
+  <input id="gemini_api_key" name="gemini_api_key" type="text" placeholder="AIza..." />
+  <label for="claude_api_key"><strong>Claude API Key (optional)</strong></label>
+  <input id="claude_api_key" name="claude_api_key" type="text" placeholder="sk-ant-..." />
+  <label style="display:block; margin-top:0.8rem;">
+    <input type="checkbox" name="use_copilot" value="1" checked />
+    Use Copilot with this GitHub account (no extra key)
+  </label>
+  <button type="submit">Save Keys</button>
+  <p><small>Add at least one key (Codex/Gemini/Claude), or keep Copilot enabled. Keys are encrypted at rest and used only for your own task execution.</small></p>
+</form>
+"""
+    return _render_auth_message("Complete Setup", form_body, status_code=200)
+
+
+@app.route("/auth/gitlab/callback", methods=["GET"])
+def auth_gitlab_callback():
+    if not NEXUS_AUTH_ENABLED:
+        return _render_auth_message(
+            "Auth Disabled",
+            "Auth onboarding is disabled in this environment.",
+            status_code=404,
+        )
+    code = str(request.args.get("code", "")).strip()
+    state = str(request.args.get("state", "")).strip()
+    if not code or not state:
+        return _render_auth_message(
+            "OAuth Error",
+            "Missing <code>code</code> or <code>state</code> in callback.",
+            status_code=400,
+        )
+    try:
+        result = _svc_complete_gitlab_oauth(code=code, state=state)
+    except Exception as exc:
+        return _render_auth_message("OAuth Error", f"{exc}", status_code=400)
+
+    session_id = str(result.get("session_id") or "").strip()
+    grants_count = int(result.get("grants_count") or 0)
+    gitlab_username = str(result.get("gitlab_username") or "").strip()
+    form_body = f"""
+<p>GitLab account linked successfully as <strong>{gitlab_username or "unknown"}</strong>.</p>
+<p>Project grants resolved: <strong>{grants_count}</strong>.</p>
+<form method="post" action="/auth/ai-keys">
+  <input type="hidden" name="session_id" value="{session_id}" />
+  <label for="codex_api_key"><strong>Codex/OpenAI API Key</strong></label>
+  <input id="codex_api_key" name="codex_api_key" type="text" placeholder="sk-..." />
+  <label for="gemini_api_key"><strong>Gemini API Key (optional)</strong></label>
+  <input id="gemini_api_key" name="gemini_api_key" type="text" placeholder="AIza..." />
+  <label for="claude_api_key"><strong>Claude API Key (optional)</strong></label>
+  <input id="claude_api_key" name="claude_api_key" type="text" placeholder="sk-ant-..." />
+  <label style="display:block; margin-top:0.8rem;">
+    <input type="checkbox" name="use_copilot" value="1" />
+    Use Copilot with a linked GitHub account (optional)
+  </label>
+  <button type="submit">Save Keys</button>
+  <p><small>Add at least one key (Codex/Gemini/Claude), or enable Copilot if your GitHub account is linked. Keys are encrypted at rest and used only for your own task execution.</small></p>
+</form>
+"""
+    return _render_auth_message("Complete Setup", form_body, status_code=200)
+
+
+@app.route("/auth/codex-key", methods=["POST"])
+def auth_codex_key():
+    if not NEXUS_AUTH_ENABLED:
+        return _render_auth_message(
+            "Auth Disabled",
+            "Auth onboarding is disabled in this environment.",
+            status_code=404,
+        )
+    payload = request.get_json(silent=True) if request.is_json else {}
+    payload = payload if isinstance(payload, dict) else {}
+    session_id = str(request.form.get("session_id") or payload.get("session_id") or "").strip()
+    api_key = str(request.form.get("api_key") or payload.get("api_key") or "").strip()
+    if not session_id or not api_key:
+        return _render_auth_message(
+            "Invalid Request",
+            "Both <code>session_id</code> and <code>api_key</code> are required.",
+            status_code=400,
+        )
+    try:
+        result = _svc_store_codex_api_key(session_id=session_id, api_key=api_key)
+    except Exception as exc:
+        return _render_auth_message("Credential Error", f"{exc}", status_code=400)
+
+    ready = bool(result.get("ready"))
+    grants = int(result.get("project_access_count") or 0)
+    body = (
+        "<p>✅ Setup completed successfully.</p>"
+        if ready
+        else "<p>⚠️ Credentials saved, but setup is not fully ready yet.</p>"
+    )
+    body += (
+        f"<p>Project access count: <strong>{grants}</strong>.</p>"
+        "<p>Go back to Discord or Telegram and run <code>/setup-status</code> or <code>/setup_status</code>.</p>"
+    )
+    return _render_auth_message("Setup Complete", body, status_code=200)
+
+
+@app.route("/auth/ai-keys", methods=["POST"])
+def auth_ai_keys():
+    if not NEXUS_AUTH_ENABLED:
+        return _render_auth_message(
+            "Auth Disabled",
+            "Auth onboarding is disabled in this environment.",
+            status_code=404,
+        )
+    payload = request.get_json(silent=True) if request.is_json else {}
+    payload = payload if isinstance(payload, dict) else {}
+    session_id = str(request.form.get("session_id") or payload.get("session_id") or "").strip()
+    codex_api_key = str(request.form.get("codex_api_key") or payload.get("codex_api_key") or "").strip()
+    gemini_api_key = str(
+        request.form.get("gemini_api_key") or payload.get("gemini_api_key") or ""
+    ).strip()
+    claude_api_key = str(
+        request.form.get("claude_api_key") or payload.get("claude_api_key") or ""
+    ).strip()
+    raw_use_copilot = request.form.get("use_copilot")
+    if raw_use_copilot is None:
+        raw_use_copilot = payload.get("use_copilot")
+    use_copilot = False
+    if isinstance(raw_use_copilot, bool):
+        use_copilot = raw_use_copilot
+    elif raw_use_copilot is not None:
+        use_copilot = str(raw_use_copilot).strip().lower() in {"1", "true", "yes", "on"}
+    if not session_id:
+        return _render_auth_message(
+            "Invalid Request",
+            "Field <code>session_id</code> is required.",
+            status_code=400,
+        )
+    try:
+        result = _svc_store_ai_provider_keys(
+            session_id=session_id,
+            codex_api_key=codex_api_key or None,
+            gemini_api_key=gemini_api_key or None,
+            claude_api_key=claude_api_key or None,
+            allow_copilot=use_copilot,
+        )
+    except Exception as exc:
+        return _render_auth_message("Credential Error", f"{exc}", status_code=400)
+
+    ready = bool(result.get("ready"))
+    grants = int(result.get("project_access_count") or 0)
+    body = (
+        "<p>✅ Setup completed successfully.</p>"
+        if ready
+        else "<p>⚠️ Credentials saved, but setup is not fully ready yet.</p>"
+    )
+    body += (
+        f"<p>Project access count: <strong>{grants}</strong>.</p>"
+        "<p>Go back to Discord or Telegram and run <code>/setup-status</code> or <code>/setup_status</code>.</p>"
+    )
+    return _render_auth_message("Setup Complete", body, status_code=200)
+
+
+@app.route("/auth/result", methods=["GET"])
+def auth_result():
+    if not NEXUS_AUTH_ENABLED:
+        return jsonify({"enabled": False, "status": "disabled"}), 200
+    session_id = str(request.args.get("session", "")).strip()
+    if not session_id:
+        return jsonify({"status": "error", "message": "session query parameter is required"}), 400
+    payload = _svc_get_session_and_setup_status(session_id)
+    return jsonify(payload), 200
+
+
 @app.route("/health", methods=["GET"])
 def health_check():
     """Health check endpoint."""
+    _run_acl_sync_if_due()
     return jsonify({"status": "healthy", "service": "nexus-webhook", "version": "1.0.0"}), 200
 
 
@@ -525,6 +816,7 @@ def _get_completion_store():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     """Main webhook endpoint for GitHub events."""
+    _run_acl_sync_if_due()
     body, status = _process_webhook_request(
         payload_body=request.data,
         headers=dict(request.headers),
@@ -553,6 +845,12 @@ def index():
                     "/webhook": "POST - Git webhook events",
                     "/health": "GET - Health check",
                     "/visualizer": "GET - Real-time workflow visualizer dashboard",
+                    "/auth/start": "GET - Begin OAuth onboarding (GitHub/GitLab)",
+                    "/auth/github/callback": "GET - GitHub OAuth callback",
+                    "/auth/gitlab/callback": "GET - GitLab OAuth callback",
+                    "/auth/codex-key": "POST - Save user Codex key",
+                    "/auth/ai-keys": "POST - Save user AI provider keys",
+                    "/auth/result": "GET - Onboarding session status",
                 },
             }
         ),

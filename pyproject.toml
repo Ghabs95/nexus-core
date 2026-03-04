@@ -65,6 +65,7 @@ nexus-bot = [
     "eventlet>=0.35",
     "apscheduler>=3.11",
     "requests>=2.32",
+    "cryptography>=42.0",
     "openai-whisper>=20250625",
     "discord.py>=2.6",
     "PyNaCl>=1.5",

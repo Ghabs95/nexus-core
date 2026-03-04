@@ -13,6 +13,8 @@ async def handle_task_confirmation_callback(
     orchestrator: Any,
     get_chat: Callable[..., Any],
     process_inbox_task: Callable[..., Awaitable[Any]],
+    requester_context_builder: Callable[[Any], dict[str, str]] | None = None,
+    authorize_project: Callable[[str, dict[str, Any] | None], tuple[bool, str]] | None = None,
 ) -> None:
     query = getattr(update, "callback_query", None)
     if not query:
@@ -56,6 +58,9 @@ async def handle_task_confirmation_callback(
     )
     context.user_data.pop("pending_task_confirmation", None)
 
+    requester_context = (
+        requester_context_builder(effective_user) if callable(requester_context_builder) else None
+    )
     result = await route_task_with_context(
         user_id=user_id,
         text=text,
@@ -63,6 +68,8 @@ async def handle_task_confirmation_callback(
         message_id=message_id,
         get_chat=get_chat,
         process_inbox_task=process_inbox_task,
+        requester_context=requester_context,
+        authorize_project=authorize_project,
     )
     if not result.get("success") and "pending_resolution" in result:
         context.user_data["pending_task_project_resolution"] = result["pending_resolution"]
@@ -85,6 +92,8 @@ async def handle_save_task_selection(
     get_inbox_dir: Callable[[str, str], str],
     transcribe_voice_message: Callable[[str, Any], Awaitable[str | None]],
     conversation_end: Any,
+    requester_context_builder: Callable[[Any], dict[str, str]] | None = None,
+    authorize_project: Callable[[str, dict[str, Any] | None], tuple[bool, str]] | None = None,
 ) -> Any:
     project = context.user_data["project"]
     task_type = context.user_data["type"]
@@ -124,12 +133,37 @@ async def handle_save_task_selection(
     if project in project_config:
         workspace = project_config[project].get("workspace", project)
 
+    requester_context = (
+        requester_context_builder(update.effective_user) if callable(requester_context_builder) else {}
+    )
+    if not isinstance(requester_context, dict):
+        requester_context = {}
+    if callable(authorize_project):
+        allowed, error_message = authorize_project(str(project), requester_context)
+        if not allowed:
+            await update.message.reply_text(error_message or "🔒 Unauthorized project access.")
+            return conversation_end
+
     filename = f"{task_type}_{update.message.message_id}.md"
     task_name_line = f"**Task Name:** {task_name}\n" if task_name else ""
+    requester_lines: list[str] = []
+    requester_nexus_id = str(requester_context.get("nexus_id") or "").strip()
+    requester_platform = str(requester_context.get("platform") or "").strip()
+    requester_platform_user_id = str(requester_context.get("platform_user_id") or "").strip()
+    if requester_nexus_id:
+        requester_lines.append(f"**Requester Nexus ID:** `{requester_nexus_id}`")
+    if requester_platform:
+        requester_lines.append(f"**Requester Platform:** {requester_platform}")
+    if requester_platform_user_id:
+        requester_lines.append(f"**Requester Platform User ID:** `{requester_platform_user_id}`")
+    requester_block = ("\n" + "\n".join(requester_lines)) if requester_lines else ""
     markdown_content = (
         f"# {types_map[task_type]}\n**Project:** {projects[project]}\n**Type:** {task_type}\n"
         f"{task_name_line}**Status:** Pending\n\n"
         f"{refined_text}\n\n"
+        f"{requester_block}\n"
+        f"---\n"
+        f"**Source:** inbox\n"
         f"---\n"
         f"**Raw Input:**\n{text}"
     )

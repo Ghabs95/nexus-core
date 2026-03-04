@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from telegram import (
+    Bot,
     BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -42,6 +43,10 @@ from config import (
     NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY,
     NEXUS_FEATURE_REGISTRY_ENABLED,
     NEXUS_FEATURE_REGISTRY_MAX_ITEMS_PER_PROJECT,
+    NEXUS_AUTH_ENABLED,
+    NEXUS_GITHUB_CLIENT_ID,
+    NEXUS_GITLAB_CLIENT_ID,
+    NEXUS_PUBLIC_BASE_URL,
     NEXUS_CORE_STORAGE_DIR,
     NEXUS_STORAGE_DSN,
     NEXUS_STORAGE_BACKEND,
@@ -272,6 +277,7 @@ from project_key_utils import normalize_project_key_optional as _normalize_proje
 from rate_limiter import RateLimit, get_rate_limiter
 from report_scheduler import ReportScheduler
 from runtime.agent_launcher import get_sop_tier_from_issue, invoke_ai_agent
+from services.auth_session_service import create_login_session_for_user
 from services.command_contract import (
     validate_command_parity,
     validate_required_command_interface,
@@ -305,6 +311,12 @@ from services.project.project_issue_command_deps_service import (
 )
 from services.project.project_issue_command_deps_service import (
     project_repo as _svc_project_repo,
+)
+from services.project_access_service import (
+    check_project_access as _svc_check_project_access,
+)
+from services.project_access_service import (
+    get_setup_status as _svc_get_setup_status,
 )
 from services.telegram.telegram_bootstrap_ui_service import (
     build_menu_keyboard as _svc_build_menu_keyboard,
@@ -526,6 +538,117 @@ rate_limiter = get_rate_limiter()
 
 # Initialize user manager
 user_manager = get_user_manager()
+
+
+def _get_or_create_telegram_user(telegram_user: Any):
+    return user_manager.get_or_create_user_by_identity(
+        platform="telegram",
+        platform_user_id=str(getattr(telegram_user, "id", "")),
+        username=getattr(telegram_user, "username", None),
+        first_name=getattr(telegram_user, "first_name", None),
+    )
+
+
+def check_permission_for_action(user_id: int, *, action: str = "execute") -> bool:
+    action_value = str(action or "execute").strip().lower()
+    if TELEGRAM_ALLOWED_USER_IDS and user_id not in TELEGRAM_ALLOWED_USER_IDS:
+        return False
+    if not NEXUS_AUTH_ENABLED:
+        return True
+    if action_value in {"readonly", "onboarding", "help"}:
+        return True
+
+    nexus_id = user_manager.resolve_nexus_id("telegram", str(user_id))
+    if not nexus_id:
+        return False
+    try:
+        setup = _svc_get_setup_status(str(nexus_id))
+    except Exception:
+        return False
+    return bool(setup.get("ready"))
+
+
+def _permission_denied_message(user_id: int, *, action: str = "execute") -> str:
+    if TELEGRAM_ALLOWED_USER_IDS and user_id not in TELEGRAM_ALLOWED_USER_IDS:
+        return "🔒 Unauthorized."
+    if not NEXUS_AUTH_ENABLED:
+        return "🔒 Unauthorized."
+    action_value = str(action or "execute").strip().lower()
+    if action_value in {"readonly", "onboarding", "help"}:
+        return "🔒 Unauthorized."
+
+    nexus_id = user_manager.resolve_nexus_id("telegram", str(user_id))
+    if not nexus_id:
+        return "🔐 Complete setup with `/login` before using task/workflow commands."
+    try:
+        setup = _svc_get_setup_status(str(nexus_id))
+    except Exception:
+        return "🔐 Auth storage is unavailable. Ask an admin to check auth configuration."
+
+    missing: list[str] = []
+    if not setup.get("git_provider_linked"):
+        missing.append("Git provider login (GitHub or GitLab)")
+    if not setup.get("ai_provider_ready"):
+        missing.append(
+            "AI provider credentials (Codex/OpenAI, Gemini, Claude, or GitHub for Copilot)"
+        )
+    if not setup.get("org_verified"):
+        missing.append("allowed org/group membership")
+    if int(setup.get("project_access_count") or 0) <= 0:
+        missing.append("project team/group access")
+    if missing:
+        return "🔐 Setup incomplete: " + ", ".join(missing) + ". Run `/login` then `/setup_status`."
+    return "🔒 Unauthorized."
+
+
+def _requester_context_for_telegram_user(telegram_user: Any) -> dict[str, str]:
+    user = _get_or_create_telegram_user(telegram_user)
+    return {
+        "nexus_id": str(user.nexus_id),
+        "platform": "telegram",
+        "platform_user_id": str(getattr(telegram_user, "id", "")),
+    }
+
+
+def _requester_context_for_telegram_user_id(user_id: int) -> dict[str, str]:
+    resolved_nexus_id = user_manager.resolve_nexus_id("telegram", str(user_id))
+    if not resolved_nexus_id:
+        user = user_manager.get_or_create_user_by_identity(
+            platform="telegram",
+            platform_user_id=str(user_id),
+            username=None,
+            first_name=None,
+        )
+        resolved_nexus_id = str(user.nexus_id)
+    return {
+        "nexus_id": str(resolved_nexus_id),
+        "platform": "telegram",
+        "platform_user_id": str(user_id),
+    }
+
+
+def _authorize_project_for_requester(
+    project_key: str,
+    requester_context: dict[str, Any] | None,
+) -> tuple[bool, str]:
+    if not NEXUS_AUTH_ENABLED:
+        return True, ""
+    context = requester_context if isinstance(requester_context, dict) else {}
+    nexus_id = str(context.get("nexus_id") or "").strip()
+    if not nexus_id:
+        return False, "🔐 Missing requester identity. Run `/login` and retry."
+    return _svc_check_project_access(nexus_id, project_key)
+
+
+def _authorize_update(*, update: Update, command: str | None = None, action: str = "execute"):
+    effective_user = getattr(update, "effective_user", None)
+    user_id = int(getattr(effective_user, "id", 0) or 0)
+    if user_id <= 0:
+        return False, "🔒 Unauthorized."
+    allowed = check_permission_for_action(user_id, action=action)
+    if allowed:
+        return True, ""
+    return False, _permission_denied_message(user_id, action=action)
 
 feature_registry_service = FeatureRegistryService(
     enabled=NEXUS_FEATURE_REGISTRY_ENABLED,
@@ -783,6 +906,8 @@ def _feature_ideation_handler_deps() -> FeatureIdeationHandlerDeps:
         base_dir=BASE_DIR,
         project_config=PROJECT_CONFIG,
         process_inbox_task=process_inbox_task,
+        requester_context_builder=_requester_context_for_telegram_user_id,
+        authorize_project=_authorize_project_for_requester,
         feature_registry_service=feature_registry_service,
         dedup_similarity=NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY,
     )
@@ -821,6 +946,8 @@ def _hands_free_routing_handler_deps() -> HandsFreeRoutingDeps:
         normalize_project_key=_normalize_project_key,
         save_resolved_task=save_resolved_task,
         task_confirmation_mode=TASK_CONFIRMATION_MODE,
+        requester_context_builder=_requester_context_for_telegram_user_id,
+        authorize_project=_authorize_project_for_requester,
         base_dir=BASE_DIR,
         project_config=PROJECT_CONFIG,
     )
@@ -1117,7 +1244,7 @@ def _parse_project_issue_args(args: list[str]) -> tuple[str | None, str | None, 
 async def _ensure_project_issue(
     update: Update, context: ContextTypes.DEFAULT_TYPE, command: str
 ) -> tuple[str | None, str | None, list[str]]:
-    return await _svc_ensure_project_issue(
+    project_key, issue_num, rest = await _svc_ensure_project_issue(
         update=update,
         context=context,
         command=command,
@@ -1127,6 +1254,13 @@ async def _ensure_project_issue(
         prompt_project_selection=_prompt_project_selection,
         prompt_issue_selection=_prompt_issue_selection,
     )
+    if project_key and NEXUS_AUTH_ENABLED:
+        requester_context = _requester_context_for_telegram_user(update.effective_user)
+        allowed, error_message = _authorize_project_for_requester(project_key, requester_context)
+        if not allowed:
+            await update.effective_message.reply_text(error_message or "🔒 Unauthorized project access.")
+            return None, None, []
+    return project_key, issue_num, rest
 
 
 async def _handle_pending_issue_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -1241,7 +1375,7 @@ async def _ctx_ensure_project_issue(
 
 
 async def _ctx_ensure_project(ctx, command: str) -> str | None:
-    return await _svc_ctx_ensure_project(
+    project_key = await _svc_ctx_ensure_project(
         ctx=ctx,
         command=command,
         get_single_project_key=_get_single_project_key,
@@ -1249,6 +1383,13 @@ async def _ctx_ensure_project(ctx, command: str) -> str | None:
         iter_project_keys=_iter_project_keys,
         ctx_prompt_project_selection=_ctx_prompt_project_selection,
     )
+    if project_key and NEXUS_AUTH_ENABLED:
+        requester_context = _requester_context_for_telegram_user_id(int(str(ctx.user_id)))
+        allowed, error_message = _authorize_project_for_requester(project_key, requester_context)
+        if not allowed:
+            await ctx.reply_text(error_message or "🔒 Unauthorized project access.")
+            return None
+    return project_key
 
 
 async def _ctx_dispatch_command(
@@ -1338,7 +1479,7 @@ tracked_issues = load_tracked_issues()  # Load on startup
 active_tail_sessions: dict[tuple[int, int], str] = {}
 active_tail_tasks: dict[tuple[int, int], asyncio.Task] = {}
 TASK_CONFIRMATION_MODE = os.getenv("TASK_CONFIRMATION_MODE", "smart").strip().lower()
-_watch_sender_bot = None
+_watch_sender_bot: Bot | None = None
 
 
 # --- 0. HELP & INFO ---
@@ -1385,6 +1526,103 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger=logger,
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
     )
+
+
+async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not NEXUS_AUTH_ENABLED:
+        await update.effective_message.reply_text("ℹ️ Auth onboarding is disabled in this environment.")
+        return
+    if not NEXUS_PUBLIC_BASE_URL:
+        await update.effective_message.reply_text(
+            "⚠️ NEXUS_PUBLIC_BASE_URL is not configured. Ask an admin to configure auth."
+        )
+        return
+
+    requested_provider = str((context.args[0] if context.args else "") or "").strip().lower()
+    if requested_provider not in {"github", "gitlab"}:
+        requested_provider = "gitlab" if NEXUS_GITLAB_CLIENT_ID else "github"
+    if requested_provider == "github" and not NEXUS_GITHUB_CLIENT_ID:
+        await update.effective_message.reply_text(
+            "⚠️ GitHub OAuth is not configured. Use `/login gitlab`.",
+            parse_mode="Markdown",
+        )
+        return
+    if requested_provider == "gitlab" and not NEXUS_GITLAB_CLIENT_ID:
+        await update.effective_message.reply_text(
+            "⚠️ GitLab OAuth is not configured. Use `/login github`.",
+            parse_mode="Markdown",
+        )
+        return
+
+    user = _get_or_create_telegram_user(update.effective_user)
+    session_id = create_login_session_for_user(
+        nexus_id=str(user.nexus_id),
+        discord_user_id=str(update.effective_user.id),
+        discord_username=getattr(update.effective_user, "username", None),
+    )
+    login_url = (
+        f"{NEXUS_PUBLIC_BASE_URL}/auth/start?session={session_id}&provider={requested_provider}"
+    )
+    await update.effective_message.reply_text(
+        (
+            "🔐 Setup required before task execution.\n\n"
+            f"1. Open: {login_url}\n"
+            f"2. Sign in with {requested_provider.title()}\n"
+            "3. Add Codex/OpenAI, Gemini, and/or Claude key, or use Copilot with linked GitHub OAuth\n"
+            "4. Run `/setup_status`"
+        ),
+    )
+
+
+async def setup_status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = _get_or_create_telegram_user(update.effective_user)
+    status = _svc_get_setup_status(str(user.nexus_id))
+    if not status.get("auth_enabled"):
+        await update.effective_message.reply_text("ℹ️ Auth onboarding is disabled in this environment.")
+        return
+
+    projects = status.get("projects") or []
+    projects_line = ", ".join(projects) if projects else "(none)"
+    lines = [
+        "🧾 Setup Status",
+        f"- Nexus ID: `{user.nexus_id}`",
+        f"- GitHub linked: {'✅' if status.get('github_linked') else '❌'}",
+        f"- GitLab linked: {'✅' if status.get('gitlab_linked') else '❌'}",
+        f"- GitHub login: `{status.get('github_login') or 'n/a'}`",
+        f"- GitLab username: `{status.get('gitlab_username') or 'n/a'}`",
+        f"- Codex key set: {'✅' if status.get('codex_key_set') else '❌'}",
+        f"- Gemini key set: {'✅' if status.get('gemini_key_set') else '❌'}",
+        f"- Claude key set: {'✅' if status.get('claude_key_set') else '❌'}",
+        f"- Copilot ready (GitHub linked): {'✅' if status.get('copilot_ready') else '❌'}",
+        f"- Org/group verified: {'✅' if status.get('org_verified') else '❌'}",
+        f"- Project access: `{int(status.get('project_access_count') or 0)}`",
+        f"- Projects: {projects_line}",
+        f"- Ready: {'✅' if status.get('ready') else '❌'}",
+    ]
+    if not status.get("ready"):
+        lines.append("")
+        lines.append("Run `/login` to complete any missing steps.")
+    await update.effective_message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def whoami_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = _get_or_create_telegram_user(update.effective_user)
+    setup = _svc_get_setup_status(str(user.nexus_id)) if NEXUS_AUTH_ENABLED else {}
+    identities = ", ".join(
+        f"{platform}:{value}" for platform, value in sorted((user.identities or {}).items())
+    )
+    lines = [
+        "👤 Identity",
+        f"- Nexus ID: `{user.nexus_id}`",
+        f"- Telegram ID: `{update.effective_user.id}`",
+        f"- Username: `{getattr(update.effective_user, 'username', None) or 'n/a'}`",
+        f"- Linked identities: {identities or '(none)'}",
+    ]
+    if NEXUS_AUTH_ENABLED:
+        lines.append(f"- GitHub login: `{setup.get('github_login') or 'n/a'}`")
+        lines.append(f"- GitLab username: `{setup.get('gitlab_username') or 'n/a'}`")
+        lines.append(f"- Ready: {'✅' if setup.get('ready') else '❌'}")
+    await update.effective_message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 def build_menu_keyboard(button_rows, include_back=True):
@@ -1469,6 +1707,8 @@ async def task_confirmation_callback_handler(update: Update, context: ContextTyp
         orchestrator=orchestrator,
         get_chat=get_chat,
         process_inbox_task=process_inbox_task,
+        requester_context_builder=_requester_context_for_telegram_user,
+        authorize_project=_authorize_project_for_requester,
     )
 
 
@@ -1509,6 +1749,12 @@ async def hands_free_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def start_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = int(getattr(update.effective_user, "id", 0) or 0)
+    if not check_permission_for_action(user_id, action="execute"):
+        await update.effective_message.reply_text(
+            _permission_denied_message(user_id, action="execute")
+        )
+        return ConversationHandler.END
     return await _svc_start_selection_flow(
         update=update,
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
@@ -1520,6 +1766,12 @@ async def start_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def project_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = int(getattr(update.effective_user, "id", 0) or 0)
+    if not check_permission_for_action(user_id, action="execute"):
+        await update.effective_message.reply_text(
+            _permission_denied_message(user_id, action="execute")
+        )
+        return ConversationHandler.END
     return await _svc_project_selected_flow(
         update=update,
         context=context,
@@ -1532,6 +1784,12 @@ async def project_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def type_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = int(getattr(update.effective_user, "id", 0) or 0)
+    if not check_permission_for_action(user_id, action="execute"):
+        await update.effective_message.reply_text(
+            _permission_denied_message(user_id, action="execute")
+        )
+        return ConversationHandler.END
     return await _svc_type_selected_flow(
         update=update,
         context=context,
@@ -1541,6 +1799,12 @@ async def type_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- 3. SAVING THE TASK (Uses Gemini only if Voice) ---
 async def save_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = int(getattr(update.effective_user, "id", 0) or 0)
+    if not check_permission_for_action(user_id, action="execute"):
+        await update.effective_message.reply_text(
+            _permission_denied_message(user_id, action="execute")
+        )
+        return ConversationHandler.END
     return await handle_save_task_selection(
         update=update,
         context=context,
@@ -1555,6 +1819,8 @@ async def save_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         get_inbox_dir=get_inbox_dir,
         transcribe_voice_message=_transcribe_voice_message,
         conversation_end=ConversationHandler.END,
+        requester_context_builder=_requester_context_for_telegram_user,
+        authorize_project=_authorize_project_for_requester,
     )
 
 
@@ -1948,10 +2214,14 @@ def main():
         app=app,
         conv_handler=conv_handler,
         filters_module=filters,
+        authorize_update=_authorize_update,
         handlers={
             "start_handler": start_handler,
             "help_handler": help_handler,
             "menu_handler": menu_handler,
+            "login_handler": login_handler,
+            "setup_status_handler": setup_status_handler,
+            "whoami_handler": whoami_handler,
             "rename_handler": rename_handler,
             "cancel": cancel,
             "status_handler": status_handler,

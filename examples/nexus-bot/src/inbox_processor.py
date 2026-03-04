@@ -75,6 +75,7 @@ from services.completion_monitor_service import (
 from services.completion_monitor_service import (
     run_completion_monitor_cycle as _run_completion_monitor_cycle,
 )
+from services.credential_store import bind_issue_requester as _bind_issue_requester
 from services.feature_registry_service import FeatureRegistryService
 from services.inbox.inbox_issue_context_service import (
     find_task_file_for_issue as _svc_find_task_file_for_issue,
@@ -187,6 +188,11 @@ from services.processor_loops_service import (
 )
 from services.processor_runtime_state import (
     ProcessorRuntimeState,
+)
+from services.project_access_service import (
+    auth_enabled as _auth_enabled,
+    check_project_access as _check_project_access,
+    check_repo_access as _check_repo_access,
 )
 from services.repo_resolution_service import (
     resolve_repo_for_issue as _service_resolve_repo_for_issue,
@@ -1159,6 +1165,25 @@ def process_task_payload(*, project_key: str, workspace: str, filename: str, con
     )
 
 
+def _ensure_project_and_repo_access(
+    requester_nexus_id: str,
+    project_key: str,
+    repo_name: str,
+) -> tuple[bool, str]:
+    if not _auth_enabled():
+        return True, ""
+    requester = str(requester_nexus_id or "").strip()
+    if not requester:
+        return False, "Missing requester identity for authenticated execution."
+    allowed_project, project_error = _check_project_access(requester, project_key)
+    if not allowed_project:
+        return False, project_error
+    allowed_repo, repo_error = _check_repo_access(requester, repo_name, project_key)
+    if not allowed_repo:
+        return False, repo_error
+    return True, ""
+
+
 def _process_task_context(*, task_ctx: dict[str, object], filepath: str) -> bool:
     return _svc_process_task_context(
         task_ctx=task_ctx,
@@ -1191,6 +1216,8 @@ def _process_task_context(*, task_ctx: dict[str, object], filepath: str) -> bool
             "get_workflow_state_plugin": get_workflow_state_plugin,
             "workflow_state_plugin_kwargs": _WORKFLOW_STATE_PLUGIN_KWARGS,
             "start_workflow": start_workflow,
+            "bind_issue_requester": _bind_issue_requester,
+            "ensure_project_and_repo_access": _ensure_project_and_repo_access,
         },
     )
 

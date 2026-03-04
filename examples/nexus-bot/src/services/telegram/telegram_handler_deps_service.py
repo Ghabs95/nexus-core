@@ -78,15 +78,30 @@ def build_feature_ideation_handler_deps(
     base_dir,
     project_config,
     process_inbox_task,
+    requester_context_builder=None,
+    authorize_project=None,
     feature_registry_service=None,
     dedup_similarity=0.86,
 ):
-    async def _create_feature_task(text: str, message_id: str, project_key: str):
+    async def _create_feature_task(
+        text: str,
+        message_id: str,
+        project_key: str,
+        user_id: str | None = None,
+    ):
+        requester_context = None
+        if callable(requester_context_builder) and user_id:
+            try:
+                requester_context = requester_context_builder(int(str(user_id)))
+            except Exception:
+                requester_context = None
         return await process_inbox_task(
             text,
             orchestrator,
             message_id,
             project_hint=project_key,
+            requester_context=requester_context,
+            authorize_project=authorize_project,
         )
 
     return FeatureIdeationHandlerDeps(

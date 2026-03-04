@@ -25,6 +25,9 @@ try:
 
     _SA_AVAILABLE = True
 except ImportError:
+    sa = None  # type: ignore[assignment]
+    DeclarativeBase = object  # type: ignore[assignment]
+    Session = None  # type: ignore[assignment]
     _SA_AVAILABLE = False
 
 
@@ -332,10 +335,12 @@ class _PostgresFeatureRegistryStore:
             )
             normalized_ref = normalize_feature_title(feature_ref)
             for row in rows:
-                aliases = self._safe_aliases(row.aliases)
+                aliases = self._safe_aliases(str(row.aliases or "[]"))
+                feature_id = str(row.feature_id or "").strip()
+                canonical_title = str(row.canonical_title or "")
                 if (
-                    row.feature_id == str(feature_ref).strip()
-                    or normalize_feature_title(row.canonical_title) == normalized_ref
+                    feature_id == str(feature_ref).strip()
+                    or normalize_feature_title(canonical_title) == normalized_ref
                     or normalized_ref in [normalize_feature_title(alias) for alias in aliases]
                 ):
                     record = self._row_to_record(row)
@@ -369,6 +374,18 @@ class _PostgresFeatureRegistryStore:
             canonical_title_hash=str(row.canonical_title_hash),
             manual_override=bool(row.manual_override),
         )
+
+    def close(self) -> None:
+        try:
+            self._engine.dispose()
+        except Exception:
+            pass
+
+    def __del__(self) -> None:  # pragma: no cover - defensive finalizer
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 def _parse_timestamp(value: str) -> datetime | None:
@@ -417,6 +434,20 @@ class FeatureRegistryService:
 
     def is_enabled(self) -> bool:
         return self.enabled
+
+    def close(self) -> None:
+        close_fn = getattr(self._store, "close", None)
+        if callable(close_fn):
+            try:
+                close_fn()
+            except Exception:
+                pass
+
+    def __del__(self) -> None:  # pragma: no cover - defensive finalizer
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def list_features(self, project_key: str) -> list[dict[str, Any]]:
         if not self.enabled:

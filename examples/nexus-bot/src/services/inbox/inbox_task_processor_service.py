@@ -1,5 +1,19 @@
+import inspect
 import os
 import re
+
+
+def _invoke_with_supported_kwargs(fn, kwargs: dict):
+    """Call fn with only kwargs supported by its signature."""
+    try:
+        signature = inspect.signature(fn)
+        parameters = signature.parameters
+        if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+            return fn(**kwargs)
+        allowed = {name: value for name, value in kwargs.items() if name in parameters}
+        return fn(**allowed)
+    except Exception:
+        return fn(**kwargs)
 
 
 def process_task_payload(
@@ -29,6 +43,18 @@ def process_task_payload(
             return False
         type_match = re.search(r"\*\*Type:\*\*\s*(.+)", str(content or ""))
         task_type = type_match.group(1).strip().lower() if type_match else "feature"
+        requester_nexus_match = re.search(
+            r"\*\*Requester Nexus ID:\*\*\s*`?([^`\n]+)`?",
+            str(content or ""),
+        )
+        requester_platform_match = re.search(
+            r"\*\*Requester Platform:\*\*\s*([^\n]+)",
+            str(content or ""),
+        )
+        requester_platform_user_match = re.search(
+            r"\*\*Requester Platform User ID:\*\*\s*`?([^`\n]+)`?",
+            str(content or ""),
+        )
         task_ctx = {
             "content": str(content or ""),
             "task_type": task_type,
@@ -37,6 +63,21 @@ def process_task_payload(
                 base_dir, str(workspace or cfg.get("workspace", project_key))
             ),
             "config": cfg,
+            "requester_nexus_id": (
+                str(requester_nexus_match.group(1)).strip()
+                if requester_nexus_match
+                else None
+            ),
+            "requester_platform": (
+                str(requester_platform_match.group(1)).strip().lower()
+                if requester_platform_match
+                else None
+            ),
+            "requester_platform_user_id": (
+                str(requester_platform_user_match.group(1)).strip()
+                if requester_platform_user_match
+                else None
+            ),
         }
         synthetic_path = f"postgres://inbox/{project_key}/{filename}"
         return bool(process_task_context_fn(task_ctx=task_ctx, filepath=synthetic_path))
@@ -56,10 +97,11 @@ def process_task_context(*, task_ctx: dict[str, object], filepath: str, deps) ->
     project_name = task_ctx["project_name"]
     project_root = task_ctx["project_root"]
     config = task_ctx["config"]
+    requester_nexus_id = str(task_ctx.get("requester_nexus_id") or "").strip() or None
 
     deps["logger"].info(f"Project: {project_name}")
 
-    if deps["handle_webhook_task"](
+    webhook_kwargs = dict(
         filepath=filepath,
         content=str(content),
         project_name=str(project_name),
@@ -78,10 +120,12 @@ def process_task_context(*, task_ctx: dict[str, object], filepath: str, deps) ->
         get_repo_for_project=deps["get_repo_for_project"],
         resolve_tier_for_issue=deps["resolve_tier_for_issue"],
         invoke_ai_agent=deps["invoke_ai_agent"],
-    ):
+        requester_nexus_id=requester_nexus_id,
+    )
+    if _invoke_with_supported_kwargs(deps["handle_webhook_task"], webhook_kwargs):
         return True
 
-    deps["handle_new_task"](
+    new_task_kwargs = dict(
         filepath=filepath,
         content=str(content),
         task_type=task_type,
@@ -107,5 +151,9 @@ def process_task_context(*, task_ctx: dict[str, object], filepath: str, deps) ->
         start_workflow=deps["start_workflow"],
         get_initial_agent_from_workflow=deps["get_initial_agent_from_workflow"],
         invoke_ai_agent=deps["invoke_ai_agent"],
+        requester_nexus_id=requester_nexus_id,
+        bind_issue_requester=deps.get("bind_issue_requester"),
+        ensure_project_and_repo_access=deps.get("ensure_project_and_repo_access"),
     )
+    _invoke_with_supported_kwargs(deps["handle_new_task"], new_task_kwargs)
     return True

@@ -116,6 +116,8 @@ async def route_task_with_context(
     message_id: str,
     get_chat: Callable[[int], dict[str, Any]],
     process_inbox_task: Any,
+    requester_context: dict[str, Any] | None = None,
+    authorize_project=None,
 ) -> dict[str, Any]:
     """Route task through shared inbox logic using active chat project context."""
     active_chat = get_chat(user_id)
@@ -123,9 +125,24 @@ async def route_task_with_context(
     metadata = metadata if isinstance(metadata, dict) else {}
     project_hint = metadata.get("project_key")
 
-    return await process_inbox_task(
-        text,
-        orchestrator,
-        message_id,
-        project_hint=project_hint,
-    )
+    kwargs = {"project_hint": project_hint}
+    if requester_context is not None:
+        kwargs["requester_context"] = requester_context
+    if authorize_project is not None:
+        kwargs["authorize_project"] = authorize_project
+
+    try:
+        return await process_inbox_task(
+            text,
+            orchestrator,
+            message_id,
+            **kwargs,
+        )
+    except TypeError:
+        # Backward compatibility for older task processors.
+        return await process_inbox_task(
+            text,
+            orchestrator,
+            message_id,
+            project_hint=project_hint,
+        )

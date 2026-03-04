@@ -69,6 +69,11 @@ def _parse_int_list(name: str) -> list[int]:
     return [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
 
 
+def _parse_csv_list(name: str) -> list[str]:
+    raw = os.getenv(name, "")
+    return [str(item).strip() for item in str(raw).split(",") if str(item).strip()]
+
+
 # --- TELEGRAM CONFIGURATION ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
@@ -157,6 +162,38 @@ PROJECT_CONFIG = _get_project_config()
 # --- WEBHOOK CONFIGURATION ---
 WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8081"))
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")  # Git webhook secret for signature verification
+
+# --- AUTH / CREDENTIALS CONFIGURATION ---
+NEXUS_AUTH_ENABLED = str(os.getenv("NEXUS_AUTH_ENABLED", "false")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+NEXUS_PUBLIC_BASE_URL = str(os.getenv("NEXUS_PUBLIC_BASE_URL", "")).strip().rstrip("/")
+NEXUS_GITLAB_BASE_URL = (
+    str(os.getenv("NEXUS_GITLAB_BASE_URL", os.getenv("GITLAB_BASE_URL", "https://gitlab.com")))
+    .strip()
+    .rstrip("/")
+)
+NEXUS_GITHUB_CLIENT_ID = str(os.getenv("NEXUS_GITHUB_CLIENT_ID", "")).strip()
+NEXUS_GITHUB_CLIENT_SECRET = str(os.getenv("NEXUS_GITHUB_CLIENT_SECRET", "")).strip()
+NEXUS_GITLAB_CLIENT_ID = str(os.getenv("NEXUS_GITLAB_CLIENT_ID", "")).strip()
+NEXUS_GITLAB_CLIENT_SECRET = str(os.getenv("NEXUS_GITLAB_CLIENT_SECRET", "")).strip()
+NEXUS_AUTH_ALLOWED_GITHUB_ORGS = [
+    str(value).strip().lower()
+    for value in _parse_csv_list("NEXUS_AUTH_ALLOWED_GITHUB_ORGS")
+    if str(value).strip()
+]
+NEXUS_AUTH_ALLOWED_GITLAB_GROUPS = [
+    str(value).strip().lower()
+    for value in _parse_csv_list("NEXUS_AUTH_ALLOWED_GITLAB_GROUPS")
+    if str(value).strip()
+]
+NEXUS_CREDENTIALS_MASTER_KEY = str(os.getenv("NEXUS_CREDENTIALS_MASTER_KEY", "")).strip()
+NEXUS_CREDENTIALS_KEY_VERSION = _get_int_env("NEXUS_CREDENTIALS_KEY_VERSION", 1)
+NEXUS_AUTH_SESSION_TTL_SECONDS = _get_int_env("NEXUS_AUTH_SESSION_TTL_SECONDS", 900)
+NEXUS_ACCESS_SYNC_INTERVAL_MINUTES = _get_int_env("NEXUS_ACCESS_SYNC_INTERVAL_MINUTES", 30)
 
 
 # --- AI ORCHESTRATOR CONFIGURATION ---
@@ -751,6 +788,31 @@ def validate_configuration():
 
     if not TELEGRAM_ALLOWED_USER_IDS:
         warnings.append("TELEGRAM_ALLOWED_USER_IDS are missing! Bot will not respond to anyone.")
+
+    if NEXUS_AUTH_ENABLED:
+        if NEXUS_STORAGE_BACKEND != "postgres":
+            errors.append("NEXUS_AUTH_ENABLED=true requires NEXUS_STORAGE_BACKEND=postgres.")
+        if not NEXUS_STORAGE_DSN:
+            errors.append("NEXUS_AUTH_ENABLED=true requires NEXUS_STORAGE_DSN.")
+        if not NEXUS_PUBLIC_BASE_URL:
+            errors.append("NEXUS_AUTH_ENABLED=true requires NEXUS_PUBLIC_BASE_URL.")
+        github_enabled = bool(NEXUS_GITHUB_CLIENT_ID and NEXUS_GITHUB_CLIENT_SECRET)
+        gitlab_enabled = bool(NEXUS_GITLAB_CLIENT_ID and NEXUS_GITLAB_CLIENT_SECRET)
+        if not github_enabled and not gitlab_enabled:
+            errors.append(
+                "NEXUS_AUTH_ENABLED=true requires GitHub or GitLab OAuth credentials "
+                "(NEXUS_GITHUB_CLIENT_ID/SECRET or NEXUS_GITLAB_CLIENT_ID/SECRET)."
+            )
+        if github_enabled and not NEXUS_AUTH_ALLOWED_GITHUB_ORGS:
+            errors.append(
+                "NEXUS_AUTH_ENABLED=true with GitHub OAuth requires NEXUS_AUTH_ALLOWED_GITHUB_ORGS."
+            )
+        if gitlab_enabled and not NEXUS_AUTH_ALLOWED_GITLAB_GROUPS:
+            errors.append(
+                "NEXUS_AUTH_ENABLED=true with GitLab OAuth requires NEXUS_AUTH_ALLOWED_GITLAB_GROUPS."
+            )
+        if not NEXUS_CREDENTIALS_MASTER_KEY:
+            errors.append("NEXUS_AUTH_ENABLED=true requires NEXUS_CREDENTIALS_MASTER_KEY.")
 
     # Validate PROJECT_CONFIG (when loaded)
     try:

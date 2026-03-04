@@ -12,6 +12,12 @@ class _AIProviderEnum(Enum):
     COPILOT = "copilot"
     GEMINI = "gemini"
     CODEX = "codex"
+    CLAUDE = "claude"
+
+
+def _known_provider_names() -> set[str]:
+    """Return normalized provider identifiers accepted in config."""
+    return {provider.value for provider in _AIProviderEnum}
 
 
 def _validate_tool_preferences_block(
@@ -45,7 +51,7 @@ def _validate_model_profiles_block(payload: Any, *, label: str) -> set[str]:
         raise ValueError(f"{label} must be a mapping")
 
     known_profiles: set[str] = set()
-    known_provider_names = {provider.value for provider in _AIProviderEnum}
+    known_provider_names = _known_provider_names()
 
     for profile_name, provider_map in payload.items():
         normalized_profile = str(profile_name or "").strip()
@@ -80,7 +86,7 @@ def _validate_profile_provider_priority_block(
     if not isinstance(payload, dict):
         raise ValueError(f"{label} must be a mapping")
 
-    known_provider_names = {provider.value for provider in _AIProviderEnum}
+    known_provider_names = _known_provider_names()
     for profile_name, providers in payload.items():
         normalized_profile = str(profile_name or "").strip()
         if not normalized_profile:
@@ -158,6 +164,59 @@ def validate_project_config(config: dict[str, Any]) -> None:
             raise ValueError(
                 f"PROJECT_CONFIG['{project}']['git_platform'] must be 'github' or 'gitlab'"
             )
+
+        access_control = proj_config.get("access_control")
+        if access_control is not None:
+            if not isinstance(access_control, dict):
+                raise ValueError(f"PROJECT_CONFIG['{project}']['access_control'] must be a mapping")
+            github_teams = access_control.get("github_teams")
+            if github_teams is not None:
+                if not isinstance(github_teams, list):
+                    raise ValueError(
+                        f"PROJECT_CONFIG['{project}']['access_control']['github_teams'] must be a list"
+                    )
+                for team_slug in github_teams:
+                    candidate = str(team_slug or "").strip()
+                    if not candidate or "/" not in candidate:
+                        raise ValueError(
+                            f"PROJECT_CONFIG['{project}']['access_control']['github_teams'] contains invalid team '{team_slug}' (expected org/team-slug)"
+                        )
+            gitlab_groups = access_control.get("gitlab_groups")
+            if gitlab_groups is not None:
+                if not isinstance(gitlab_groups, list):
+                    raise ValueError(
+                        f"PROJECT_CONFIG['{project}']['access_control']['gitlab_groups'] must be a list"
+                    )
+                for group_path in gitlab_groups:
+                    candidate = str(group_path or "").strip()
+                    if not candidate or "/" not in candidate:
+                        raise ValueError(
+                            f"PROJECT_CONFIG['{project}']['access_control']['gitlab_groups'] contains invalid group '{group_path}' (expected group/subgroup)"
+                        )
+            github_users = access_control.get("github_users")
+            if github_users is not None:
+                if not isinstance(github_users, list):
+                    raise ValueError(
+                        f"PROJECT_CONFIG['{project}']['access_control']['github_users'] must be a list"
+                    )
+                for username in github_users:
+                    candidate = str(username or "").strip().lstrip("@")
+                    if not candidate or "/" in candidate:
+                        raise ValueError(
+                            f"PROJECT_CONFIG['{project}']['access_control']['github_users'] contains invalid username '{username}'"
+                        )
+            gitlab_users = access_control.get("gitlab_users")
+            if gitlab_users is not None:
+                if not isinstance(gitlab_users, list):
+                    raise ValueError(
+                        f"PROJECT_CONFIG['{project}']['access_control']['gitlab_users'] must be a list"
+                    )
+                for username in gitlab_users:
+                    candidate = str(username or "").strip().lstrip("@")
+                    if not candidate or "/" in candidate:
+                        raise ValueError(
+                            f"PROJECT_CONFIG['{project}']['access_control']['gitlab_users'] contains invalid username '{username}'"
+                        )
 
         project_profiles = set(global_profiles)
         project_profiles.update(
