@@ -285,3 +285,18 @@ def test_compute_gitlab_project_grants_users_only_and_group_user_intersection():
         project_config=config,
     )
     assert ("acme", "mario") in grants_mario
+
+
+def test_compute_gitlab_project_grants_accepts_top_level_group():
+    config = {
+        "acme": {
+            "workspace": "acme",
+            "access_control": {"gitlab_groups": ["acme"]},
+        }
+    }
+    grants = access_svc.compute_project_grants_for_gitlab_acl(
+        group_paths={"acme"},
+        gitlab_username=None,
+        project_config=config,
+    )
+    assert ("acme", "acme") in grants

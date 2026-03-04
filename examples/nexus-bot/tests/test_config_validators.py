@@ -70,3 +70,15 @@ def test_validate_project_config_rejects_invalid_access_control_username():
     }
     with pytest.raises(ValueError):
         validate_project_config(payload)
+
+
+def test_validate_project_config_accepts_top_level_gitlab_group():
+    payload = {
+        "nexus": {
+            "workspace": "x",
+            "agents_dir": "a",
+            "git_platform": "gitlab",
+            "access_control": {"gitlab_groups": ["acme"]},
+        }
+    }
+    validate_project_config(payload)

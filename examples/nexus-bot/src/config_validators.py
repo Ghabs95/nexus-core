@@ -188,10 +188,15 @@ def validate_project_config(config: dict[str, Any]) -> None:
                         f"PROJECT_CONFIG['{project}']['access_control']['gitlab_groups'] must be a list"
                     )
                 for group_path in gitlab_groups:
-                    candidate = str(group_path or "").strip()
-                    if not candidate or "/" not in candidate:
+                    candidate = str(group_path or "").strip().strip("/")
+                    if not candidate:
                         raise ValueError(
-                            f"PROJECT_CONFIG['{project}']['access_control']['gitlab_groups'] contains invalid group '{group_path}' (expected group/subgroup)"
+                            f"PROJECT_CONFIG['{project}']['access_control']['gitlab_groups'] contains invalid group '{group_path}'"
+                        )
+                    parts = [part for part in candidate.split("/") if str(part).strip()]
+                    if not parts:
+                        raise ValueError(
+                            f"PROJECT_CONFIG['{project}']['access_control']['gitlab_groups'] contains invalid group '{group_path}'"
                         )
             github_users = access_control.get("github_users")
             if github_users is not None:

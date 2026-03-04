@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
 from urllib.parse import quote_plus
@@ -78,6 +78,18 @@ def _normalize_slug(value: str) -> str:
     return f"{left}/{right}"
 
 
+def _normalize_gitlab_group(value: str) -> str:
+    candidate = str(value or "").strip().lower().strip("/")
+    if not candidate:
+        return ""
+    if "/" not in candidate:
+        return candidate
+    parts = [part.strip() for part in candidate.split("/") if part.strip()]
+    if not parts:
+        return ""
+    return "/".join(parts)
+
+
 def _normalize_username(value: str) -> str:
     candidate = str(value or "").strip().lower()
     if candidate.startswith("@"):
@@ -88,6 +100,8 @@ def _normalize_username(value: str) -> str:
 def _project_access_mapping(
     key_name: str,
     project_config: Mapping[str, Any] | None = None,
+    *,
+    normalizer: Callable[[str], str] = _normalize_slug,
 ) -> dict[str, set[str]]:
     config = project_config if isinstance(project_config, Mapping) else PROJECT_CONFIG
     mapping: dict[str, set[str]] = {}
@@ -103,7 +117,7 @@ def _project_access_mapping(
             continue
         slugs: set[str] = set()
         for item in raw_items:
-            slug = _normalize_slug(str(item))
+            slug = normalizer(str(item))
             if slug:
                 slugs.add(slug)
         if slugs:
@@ -335,12 +349,7 @@ def fetch_gitlab_user_groups(token: str) -> set[str]:
             if not isinstance(item, dict):
                 continue
             full_path = str(item.get("full_path") or "").strip().lower()
-            if "/" not in full_path:
-                # Top-level groups can still be used as path (org/group-name is not required).
-                if full_path:
-                    groups.add(full_path)
-                continue
-            normalized = _normalize_slug(full_path)
+            normalized = _normalize_gitlab_group(full_path)
             if normalized:
                 groups.add(normalized)
         if len(payload) < 100:
@@ -386,7 +395,7 @@ def compute_project_grants_for_teams(
     team_slugs: set[str],
     project_config: Mapping[str, Any] | None = None,
 ) -> list[tuple[str, str]]:
-    mapping = _project_access_mapping("github_teams", project_config)
+    mapping = _project_access_mapping("github_teams", project_config, normalizer=_normalize_slug)
     grants: list[tuple[str, str]] = []
     for project_key, required_teams in mapping.items():
         for team in required_teams:
@@ -401,7 +410,7 @@ def compute_project_grants_for_github_acl(
     github_login: str | None,
     project_config: Mapping[str, Any] | None = None,
 ) -> list[tuple[str, str]]:
-    team_mapping = _project_access_mapping("github_teams", project_config)
+    team_mapping = _project_access_mapping("github_teams", project_config, normalizer=_normalize_slug)
     user_mapping = _project_user_mapping("github_users", project_config)
     projects = set(team_mapping) | set(user_mapping)
     normalized_login = _normalize_username(str(github_login or ""))
@@ -436,7 +445,11 @@ def compute_project_grants_for_gitlab_groups(
     group_paths: set[str],
     project_config: Mapping[str, Any] | None = None,
 ) -> list[tuple[str, str]]:
-    mapping = _project_access_mapping("gitlab_groups", project_config)
+    mapping = _project_access_mapping(
+        "gitlab_groups",
+        project_config,
+        normalizer=_normalize_gitlab_group,
+    )
     grants: list[tuple[str, str]] = []
     for project_key, required_groups in mapping.items():
         for group in required_groups:
@@ -452,7 +465,11 @@ def compute_project_grants_for_gitlab_acl(
     gitlab_username: str | None,
     project_config: Mapping[str, Any] | None = None,
 ) -> list[tuple[str, str]]:
-    group_mapping = _project_access_mapping("gitlab_groups", project_config)
+    group_mapping = _project_access_mapping(
+        "gitlab_groups",
+        project_config,
+        normalizer=_normalize_gitlab_group,
+    )
     user_mapping = _project_user_mapping("gitlab_users", project_config)
     projects = set(group_mapping) | set(user_mapping)
     normalized_username = _normalize_username(str(gitlab_username or ""))
@@ -489,7 +506,7 @@ def sync_user_project_access(
     github_login: str | None = None,
     project_config: Mapping[str, Any] | None = None,
 ) -> int:
-    team_mapping = _project_access_mapping("github_teams", project_config)
+    team_mapping = _project_access_mapping("github_teams", project_config, normalizer=_normalize_slug)
     user_mapping = _project_user_mapping("github_users", project_config)
 
     team_slugs: set[str] | None = set()
@@ -520,7 +537,11 @@ def sync_user_gitlab_project_access(
     gitlab_username: str | None = None,
     project_config: Mapping[str, Any] | None = None,
 ) -> int:
-    group_mapping = _project_access_mapping("gitlab_groups", project_config)
+    group_mapping = _project_access_mapping(
+        "gitlab_groups",
+        project_config,
+        normalizer=_normalize_gitlab_group,
+    )
     user_mapping = _project_user_mapping("gitlab_users", project_config)
 
     group_paths: set[str] | None = set()
