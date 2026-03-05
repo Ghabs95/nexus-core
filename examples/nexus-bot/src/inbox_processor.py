@@ -38,12 +38,17 @@ from nexus.core.config import (
 from nexus.adapters.git.utils import build_issue_url
 from nexus.core.auth.access_domain import (
     auth_enabled as _auth_enabled,
+    build_execution_env as _build_execution_env,
     check_project_access as _check_project_access,
     check_repo_access as _check_repo_access,
     has_setup_ready_user_for_project as _has_setup_ready_user_for_project,
     resolve_project_polling_git_token as _resolve_project_polling_git_token,
 )
 from nexus.core.auth.credential_store import bind_issue_requester as _bind_issue_requester
+from nexus.core.auth.credential_store import get_issue_requester as _get_issue_requester
+from nexus.core.auth.credential_store import (
+    list_bound_issue_numbers as _list_bound_issue_numbers,
+)
 from nexus.core.comment_monitor_service import (
     run_comment_monitor_cycle as _run_comment_monitor_cycle,
 )
@@ -54,8 +59,6 @@ from nexus.core.completion_monitor_service import (
     run_completion_monitor_cycle as _run_completion_monitor_cycle,
 )
 from nexus.core.completion_store import CompletionStore
-from services.credential_store import get_issue_requester as _get_issue_requester
-from services.credential_store import list_bound_issue_numbers as _list_bound_issue_numbers
 from nexus.core.feature_registry_service import FeatureRegistryService
 from nexus.core.inbox.inbox_issue_context_service import (
     find_task_file_for_issue as _svc_find_task_file_for_issue,
@@ -189,14 +192,6 @@ from nexus.core.processor_loops import (
 from nexus.core.processor_runtime_state import (
     ProcessorRuntimeState,
 )
-from services.project_access_service import (
-    auth_enabled as _auth_enabled,
-    build_execution_env as _build_execution_env,
-    check_project_access as _check_project_access,
-    check_repo_access as _check_repo_access,
-    has_setup_ready_user_for_project as _has_setup_ready_user_for_project,
-)
-from services.repo_resolution_service import (
 from nexus.core.project.repo_resolution import (
     resolve_repo_for_issue as _service_resolve_repo_for_issue,
 )

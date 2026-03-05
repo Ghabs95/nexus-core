@@ -72,7 +72,7 @@ def test_visualizer_accepts_session_query_and_sets_cookie(monkeypatch):
     assert first.headers["Location"].endswith("/visualizer")
     assert webhook_server._WEB_SESSION_COOKIE_NAME in (first.headers.get("Set-Cookie") or "")
     assert second.status_code == 200
-    assert b"Nexus Live Workflow Visualizer" in second.data
+    assert b"Nexus Workflow Visualizer" in second.data
 
 
 def test_visualizer_snapshot_requires_auth_when_enabled(monkeypatch):
@@ -157,7 +157,7 @@ def test_visualizer_access_token_post_sets_cookie(monkeypatch):
 
     visualizer_response = client.get("/visualizer")
     assert visualizer_response.status_code == 200
-    assert b"Nexus Live Workflow Visualizer" in visualizer_response.data
+    assert b"Nexus Workflow Visualizer" in visualizer_response.data
 
 
 def test_visualizer_disabled_flag_returns_404(monkeypatch):
