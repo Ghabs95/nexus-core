@@ -55,6 +55,7 @@ def create_pr_from_changes(
     title: str,
     body: str,
     issue_repo: str | None = None,
+    token_override: str | None = None,
 ) -> str | None:
     issue_worktree_dir = os.path.join(
         str(repo_dir),
@@ -70,7 +71,11 @@ def create_pr_from_changes(
             target_repo_dir,
         )
 
-    platform = get_git_platform(repo, project_name=project_name)
+    platform = get_git_platform(
+        repo,
+        project_name=project_name,
+        token_override=token_override,
+    )
     pr_result = asyncio.run(
         platform.create_pr_from_changes(
             repo_dir=target_repo_dir,
@@ -89,8 +94,13 @@ def close_issue(
     repo: str,
     issue_number: str,
     comment: str | None = None,
+    token_override: str | None = None,
 ) -> bool:
-    platform = get_git_platform(repo, project_name=project_name)
+    platform = get_git_platform(
+        repo,
+        project_name=project_name,
+        token_override=token_override,
+    )
     return bool(asyncio.run(platform.close_issue(issue_number, comment=comment)))
 
 
@@ -99,8 +109,13 @@ def find_existing_pr(
     project_name: str,
     repo: str,
     issue_number: str,
+    token_override: str | None = None,
 ) -> str | None:
-    platform = get_git_platform(repo, project_name=project_name)
+    platform = get_git_platform(
+        repo,
+        project_name=project_name,
+        token_override=token_override,
+    )
     linked = asyncio.run(platform.search_linked_prs(str(issue_number)))
     if not linked:
         return None

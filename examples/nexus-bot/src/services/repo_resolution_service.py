@@ -21,6 +21,7 @@ def resolve_repo_for_issue(
     ],
     get_repos: Callable[[str], list[str]],
     get_git_platform: Callable[..., Any],
+    resolve_issue_token: Callable[[str, str, str], str | None] | None,
     extract_repo_from_issue_url: Callable[[str], str],
     base_dir: str,
 ) -> str:
@@ -50,8 +51,17 @@ def resolve_repo_for_issue(
         ) or (default_project or get_default_project())
 
         try:
+            token_override = (
+                resolve_issue_token(str(matched_project), str(repo_name), str(issue_num))
+                if callable(resolve_issue_token)
+                else None
+            )
             issue = asyncio.run(
-                get_git_platform(repo_name, project_name=matched_project).get_issue(str(issue_num))
+                get_git_platform(
+                    repo_name,
+                    project_name=matched_project,
+                    token_override=token_override,
+                ).get_issue(str(issue_num))
             )
         except Exception:
             continue

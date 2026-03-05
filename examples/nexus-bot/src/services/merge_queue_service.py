@@ -162,6 +162,15 @@ def _parse_gitlab_mr_url(pr_url: str) -> tuple[str, str] | None:
 
 def merge_queue_auto_merge_once() -> None:
     """Process pending auto-merge queue entries (best effort)."""
+    merge_queue_auto_merge_once_with_token_resolver()
+
+
+def merge_queue_auto_merge_once_with_token_resolver(
+    *,
+    resolve_issue_token=None,
+    require_issue_requester_token: bool = False,
+) -> None:
+    """Process pending auto-merge queue entries with optional requester-token resolution."""
     global _last_merge_queue_run_at
     now = time.time()
     if now - _last_merge_queue_run_at < _MERGE_QUEUE_RUN_INTERVAL:
@@ -221,7 +230,20 @@ def merge_queue_auto_merge_once() -> None:
         try:
             if not repo_name:
                 raise RuntimeError("missing_repo")
-            platform = get_git_platform(repo_name, project_name=project_name or None)
+            token_override = (
+                resolve_issue_token(str(project_name), str(repo_name), str(issue_num))
+                if callable(resolve_issue_token)
+                else None
+            )
+            if require_issue_requester_token and not token_override:
+                raise PermissionError(
+                    f"No requester token available for {project_name}/{repo_name} issue #{issue_num}"
+                )
+            platform = get_git_platform(
+                repo_name,
+                project_name=project_name or None,
+                token_override=token_override,
+            )
             merge_output = asyncio.run(
                 platform.merge_pull_request(
                     pr_number,
@@ -246,6 +268,7 @@ def merge_queue_auto_merge_once() -> None:
                         "not mergeable",
                         "unsupported",
                         "missing_repo",
+                        "requester token",
                     )
                 )
                 else "failed"

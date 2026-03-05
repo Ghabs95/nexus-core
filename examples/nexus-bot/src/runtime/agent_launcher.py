@@ -33,7 +33,7 @@ from config import (
 from integrations.notifications import notify_agent_completed, emit_alert
 from orchestration.ai_orchestrator import get_orchestrator
 from orchestration.plugin_runtime import get_profiled_plugin
-from services.credential_store import get_issue_requester_by_url
+from services.credential_store import get_issue_requester, get_issue_requester_by_url
 from services.project_access_service import (
     auth_enabled,
     build_execution_env,
@@ -121,16 +121,51 @@ def _completed_agent_from_trigger(trigger_source: str) -> str | None:
     return normalized
 
 
-def _get_git_platform_client(repo: str, project_name: str | None = None):
+def _resolve_requester_token_for_issue(
+    issue_number: str,
+    repo: str,
+    project_name: str | None,
+) -> str | None:
+    if not auth_enabled():
+        return None
+    requester_nexus_id = get_issue_requester(str(repo), str(issue_number))
+    if not requester_nexus_id:
+        return None
+    user_env, env_error = build_execution_env(str(requester_nexus_id))
+    if env_error:
+        logger.warning(
+            "Requester token unavailable for issue #%s repo=%s project=%s requester=%s: %s",
+            issue_number,
+            repo,
+            project_name,
+            requester_nexus_id,
+            env_error,
+        )
+        return None
+    platform = str(get_project_platform(str(project_name or "")) or "").strip().lower()
+    if platform == "gitlab":
+        return str(user_env.get("GITLAB_TOKEN") or user_env.get("GITHUB_TOKEN") or "").strip() or None
+    return str(user_env.get("GITHUB_TOKEN") or user_env.get("GITLAB_TOKEN") or "").strip() or None
+
+
+def _get_git_platform_client(
+    repo: str,
+    project_name: str | None = None,
+    token_override: str | None = None,
+):
     """Return cached abstract git platform adapter for repository."""
     from orchestration.nexus_core_helpers import get_git_platform
 
     cache_key = f"{project_name or ''}:{repo}"
-    if cache_key in _git_platform_cache:
+    if not token_override and cache_key in _git_platform_cache:
         return _git_platform_cache[cache_key]
 
-    platform = get_git_platform(repo=repo, project_name=project_name or None)
-    if platform:
+    platform = get_git_platform(
+        repo=repo,
+        project_name=project_name or None,
+        token_override=token_override,
+    )
+    if platform and not token_override:
         _git_platform_cache[cache_key] = platform
     return platform
 
@@ -178,7 +213,16 @@ def _load_issue_body_from_project_repo(issue_number: str, preferred_repo: str | 
 
     for project_key, repo_name in candidate_repos:
         try:
-            platform = _get_git_platform_client(repo_name, project_name=project_key)
+            token_override = _resolve_requester_token_for_issue(
+                issue_number,
+                repo_name,
+                project_key,
+            )
+            platform = _get_git_platform_client(
+                repo_name,
+                project_name=project_key,
+                token_override=token_override,
+            )
         except Exception as exc:
             logger.warning(
                 "Skipping issue probe for issue #%s in %s (%s): %s",
@@ -893,21 +937,22 @@ def get_sop_tier_from_issue(issue_number, project="nexus", repo_override: str | 
 
     Returns: tier_name (full/shortened/fast-track) or None
     """
-    from nexus.adapters.git.github import GitHubPlatform
-
     from orchestration.nexus_core_helpers import get_git_platform
 
     repo = str(repo_override or "")
     try:
         repo = repo or get_repo(project)
-        platform_type = get_project_platform(project)
-
-        if platform_type == "github":
-            platform = GitHubPlatform(repo)
-            return platform.get_workflow_type_from_issue(int(issue_number))
-
+        token_override = _resolve_requester_token_for_issue(
+            str(issue_number),
+            repo,
+            project,
+        )
         issue = asyncio.run(
-            get_git_platform(repo, project_name=project).get_issue(str(issue_number))
+            get_git_platform(
+                repo,
+                project_name=project,
+                token_override=token_override,
+            ).get_issue(str(issue_number))
         )
         if not issue:
             return None

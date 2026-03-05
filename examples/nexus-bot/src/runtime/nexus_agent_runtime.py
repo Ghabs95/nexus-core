@@ -39,6 +39,14 @@ _ISSUE_OPEN_ERROR_LOG_COOLDOWN_SECONDS = 300
 _last_issue_open_error_log_at: dict[tuple[str, str], float] = {}
 
 
+def _runtime_token_override() -> str | None:
+    token = str(os.getenv("GITHUB_TOKEN", "")).strip()
+    if token:
+        return token
+    token = str(os.getenv("GITLAB_TOKEN", "")).strip()
+    return token or None
+
+
 def _extract_http_status_code(exc: Exception) -> int | None:
     """Best-effort extraction of HTTP status from provider exceptions."""
     for attr in ("status_code", "status", "http_status"):
@@ -536,7 +544,7 @@ class NexusAgentRuntime(AgentRuntime):
         from orchestration.nexus_core_helpers import get_git_platform
 
         try:
-            platform = get_git_platform(repo)
+            platform = get_git_platform(repo, token_override=_runtime_token_override())
             import asyncio
 
             if self._has_recent_agent_completion_comment(platform, issue_number):
@@ -565,7 +573,7 @@ class NexusAgentRuntime(AgentRuntime):
 
             from orchestration.nexus_core_helpers import get_git_platform
 
-            platform = get_git_platform(repo)
+            platform = get_git_platform(repo, token_override=_runtime_token_override())
             if not platform:
                 return None
 
@@ -747,7 +755,11 @@ class NexusAgentRuntime(AgentRuntime):
                     issue_num = path_parts[idx + 1]
 
         try:
-            platform = get_git_platform(repo=repo_name or None, project_name=project_name)
+            platform = get_git_platform(
+                repo=repo_name or None,
+                project_name=project_name,
+                token_override=_runtime_token_override(),
+            )
             details = platform.get_issue(str(issue_num), ["state"]) if platform else None
             if not details:
                 return False

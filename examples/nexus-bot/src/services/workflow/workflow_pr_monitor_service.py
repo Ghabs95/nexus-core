@@ -9,10 +9,13 @@ def build_workflow_issue_number_lister(
     get_workflow_monitor_policy_plugin: Callable[..., Any],
     get_git_platform: Callable[..., Any],
     workflow_labels: Iterable[str],
+    list_bound_issue_numbers: Callable[[str, str], list[int]] | None = None,
 ) -> Callable[[str, str], list[int]]:
     labels = sorted({str(label) for label in workflow_labels if str(label).strip()})
 
     def _list_workflow_issue_numbers(project_name: str, repo: str) -> list[int]:
+        if callable(list_bound_issue_numbers):
+            return list_bound_issue_numbers(project_name, repo)
         monitor_policy = get_workflow_monitor_policy_plugin(
             list_open_issues=lambda **kwargs: asyncio.run(
                 get_git_platform(kwargs["repo"], project_name=project_name).list_open_issues(
@@ -36,11 +39,26 @@ def build_bot_comments_getter(
     get_workflow_monitor_policy_plugin: Callable[..., Any],
     get_git_platform: Callable[..., Any],
     bot_author: str = "Ghabs95",
+    resolve_issue_token: Callable[[str, str, str], str | None] | None = None,
+    require_issue_requester_token: bool = False,
 ) -> Callable[[str, str, str], list[Any]]:
     def _get_bot_comments(project_name: str, repo: str, issue_number: str):
+        token_override = (
+            resolve_issue_token(project_name, repo, str(issue_number))
+            if callable(resolve_issue_token)
+            else None
+        )
+        if require_issue_requester_token and not token_override:
+            raise PermissionError(
+                f"No requester token available for {project_name}/{repo} issue #{issue_number}"
+            )
         monitor_policy = get_workflow_monitor_policy_plugin(
             get_comments=lambda **kwargs: asyncio.run(
-                get_git_platform(kwargs["repo"], project_name=project_name).get_comments(
+                get_git_platform(
+                    kwargs["repo"],
+                    project_name=project_name,
+                    token_override=token_override,
+                ).get_comments(
                     str(kwargs["issue_number"])
                 )
             ),
@@ -64,12 +82,27 @@ def check_and_notify_pr(
     get_workflow_monitor_policy_plugin: Callable[..., Any],
     get_git_platform: Callable[..., Any],
     notify_workflow_completed: Callable[..., Any],
+    resolve_issue_token: Callable[[str, str, str], str | None] | None = None,
+    require_issue_requester_token: bool = False,
 ) -> None:
     try:
         repo = get_repo(project)
+        token_override = (
+            resolve_issue_token(str(project), str(repo), str(issue_num))
+            if callable(resolve_issue_token)
+            else None
+        )
+        if require_issue_requester_token and not token_override:
+            raise PermissionError(
+                f"No requester token available for {project}/{repo} issue #{issue_num}"
+            )
         monitor_policy = get_workflow_monitor_policy_plugin(
             search_linked_prs=lambda **kwargs: asyncio.run(
-                get_git_platform(kwargs["repo"], project_name=project).search_linked_prs(
+                get_git_platform(
+                    kwargs["repo"],
+                    project_name=project,
+                    token_override=token_override,
+                ).search_linked_prs(
                     str(kwargs["issue_number"])
                 )
             ),
@@ -84,5 +117,13 @@ def check_and_notify_pr(
         logger.info(f"ℹ️ No open PR found for issue #{issue_num}")
         notify_workflow_completed(issue_num, project)
     except Exception as exc:
+        if isinstance(exc, PermissionError):
+            logger.warning(
+                "Skipping PR check for issue #%s (%s): %s",
+                issue_num,
+                project,
+                exc,
+            )
+            return
         logger.error(f"Error checking for PR: {exc}")
         notify_workflow_completed(issue_num, project)

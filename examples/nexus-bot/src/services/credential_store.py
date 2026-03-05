@@ -757,3 +757,28 @@ def get_issue_requester(repo_key: str, issue_number: int | str) -> str | None:
             .first()
         )
         return str(row[0]) if row and row[0] else None
+
+
+def list_bound_issue_numbers(project_key: str, repo_key: str) -> list[int]:
+    engine = _get_engine()
+    project = str(project_key or "").strip().lower()
+    repo = str(repo_key or "").strip()
+    if not (project and repo):
+        return []
+    with Session(engine) as session:
+        rows = (
+            session.query(_IssueRequesterBindingRow.issue_number)
+            .filter(_IssueRequesterBindingRow.project_key == project)
+            .filter(_IssueRequesterBindingRow.repo_key == repo)
+            .order_by(_IssueRequesterBindingRow.updated_at.desc())
+            .all()
+        )
+        numbers: list[int] = []
+        for row in rows:
+            try:
+                value = int(row[0])
+            except Exception:
+                continue
+            if value not in numbers:
+                numbers.append(value)
+        return numbers

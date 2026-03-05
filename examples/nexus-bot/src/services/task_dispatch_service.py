@@ -183,12 +183,21 @@ def handle_webhook_task(
             )
             return True
 
-        tier_name = resolve_tier_for_issue(
-            issue_number,
-            project_name,
-            repo_for_tier,
-            context="webhook launch",
-        )
+        try:
+            tier_name = resolve_tier_for_issue(
+                issue_number,
+                project_name,
+                repo_for_tier,
+                context="webhook launch",
+                requester_nexus_id=requester_nexus_id,
+            )
+        except TypeError:
+            tier_name = resolve_tier_for_issue(
+                issue_number,
+                project_name,
+                repo_for_tier,
+                context="webhook launch",
+            )
         if not tier_name:
             return True
 

@@ -227,7 +227,28 @@ def setup_event_handlers() -> None:
             logger.warning("Failed to setup Slack event handler: %s", exc)
 
 
-def get_git_platform(repo: str = None, project_name: str = None, token_override: str | None = None):
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _allow_env_token_fallback_default() -> bool:
+    """Allow global env-token fallback only for local/test runtime modes."""
+    if not _env_bool("NEXUS_AUTH_ENABLED", False):
+        return True
+    storage_raw = str(os.getenv("NEXUS_STORAGE_BACKEND", "")).strip().lower()
+    # Kept as explicit opt-in alias for local/test mode as requested.
+    return storage_raw == "database"
+
+
+def get_git_platform(
+    repo: str = None,
+    project_name: str = None,
+    token_override: str | None = None,
+    allow_env_token_fallback: bool | None = None,
+):
     """Get initialized Git platform adapter for the project.
 
     Returns either :class:`GitPlatform` or :class:`GitLabPlatform`.
@@ -239,13 +260,22 @@ def get_git_platform(repo: str = None, project_name: str = None, token_override:
     project_config = _get_project_config().get(project_key, {})
     default_token_var = "GITLAB_TOKEN" if platform_type == "gitlab" else "GITHUB_TOKEN"
     token_var = project_config.get("git_token_var_name", default_token_var)
-    token = str(token_override or "").strip() or os.getenv(token_var)
+    token = str(token_override or "").strip()
+    if not token:
+        should_fallback = (
+            _allow_env_token_fallback_default()
+            if allow_env_token_fallback is None
+            else bool(allow_env_token_fallback)
+        )
+        if should_fallback:
+            token = str(os.getenv(token_var, "")).strip()
 
     if platform_type == "gitlab":
         if not token:
             raise ValueError(
-                f"{token_var} is required for gitlab projects. "
-                f"Missing token for project '{project_key}'."
+                f"GitLab token required for project '{project_key}'. "
+                "Provide a requester-scoped token_override "
+                f"(env fallback disabled for token var '{token_var}')."
             )
         return GitLabPlatform(
             token=token,
@@ -255,7 +285,9 @@ def get_git_platform(repo: str = None, project_name: str = None, token_override:
 
     if not token:
         logger.warning(
-            f"{token_var} is missing for project '{project_key}'. Git operations may fail."
+            "Git token missing for project '%s'. "
+            "Provide requester-scoped token_override (env fallback may be disabled).",
+            project_key,
         )
     return GitHubPlatform(repo=repo_name, token=token)
 

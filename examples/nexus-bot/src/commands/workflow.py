@@ -14,6 +14,8 @@ from orchestration.plugin_runtime import (
     get_workflow_state_plugin,
 )
 from project_key_utils import normalize_project_key_str as _normalize_project_key
+from services.credential_store import get_issue_requester
+from services.project_access_service import build_execution_env
 from state_manager import HostStateManager
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,27 @@ def _get_issue_plugin(repo: str):
     if plugin:
         _issue_plugin_cache[repo] = plugin
     return plugin
+
+
+def _issue_token_override(project_key: str, repo: str, issue_num: str) -> str | None:
+    requester_nexus_id = get_issue_requester(str(repo), str(issue_num))
+    if not requester_nexus_id:
+        return None
+    user_env, env_error = build_execution_env(str(requester_nexus_id))
+    if env_error:
+        logger.warning(
+            "Requester token unavailable for workflow command issue #%s (%s/%s): %s",
+            issue_num,
+            project_key,
+            repo,
+            env_error,
+        )
+        return None
+    cfg = PROJECT_CONFIG.get(str(project_key), {})
+    platform = str(cfg.get("git_platform", "github")).strip().lower() if isinstance(cfg, dict) else "github"
+    if platform == "gitlab":
+        return str(user_env.get("GITLAB_TOKEN") or user_env.get("GITHUB_TOKEN") or "").strip() or None
+    return str(user_env.get("GITHUB_TOKEN") or user_env.get("GITLAB_TOKEN") or "").strip() or None
 
 
 async def pause_handler(ctx: InteractiveContext):
@@ -249,7 +272,11 @@ async def stop_handler(ctx: InteractiveContext):
     issue_state_verified: str | None = None
     try:
         repo = _get_project_repo(project_key)
-        platform = get_git_platform(repo, project_name=project_key)
+        platform = get_git_platform(
+            repo,
+            project_name=project_key,
+            token_override=_issue_token_override(project_key, repo, issue_num),
+        )
         issue_close_requested = True
         if not platform:
             raise RuntimeError("git platform unavailable")

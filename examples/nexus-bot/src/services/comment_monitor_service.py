@@ -44,6 +44,17 @@ def run_comment_monitor_cycle(
 ) -> None:
     """Monitor issue comments and notify on agent blockers/questions."""
     loop_scope = "agent-comments:loop"
+
+    def _is_authz_error(exc: Exception) -> bool:
+        text = str(exc or "").lower()
+        return (
+            " 401" in text
+            or " 403" in text
+            or "unauthorized" in text
+            or "forbidden" in text
+            or "requester token" in text
+        )
+
     try:
         all_issue_nums: list[tuple[Any, str, str]] = []
         for project_name, _cfg in iter_projects():
@@ -71,6 +82,14 @@ def run_comment_monitor_cycle(
                     all_issue_nums.append((issue_number, project_name, repo))
                 clear_polling_failures(list_scope)
             except Exception as exc:
+                if _is_authz_error(exc):
+                    logger.warning(
+                        "Skipping issue polling for project %s due to access denial: %s",
+                        project_name,
+                        exc,
+                    )
+                    clear_polling_failures(list_scope)
+                    continue
                 logger.warning("Issue list failed for project %s: %s", project_name, exc)
                 record_polling_failure(list_scope, exc)
                 continue
@@ -87,6 +106,15 @@ def run_comment_monitor_cycle(
                 bot_comments = get_bot_comments(project_name, repo, str(issue_num))
                 clear_polling_failures(comments_scope)
             except Exception as exc:
+                if _is_authz_error(exc):
+                    logger.warning(
+                        "Skipping comment polling for project %s issue #%s due to access denial: %s",
+                        project_name,
+                        issue_num,
+                        exc,
+                    )
+                    clear_polling_failures(comments_scope)
+                    continue
                 logger.warning("Failed to fetch comments for issue #%s: %s", issue_num, exc)
                 record_polling_failure(comments_scope, exc)
                 continue

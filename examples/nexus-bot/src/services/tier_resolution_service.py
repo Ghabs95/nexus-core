@@ -17,11 +17,16 @@ def ensure_workflow_label(
     repo: str,
     *,
     project_name: str | None = None,
+    token_override: str | None = None,
 ) -> None:
     """Add `workflow:<tier>` label to an issue if missing."""
     label = f"workflow:{tier_name}"
     try:
-        platform = get_git_platform(repo, project_name=project_name)
+        platform = get_git_platform(
+            repo,
+            project_name=project_name,
+            token_override=token_override,
+        )
         issue = asyncio.run(platform.get_issue(str(issue_num)))
         if issue is None:
             raise RuntimeError("issue_not_found")
@@ -41,6 +46,7 @@ def resolve_tier_for_issue(
     *,
     context: str = "auto-chain",
     alert_source: str = "inbox_processor",
+    token_override: str | None = None,
 ) -> str | None:
     """Resolve workflow tier for an issue, sending alert when unavailable."""
     tracker_tier = HostStateManager.get_last_tier_for_issue(issue_num)
@@ -60,7 +66,13 @@ def resolve_tier_for_issue(
         return label_tier
 
     if tracker_tier:
-        ensure_workflow_label(issue_num, tracker_tier, repo, project_name=project_name)
+        ensure_workflow_label(
+            issue_num,
+            tracker_tier,
+            repo,
+            project_name=project_name,
+            token_override=token_override,
+        )
         return tracker_tier
 
     logger.error(

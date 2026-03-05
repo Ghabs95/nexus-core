@@ -68,13 +68,28 @@ def read_latest_structured_comment(
     repo: str,
     project_name: str,
     get_git_platform,
+    resolve_issue_token=None,
+    require_issue_requester_token: bool = False,
     normalize_agent_reference,
     step_complete_comment_re,
     ready_for_comment_re,
     logger,
 ) -> dict | None:
     try:
-        platform = get_git_platform(repo, project_name=project_name)
+        token_override = (
+            resolve_issue_token(str(project_name), str(repo), str(issue_num))
+            if callable(resolve_issue_token)
+            else None
+        )
+        if require_issue_requester_token and not token_override:
+            raise PermissionError(
+                f"No requester token available for {project_name}/{repo} issue #{issue_num}"
+            )
+        platform = get_git_platform(
+            repo,
+            project_name=project_name,
+            token_override=token_override,
+        )
         comments = asyncio.run(platform.get_comments(str(issue_num)))
     except Exception as exc:
         logger.debug(f"Startup drift check skipped for issue #{issue_num}: {exc}")

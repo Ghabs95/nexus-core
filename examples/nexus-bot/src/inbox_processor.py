@@ -76,6 +76,8 @@ from services.completion_monitor_service import (
     run_completion_monitor_cycle as _run_completion_monitor_cycle,
 )
 from services.credential_store import bind_issue_requester as _bind_issue_requester
+from services.credential_store import get_issue_requester as _get_issue_requester
+from services.credential_store import list_bound_issue_numbers as _list_bound_issue_numbers
 from services.feature_registry_service import FeatureRegistryService
 from services.inbox.inbox_issue_context_service import (
     find_task_file_for_issue as _svc_find_task_file_for_issue,
@@ -181,7 +183,7 @@ from services.merge_queue_service import (
     enqueue_merge_queue_prs as _enqueue_merge_queue_prs,
 )
 from services.merge_queue_service import (
-    merge_queue_auto_merge_once as _merge_queue_auto_merge_once,
+    merge_queue_auto_merge_once_with_token_resolver as _merge_queue_auto_merge_once,
 )
 from services.processor_loops_service import (
     run_processor_loop as _run_processor_loop,
@@ -191,6 +193,7 @@ from services.processor_runtime_state import (
 )
 from services.project_access_service import (
     auth_enabled as _auth_enabled,
+    build_execution_env as _build_execution_env,
     check_project_access as _check_project_access,
     check_repo_access as _check_repo_access,
     has_setup_ready_user_for_project as _has_setup_ready_user_for_project,
@@ -477,6 +480,7 @@ def _resolve_repo_for_issue(issue_num: str, default_project: str | None = None) 
         project_repos_from_config=_project_repos_from_config,
         get_repos=get_repos,
         get_git_platform=get_git_platform,
+        resolve_issue_token=_resolve_issue_requester_token,
         extract_repo_from_issue_url=_extract_repo_from_issue_url,
         base_dir=BASE_DIR,
     )
@@ -514,6 +518,8 @@ def _read_latest_structured_comment(issue_num: str, repo: str, project_name: str
         repo=str(repo),
         project_name=str(project_name),
         get_git_platform=get_git_platform,
+        resolve_issue_token=_resolve_issue_requester_token,
+        require_issue_requester_token=_auth_enabled(),
         normalize_agent_reference=_normalize_agent_reference,
         step_complete_comment_re=_STEP_COMPLETE_COMMENT_RE,
         ready_for_comment_re=_READY_FOR_COMMENT_RE,
@@ -677,11 +683,21 @@ def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name:
             title=kwargs["title"],
             body=kwargs["body"],
             issue_repo=kwargs.get("issue_repo"),
+            token_override=_resolve_issue_requester_token(
+                project_name,
+                kwargs["repo"],
+                str(kwargs["issue_number"]),
+            ),
         ),
         find_existing_pr_fn=lambda **kwargs: _finalize_find_existing_pr(
             project_name=project_name,
             repo=kwargs["repo"],
             issue_number=str(kwargs["issue_number"]),
+            token_override=_resolve_issue_requester_token(
+                project_name,
+                kwargs["repo"],
+                str(kwargs["issue_number"]),
+            ),
         ),
         cleanup_worktree_fn=lambda **kwargs: _finalize_cleanup_worktree(
             repo_dir=kwargs["repo_dir"],
@@ -695,6 +711,11 @@ def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name:
             repo=kwargs["repo"],
             issue_number=str(kwargs["issue_number"]),
             comment=kwargs.get("comment"),
+            token_override=_resolve_issue_requester_token(
+                project_name,
+                kwargs["repo"],
+                str(kwargs["issue_number"]),
+            ),
         ),
         send_notification=_workflow_policy_notify,
         enqueue_merge_queue_prs=_enqueue_merge_queue_prs,
@@ -703,6 +724,95 @@ def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name:
         base_dir=BASE_DIR,
         get_tasks_active_dir=get_tasks_active_dir,
         get_tasks_closed_dir=get_tasks_closed_dir,
+    )
+
+
+def _list_bound_workflow_issue_numbers(project_name: str, repo: str) -> list[int]:
+    if not _auth_enabled():
+        return []
+    try:
+        return _list_bound_issue_numbers(project_name, repo)
+    except Exception as exc:
+        logger.warning(
+            "Could not list bound issues for project=%s repo=%s: %s",
+            project_name,
+            repo,
+            exc,
+        )
+        return []
+
+
+def _resolve_issue_requester_token(project_name: str, repo: str, issue_number: str) -> str | None:
+    if not _auth_enabled():
+        return None
+
+    requester_nexus_id = _get_issue_requester(str(repo), str(issue_number))
+    if not requester_nexus_id:
+        return None
+
+    user_env, env_error = _build_execution_env(str(requester_nexus_id))
+    if env_error:
+        logger.warning(
+            "Requester token unavailable for project=%s repo=%s issue=%s requester=%s: %s",
+            project_name,
+            repo,
+            issue_number,
+            requester_nexus_id,
+            env_error,
+        )
+        return None
+
+    try:
+        platform = str(get_project_platform(str(project_name)) or "").strip().lower()
+    except Exception:
+        platform = ""
+
+    if platform == "gitlab":
+        return str(user_env.get("GITLAB_TOKEN") or user_env.get("GITHUB_TOKEN") or "").strip() or None
+    return str(user_env.get("GITHUB_TOKEN") or user_env.get("GITLAB_TOKEN") or "").strip() or None
+
+
+def _resolve_project_requester_token(project_name: str, requester_nexus_id: str | None) -> str | None:
+    requester = str(requester_nexus_id or "").strip()
+    if not requester or not _auth_enabled():
+        return None
+    user_env, env_error = _build_execution_env(requester)
+    if env_error:
+        logger.warning(
+            "Requester token unavailable for project=%s requester=%s: %s",
+            project_name,
+            requester,
+            env_error,
+        )
+        return None
+    try:
+        platform = str(get_project_platform(str(project_name)) or "").strip().lower()
+    except Exception:
+        platform = ""
+    if platform == "gitlab":
+        return str(user_env.get("GITLAB_TOKEN") or user_env.get("GITHUB_TOKEN") or "").strip() or None
+    return str(user_env.get("GITHUB_TOKEN") or user_env.get("GITLAB_TOKEN") or "").strip() or None
+
+
+def _resolve_tier_for_issue_scoped(
+    issue_num: str,
+    project_name: str,
+    repo: str,
+    *,
+    context: str = "auto-chain",
+    alert_source: str = "inbox_processor",
+    requester_nexus_id: str | None = None,
+) -> str | None:
+    token_override = _resolve_project_requester_token(project_name, requester_nexus_id)
+    if not token_override:
+        token_override = _resolve_issue_requester_token(project_name, repo, issue_num)
+    return _resolve_tier_for_issue(
+        issue_num,
+        project_name,
+        repo,
+        context=context,
+        alert_source=alert_source,
+        token_override=token_override,
     )
 
 
@@ -1015,11 +1125,16 @@ def check_agent_comments():
             get_workflow_monitor_policy_plugin=get_workflow_monitor_policy_plugin,
             get_git_platform=get_git_platform,
             workflow_labels=_WORKFLOW_MONITOR_LABELS,
+            list_bound_issue_numbers=(
+                _list_bound_workflow_issue_numbers if _auth_enabled() else None
+            ),
         ),
         get_bot_comments=_build_bot_comments_getter(
             get_workflow_monitor_policy_plugin=get_workflow_monitor_policy_plugin,
             get_git_platform=get_git_platform,
             bot_author="Ghabs",
+            resolve_issue_token=_resolve_issue_requester_token,
+            require_issue_requester_token=_auth_enabled(),
         ),
         notify_agent_needs_input=notify_agent_needs_input,
         notified_comments=PROCESSOR_RUNTIME_STATE.notified_comments,
@@ -1047,6 +1162,8 @@ def check_and_notify_pr(issue_num, project):
         get_workflow_monitor_policy_plugin=get_workflow_monitor_policy_plugin,
         get_git_platform=get_git_platform,
         notify_workflow_completed=notify_workflow_completed,
+        resolve_issue_token=_resolve_issue_requester_token,
+        require_issue_requester_token=_auth_enabled(),
     )
 
 
@@ -1202,7 +1319,7 @@ def _process_task_context(*, task_ctx: dict[str, object], filepath: str) -> bool
             "is_recent_launch": is_recent_launch,
             "get_initial_agent_from_workflow": _get_initial_agent_from_workflow,
             "get_repo_for_project": get_repo,
-            "resolve_tier_for_issue": _resolve_tier_for_issue,
+            "resolve_tier_for_issue": _resolve_tier_for_issue_scoped,
             "invoke_ai_agent": invoke_ai_agent,
             "handle_webhook_task": _handle_webhook_task,
             "handle_new_task": _handle_new_task,
@@ -1246,7 +1363,10 @@ def main():
         check_stuck_agents=check_stuck_agents,
         check_agent_comments=check_agent_comments,
         check_completed_agents=check_completed_agents,
-        merge_queue_auto_merge_once=_merge_queue_auto_merge_once,
+        merge_queue_auto_merge_once=lambda: _merge_queue_auto_merge_once(
+            resolve_issue_token=_resolve_issue_requester_token,
+            require_issue_requester_token=_auth_enabled(),
+        ),
         cleanup_stale_worktrees_once=_cleanup_stale_worktrees_once,
         drain_postgres_inbox_queue=_drain_postgres_inbox_queue,
         process_filesystem_inbox_once=_process_filesystem_inbox_once,

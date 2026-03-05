@@ -905,6 +905,7 @@ def main():
         host="0.0.0.0",
         port=port,
         debug=False,
+        allow_unsafe_werkzeug=True,
     )
 
 
