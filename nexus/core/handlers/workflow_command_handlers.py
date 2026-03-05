@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.config import NEXUS_CORE_STORAGE_DIR
+from nexus.core.config import NEXUS_CORE_STORAGE_DIR, NEXUS_STATE_DIR, NEXUS_STORAGE_BACKEND
+from nexus.core.inbox.inbox_persistence_service import load_json_state_file
+from nexus.core.inbox.inbox_persistence_service import save_json_state_file
 from nexus.core.integrations.workflow_state_factory import get_workflow_state
 from nexus.core.runtime.bridge import clear_launch_guard
 from nexus.core.state_manager import HostStateManager
@@ -435,18 +436,27 @@ async def forget_handler(
     cleared_guards = clear_launch_guard(str(issue_num))
 
     try:
-        completion_path = os.path.join(
-            os.path.dirname(NEXUS_CORE_STORAGE_DIR), "completion_comments.json"
+        completion_path = os.path.join(NEXUS_STATE_DIR, "completion_comments.json")
+        completion_data = load_json_state_file(
+            path=completion_path,
+            logger=deps.logger,
+            warn_only=True,
+            storage_backend=NEXUS_STORAGE_BACKEND,
+            state_key="completion_comments",
         )
-        with open(completion_path, encoding="utf-8") as handle:
-            completion_data = json.load(handle) or {}
         if isinstance(completion_data, dict):
             to_delete = [key for key in completion_data if key.startswith(f"{issue_num}:")]
             for key in to_delete:
                 completion_data.pop(key, None)
             if to_delete:
-                with open(completion_path, "w", encoding="utf-8") as handle:
-                    json.dump(completion_data, handle)
+                save_json_state_file(
+                    path=completion_path,
+                    data=completion_data,
+                    logger=deps.logger,
+                    warn_only=True,
+                    storage_backend=NEXUS_STORAGE_BACKEND,
+                    state_key="completion_comments",
+                )
     except Exception as exc:
         deps.logger.debug("completion_comments cleanup skipped for issue #%s: %s", issue_num, exc)
 

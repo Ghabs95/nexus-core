@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import atexit
 import hashlib
+import json
 import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 try:
     import sqlalchemy as sa
@@ -62,6 +63,9 @@ if _SA_AVAILABLE:
         nexus_id: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(64), nullable=False, index=True)
         discord_user_id: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(64), nullable=False)
         discord_username: sa.orm.Mapped[str | None] = sa.orm.mapped_column(sa.String(255))
+        chat_platform: sa.orm.Mapped[str | None] = sa.orm.mapped_column(sa.String(32))
+        chat_id: sa.orm.Mapped[str | None] = sa.orm.mapped_column(sa.String(128))
+        onboarding_message_id: sa.orm.Mapped[str | None] = sa.orm.mapped_column(sa.String(128))
         oauth_provider: sa.orm.Mapped[str | None] = sa.orm.mapped_column(sa.String(32))
         oauth_state_hash: sa.orm.Mapped[str | None] = sa.orm.mapped_column(
             sa.String(128), index=True
@@ -157,6 +161,15 @@ if _SA_AVAILABLE:
             sa.DateTime(timezone=True), nullable=False, default=_now_utc
         )
 
+    class _UserTrackingStateRow(_AuthBase):
+        __tablename__ = "nexus_user_tracking_state"
+
+        storage_key: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.String(32), primary_key=True)
+        payload_json: sa.orm.Mapped[str] = sa.orm.mapped_column(sa.Text, nullable=False, default="{}")
+        updated_at: sa.orm.Mapped[datetime] = sa.orm.mapped_column(
+            sa.DateTime(timezone=True), nullable=False, default=_now_utc
+        )
+
 
 @dataclass
 class CredentialRecord:
@@ -188,6 +201,9 @@ class AuthSessionRecord:
     nexus_id: str
     discord_user_id: str
     discord_username: str | None
+    chat_platform: str | None
+    chat_id: str | None
+    onboarding_message_id: str | None
     oauth_provider: str | None
     oauth_state_hash: str | None
     status: str
@@ -215,7 +231,17 @@ def _run_schema_migrations(engine: Any) -> None:
         # Auth sessions
         "ALTER TABLE IF EXISTS nexus_auth_sessions ADD COLUMN IF NOT EXISTS oauth_provider VARCHAR(32)",
         "ALTER TABLE IF EXISTS nexus_auth_sessions ADD COLUMN IF NOT EXISTS oauth_state_hash VARCHAR(128)",
+        "ALTER TABLE IF EXISTS nexus_auth_sessions ADD COLUMN IF NOT EXISTS chat_platform VARCHAR(32)",
+        "ALTER TABLE IF EXISTS nexus_auth_sessions ADD COLUMN IF NOT EXISTS chat_id VARCHAR(128)",
+        "ALTER TABLE IF EXISTS nexus_auth_sessions ADD COLUMN IF NOT EXISTS onboarding_message_id VARCHAR(128)",
         "CREATE INDEX IF NOT EXISTS ix_nexus_auth_sessions_oauth_state_hash ON nexus_auth_sessions (oauth_state_hash)",
+        (
+            "CREATE TABLE IF NOT EXISTS nexus_user_tracking_state ("
+            "storage_key VARCHAR(32) PRIMARY KEY, "
+            "payload_json TEXT NOT NULL DEFAULT '{}', "
+            "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+            ")"
+        ),
         # User credentials
         "ALTER TABLE IF EXISTS nexus_user_credentials ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(32)",
         "ALTER TABLE IF EXISTS nexus_user_credentials ADD COLUMN IF NOT EXISTS gitlab_user_id BIGINT",
@@ -306,6 +332,9 @@ def _row_to_session(row: Any) -> AuthSessionRecord:
         nexus_id=str(row.nexus_id),
         discord_user_id=str(row.discord_user_id),
         discord_username=row.discord_username,
+        chat_platform=row.chat_platform,
+        chat_id=row.chat_id,
+        onboarding_message_id=row.onboarding_message_id,
         oauth_provider=row.oauth_provider,
         oauth_state_hash=row.oauth_state_hash,
         status=str(row.status),
@@ -345,6 +374,9 @@ def create_auth_session(
     nexus_id: str,
     discord_user_id: str,
     discord_username: str | None,
+    chat_platform: str | None = None,
+    chat_id: str | None = None,
+    onboarding_message_id: str | None = None,
     ttl_seconds: int,
 ) -> str:
     engine = _get_engine()
@@ -357,6 +389,9 @@ def create_auth_session(
             nexus_id=str(nexus_id),
             discord_user_id=str(discord_user_id),
             discord_username=str(discord_username or "").strip() or None,
+            chat_platform=str(chat_platform or "").strip().lower() or None,
+            chat_id=str(chat_id or "").strip() or None,
+            onboarding_message_id=str(onboarding_message_id or "").strip() or None,
             status="pending",
             expires_at=expires_at,
             created_at=now,
@@ -380,6 +415,9 @@ def update_auth_session(
     nexus_id: str | None = None,
     oauth_provider: str | None = None,
     oauth_state_hash: str | None = None,
+    chat_platform: str | None = None,
+    chat_id: str | None = None,
+    onboarding_message_id: str | None = None,
     status: str | None = None,
     last_error: str | None = None,
     used_at: datetime | None = None,
@@ -395,6 +433,12 @@ def update_auth_session(
             row.oauth_provider = str(oauth_provider or "").strip().lower() or None
         if oauth_state_hash is not None:
             row.oauth_state_hash = str(oauth_state_hash or "").strip() or None
+        if chat_platform is not None:
+            row.chat_platform = str(chat_platform or "").strip().lower() or None
+        if chat_id is not None:
+            row.chat_id = str(chat_id or "").strip() or None
+        if onboarding_message_id is not None:
+            row.onboarding_message_id = str(onboarding_message_id or "").strip() or None
         if status is not None:
             row.status = str(status or "").strip() or row.status
         if last_error is not None:
@@ -428,6 +472,53 @@ def cleanup_expired_auth_sessions() -> int:
             session.delete(row)
         session.commit()
         return count
+
+
+def get_user_tracking_state(*, storage_key: str = "default") -> tuple[dict[str, Any] | None, datetime | None]:
+    """Return serialized UNI tracking payload and its update timestamp."""
+    engine = _get_engine()
+    with Session(engine) as session:
+        row = session.get(_UserTrackingStateRow, str(storage_key))
+        if not row:
+            return None, None
+        updated_at = cast(datetime | None, cast(object, row.updated_at))
+        payload_raw = str(row.payload_json or "").strip()
+        if not payload_raw:
+            return {}, updated_at
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            logger.warning("Invalid JSON in nexus_user_tracking_state for key=%s", storage_key)
+            return {}, updated_at
+        if not isinstance(payload, dict):
+            logger.warning("Unexpected payload type in nexus_user_tracking_state for key=%s", storage_key)
+            return {}, updated_at
+        return payload, updated_at
+
+
+def upsert_user_tracking_state(
+    payload: dict[str, Any],
+    *,
+    storage_key: str = "default",
+) -> datetime:
+    """Persist serialized UNI tracking payload in Postgres."""
+    engine = _get_engine()
+    now = _now_utc()
+    serialized = json.dumps(payload if isinstance(payload, dict) else {}, separators=(",", ":"))
+    with Session(engine) as session:
+        row = session.get(_UserTrackingStateRow, str(storage_key))
+        if row is None:
+            row = _UserTrackingStateRow(
+                storage_key=str(storage_key),
+                payload_json=serialized,
+                updated_at=now,
+            )
+            session.add(row)
+        else:
+            row.payload_json = serialized
+            row.updated_at = now
+        session.commit()
+    return now
 
 
 def upsert_github_credentials(

@@ -1,7 +1,9 @@
 """Tests for user_manager module."""
 
 import json
+from pathlib import Path
 
+from nexus.core import user_manager as user_manager_module
 from nexus.core.user_manager import UserManager
 
 
@@ -260,3 +262,45 @@ class TestUserManager:
 
         assert user1_issues["proj_a"] == ["123"]
         assert user2_issues["proj_a"] == ["456"]
+
+
+def test_resolve_state_dir_prefers_nexus_state_dir(monkeypatch):
+    monkeypatch.setenv("NEXUS_STATE_DIR", "/tmp/nexus-state")
+    monkeypatch.setenv("DATA_DIR", "/tmp/data-dir")
+    monkeypatch.setenv("NEXUS_RUNTIME_DIR", "/tmp/runtime-dir")
+    assert user_manager_module._resolve_state_dir() == Path("/tmp/nexus-state")
+
+
+def test_resolve_state_dir_falls_back_to_data_dir(monkeypatch):
+    monkeypatch.delenv("NEXUS_STATE_DIR", raising=False)
+    monkeypatch.setenv("DATA_DIR", "/tmp/data-dir")
+    monkeypatch.setenv("NEXUS_RUNTIME_DIR", "/tmp/runtime-dir")
+    assert user_manager_module._resolve_state_dir() == Path("/tmp/data-dir")
+
+
+def test_resolve_state_dir_falls_back_to_runtime_dir(monkeypatch):
+    monkeypatch.delenv("NEXUS_STATE_DIR", raising=False)
+    monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.setenv("NEXUS_RUNTIME_DIR", "/tmp/runtime-dir")
+    assert user_manager_module._resolve_state_dir() == Path("/tmp/runtime-dir/state")
+
+
+def test_resolve_storage_backend_prefers_forced_backend(monkeypatch):
+    monkeypatch.setenv("NEXUS_USER_MANAGER_BACKEND", "postgres")
+    monkeypatch.setenv("NEXUS_STORAGE_BACKEND", "filesystem")
+    backend = user_manager_module._resolve_storage_backend(data_file=user_manager_module.USER_DATA_FILE)
+    assert backend == "postgres"
+
+
+def test_resolve_storage_backend_uses_filesystem_for_custom_data_file(monkeypatch, tmp_path):
+    monkeypatch.delenv("NEXUS_USER_MANAGER_BACKEND", raising=False)
+    monkeypatch.setenv("NEXUS_STORAGE_BACKEND", "postgres")
+    backend = user_manager_module._resolve_storage_backend(data_file=tmp_path / "users.json")
+    assert backend == "filesystem"
+
+
+def test_resolve_storage_backend_uses_postgres_for_default_data_file(monkeypatch):
+    monkeypatch.delenv("NEXUS_USER_MANAGER_BACKEND", raising=False)
+    monkeypatch.setenv("NEXUS_STORAGE_BACKEND", "postgres")
+    backend = user_manager_module._resolve_storage_backend(data_file=user_manager_module.USER_DATA_FILE)
+    assert backend == "postgres"

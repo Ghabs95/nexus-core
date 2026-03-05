@@ -13,7 +13,7 @@ class TestGetStatsReport:
         mock_adapter = MagicMock()
         mock_adapter.format_stats_report.return_value = "📊 **Report**"
 
-        with patch("analytics.LokiAnalyticsAdapter", return_value=mock_adapter):
+        with patch("nexus.core.analytics.reporting.LokiAnalyticsAdapter", return_value=mock_adapter):
             from nexus.core.analytics.reporting import get_stats_report
 
             result = get_stats_report(lookback_days=7)
@@ -22,7 +22,7 @@ class TestGetStatsReport:
         assert "📊" in result
 
     def test_returns_fallback_on_loki_error(self):
-        with patch("analytics.LokiAnalyticsAdapter", side_effect=ConnectionError("no loki")):
+        with patch("nexus.core.analytics.reporting.LokiAnalyticsAdapter", side_effect=ConnectionError("no loki")):
             from nexus.core.analytics.reporting import get_stats_report
 
             result = get_stats_report(lookback_days=1)
@@ -34,7 +34,7 @@ class TestGetStatsReport:
         mock_adapter = MagicMock()
         mock_adapter.format_stats_report.return_value = "report"
 
-        with patch("analytics.LokiAnalyticsAdapter", return_value=mock_adapter):
+        with patch("nexus.core.analytics.reporting.LokiAnalyticsAdapter", return_value=mock_adapter):
             from nexus.core.analytics.reporting import get_stats_report
 
             get_stats_report()

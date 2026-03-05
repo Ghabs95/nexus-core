@@ -1,11 +1,8 @@
 """Tests for state_manager module."""
 
-import sys
 import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from nexus.core.state_manager import HostStateManager
 
 

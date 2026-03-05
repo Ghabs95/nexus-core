@@ -1,11 +1,18 @@
 """Rate limiting and throttling for chat commands and Git API calls."""
 
-import json
 import logging
 import os
 import time
+import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
+
+from nexus.core.inbox.inbox_persistence_service import (
+    load_json_state_file as _load_json_state_file,
+)
+from nexus.core.inbox.inbox_persistence_service import (
+    save_json_state_file as _save_json_state_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +82,19 @@ class RateLimiter:
         "git_api": RateLimit(100, 3600, "100 API calls/hour"),
         "git_issue_create": RateLimit(10, 3600, "10 issue creates/hour"),
     }
+    _REDIS_USERS_KEY = "nexus:rate_limits:users"
+    _REDIS_USER_ACTIONS_KEY = "nexus:rate_limits:user_actions"
+    _REDIS_GLOBAL_KEY = "nexus:rate_limits:global"
 
-    def __init__(self, state_file: str | None = None):
+    def __init__(
+        self,
+        state_file: str | None = None,
+        *,
+        state_backend: str | None = None,
+        state_key: str = "rate_limits",
+        redis_url: str | None = None,
+        redis_client=None,
+    ):
         """
         Initialize rate limiter.
 
@@ -84,14 +102,110 @@ class RateLimiter:
             state_file: Optional path to persist rate limit state
         """
         self.state_file = state_file
+        self.state_backend = self._normalize_state_backend(state_backend)
+        self.state_key = state_key
+        self.redis_url = str(redis_url or "").strip()
+        self._redis = redis_client
+        if self.state_backend == "redis":
+            if self._redis is None:
+                self._redis = self._build_redis_client()
+            if self._redis is None:
+                logger.warning(
+                    "Redis rate limiter backend unavailable; falling back to database/filesystem backend"
+                )
+                self.state_backend = "database"
         self.user_quotas: dict[int, dict[str, UserQuota]] = defaultdict(
             lambda: defaultdict(lambda: UserQuota(user_id=0))
         )
         self.global_quota = UserQuota(user_id=0)  # For global limits
 
         # Load persisted state if available
-        if state_file and os.path.exists(state_file):
+        if state_file:
             self.load_state()
+
+    @staticmethod
+    def _normalize_state_backend(value: str | None) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"redis"}:
+            return "redis"
+        if normalized in {"database", "postgres", "postgresql"}:
+            return "database"
+        if normalized in {"filesystem", "file"}:
+            return "filesystem"
+        # Default to shared backend when available.
+        return "redis"
+
+    def _build_redis_client(self):
+        try:
+            import redis
+        except Exception:
+            logger.warning("Redis package not installed; rate limiter will use database/filesystem")
+            return None
+
+        try:
+            url = self.redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
+            client = redis.from_url(url, decode_responses=True)
+            client.ping()
+            return client
+        except Exception as exc:
+            logger.warning("Failed to connect rate limiter to Redis (%s): %s", self.redis_url, exc)
+            return None
+
+    @staticmethod
+    def _redis_quota_key(user_id: int, action: str) -> str:
+        return f"nexus:rate_limits:user:{int(user_id)}:{str(action).strip().lower()}"
+
+    @staticmethod
+    def _redis_now_ts() -> float:
+        return time.time()
+
+    def _redis_cleanup_quota(self, *, user_id: int, action: str, window_seconds: int) -> None:
+        if self._redis is None:
+            return
+        cutoff = self._redis_now_ts() - max(1, int(window_seconds))
+        key = self._redis_quota_key(user_id, action)
+        self._redis.zremrangebyscore(key, "-inf", cutoff)
+
+    def _check_limit_redis(
+        self, user_id: int, action: str, limit: RateLimit
+    ) -> tuple[bool, str | None]:
+        if self._redis is None:
+            return (True, None)
+
+        key = self._redis_quota_key(user_id, action)
+        self._redis_cleanup_quota(user_id=user_id, action=action, window_seconds=limit.window_seconds)
+        recent_count = int(self._redis.zcard(key) or 0)
+        if recent_count >= limit.max_requests:
+            oldest = self._redis.zrange(key, 0, 0, withscores=True)
+            if oldest:
+                oldest_ts = float(oldest[0][1] or 0.0)
+                wait_time = max(1, int(limit.window_seconds - (self._redis_now_ts() - oldest_ts)))
+            else:
+                wait_time = max(1, int(limit.window_seconds))
+            return (
+                False,
+                f"⏱ Rate limit exceeded for {action}. Limit: {limit.name}. Try again in {wait_time}s.",
+            )
+        return (True, None)
+
+    def _record_request_redis(self, user_id: int, action: str) -> None:
+        if self._redis is None:
+            return
+        now = self._redis_now_ts()
+        member = f"{now:.6f}:{uuid.uuid4().hex[:8]}"
+        key = self._redis_quota_key(user_id, action)
+        self._redis.zadd(key, {member: now})
+        self._redis.sadd(self._REDIS_USERS_KEY, str(user_id))
+        self._redis.sadd(self._REDIS_USER_ACTIONS_KEY, f"{user_id}:{action}")
+
+        limit = self.DEFAULT_LIMITS.get(action)
+        if limit:
+            self._redis.expire(key, max(limit.window_seconds * 2, 120))
+
+        if action in ["git_api", "git_issue_create"]:
+            self._redis.zadd(self._REDIS_GLOBAL_KEY, {member: now})
+            self._redis.zremrangebyscore(self._REDIS_GLOBAL_KEY, "-inf", now - 3600)
+            self._redis.expire(self._REDIS_GLOBAL_KEY, 7200)
 
     def check_limit(
         self, user_id: int, action: str, limit: RateLimit | None = None
@@ -112,6 +226,9 @@ class RateLimiter:
             if limit is None:
                 # No limit configured, allow by default
                 return (True, None)
+
+        if self.state_backend == "redis":
+            return self._check_limit_redis(user_id, action, limit)
 
         # Get or create user quota for this action
         quota = self.user_quotas[user_id][action]
@@ -143,6 +260,10 @@ class RateLimiter:
 
         Call this AFTER check_limit() returns True and the request succeeds.
         """
+        if self.state_backend == "redis":
+            self._record_request_redis(user_id, action)
+            return
+
         quota = self.user_quotas[user_id][action]
         quota.user_id = user_id
         quota.add_request()
@@ -180,6 +301,18 @@ class RateLimiter:
         if limit is None:
             return -1
 
+        if self.state_backend == "redis":
+            if self._redis is None:
+                return limit.max_requests
+            self._redis_cleanup_quota(
+                user_id=user_id,
+                action=action,
+                window_seconds=limit.window_seconds,
+            )
+            key = self._redis_quota_key(user_id, action)
+            recent_count = int(self._redis.zcard(key) or 0)
+            return max(0, limit.max_requests - recent_count)
+
         quota = self.user_quotas[user_id][action]
         recent_count = quota.count_recent(limit.window_seconds)
         return max(0, limit.max_requests - recent_count)
@@ -192,6 +325,19 @@ class RateLimiter:
             user_id: User to reset
             action: Optional specific action to reset (resets all if None)
         """
+        if self.state_backend == "redis":
+            if self._redis is None:
+                return
+            if action:
+                self._redis.delete(self._redis_quota_key(user_id, action))
+                self._redis.srem(self._REDIS_USER_ACTIONS_KEY, f"{user_id}:{action}")
+                return
+            for tracked_action in self.DEFAULT_LIMITS.keys():
+                self._redis.delete(self._redis_quota_key(user_id, tracked_action))
+                self._redis.srem(self._REDIS_USER_ACTIONS_KEY, f"{user_id}:{tracked_action}")
+            self._redis.srem(self._REDIS_USERS_KEY, str(user_id))
+            return
+
         if action:
             if user_id in self.user_quotas and action in self.user_quotas[user_id]:
                 self.user_quotas[user_id][action] = UserQuota(user_id=user_id)
@@ -202,6 +348,9 @@ class RateLimiter:
 
     def cleanup_old_data(self):
         """Remove old timestamps from all quotas to free memory."""
+        if self.state_backend == "redis":
+            return
+
         # Clean up user quotas
         for user_id in list(self.user_quotas.keys()):
             for action, quota in list(self.user_quotas[user_id].items()):
@@ -221,15 +370,36 @@ class RateLimiter:
 
     def get_stats(self) -> dict:
         """Get rate limiter statistics."""
+        if self.state_backend == "redis":
+            if self._redis is None:
+                return {
+                    "active_users": 0,
+                    "total_tracked_actions": 0,
+                    "global_requests_last_hour": 0,
+                    "configured_limits": len(self.DEFAULT_LIMITS),
+                    "backend": "redis-unavailable",
+                }
+            now = self._redis_now_ts()
+            self._redis.zremrangebyscore(self._REDIS_GLOBAL_KEY, "-inf", now - 3600)
+            return {
+                "active_users": int(self._redis.scard(self._REDIS_USERS_KEY) or 0),
+                "total_tracked_actions": int(self._redis.scard(self._REDIS_USER_ACTIONS_KEY) or 0),
+                "global_requests_last_hour": int(self._redis.zcard(self._REDIS_GLOBAL_KEY) or 0),
+                "configured_limits": len(self.DEFAULT_LIMITS),
+                "backend": "redis",
+            }
         return {
             "active_users": len(self.user_quotas),
             "total_tracked_actions": sum(len(actions) for actions in self.user_quotas.values()),
             "global_requests_last_hour": len(self.global_quota.timestamps),
             "configured_limits": len(self.DEFAULT_LIMITS),
+            "backend": self.state_backend,
         }
 
     def save_state(self):
         """Save rate limiter state to disk for persistence."""
+        if self.state_backend == "redis":
+            return
         if not self.state_file:
             return
 
@@ -244,20 +414,36 @@ class RateLimiter:
         }
 
         try:
-            with open(self.state_file, "w") as f:
-                json.dump(state, f, indent=2)
+            _save_json_state_file(
+                path=self.state_file,
+                data=state,
+                logger=logger,
+                warn_only=False,
+                storage_backend=self.state_backend if self.state_backend != "filesystem" else "filesystem",
+                state_key=self.state_key,
+            )
             logger.debug(f"Saved rate limiter state to {self.state_file}")
         except Exception as e:
             logger.error(f"Failed to save rate limiter state: {e}")
 
     def load_state(self):
         """Load rate limiter state from disk."""
-        if not self.state_file or not os.path.exists(self.state_file):
+        if self.state_backend == "redis":
+            return
+        if not self.state_file:
             return
 
         try:
-            with open(self.state_file) as f:
-                state = json.load(f)
+            state = _load_json_state_file(
+                path=self.state_file,
+                logger=logger,
+                warn_only=False,
+                storage_backend=self.state_backend if self.state_backend != "filesystem" else "filesystem",
+                state_key=self.state_key,
+                migrate_local_on_empty=True,
+            )
+            if not isinstance(state, dict) or not state:
+                return
 
             # Restore user quotas
             for user_id_str, actions in state.get("user_quotas", {}).items():
@@ -278,18 +464,41 @@ class RateLimiter:
             logger.error(f"Failed to load rate limiter state: {e}")
 
 
-# Global rate limiter instance
-rate_limiter = None
+_rate_limiter: RateLimiter | None = None
 
 
-def get_rate_limiter(state_file: str | None = None) -> RateLimiter:
-    """Get or create global rate limiter instance."""
-    global rate_limiter
-    if rate_limiter is None:
+def reset_rate_limiter() -> None:
+    """Reset process-level shared rate limiter singleton (mainly for tests)."""
+    global _rate_limiter
+    _rate_limiter = None
+
+
+def get_rate_limiter(
+    state_file: str | None = None,
+    *,
+    settings=None,
+) -> RateLimiter:
+    """Return a shared rate limiter configured from core settings."""
+    global _rate_limiter
+    if _rate_limiter is None:
+        state_backend = None
+        redis_url = None
         if state_file is None:
-            # Default location
-            from config import NEXUS_STATE_DIR
+            if settings is None:
+                from nexus.core.config import get_runtime_settings
 
-            state_file = os.path.join(NEXUS_STATE_DIR, "rate_limits.json")
-        rate_limiter = RateLimiter(state_file)
-    return rate_limiter
+                settings = get_runtime_settings()
+
+            state_file = os.path.join(settings.nexus_state_dir, "rate_limits.json")
+            redis_url = settings.redis_url
+            state_backend = settings.nexus_rate_limit_backend
+            if str(state_backend).strip().lower() in {"database", "postgres", "postgresql"}:
+                storage_backend = str(settings.nexus_storage_backend).strip().lower()
+                state_backend = "database" if storage_backend != "filesystem" else "filesystem"
+        _rate_limiter = RateLimiter(
+            state_file,
+            state_backend=state_backend,
+            state_key="rate_limits",
+            redis_url=redis_url,
+        )
+    return _rate_limiter

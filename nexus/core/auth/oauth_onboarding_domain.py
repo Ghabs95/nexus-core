@@ -88,13 +88,34 @@ def create_login_session_for_user(
     nexus_id: str,
     discord_user_id: str,
     discord_username: str | None,
+    chat_platform: str | None = None,
+    chat_id: str | None = None,
+    onboarding_message_id: str | None = None,
 ) -> str:
     cleanup_expired_auth_sessions()
     return create_auth_session(
         nexus_id=str(nexus_id),
         discord_user_id=str(discord_user_id),
         discord_username=discord_username,
+        chat_platform=chat_platform,
+        chat_id=chat_id,
+        onboarding_message_id=onboarding_message_id,
         ttl_seconds=_session_ttl_seconds(),
+    )
+
+
+def register_onboarding_message(
+    *,
+    session_id: str,
+    chat_platform: str,
+    chat_id: str,
+    message_id: str,
+) -> None:
+    update_auth_session(
+        session_id=str(session_id),
+        chat_platform=str(chat_platform or "").strip().lower(),
+        chat_id=str(chat_id or "").strip(),
+        onboarding_message_id=str(message_id or "").strip(),
     )
 
 

@@ -108,6 +108,8 @@ def test_schema_migrations_include_claude_and_gitlab_oauth():
     assert any("claude_api_key_enc" in stmt for stmt in executed)
     assert any("gitlab_refresh_token_enc" in stmt for stmt in executed)
     assert any("oauth_provider" in stmt for stmt in executed)
+    assert any("chat_platform" in stmt for stmt in executed)
+    assert any("onboarding_message_id" in stmt for stmt in executed)
 
 
 def test_get_setup_status_counts_claude_key_for_readiness(monkeypatch):

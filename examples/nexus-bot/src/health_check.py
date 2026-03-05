@@ -7,18 +7,17 @@ Designed to run alongside nexus-telegram, nexus-discord, and nexus-processor ser
 import logging
 import os
 import subprocess
-import sys
 from datetime import datetime
-from pathlib import Path
-
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
 
 from flask import Flask, jsonify
 
-from config import LOGS_DIR, NEXUS_RUNTIME_DIR
+from nexus.core.config.bootstrap import initialize_runtime
+
+initialize_runtime(configure_logging=False)
+
+from nexus.core.config import LOGS_DIR, NEXUS_RUNTIME_DIR
 from nexus.core.integrations.audit_query_factory import get_audit_query
-from rate_limiter import get_rate_limiter
+from nexus.core.rate_limiter import get_rate_limiter
 
 # Configure logging
 logging.basicConfig(
@@ -64,7 +63,7 @@ def check_service_status(service_name: str) -> dict:
 
         # Parse uptime and memory from status output
         status_lines = status_result.stdout.split("\n")
-        info = {"running": True, "status": "active"}
+        info: dict[str, bool | str | int] = {"running": True, "status": "active"}
 
         for line in status_lines:
             if "Active:" in line:

@@ -12,8 +12,7 @@ from typing import Any, TypeVar, cast
 
 from nexus.adapters.storage.file import FileStorage
 from nexus.adapters.storage.structured_log import StructuredLogAuditBackend
-from nexus.core.config import NEXUS_CORE_STORAGE_DIR
-from nexus.core.storage.audit import AuditStore as CoreAuditStore
+from nexus.core.storage.audit import WorkflowAuditStore
 
 logger = logging.getLogger(__name__)
 
@@ -58,17 +57,40 @@ class AuditStore:
     """Read/write audit events using nexus-arc implementation."""
 
     _core_store = None
+    _storage_dir_override: str | None = None
+
+    @classmethod
+    def configure(cls, *, storage_dir: str | None = None, reset: bool = False) -> None:
+        """Configure storage parameters and optional singleton reset."""
+        if storage_dir is not None:
+            cls._storage_dir_override = storage_dir
+        if reset:
+            cls._core_store = None
+
+    @classmethod
+    def reset(cls) -> None:
+        """Reset singleton core audit store (mainly for tests)."""
+        cls._core_store = None
+        cls._storage_dir_override = None
+
+    @classmethod
+    def _resolve_storage_dir(cls) -> str:
+        if cls._storage_dir_override:
+            return cls._storage_dir_override
+        from nexus.core.config import get_runtime_settings
+
+        return get_runtime_settings().nexus_core_storage_dir
 
     @classmethod
     def _get_core_store(cls):
         if cls._core_store is None:
-            base_storage = FileStorage(base_path=NEXUS_CORE_STORAGE_DIR)
+            base_storage = FileStorage(base_path=cls._resolve_storage_dir())
             storage = StructuredLogAuditBackend(
                 backend=base_storage,
                 logger_name="nexus.audit",
                 extra_labels={"app": "nexus", "env": "prod"},
             )
-            cls._core_store = CoreAuditStore(storage=storage)
+            cls._core_store = WorkflowAuditStore(storage=storage)
         return cls._core_store
 
     @staticmethod

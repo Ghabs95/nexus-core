@@ -2,6 +2,10 @@
 
 This folder is now the canonical home for the Telegram bot runtime that previously lived in `ghabs/nexus/src`.
 
+Bootstrap/runtime lifecycle reference:
+
+- [`docs/CONFIG_BOOTSTRAP_LIFECYCLE.md`](../../docs/CONFIG_BOOTSTRAP_LIFECYCLE.md)
+
 ## What is included
 
 - `src/`: Bot runtime, handlers, processor, webhook server, health check

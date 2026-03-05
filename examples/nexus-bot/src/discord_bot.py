@@ -11,7 +11,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from nexus.core.config.bootstrap import initialize_runtime
 from nexus.core.utils.logging_filters import install_secret_redaction
+
+initialize_runtime(configure_logging=False)
 
 # Setup logging
 logging.basicConfig(
@@ -20,11 +23,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Add src directories to check for local imports
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from config import (
+from nexus.core.config import (
     AI_PERSONA,
     BASE_DIR,
     DISCORD_ALLOWED_USER_IDS,
@@ -60,6 +59,7 @@ from nexus.core.handlers.feature_ideation_handlers import (
     is_feature_ideation_request,
 )
 from nexus.core.handlers.inbox_routing_handler import PROJECTS as ROUTING_PROJECTS
+from nexus.core.handlers.inbox_routing_handler import TYPES as ROUTING_TASK_TYPES
 from nexus.core.handlers.inbox_routing_handler import process_inbox_task, save_resolved_task
 from nexus.core.handlers.monitoring_command_handlers import (
     active_handler as monitoring_active_handler,
@@ -184,6 +184,7 @@ from nexus.core.auth import (
 from nexus.core.auth import (
     get_setup_status as _svc_get_setup_status,
 )
+from nexus.core.auth import register_onboarding_message as _svc_register_onboarding_message
 from nexus.core.auth import (
     has_project_access as _svc_has_project_access,
 )
@@ -214,6 +215,7 @@ orchestrator = get_orchestrator(ORCHESTRATOR_CONFIG)
 user_manager = get_user_manager()
 _pending_project_resolution: dict[int, dict] = {}
 _pending_feature_ideation: dict[int, dict] = {}
+_pending_new_task_capture: dict[int, dict[str, str]] = {}
 _discord_user_state: dict[int, dict[str, Any]] = {}
 
 
@@ -611,6 +613,112 @@ class RootMenuView(discord.ui.View):
             await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
             return
         await interaction.response.edit_message(content="✅ Menu closed.", view=None)
+
+
+class NewTaskTypeView(discord.ui.View):
+    def __init__(self, user_id: int, project_key: str):
+        super().__init__(timeout=300)
+        self.user_id = user_id
+        self.project_key = project_key
+
+        for type_key, type_label in ROUTING_TASK_TYPES.items():
+            button = discord.ui.Button(
+                label=str(type_label)[:80],
+                style=discord.ButtonStyle.primary,
+                custom_id=f"new:type:{type_key}",
+            )
+            button.callback = self._make_type_callback(type_key)
+            self.add_item(button)
+
+        cancel_btn = discord.ui.Button(
+            label="❌ Cancel",
+            style=discord.ButtonStyle.secondary,
+            custom_id="new:type:cancel",
+        )
+        cancel_btn.callback = self._cancel_callback
+        self.add_item(cancel_btn)
+
+    def _make_type_callback(self, type_key: str):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.user_id or not check_permission_for_action(
+                interaction.user.id, action="execute"
+            ):
+                await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+                return
+            _pending_new_task_capture[interaction.user.id] = {
+                "project": self.project_key,
+                "type": type_key,
+            }
+            await interaction.response.edit_message(
+                content=(
+                    f"📝 Project: **{_svc_get_project_label(self.project_key, ROUTING_PROJECTS)}**\n"
+                    f"Type: **{ROUTING_TASK_TYPES.get(type_key, type_key)}**\n\n"
+                    "Send the task text in your next message.\n"
+                    "Type `cancel` to abort."
+                ),
+                view=None,
+            )
+
+        return callback
+
+    async def _cancel_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+            return
+        _pending_new_task_capture.pop(interaction.user.id, None)
+        await interaction.response.edit_message(content="❎ Task creation canceled.", view=None)
+
+
+class NewTaskProjectView(discord.ui.View):
+    def __init__(self, user_id: int):
+        super().__init__(timeout=300)
+        self.user_id = user_id
+        for project_key, project_label in sorted(ROUTING_PROJECTS.items()):
+            button = discord.ui.Button(
+                label=str(project_label)[:80],
+                style=discord.ButtonStyle.primary,
+                custom_id=f"new:project:{project_key}",
+            )
+            button.callback = self._make_project_callback(project_key)
+            self.add_item(button)
+
+        cancel_btn = discord.ui.Button(
+            label="❌ Cancel",
+            style=discord.ButtonStyle.secondary,
+            custom_id="new:project:cancel",
+        )
+        cancel_btn.callback = self._cancel_callback
+        self.add_item(cancel_btn)
+
+    def _make_project_callback(self, project_key: str):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.user_id or not check_permission_for_action(
+                interaction.user.id, action="execute"
+            ):
+                await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+                return
+            if NEXUS_AUTH_ENABLED:
+                requester = _requester_context_for_discord_user(interaction.user)
+                allowed, error = _authorize_project_for_requester(project_key, requester)
+                if not allowed:
+                    await interaction.response.send_message(error, ephemeral=True)
+                    return
+            await interaction.response.edit_message(
+                content=(
+                    f"📁 Selected project: **{_svc_get_project_label(project_key, ROUTING_PROJECTS)}**\n\n"
+                    "Choose task type:"
+                ),
+                view=NewTaskTypeView(self.user_id, project_key),
+            )
+
+        return callback
+
+    async def _cancel_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
+            return
+        _pending_new_task_capture.pop(interaction.user.id, None)
+        await interaction.response.edit_message(content="❎ Task creation canceled.", view=None)
 
 
 def _command_issue_state(command_name: str) -> str:
@@ -1914,14 +2022,33 @@ async def login_command(
                     url=login_url,
                 )
             )
-        await interaction.response.send_message(
-            (
+        try:
+            dm_channel = await interaction.user.create_dm()
+            sent = await dm_channel.send(
                 "🔐 Setup required before task execution.\n\n"
-                "Choose your Git provider to continue OAuth onboarding."
-            ),
-            view=view,
-            ephemeral=True,
-        )
+                "Choose your Git provider to continue OAuth onboarding.",
+                view=view,
+            )
+            await interaction.response.send_message(
+                "📩 I sent you a DM with onboarding links.",
+                ephemeral=True,
+            )
+        except Exception as exc:
+            logger.warning("Failed to send Discord onboarding DM for session %s: %s", session_id, exc)
+            await interaction.response.send_message(
+                "⚠️ I could not DM you. Enable DMs and run `/login` again.",
+                ephemeral=True,
+            )
+            return
+        try:
+            _svc_register_onboarding_message(
+                session_id=session_id,
+                chat_platform="discord",
+                chat_id=str(getattr(dm_channel, "id", "") or ""),
+                message_id=str(getattr(sent, "id", "") or ""),
+            )
+        except Exception as exc:
+            logger.warning("Failed to register Discord onboarding message for session %s: %s", session_id, exc)
         return
 
     if selected_provider not in {"github", "gitlab"}:
@@ -1940,16 +2067,35 @@ async def login_command(
     login_url = (
         f"{NEXUS_PUBLIC_BASE_URL}/auth/start?session={session_id}&provider={selected_provider}"
     )
-    await interaction.response.send_message(
-        (
+    try:
+        dm_channel = await interaction.user.create_dm()
+        sent = await dm_channel.send(
             "🔐 Setup required before task execution.\n\n"
             f"1. Open: <{login_url}>\n"
             f"2. Sign in with {selected_provider.title()}\n"
             "3. Add Codex/OpenAI, Gemini, and/or Claude key, or use Copilot with linked GitHub OAuth\n"
             "4. Use `/menu` to continue."
-        ),
-        ephemeral=True,
-    )
+        )
+        await interaction.response.send_message(
+            "📩 I sent you a DM with onboarding instructions.",
+            ephemeral=True,
+        )
+    except Exception as exc:
+        logger.warning("Failed to send Discord onboarding DM for session %s: %s", session_id, exc)
+        await interaction.response.send_message(
+            "⚠️ I could not DM you. Enable DMs and run `/login` again.",
+            ephemeral=True,
+        )
+        return
+    try:
+        _svc_register_onboarding_message(
+            session_id=session_id,
+            chat_platform="discord",
+            chat_id=str(getattr(dm_channel, "id", "") or ""),
+            message_id=str(getattr(sent, "id", "") or ""),
+        )
+    except Exception as exc:
+        logger.warning("Failed to register Discord onboarding message for session %s: %s", session_id, exc)
 
 
 @bot.tree.command(name="setup-status", description="Show your onboarding and project access status")
@@ -2707,12 +2853,13 @@ async def start_command(interaction: discord.Interaction):
 
 @bot.tree.command(name="new", description="Start task creation guidance")
 async def new_command(interaction: discord.Interaction):
-    if not check_permission(interaction.user.id):
+    if not check_permission_for_action(interaction.user.id, action="execute"):
         await interaction.response.send_message("🔒 Unauthorized.", ephemeral=True)
         return
+    _pending_new_task_capture.pop(interaction.user.id, None)
     await interaction.response.send_message(
-        "✨ Create tasks by sending plain text/voice (when intent is enabled), or use `/menu` → Task Creation.",
-        ephemeral=True,
+        "✨ Create a new task.\n\nSelect a project:",
+        view=NewTaskProjectView(interaction.user.id),
     )
 
 
@@ -2723,6 +2870,7 @@ async def cancel_command(interaction: discord.Interaction):
         return
     _pending_project_resolution.pop(interaction.user.id, None)
     _pending_feature_ideation.pop(interaction.user.id, None)
+    _pending_new_task_capture.pop(interaction.user.id, None)
     await interaction.response.send_message("❎ Pending Discord flow canceled.", ephemeral=True)
 
 
@@ -3058,6 +3206,46 @@ async def on_message(message: discord.Message):
 
     if await _begin_feature_ideation(message, text):
         await status_msg.delete()
+        return
+
+    pending_new = _pending_new_task_capture.get(message.author.id)
+    if isinstance(pending_new, dict):
+        candidate = str(text or "").strip().lower()
+        if candidate in {"cancel", "/cancel"}:
+            _pending_new_task_capture.pop(message.author.id, None)
+            await status_msg.edit(content="❎ Task creation canceled.")
+            return
+
+        project_key = str(pending_new.get("project") or "").strip().lower()
+        task_type = str(pending_new.get("type") or "").strip().lower()
+        if project_key not in ROUTING_PROJECTS:
+            _pending_new_task_capture.pop(message.author.id, None)
+            await status_msg.edit(content="⚠️ Task creation session expired. Run `/new` again.")
+            return
+        if NEXUS_AUTH_ENABLED:
+            allowed_project, error_project = _authorize_project_for_requester(
+                project_key,
+                requester_context,
+            )
+            if not allowed_project:
+                _pending_new_task_capture.pop(message.author.id, None)
+                await status_msg.edit(content=error_project)
+                return
+
+        task_prefix = ROUTING_TASK_TYPES.get(task_type, task_type)
+        routed_text = f"{task_prefix}: {text}" if task_prefix else text
+        result = await process_inbox_task(
+            routed_text,
+            orchestrator,
+            str(message.id),
+            project_hint=project_key,
+            requester_context=requester_context,
+            authorize_project=_authorize_project_for_requester,
+        )
+        if not result.get("success") and "pending_resolution" in result:
+            _pending_project_resolution[message.author.id] = result["pending_resolution"]
+        _pending_new_task_capture.pop(message.author.id, None)
+        await status_msg.edit(content=result.get("message", "⚠️ Task processing completed."))
         return
 
     pending_resolution = _pending_project_resolution.get(message.author.id)

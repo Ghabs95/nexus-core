@@ -22,11 +22,32 @@ class AuthManager:
         nexus_id: str,
         discord_user_id: str,
         discord_username: str | None,
+        chat_platform: str | None = None,
+        chat_id: str | None = None,
+        onboarding_message_id: str | None = None,
     ) -> str:
         return _auth_sessions.create_login_session_for_user(
             nexus_id=nexus_id,
             discord_user_id=discord_user_id,
             discord_username=discord_username,
+            chat_platform=chat_platform,
+            chat_id=chat_id,
+            onboarding_message_id=onboarding_message_id,
+        )
+
+    def register_onboarding_message(
+        self,
+        *,
+        session_id: str,
+        chat_platform: str,
+        chat_id: str,
+        message_id: str,
+    ) -> None:
+        _auth_sessions.register_onboarding_message(
+            session_id=session_id,
+            chat_platform=chat_platform,
+            chat_id=chat_id,
+            message_id=message_id,
         )
 
     def start_oauth_flow(self, session_id: str, provider: str = "github") -> tuple[str, str]:
@@ -85,11 +106,32 @@ def create_login_session_for_user(
     nexus_id: str,
     discord_user_id: str,
     discord_username: str | None,
+    chat_platform: str | None = None,
+    chat_id: str | None = None,
+    onboarding_message_id: str | None = None,
 ) -> str:
     return auth_manager.create_login_session_for_user(
         nexus_id=nexus_id,
         discord_user_id=discord_user_id,
         discord_username=discord_username,
+        chat_platform=chat_platform,
+        chat_id=chat_id,
+        onboarding_message_id=onboarding_message_id,
+    )
+
+
+def register_onboarding_message(
+    *,
+    session_id: str,
+    chat_platform: str,
+    chat_id: str,
+    message_id: str,
+) -> None:
+    auth_manager.register_onboarding_message(
+        session_id=session_id,
+        chat_platform=chat_platform,
+        chat_id=chat_id,
+        message_id=message_id,
     )
 
 

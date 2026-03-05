@@ -11,6 +11,7 @@ from nexus.core.chat.chat_context_service import (
     chat_context_summary,
 )
 from nexus.core.handlers.inbox_routing_handler import PROJECTS
+from nexus.core.interactive.context import InteractiveContext
 from nexus.core.memory import (
     create_chat,
     delete_chat,
@@ -20,7 +21,6 @@ from nexus.core.memory import (
     set_active_chat,
     update_chat_metadata,
 )
-from nexus.core.interactive.context import InteractiveContext
 
 if TYPE_CHECKING:
     pass

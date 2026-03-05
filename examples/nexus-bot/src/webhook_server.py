@@ -13,12 +13,20 @@ Event handlers:
 """
 
 import asyncio
+import html
 import logging
 import os
-import sys
 import time
+from datetime import UTC, datetime
+from hmac import compare_digest
+from urllib.parse import quote
 
-from flask import Flask, jsonify, redirect, request, send_from_directory
+import requests
+from flask import Flask, jsonify, make_response, redirect, request, send_from_directory
+
+from nexus.core.config.bootstrap import initialize_runtime
+
+initialize_runtime(configure_logging=False)
 
 try:
     from flask_socketio import SocketIO
@@ -36,18 +44,17 @@ except ImportError:
         def run(self, app, *args, **kwargs):
             return app.run(*args, **kwargs)
 
-
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from nexus.core.project.repo_utils import project_repos_from_config as _project_repos
 from nexus.core.workspace import WorkspaceManager
 
-from config import (
+from nexus.core.config import (
     BASE_DIR,
     LOGS_DIR,
+    DISCORD_TOKEN,
     NEXUS_ACCESS_SYNC_INTERVAL_MINUTES,
     NEXUS_AUTH_ENABLED,
+    NEXUS_AUTH_SESSION_TTL_SECONDS,
+    NEXUS_PUBLIC_BASE_URL,
     NEXUS_STORAGE_BACKEND,
     NEXUS_CORE_STORAGE_DIR,
     NEXUS_STORAGE_DSN,
@@ -55,6 +62,7 @@ from config import (
     PROJECT_CONFIG,
     WEBHOOK_PORT,
     WEBHOOK_SECRET,
+    TELEGRAM_TOKEN,
     get_default_project,
     get_repos,
     get_inbox_dir,
@@ -100,6 +108,8 @@ from nexus.core.auth import (
 from nexus.core.auth import (
     store_ai_provider_keys as _svc_store_ai_provider_keys,
 )
+from nexus.core.auth.credential_store import get_auth_session as _svc_get_auth_session
+from nexus.core.auth.credential_store import get_auth_session_by_state as _svc_get_auth_session_by_state
 from nexus.core.runtime_mode import is_issue_process_running
 
 # Configure logging
@@ -134,6 +144,18 @@ socketio = SocketIO(app, async_mode=_socketio_async_mode, cors_allowed_origins="
 # Track processed events to avoid duplicates
 processed_events = set()
 _last_acl_sync_at = 0.0
+_WEB_SESSION_COOKIE_NAME = "nexus_web_session"
+_WEB_SESSION_COOKIE_SECURE = NEXUS_PUBLIC_BASE_URL.lower().startswith("https://")
+_WEB_SESSION_COOKIE_MAX_AGE_SECONDS = max(300, int(NEXUS_AUTH_SESSION_TTL_SECONDS))
+_VISUALIZER_ENABLED = str(os.getenv("NEXUS_VISUALIZER_ENABLED", "true")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_VISUALIZER_SHARED_TOKEN = str(os.getenv("NEXUS_VISUALIZER_SHARED_TOKEN", "")).strip()
+_VISUALIZER_SHARED_TOKEN_COOKIE_NAME = "nexus_visualizer_token"
+_VISUALIZER_SHARED_TOKEN_HEADER = "X-Nexus-Visualizer-Token"
 
 
 def _run_acl_sync_if_due() -> None:
@@ -151,6 +173,199 @@ def _run_acl_sync_if_due() -> None:
             logger.info("Auth ACL sync: %s", result)
     except Exception as exc:
         logger.warning("Periodic ACL sync failed: %s", exc)
+
+
+def _safe_next_path(raw_path: str | None, *, default: str = "/visualizer") -> str:
+    candidate = str(raw_path or "").strip()
+    if candidate.startswith("/") and not candidate.startswith("//"):
+        return candidate
+    return default
+
+
+def _parse_iso_utc(raw_value: str | None) -> datetime | None:
+    value = str(raw_value or "").strip()
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _extract_session_id_from_request() -> str:
+    for candidate in (
+        request.args.get("session"),
+        request.headers.get("X-Nexus-Session"),
+        request.cookies.get(_WEB_SESSION_COOKIE_NAME),
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _resolve_ready_web_session(session_id: str | None = None) -> tuple[str, dict | None]:
+    candidate = str(session_id or _extract_session_id_from_request() or "").strip()
+    if not candidate:
+        return "", None
+    try:
+        payload = _svc_get_session_and_setup_status(candidate)
+    except Exception as exc:
+        logger.warning("Failed to resolve auth session %s: %s", candidate, exc)
+        return "", None
+    if not isinstance(payload, dict) or not payload.get("exists"):
+        return "", None
+
+    expires_at = _parse_iso_utc(payload.get("expires_at"))
+    if expires_at and expires_at <= datetime.now(tz=UTC):
+        return "", None
+    if str(payload.get("status") or "").strip().lower() == "expired":
+        return "", None
+
+    setup = payload.get("setup")
+    if not isinstance(setup, dict) or not bool(setup.get("ready")):
+        return "", None
+    return candidate, payload
+
+
+def _set_web_session_cookie(response, session_id: str) -> None:
+    response.set_cookie(
+        _WEB_SESSION_COOKIE_NAME,
+        str(session_id),
+        max_age=_WEB_SESSION_COOKIE_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=_WEB_SESSION_COOKIE_SECURE,
+        samesite="Lax",
+        path="/",
+    )
+
+
+def _clear_web_session_cookie(response) -> None:
+    response.set_cookie(
+        _WEB_SESSION_COOKIE_NAME,
+        "",
+        expires=0,
+        max_age=0,
+        httponly=True,
+        secure=_WEB_SESSION_COOKIE_SECURE,
+        samesite="Lax",
+        path="/",
+    )
+
+
+def _extract_visualizer_shared_token_from_request() -> str:
+    auth_header = str(request.headers.get("Authorization", "")).strip()
+    bearer_token = ""
+    if auth_header.lower().startswith("bearer "):
+        bearer_token = auth_header[7:].strip()
+    for candidate in (
+        request.headers.get(_VISUALIZER_SHARED_TOKEN_HEADER),
+        bearer_token,
+        request.cookies.get(_VISUALIZER_SHARED_TOKEN_COOKIE_NAME),
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _has_valid_visualizer_shared_token(raw_token: str | None = None) -> bool:
+    expected = str(_VISUALIZER_SHARED_TOKEN or "").strip()
+    if not expected:
+        return False
+    candidate = str(raw_token or _extract_visualizer_shared_token_from_request() or "").strip()
+    if not candidate:
+        return False
+    return bool(compare_digest(candidate, expected))
+
+
+def _set_visualizer_shared_token_cookie(response, token: str) -> None:
+    response.set_cookie(
+        _VISUALIZER_SHARED_TOKEN_COOKIE_NAME,
+        str(token),
+        max_age=_WEB_SESSION_COOKIE_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=_WEB_SESSION_COOKIE_SECURE,
+        samesite="Lax",
+        path="/",
+    )
+
+
+def _clear_visualizer_shared_token_cookie(response) -> None:
+    response.set_cookie(
+        _VISUALIZER_SHARED_TOKEN_COOKIE_NAME,
+        "",
+        expires=0,
+        max_age=0,
+        httponly=True,
+        secure=_WEB_SESSION_COOKIE_SECURE,
+        samesite="Lax",
+        path="/",
+    )
+
+
+def _resolve_visualizer_access() -> tuple[bool, str, str]:
+    if not _VISUALIZER_ENABLED:
+        return False, "disabled", ""
+    if _VISUALIZER_SHARED_TOKEN and _has_valid_visualizer_shared_token():
+        return True, "token", ""
+    if NEXUS_AUTH_ENABLED:
+        session_id, _payload = _resolve_ready_web_session()
+        if session_id:
+            return True, "session", session_id
+        return False, "login-required", ""
+    if _VISUALIZER_SHARED_TOKEN:
+        return False, "token-required", ""
+    return False, "unconfigured", ""
+
+
+def _visualizer_login_redirect(next_path: str = "/visualizer"):
+    safe_next = quote(_safe_next_path(next_path), safe="/")
+    return redirect(f"/?next={safe_next}", code=302)
+
+
+def _render_login_page(*, message_html: str = "", session_hint: str = ""):
+    preferred_provider = "gitlab" if os.getenv("NEXUS_GITLAB_CLIENT_ID") else "github"
+    session_value = html.escape(str(session_hint or "").strip(), quote=True)
+    provider_options = (
+        '<option value="github">GitHub</option><option value="gitlab">GitLab</option>'
+        if preferred_provider == "github"
+        else '<option value="gitlab">GitLab</option><option value="github">GitHub</option>'
+    )
+    body = f"""
+<p>Authenticate using the same OAuth onboarding used by Telegram/Discord <code>/login</code>.</p>
+{message_html}
+<form method="get" action="/auth/start" autocomplete="off">
+  <label for="session"><strong>Session ID</strong></label>
+  <input id="session" name="session" type="text" value="{session_value}" placeholder="Paste the session from /login link" spellcheck="false" autocapitalize="off" autocorrect="off" required />
+  <label for="provider"><strong>Provider</strong></label>
+  <select id="provider" name="provider" style="width:100%; padding:0.6rem; border-radius:8px; border:1px solid #94a3b8;">
+    {provider_options}
+  </select>
+  <button type="submit" class="form-submit">Continue Login</button>
+</form>
+<p><small>Tip: run <code>/login</code> in Telegram or Discord, then paste the session value from that link.</small></p>
+"""
+    return _render_auth_message("Nexus Login", body, status_code=200)
+
+
+def _render_visualizer_token_page(*, message_html: str = "", next_path: str = "/visualizer"):
+    safe_next = html.escape(_safe_next_path(next_path), quote=True)
+    body = f"""
+<p>Visualizer access requires the shared token configured in <code>NEXUS_VISUALIZER_SHARED_TOKEN</code>.</p>
+{message_html}
+<form method="post" action="/visualizer/access" autocomplete="off">
+  <input type="hidden" name="next" value="{safe_next}" />
+  <label for="token"><strong>Visualizer Token</strong></label>
+  <input id="token" name="token" type="password" placeholder="Paste shared token" spellcheck="false" autocapitalize="off" autocorrect="off" required />
+  <button type="submit" class="form-submit">Open Visualizer</button>
+</form>
+<p><small>Alternative: send header <code>{_VISUALIZER_SHARED_TOKEN_HEADER}</code> or <code>Authorization: Bearer ...</code>.</small></p>
+"""
+    return _render_auth_message("Visualizer Access", body, status_code=200)
 
 
 def _collect_visualizer_snapshot() -> list[dict]:
@@ -212,6 +427,10 @@ except Exception as _e:
 
 @socketio.on("connect", namespace="/visualizer")
 def _visualizer_socket_connect():
+    allowed, mode, _session_id = _resolve_visualizer_access()
+    if not allowed:
+        logger.warning("Visualizer Socket.IO rejected: access mode=%s", mode)
+        return False
     logger.info("Visualizer Socket.IO client connected")
 
 
@@ -594,6 +813,74 @@ function enableProviderField(fieldName) {{
 """
 
 
+def _telegram_edit_message(*, chat_id: str, message_id: str, text: str) -> None:
+    token = str(TELEGRAM_TOKEN or "").strip()
+    if not token:
+        return
+    requests.post(
+        f"https://api.telegram.org/bot{token}/editMessageText",
+        json={
+            "chat_id": chat_id,
+            "message_id": int(message_id),
+            "text": text,
+            "disable_web_page_preview": True,
+        },
+        timeout=10,
+    )
+
+
+def _discord_edit_message(*, chat_id: str, message_id: str, text: str) -> None:
+    token = str(DISCORD_TOKEN or "").strip()
+    if not token:
+        return
+    requests.patch(
+        f"https://discord.com/api/v10/channels/{quote(str(chat_id), safe='')}/messages/{quote(str(message_id), safe='')}",
+        headers={
+            "Authorization": f"Bot {token}",
+            "Content-Type": "application/json",
+        },
+        json={"content": text},
+        timeout=10,
+    )
+
+
+def _notify_onboarding_message(
+    *,
+    session_id: str,
+    text: str,
+) -> None:
+    try:
+        record = _svc_get_auth_session(str(session_id))
+    except Exception as exc:
+        logger.warning("Failed to load auth session %s for onboarding message update: %s", session_id, exc)
+        return
+    if not record:
+        return
+
+    platform = str(record.chat_platform or "").strip().lower()
+    chat_id = str(record.chat_id or "").strip()
+    message_id = str(record.onboarding_message_id or "").strip()
+    if not platform or not chat_id or not message_id:
+        return
+
+    try:
+        if platform == "telegram":
+            _telegram_edit_message(chat_id=chat_id, message_id=message_id, text=text)
+            return
+        if platform == "discord":
+            _discord_edit_message(chat_id=chat_id, message_id=message_id, text=text)
+            return
+    except Exception as exc:
+        logger.warning(
+            "Failed to update onboarding message for session %s (%s:%s/%s): %s",
+            session_id,
+            platform,
+            chat_id,
+            message_id,
+            exc,
+        )
+
+
 @app.route("/auth/start", methods=["GET"])
 def auth_start():
     if not NEXUS_AUTH_ENABLED:
@@ -611,6 +898,10 @@ def auth_start():
     try:
         oauth_url, _state = _svc_start_oauth_flow(session_id, provider=provider)
     except Exception as exc:
+        _notify_onboarding_message(
+            session_id=session_id,
+            text=f"❌ OAuth start failed for {provider.title()}: {exc}\nRun /login to retry.",
+        )
         return _render_auth_message("Login Error", f"Failed to start OAuth: <code>{exc}</code>", status_code=400)
     return redirect(oauth_url, code=302)
 
@@ -634,6 +925,17 @@ def auth_github_callback():
     try:
         result = _svc_complete_github_oauth(code=code, state=state)
     except Exception as exc:
+        session_id = ""
+        try:
+            session = _svc_get_auth_session_by_state(state)
+            session_id = str(getattr(session, "session_id", "") or "").strip()
+        except Exception:
+            session_id = ""
+        if session_id:
+            _notify_onboarding_message(
+                session_id=session_id,
+                text=f"❌ GitHub OAuth failed: {exc}\nRun /login to retry.",
+            )
         return _render_auth_message("OAuth Error", f"{exc}", status_code=400)
 
     source_nexus_id = str(result.get("source_nexus_id") or "").strip()
@@ -680,7 +982,16 @@ def auth_github_callback():
             + "Keys/tokens are encrypted at rest and used only for your own task execution."
         ),
     )
-    return _render_auth_message("Complete Setup", form_body, status_code=200)
+    _notify_onboarding_message(
+        session_id=session_id,
+        text=(
+            "✅ GitHub OAuth linked successfully.\n"
+            "Continue in the browser to save AI keys, then run /setup-status (Discord) or /setup_status (Telegram)."
+        ),
+    )
+    response = make_response(_render_auth_message("Complete Setup", form_body, status_code=200))
+    _set_web_session_cookie(response, session_id)
+    return response
 
 
 @app.route("/auth/gitlab/callback", methods=["GET"])
@@ -702,6 +1013,17 @@ def auth_gitlab_callback():
     try:
         result = _svc_complete_gitlab_oauth(code=code, state=state)
     except Exception as exc:
+        session_id = ""
+        try:
+            session = _svc_get_auth_session_by_state(state)
+            session_id = str(getattr(session, "session_id", "") or "").strip()
+        except Exception:
+            session_id = ""
+        if session_id:
+            _notify_onboarding_message(
+                session_id=session_id,
+                text=f"❌ GitLab OAuth failed: {exc}\nRun /login to retry.",
+            )
         return _render_auth_message("OAuth Error", f"{exc}", status_code=400)
 
     source_nexus_id = str(result.get("source_nexus_id") or "").strip()
@@ -749,7 +1071,16 @@ def auth_gitlab_callback():
             + "Keys/tokens are encrypted at rest and used only for your own task execution."
         ),
     )
-    return _render_auth_message("Complete Setup", form_body, status_code=200)
+    _notify_onboarding_message(
+        session_id=session_id,
+        text=(
+            "✅ GitLab OAuth linked successfully.\n"
+            "Continue in the browser to save AI keys, then run /setup-status (Discord) or /setup_status (Telegram)."
+        ),
+    )
+    response = make_response(_render_auth_message("Complete Setup", form_body, status_code=200))
+    _set_web_session_cookie(response, session_id)
+    return response
 
 
 @app.route("/auth/ai-keys", methods=["POST"])
@@ -809,6 +1140,10 @@ def auth_ai_keys():
             allow_copilot=use_copilot,
         )
     except Exception as exc:
+        _notify_onboarding_message(
+            session_id=session_id,
+            text=f"❌ Credential save failed: {exc}\nRetry from the web form or run /login again.",
+        )
         return _render_auth_message("Credential Error", f"{exc}", status_code=400)
 
     ready = bool(result.get("ready"))
@@ -823,7 +1158,16 @@ def auth_ai_keys():
         "<p>Go back to your chat app and run the matching command:"
         " Discord <code>/setup-status</code>, Telegram <code>/setup_status</code>.</p>"
     )
-    return _render_auth_message("Setup Complete", body, status_code=200)
+    _notify_onboarding_message(
+        session_id=session_id,
+        text=(
+            f"{'✅' if ready else '⚠️'} Setup {'completed' if ready else 'updated'}.\n"
+            "Run /setup-status (Discord) or /setup_status (Telegram)."
+        ),
+    )
+    response = make_response(_render_auth_message("Setup Complete", body, status_code=200))
+    _set_web_session_cookie(response, session_id)
+    return response
 
 
 @app.route("/auth/result", methods=["GET"])
@@ -993,37 +1337,175 @@ def webhook():
 
 @app.route("/", methods=["GET"])
 def index():
-    """Root endpoint - basic info."""
-    return (
-        jsonify(
-            {
-                "service": "Nexus Webhook Server",
-                "version": "1.0.0",
-                "endpoints": {
-                    "/webhook": "POST - Git webhook events",
-                    "/health": "GET - Health check",
-                    "/visualizer": "GET - Real-time workflow visualizer dashboard",
-                    "/auth/start": "GET - Begin OAuth onboarding (GitHub/GitLab)",
-                    "/auth/github/callback": "GET - GitHub OAuth callback",
-                    "/auth/gitlab/callback": "GET - GitLab OAuth callback",
-                    "/auth/ai-keys": "POST - Save user AI provider keys",
-                    "/auth/result": "GET - Onboarding session status",
-                },
-            }
-        ),
-        200,
+    """Root endpoint."""
+    next_path = _safe_next_path(request.args.get("next"), default="/visualizer")
+    allowed, mode, session_id = _resolve_visualizer_access()
+    if allowed:
+        response = make_response(redirect(next_path, code=302))
+        if mode == "session" and session_id:
+            _set_web_session_cookie(response, session_id)
+        elif mode == "token":
+            provided_token = _extract_visualizer_shared_token_from_request()
+            if provided_token:
+                _set_visualizer_shared_token_cookie(response, provided_token)
+        return response
+
+    if mode == "disabled":
+        return _render_auth_message(
+            "Visualizer Disabled",
+            "The visualizer is disabled (<code>NEXUS_VISUALIZER_ENABLED=false</code>).",
+            status_code=404,
+        )
+
+    if mode == "token-required":
+        response = make_response(_render_visualizer_token_page(next_path=next_path))
+        _clear_visualizer_shared_token_cookie(response)
+        return response
+
+    if mode == "unconfigured":
+        return _render_auth_message(
+            "Visualizer Locked",
+            (
+                "No access method is configured. "
+                "Set <code>NEXUS_VISUALIZER_SHARED_TOKEN</code> or enable "
+                "<code>NEXUS_AUTH_ENABLED=true</code>."
+            ),
+            status_code=503,
+        )
+
+    session_hint = str(request.args.get("session", "")).strip()
+    ready_session_id, payload = _resolve_ready_web_session(session_hint or None)
+    if ready_session_id and payload:
+        response = make_response(redirect(next_path, code=302))
+        _set_web_session_cookie(response, ready_session_id)
+        return response
+
+    info_message = ""
+    if session_hint:
+        info_message = (
+            "<p><small>Session found but setup is not ready yet. Complete OAuth + key setup first.</small></p>"
+        )
+    response = make_response(
+        _render_login_page(
+            message_html=info_message,
+            session_hint=session_hint,
+        )
     )
+    if session_hint:
+        _clear_web_session_cookie(response)
+    return response
+
+
+@app.route("/visualizer/access", methods=["POST"])
+def visualizer_access():
+    """Exchange shared visualizer token for an HttpOnly cookie session."""
+    if not _VISUALIZER_ENABLED:
+        return _render_auth_message(
+            "Visualizer Disabled",
+            "The visualizer is disabled (<code>NEXUS_VISUALIZER_ENABLED=false</code>).",
+            status_code=404,
+        )
+    if not _VISUALIZER_SHARED_TOKEN:
+        return _render_auth_message(
+            "Token Access Disabled",
+            "Shared-token access is disabled because <code>NEXUS_VISUALIZER_SHARED_TOKEN</code> is not set.",
+            status_code=404,
+        )
+
+    payload = request.get_json(silent=True) if request.is_json else {}
+    payload = payload if isinstance(payload, dict) else {}
+    raw_next = request.form.get("next") or payload.get("next")
+    next_path = _safe_next_path(raw_next, default="/visualizer")
+    token = str(request.form.get("token") or payload.get("token") or "").strip()
+    if not _has_valid_visualizer_shared_token(token):
+        response = make_response(
+            _render_visualizer_token_page(
+                message_html="<p><small>Invalid token. Try again.</small></p>",
+                next_path=next_path,
+            )
+        )
+        response.status_code = 401
+        _clear_visualizer_shared_token_cookie(response)
+        return response
+
+    response = make_response(redirect(next_path, code=302))
+    _set_visualizer_shared_token_cookie(response, token)
+    return response
 
 
 @app.route("/visualizer", methods=["GET"])
 def visualizer():
     """Serve the real-time workflow visualizer dashboard."""
-    return send_from_directory(app.static_folder, "visualizer.html")
+    allowed, mode, session_id = _resolve_visualizer_access()
+    if not allowed:
+        if mode == "disabled":
+            return _render_auth_message(
+                "Visualizer Disabled",
+                "The visualizer is disabled (<code>NEXUS_VISUALIZER_ENABLED=false</code>).",
+                status_code=404,
+            )
+        if mode == "unconfigured":
+            return _render_auth_message(
+                "Visualizer Locked",
+                (
+                    "No access method is configured. "
+                    "Set <code>NEXUS_VISUALIZER_SHARED_TOKEN</code> or enable "
+                    "<code>NEXUS_AUTH_ENABLED=true</code>."
+                ),
+                status_code=503,
+            )
+        response = make_response(_visualizer_login_redirect("/visualizer"))
+        if mode == "login-required":
+            _clear_web_session_cookie(response)
+        if mode == "token-required":
+            _clear_visualizer_shared_token_cookie(response)
+        return response
+
+    if request.args.get("session"):
+        response = make_response(redirect("/visualizer", code=302))
+    else:
+        response = make_response(send_from_directory(app.static_folder, "visualizer.html"))
+    if mode == "session" and session_id:
+        _set_web_session_cookie(response, session_id)
+    elif mode == "token":
+        provided_token = _extract_visualizer_shared_token_from_request()
+        if provided_token:
+            _set_visualizer_shared_token_cookie(response, provided_token)
+    return response
 
 
 @app.route("/visualizer/snapshot", methods=["GET"])
 def visualizer_snapshot():
     """Return a snapshot payload for initial visualizer rendering."""
+    allowed, mode, _session_id = _resolve_visualizer_access()
+    if not allowed:
+        if mode == "disabled":
+            return jsonify({"status": "disabled", "message": "Visualizer is disabled."}), 404
+        if mode == "unconfigured":
+            return (
+                jsonify(
+                    {
+                        "status": "locked",
+                        "message": (
+                            "No visualizer auth method configured. "
+                            "Set NEXUS_VISUALIZER_SHARED_TOKEN or enable NEXUS_AUTH_ENABLED=true."
+                        ),
+                    }
+                ),
+                503,
+            )
+        return (
+            jsonify(
+                {
+                    "status": "unauthorized",
+                    "message": (
+                        "Authentication required. Use /login or provide visualizer shared token "
+                        f"via {_VISUALIZER_SHARED_TOKEN_HEADER}."
+                    ),
+                }
+            ),
+            401,
+        )
     records = _collect_visualizer_snapshot()
     return (
         jsonify(

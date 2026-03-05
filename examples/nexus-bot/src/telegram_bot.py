@@ -24,8 +24,12 @@ from telegram.ext import (
 )
 
 from alerting import init_alerting_system
+from nexus.core.config.bootstrap import initialize_runtime
+
+initialize_runtime(configure_logging=False)
+
 # Import configuration from centralized config module
-from config import (
+from nexus.core.config import (
     AI_PERSONA,
     BASE_DIR,
     LOGS_DIR,
@@ -67,6 +71,7 @@ from nexus.core.auth import create_login_session_for_user
 from nexus.core.auth import (
     get_setup_status as _svc_get_setup_status,
 )
+from nexus.core.auth import register_onboarding_message as _svc_register_onboarding_message
 from nexus.core.command_contract import (
     validate_command_parity,
     validate_required_command_interface,
@@ -514,7 +519,7 @@ from nexus.core.workflow_runtime.workflow_signal_sync import (
 )
 from nexus.core.workflow_runtime.workflow_watch_service import get_workflow_watch_service
 from nexus.plugins.builtin.ai_runtime_plugin import AIProvider
-from rate_limiter import RateLimit, get_rate_limiter
+from nexus.core.rate_limiter import RateLimit, get_rate_limiter
 
 # --- LOGGING ---
 logger = logging.getLogger(__name__)
@@ -1582,7 +1587,7 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             for provider in available_providers
         ]
-        await update.effective_message.reply_text(
+        sent = await update.effective_message.reply_text(
             (
                 "🔐 Setup required before task execution.\n\n"
                 "Choose your Git provider to continue OAuth onboarding."
@@ -1590,6 +1595,15 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
             disable_web_page_preview=True,
         )
+        try:
+            _svc_register_onboarding_message(
+                session_id=session_id,
+                chat_platform="telegram",
+                chat_id=str(getattr(sent, "chat_id", "") or getattr(update.effective_chat, "id", "")),
+                message_id=str(getattr(sent, "message_id", "")),
+            )
+        except Exception as exc:
+            logger.warning("Failed to register Telegram onboarding message for session %s: %s", session_id, exc)
         return
 
     if requested_provider not in {"github", "gitlab"}:
@@ -1608,7 +1622,7 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     login_url = (
         f"{NEXUS_PUBLIC_BASE_URL}/auth/start?session={session_id}&provider={requested_provider}"
     )
-    await update.effective_message.reply_text(
+    sent = await update.effective_message.reply_text(
         (
             "🔐 Setup required before task execution.\n\n"
             f"1. Open: {login_url}\n"
@@ -1618,6 +1632,15 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ),
         disable_web_page_preview=True,
     )
+    try:
+        _svc_register_onboarding_message(
+            session_id=session_id,
+            chat_platform="telegram",
+            chat_id=str(getattr(sent, "chat_id", "") or getattr(update.effective_chat, "id", "")),
+            message_id=str(getattr(sent, "message_id", "")),
+        )
+    except Exception as exc:
+        logger.warning("Failed to register Telegram onboarding message for session %s: %s", session_id, exc)
 
 
 async def setup_status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

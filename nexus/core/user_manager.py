@@ -10,15 +10,44 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
+def _resolve_state_dir() -> Path:
+    explicit_state = str(os.getenv("NEXUS_STATE_DIR", "")).strip()
+    if explicit_state:
+        return Path(explicit_state)
+    legacy_data = str(os.getenv("DATA_DIR", "")).strip()
+    if legacy_data:
+        return Path(legacy_data)
+    runtime_dir = str(os.getenv("NEXUS_RUNTIME_DIR", "")).strip()
+    if runtime_dir:
+        return Path(runtime_dir) / "state"
+    return Path(".nexus/state")
+
+
+def _resolve_storage_backend(*, data_file: Path) -> str:
+    forced_backend = str(os.getenv("NEXUS_USER_MANAGER_BACKEND", "")).strip().lower()
+    if forced_backend in {"filesystem", "postgres", "postgresql"}:
+        return "postgres" if forced_backend in {"postgres", "postgresql"} else "filesystem"
+
+    if data_file != USER_DATA_FILE:
+        return "filesystem"
+
+    host_state = str(os.getenv("NEXUS_HOST_STATE_BACKEND", "")).strip().lower()
+    if host_state in {"postgres", "postgresql"}:
+        return "postgres"
+
+    storage_backend = str(os.getenv("NEXUS_STORAGE_BACKEND", "filesystem")).strip().lower()
+    if storage_backend in {"postgres", "postgresql"}:
+        return "postgres"
+    return "filesystem"
+
+
 # User tracking file
-USER_DATA_FILE = (
-    Path(str(os.getenv("NEXUS_STATE_DIR", ".nexus/state")).strip() or ".nexus/state")
-    / "user_tracking.json"
-)
+USER_DATA_FILE = _resolve_state_dir() / "user_tracking.json"
 
 
 @dataclass
@@ -65,9 +94,11 @@ class UserManager:
             data_file: Path to user data JSON file
         """
         self.data_file = data_file
+        self._storage_backend = _resolve_storage_backend(data_file=data_file)
         self.users: dict[str, User] = {}
         self.identity_map: dict[str, str] = {}
         self._last_loaded_mtime_ns: int | None = None
+        self._last_loaded_db_updated_at: str | None = None
         self.load_users()
 
     @staticmethod
@@ -83,12 +114,37 @@ class UserManager:
         self.identity_map[self._identity_key(platform_key, platform_value)] = nexus_id
 
     def _refresh_mtime_snapshot(self) -> None:
+        if self._storage_backend == "postgres":
+            try:
+                from nexus.core.auth.credential_store import get_user_tracking_state
+
+                _payload, updated_at = get_user_tracking_state()
+                self._last_loaded_db_updated_at = (
+                    updated_at.isoformat() if isinstance(updated_at, datetime) else None
+                )
+            except Exception:
+                self._last_loaded_db_updated_at = None
+            return
         try:
             self._last_loaded_mtime_ns = self.data_file.stat().st_mtime_ns
         except FileNotFoundError:
             self._last_loaded_mtime_ns = None
 
     def _maybe_reload_from_disk(self) -> None:
+        if self._storage_backend == "postgres":
+            try:
+                from nexus.core.auth.credential_store import get_user_tracking_state
+
+                _payload, updated_at = get_user_tracking_state()
+                current_token = updated_at.isoformat() if isinstance(updated_at, datetime) else None
+            except Exception:
+                return
+            if self._last_loaded_db_updated_at is None:
+                self._last_loaded_db_updated_at = current_token
+                return
+            if current_token != self._last_loaded_db_updated_at:
+                self.load_users()
+            return
         try:
             current_mtime_ns = self.data_file.stat().st_mtime_ns
         except FileNotFoundError:
@@ -99,73 +155,126 @@ class UserManager:
         if current_mtime_ns != self._last_loaded_mtime_ns:
             self.load_users()
 
+    def _hydrate_from_payload(self, data: Any) -> None:
+        self.users = {}
+        self.identity_map = {}
+        users_blob = data.get("users") if isinstance(data, dict) else None
+        if isinstance(users_blob, dict):
+            for nexus_id, user_data in users_blob.items():
+                projects = {}
+                for proj_name, proj_data in user_data.get("projects", {}).items():
+                    projects[proj_name] = UserProject(
+                        project_name=proj_data["project_name"],
+                        tracked_issues=proj_data["tracked_issues"],
+                        last_activity=proj_data["last_activity"],
+                    )
+                user = User(
+                    nexus_id=nexus_id,
+                    identities={
+                        str(k): str(v)
+                        for k, v in (user_data.get("identities") or {}).items()
+                        if k and v is not None
+                    },
+                    username=user_data.get("username"),
+                    first_name=user_data.get("first_name"),
+                    projects=projects,
+                    created_at=user_data["created_at"],
+                    last_seen=user_data["last_seen"],
+                )
+                self.users[nexus_id] = user
+                for platform, platform_user_id in user.identities.items():
+                    self.identity_map[self._identity_key(platform, platform_user_id)] = nexus_id
+
+            # Reconcile optional persisted map with in-memory derived values.
+            persisted_map = data.get("identity_map") if isinstance(data, dict) else None
+            persisted_map = persisted_map or {}
+            if isinstance(persisted_map, dict):
+                for identity_key, nexus_id in persisted_map.items():
+                    if nexus_id in self.users:
+                        self.identity_map[str(identity_key)] = str(nexus_id)
+            return
+
+        if not isinstance(data, dict):
+            return
+        # Legacy format migration (top-level keyed by telegram_id).
+        for user_id_str, user_data in data.items():
+            telegram_id = str(user_data.get("telegram_id", user_id_str)).strip()
+            projects = {}
+            for proj_name, proj_data in user_data.get("projects", {}).items():
+                projects[proj_name] = UserProject(
+                    project_name=proj_data["project_name"],
+                    tracked_issues=proj_data["tracked_issues"],
+                    last_activity=proj_data["last_activity"],
+                )
+            nexus_id = str(uuid4())
+            self.users[nexus_id] = User(
+                nexus_id=nexus_id,
+                identities={"telegram": telegram_id},
+                username=user_data.get("username"),
+                first_name=user_data.get("first_name"),
+                projects=projects,
+                created_at=user_data["created_at"],
+                last_seen=user_data["last_seen"],
+            )
+            self.identity_map[self._identity_key("telegram", telegram_id)] = nexus_id
+
+    def _serialize_payload(self) -> dict[str, Any]:
+        users_blob: dict[str, dict] = {}
+        for nexus_id, user in self.users.items():
+            projects_dict = {}
+            for proj_name, proj in user.projects.items():
+                projects_dict[proj_name] = asdict(proj)
+
+            users_blob[nexus_id] = {
+                "nexus_id": user.nexus_id,
+                "identities": user.identities,
+                "username": user.username,
+                "first_name": user.first_name,
+                "projects": projects_dict,
+                "created_at": user.created_at,
+                "last_seen": user.last_seen,
+            }
+        return {"users": users_blob, "identity_map": self.identity_map}
+
     def load_users(self) -> None:
-        """Load user data from file."""
+        """Load user data from configured backend."""
         try:
+            if self._storage_backend == "postgres":
+                from nexus.core.auth.credential_store import get_user_tracking_state
+                from nexus.core.auth.credential_store import upsert_user_tracking_state
+
+                payload, updated_at = get_user_tracking_state()
+                if payload is None:
+                    if self.data_file.exists():
+                        with open(self.data_file) as f:
+                            payload = json.load(f)
+                        self._hydrate_from_payload(payload)
+                        upsert_user_tracking_state(self._serialize_payload())
+                        logger.info(
+                            "Bootstrapped UNI tracking state to Postgres from %s (%s users)",
+                            self.data_file,
+                            len(self.users),
+                        )
+                    else:
+                        self.users = {}
+                        self.identity_map = {}
+                        logger.info("No existing Postgres UNI tracking state, starting fresh")
+                else:
+                    self._hydrate_from_payload(payload)
+                    logger.info("Loaded %s users from Postgres UNI tracking state", len(self.users))
+                self._last_loaded_db_updated_at = (
+                    updated_at.isoformat() if isinstance(updated_at, datetime) else None
+                )
+                return
+
             if self.data_file.exists():
                 with open(self.data_file) as f:
                     data = json.load(f)
-
-                users_blob = data.get("users")
-                if isinstance(users_blob, dict):
-                    for nexus_id, user_data in users_blob.items():
-                        projects = {}
-                        for proj_name, proj_data in user_data.get("projects", {}).items():
-                            projects[proj_name] = UserProject(
-                                project_name=proj_data["project_name"],
-                                tracked_issues=proj_data["tracked_issues"],
-                                last_activity=proj_data["last_activity"],
-                            )
-                        user = User(
-                            nexus_id=nexus_id,
-                            identities={
-                                str(k): str(v)
-                                for k, v in (user_data.get("identities") or {}).items()
-                                if k and v is not None
-                            },
-                            username=user_data.get("username"),
-                            first_name=user_data.get("first_name"),
-                            projects=projects,
-                            created_at=user_data["created_at"],
-                            last_seen=user_data["last_seen"],
-                        )
-                        self.users[nexus_id] = user
-                        for platform, platform_user_id in user.identities.items():
-                            self.identity_map[self._identity_key(platform, platform_user_id)] = (
-                                nexus_id
-                            )
-
-                    # Reconcile optional persisted map with in-memory derived values.
-                    persisted_map = data.get("identity_map") or {}
-                    if isinstance(persisted_map, dict):
-                        for identity_key, nexus_id in persisted_map.items():
-                            if nexus_id in self.users:
-                                self.identity_map[str(identity_key)] = str(nexus_id)
-                else:
-                    # Legacy format migration (top-level keyed by telegram_id).
-                    for user_id_str, user_data in data.items():
-                        telegram_id = str(user_data.get("telegram_id", user_id_str)).strip()
-                        projects = {}
-                        for proj_name, proj_data in user_data.get("projects", {}).items():
-                            projects[proj_name] = UserProject(
-                                project_name=proj_data["project_name"],
-                                tracked_issues=proj_data["tracked_issues"],
-                                last_activity=proj_data["last_activity"],
-                            )
-                        nexus_id = str(uuid4())
-                        self.users[nexus_id] = User(
-                            nexus_id=nexus_id,
-                            identities={"telegram": telegram_id},
-                            username=user_data.get("username"),
-                            first_name=user_data.get("first_name"),
-                            projects=projects,
-                            created_at=user_data["created_at"],
-                            last_seen=user_data["last_seen"],
-                        )
-                        self.identity_map[self._identity_key("telegram", telegram_id)] = nexus_id
-
+                self._hydrate_from_payload(data)
                 logger.info(f"Loaded {len(self.users)} users from {self.data_file}")
             else:
+                self.users = {}
+                self.identity_map = {}
                 logger.info("No existing user data file, starting fresh")
             self._refresh_mtime_snapshot()
 
@@ -176,25 +285,19 @@ class UserManager:
             self._refresh_mtime_snapshot()
 
     def save_users(self) -> None:
-        """Save user data to file."""
+        """Save user data to configured backend."""
         try:
-            # Convert to JSON-serializable format
-            users_blob: dict[str, dict] = {}
-            for nexus_id, user in self.users.items():
-                projects_dict = {}
-                for proj_name, proj in user.projects.items():
-                    projects_dict[proj_name] = asdict(proj)
+            data = self._serialize_payload()
 
-                users_blob[nexus_id] = {
-                    "nexus_id": user.nexus_id,
-                    "identities": user.identities,
-                    "username": user.username,
-                    "first_name": user.first_name,
-                    "projects": projects_dict,
-                    "created_at": user.created_at,
-                    "last_seen": user.last_seen,
-                }
-            data = {"users": users_blob, "identity_map": self.identity_map}
+            if self._storage_backend == "postgres":
+                from nexus.core.auth.credential_store import upsert_user_tracking_state
+
+                updated_at = upsert_user_tracking_state(data)
+                self._last_loaded_db_updated_at = (
+                    updated_at.isoformat() if isinstance(updated_at, datetime) else None
+                )
+                logger.debug("Saved %s users to Postgres UNI tracking state", len(self.users))
+                return
 
             # Ensure directory exists
             self.data_file.parent.mkdir(parents=True, exist_ok=True)

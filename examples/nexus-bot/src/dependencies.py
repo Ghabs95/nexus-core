@@ -1,7 +1,11 @@
 import logging
 
+from nexus.adapters.git.utils import build_issue_url, resolve_repo
+from nexus.core.analytics.reporting import get_stats_report
+from nexus.core.audit_store import AuditStore
+from nexus.core.completion import scan_for_completions
 # Import configuration from centralized config module
-from config import (
+from nexus.core.config import (
     AI_PERSONA,
     BASE_DIR,
     NEXUS_CORE_STORAGE_DIR,
@@ -20,10 +24,6 @@ from config import (
     get_tasks_closed_dir,
     get_track_short_projects,
 )
-from nexus.adapters.git.utils import build_issue_url, resolve_repo
-from nexus.core.analytics.reporting import get_stats_report
-from nexus.core.audit_store import AuditStore
-from nexus.core.completion import scan_for_completions
 from nexus.core.error_handling import format_error_for_user
 from nexus.core.handlers.inbox_routing_handler import (
     TYPES,
@@ -53,6 +53,7 @@ from nexus.core.orchestration.plugin_runtime import (
     get_workflow_state_plugin,
 )
 from nexus.core.project.key_utils import normalize_project_key_optional as _normalize_project_key
+from nexus.core.rate_limiter import get_rate_limiter
 from nexus.core.runtime.bridge import get_sop_tier_from_issue, invoke_ai_agent
 from nexus.core.runtime.workflow_commands import (
     pause_handler as workflow_pause_handler,
@@ -79,7 +80,6 @@ from nexus.core.workflow_runtime.workflow_ops_service import (
     fetch_workflow_state_snapshot,
     reconcile_issue_from_signals,
 )
-from rate_limiter import get_rate_limiter
 
 # --- LOGGING ---
 logger = logging.getLogger(__name__)

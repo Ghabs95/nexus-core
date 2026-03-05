@@ -3,14 +3,27 @@
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from typing import Any
 
-from dotenv import load_dotenv
-
+from nexus.core.config.backend_enums import (
+    RATE_LIMIT_BACKEND_ALIASES as _RATE_LIMIT_BACKEND_ALIASES,
+    STORAGE_BACKEND_ALIASES as _STORAGE_BACKEND_ALIASES,
+    VALID_RATE_LIMIT_BACKENDS as _VALID_RATE_LIMIT_BACKENDS,
+    VALID_STORAGE_BACKENDS as _VALID_STORAGE_BACKENDS,
+    normalize_backend_enum as _normalize_backend_enum,
+)
 from nexus.core.config.chat import (
     get_chat_agent_types as _svc_get_chat_agent_types,
     get_chat_agents as _svc_get_chat_agents,
     get_system_operations as _svc_get_system_operations,
+)
+from nexus.core.config.env import (
+    env_bool as _env_bool,
+    env_float as _env_float,
+    get_int_env as _get_int_env,
+    parse_csv_list as _parse_csv_list,
+    parse_int_list as _parse_int_list,
 )
 from nexus.core.config.loaders import (
     load_and_validate_project_config as _svc_load_and_validate_project_config,
@@ -42,37 +55,6 @@ from nexus.core.project.registry import (
     get_project_registry as _svc_get_project_registry,
     normalize_project_key as _svc_normalize_project_key,
 )
-
-# Load secrets from local file if exists
-SECRET_FILE = ".env"
-if os.path.exists(SECRET_FILE):
-    logging.info(f"Loading environment from {SECRET_FILE}")
-    load_dotenv(SECRET_FILE)
-else:
-    logging.info(f"No {SECRET_FILE} found, relying on shell environment")
-
-
-def _get_int_env(name: str, default: int) -> int:
-    """Return integer environment variable value or fallback default."""
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = int(str(raw).strip())
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
-
-
-def _parse_int_list(name: str) -> list[int]:
-    raw = os.getenv(name, "")
-    return [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
-
-
-def _parse_csv_list(name: str) -> list[str]:
-    raw = os.getenv(name, "")
-    return [str(item).strip() for item in str(raw).split(",") if str(item).strip()]
-
 
 # --- TELEGRAM CONFIGURATION ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -532,55 +514,38 @@ NEXUS_CORE_STORAGE_DIR = os.getenv(
 WORKFLOW_ID_MAPPING_FILE = os.path.join(NEXUS_STATE_DIR, "workflow_id_mapping.json")
 APPROVAL_STATE_FILE = os.path.join(NEXUS_STATE_DIR, "approval_state.json")
 
-# Storage backend configuration
-_STORAGE_BACKEND_ALIASES = {
-    "file": "filesystem",
-    "fs": "filesystem",
-    "filesystem": "filesystem",
-    "postgres": "postgres",
-    "postgresql": "postgres",
-}
-_VALID_STORAGE_BACKENDS = {"filesystem", "postgres"}
+# Backend enum configuration
 
 
-def _normalize_storage_backend(raw_value: str | None, default: str = "filesystem") -> str:
-    candidate = str(raw_value or "").strip().lower()
-    if not candidate:
-        return default
-    normalized = _STORAGE_BACKEND_ALIASES.get(candidate, candidate)
-    if normalized not in _VALID_STORAGE_BACKENDS:
-        return default
-    return normalized
-
-
-NEXUS_STORAGE_BACKEND = _normalize_storage_backend(
+NEXUS_STORAGE_BACKEND = _normalize_backend_enum(
     os.getenv("NEXUS_STORAGE_BACKEND"),
+    env_name="NEXUS_STORAGE_BACKEND",
     default="filesystem",
+    allowed=_VALID_STORAGE_BACKENDS,
+    aliases=_STORAGE_BACKEND_ALIASES,
 )
-NEXUS_WORKFLOW_BACKEND = _normalize_storage_backend(
+NEXUS_WORKFLOW_BACKEND = _normalize_backend_enum(
     os.getenv("NEXUS_WORKFLOW_BACKEND"),
+    env_name="NEXUS_WORKFLOW_BACKEND",
     default="postgres" if NEXUS_STORAGE_BACKEND == "postgres" else "filesystem",
+    allowed=_VALID_STORAGE_BACKENDS,
+    aliases=_STORAGE_BACKEND_ALIASES,
 )
-NEXUS_INBOX_BACKEND = _normalize_storage_backend(
+NEXUS_INBOX_BACKEND = _normalize_backend_enum(
     os.getenv("NEXUS_INBOX_BACKEND"),
+    env_name="NEXUS_INBOX_BACKEND",
     default=NEXUS_STORAGE_BACKEND,
+    allowed=_VALID_STORAGE_BACKENDS,
+    aliases=_STORAGE_BACKEND_ALIASES,
+)
+NEXUS_RATE_LIMIT_BACKEND = _normalize_backend_enum(
+    os.getenv("NEXUS_RATE_LIMIT_BACKEND"),
+    env_name="NEXUS_RATE_LIMIT_BACKEND",
+    default="redis",
+    allowed=_VALID_RATE_LIMIT_BACKENDS,
+    aliases=_RATE_LIMIT_BACKEND_ALIASES,
 )
 NEXUS_STORAGE_DSN = os.getenv("NEXUS_STORAGE_DSN", "").strip()
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name, str(default))
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return float(default)
 
 
 NEXUS_FEATURE_REGISTRY_ENABLED = _env_bool("NEXUS_FEATURE_REGISTRY_ENABLED", True)
@@ -594,6 +559,28 @@ NEXUS_FEATURE_REGISTRY_DEDUP_SIMILARITY = min(
 
 # Compatibility alias retained for older code paths that still reference this constant.
 NEXUS_CORE_STORAGE_BACKEND = NEXUS_WORKFLOW_BACKEND
+
+
+@dataclass(frozen=True)
+class RuntimeSettings:
+    """Typed runtime settings for injectable configuration."""
+
+    nexus_state_dir: str
+    nexus_storage_backend: str
+    nexus_rate_limit_backend: str
+    redis_url: str
+    nexus_core_storage_dir: str
+
+
+def get_runtime_settings() -> RuntimeSettings:
+    """Return current runtime settings snapshot."""
+    return RuntimeSettings(
+        nexus_state_dir=NEXUS_STATE_DIR,
+        nexus_storage_backend=NEXUS_STORAGE_BACKEND,
+        nexus_rate_limit_backend=NEXUS_RATE_LIMIT_BACKEND,
+        redis_url=REDIS_URL,
+        nexus_core_storage_dir=NEXUS_CORE_STORAGE_DIR,
+    )
 
 
 def get_inbox_storage_backend() -> str:
@@ -769,9 +756,12 @@ LOG_LEVEL = logging.INFO
 
 # --- VALIDATION ---
 logger = logging.getLogger(__name__)
-logging.basicConfig(format=LOG_FORMAT, level=LOG_LEVEL)
 
-logger.info(f"Using BASE_DIR: {BASE_DIR}")
+
+def configure_runtime_logging(*, force: bool = False) -> None:
+    """Configure runtime logging explicitly during app startup."""
+    logging.basicConfig(format=LOG_FORMAT, level=LOG_LEVEL, force=force)
+    logger.info(f"Using BASE_DIR: {BASE_DIR}")
 
 
 def validate_configuration():
@@ -791,7 +781,10 @@ def validate_configuration():
 
     if NEXUS_AUTH_ENABLED:
         if NEXUS_STORAGE_BACKEND != "postgres":
-            errors.append("NEXUS_AUTH_ENABLED=true requires NEXUS_STORAGE_BACKEND=postgres.")
+            errors.append(
+                "NEXUS_AUTH_ENABLED=true requires NEXUS_STORAGE_BACKEND=postgres "
+                "(alias: database)."
+            )
         if not NEXUS_STORAGE_DSN:
             errors.append("NEXUS_AUTH_ENABLED=true requires NEXUS_STORAGE_DSN.")
         if not NEXUS_PUBLIC_BASE_URL:
@@ -890,10 +883,11 @@ def ensure_logs_dir():
     logger.debug(f"✅ Logs directory ready: {LOGS_DIR}")
 
 
-# Initialize directories (non-blocking)
-try:
-    ensure_state_dir()
-    ensure_nexus_storage_dir()
-    ensure_logs_dir()
-except Exception as e:
-    logger.warning(f"Could not initialize directories: {e}")
+def initialize_runtime_directories() -> None:
+    """Initialize required runtime directories (non-blocking)."""
+    try:
+        ensure_state_dir()
+        ensure_nexus_storage_dir()
+        ensure_logs_dir()
+    except Exception as e:
+        logger.warning(f"Could not initialize directories: {e}")

@@ -235,7 +235,7 @@ class TestNexusAgentRuntimeIsProcessRunning:
                 "nexus.core.state_manager.HostStateManager.load_launched_agents",
                 return_value={"106": {"pid": 12345}},
             ),
-            patch("runtime.nexus_agent_runtime.os.kill", return_value=None) as kill_mock,
+            patch("nexus.core.runtime.nexus_agent_runtime.os.kill", return_value=None) as kill_mock,
         ):
             assert runtime.is_process_running("106") is True
             kill_mock.assert_called_once_with(12345, 0)
@@ -253,7 +253,7 @@ class TestNexusAgentRuntimeIsProcessRunning:
                 "nexus.core.state_manager.HostStateManager.load_launched_agents",
                 return_value={"106": {"pid": 12345}},
             ),
-            patch("runtime.nexus_agent_runtime.os.kill", side_effect=OSError("not running")),
+            patch("nexus.core.runtime.nexus_agent_runtime.os.kill", side_effect=OSError("not running")),
         ):
             assert runtime.is_process_running("106") is False
 

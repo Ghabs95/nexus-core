@@ -6,9 +6,13 @@ import re
 import time
 from typing import Any
 
+from nexus.core.config.bootstrap import initialize_runtime
+
+initialize_runtime(configure_logging=False)
+
 # Nexus Core framework imports — orchestration handled by ProcessOrchestrator
 # Import centralized configuration
-from config import (
+from nexus.core.config import (
     BASE_DIR,
     INBOX_PROCESSOR_LOG_FILE,
     NEXUS_CORE_STORAGE_DIR,
@@ -327,7 +331,13 @@ COMPLETION_COMMENTS_FILE = os.path.join(NEXUS_STATE_DIR, "completion_comments.js
 
 
 def load_failed_lookups():
-    return _svc_load_json_state_file(path=FAILED_LOOKUPS_FILE, logger=logger, warn_only=False)
+    return _svc_load_json_state_file(
+        path=FAILED_LOOKUPS_FILE,
+        logger=logger,
+        warn_only=False,
+        storage_backend=NEXUS_STORAGE_BACKEND,
+        state_key="failed_task_lookups",
+    )
 
 
 def save_failed_lookups(lookups):
@@ -336,11 +346,19 @@ def save_failed_lookups(lookups):
         data=lookups if isinstance(lookups, dict) else {},
         logger=logger,
         warn_only=False,
+        storage_backend=NEXUS_STORAGE_BACKEND,
+        state_key="failed_task_lookups",
     )
 
 
 def load_completion_comments():
-    return _svc_load_json_state_file(path=COMPLETION_COMMENTS_FILE, logger=logger, warn_only=True)
+    return _svc_load_json_state_file(
+        path=COMPLETION_COMMENTS_FILE,
+        logger=logger,
+        warn_only=True,
+        storage_backend=NEXUS_STORAGE_BACKEND,
+        state_key="completion_comments",
+    )
 
 
 def save_completion_comments(comments):
@@ -349,6 +367,8 @@ def save_completion_comments(comments):
         data=comments if isinstance(comments, dict) else {},
         logger=logger,
         warn_only=True,
+        storage_backend=NEXUS_STORAGE_BACKEND,
+        state_key="completion_comments",
     )
 
 
