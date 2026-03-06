@@ -1390,6 +1390,7 @@ def _process_task_context(*, task_ctx: dict[str, object], filepath: str) -> bool
             "get_repos_for_project": get_repos,
             "get_repo_branch_for_project": get_repo_branch,
             "resolve_git_dir_for_project": _resolve_git_dir,
+            "resolve_git_dir_for_repo_for_project": _resolve_git_dir_for_repo,
             "resolve_git_dirs_for_project": _resolve_git_dirs,
             "run_workflow_start_git_sync": _sync_project_repos_on_workflow_start,
             "resolve_tier_for_issue": _resolve_tier_for_issue_scoped,

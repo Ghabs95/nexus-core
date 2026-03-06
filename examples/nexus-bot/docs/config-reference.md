@@ -79,6 +79,8 @@ my_project:
       "org/my-project": "main"        # Per-repo base branch override
   git_sync: # Optional workflow-start git sync behavior
     on_workflow_start: true
+    bootstrap_missing_workspace: false # Optional: create missing workspace dir at startup
+    bootstrap_missing_repos: false     # Optional: clone missing configured repos before fetch
     network_auth_retries: 3
     retry_backoff_seconds: 5
     decision_timeout_seconds: 120
@@ -105,6 +107,8 @@ ai_tool_preferences:
 
 `git_branches` applies to both startup sync and PR/MR base branch selection.
 When omitted, the runtime falls back to `main`.
+`git_sync.bootstrap_missing_workspace` and `git_sync.bootstrap_missing_repos` are opt-in bootstrap
+helpers for first-time setups; default behavior does not create folders or clone repos.
 
 ## State Files (filesystem backend)
 

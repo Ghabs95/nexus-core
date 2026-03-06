@@ -217,6 +217,20 @@ def validate_project_config(config: dict[str, Any]) -> None:
                 raise ValueError(
                     f"PROJECT_CONFIG['{project}']['git_sync']['on_workflow_start'] must be a boolean"
                 )
+            bootstrap_missing_workspace = git_sync.get("bootstrap_missing_workspace")
+            if bootstrap_missing_workspace is not None and not isinstance(
+                bootstrap_missing_workspace, bool
+            ):
+                raise ValueError(
+                    f"PROJECT_CONFIG['{project}']['git_sync']['bootstrap_missing_workspace'] must be a boolean"
+                )
+            bootstrap_missing_repos = git_sync.get("bootstrap_missing_repos")
+            if bootstrap_missing_repos is not None and not isinstance(
+                bootstrap_missing_repos, bool
+            ):
+                raise ValueError(
+                    f"PROJECT_CONFIG['{project}']['git_sync']['bootstrap_missing_repos'] must be a boolean"
+                )
 
             for key in (
                 "network_auth_retries",

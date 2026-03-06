@@ -157,6 +157,7 @@ def process_task_context(*, task_ctx: dict[str, object], filepath: str, deps) ->
         get_repos_for_project=deps.get("get_repos_for_project"),
         get_repo_branch_for_project=deps.get("get_repo_branch_for_project"),
         resolve_git_dir_for_project=deps.get("resolve_git_dir_for_project"),
+        resolve_git_dir_for_repo_for_project=deps.get("resolve_git_dir_for_repo_for_project"),
         resolve_git_dirs_for_project=deps.get("resolve_git_dirs_for_project"),
         run_workflow_start_git_sync=deps.get("run_workflow_start_git_sync"),
     )

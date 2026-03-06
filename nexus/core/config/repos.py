@@ -162,6 +162,14 @@ def get_git_sync_settings(
     if isinstance(enabled, bool):
         settings["on_workflow_start"] = enabled
 
+    bootstrap_workspace = raw.get("bootstrap_missing_workspace")
+    if isinstance(bootstrap_workspace, bool):
+        settings["bootstrap_missing_workspace"] = bootstrap_workspace
+
+    bootstrap_repos = raw.get("bootstrap_missing_repos")
+    if isinstance(bootstrap_repos, bool):
+        settings["bootstrap_missing_repos"] = bootstrap_repos
+
     retries = raw.get("network_auth_retries")
     if isinstance(retries, int):
         settings["network_auth_retries"] = retries

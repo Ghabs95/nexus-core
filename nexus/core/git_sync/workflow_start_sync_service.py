@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from collections.abc import Callable
@@ -56,6 +57,138 @@ def _wait_for_block_decision(
     return False
 
 
+def _project_repo_slugs(
+    *,
+    project_cfg: dict[str, Any],
+    project_name: str,
+    get_repos: Callable[[str], list[str]],
+) -> list[str]:
+    repos: list[str] = []
+    try:
+        repos = [str(item).strip() for item in get_repos(project_name)]
+        repos = [item for item in repos if item]
+    except Exception:
+        repos = []
+
+    if repos:
+        return repos
+
+    single_repo = str(project_cfg.get("git_repo") or "").strip()
+    if single_repo:
+        repos.append(single_repo)
+    repo_list = project_cfg.get("git_repos")
+    if isinstance(repo_list, list):
+        for repo_name in repo_list:
+            value = str(repo_name or "").strip()
+            if value and value not in repos:
+                repos.append(value)
+    return repos
+
+
+def _build_clone_url(repo_slug: str, project_cfg: dict[str, Any]) -> str:
+    repo = str(repo_slug or "").strip().strip("/")
+    if repo.startswith(("https://", "http://", "git@")):
+        if repo.endswith(".git"):
+            return repo
+        return f"{repo}.git"
+
+    git_platform = str(project_cfg.get("git_platform", "github") or "github").strip().lower()
+    if git_platform == "gitlab":
+        base_url = str(project_cfg.get("gitlab_base_url") or "").strip() or "https://gitlab.com"
+    else:
+        base_url = "https://github.com"
+    return f"{base_url.rstrip('/')}/{repo}.git"
+
+
+def _run_git_command_with_retries(
+    *,
+    cmd: list[str],
+    cwd: str | None,
+    retries: int,
+    backoff_seconds: int,
+    logger: Any | None,
+    log_context: str,
+    sleep_fn: Callable[[float], None],
+) -> tuple[bool, str, bool]:
+    max_attempts = max(1, retries + 1)
+    for attempt in range(1, max_attempts + 1):
+        result = subprocess.run(
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if result.returncode == 0:
+            return True, "", False
+
+        stderr = str(result.stderr or "").strip()
+        stdout = str(result.stdout or "").strip()
+        network_or_auth = _is_network_or_auth_failure(stderr, stdout)
+        if network_or_auth and attempt < max_attempts:
+            if logger:
+                logger.warning(
+                    "Workflow-start git sync retry %s/%s for %s: %s",
+                    attempt,
+                    max_attempts,
+                    log_context,
+                    stderr or stdout or "unknown error",
+                )
+            sleep_fn(float(max(1, backoff_seconds)))
+            continue
+
+        error_msg = stderr or stdout or f"git command failed (code={result.returncode})"
+        return False, error_msg, network_or_auth
+
+    return False, "git command failed with unknown error", False
+
+
+def _alert_and_wait_for_decision(
+    *,
+    issue_number: str,
+    project_name: str,
+    repo_slug: str,
+    branch: str,
+    error_msg: str,
+    decision_timeout_seconds: int,
+    should_block_launch: Callable[[str, str], bool] | None,
+    sleep_fn: Callable[[float], None],
+    emit_alert: Callable[..., Any] | None,
+    operation: str,
+) -> bool:
+    if callable(emit_alert):
+        emit_alert(
+            (
+                f"⚠️ Workflow-start git {operation} failed after retries.\n"
+                f"Issue: #{issue_number}\n"
+                f"Project: {project_name}\n"
+                f"Repo: {repo_slug}\n"
+                f"Branch: {branch}\n"
+                f"Error: {error_msg}\n\n"
+                "Choose whether to block launch now. "
+                "If no action is taken, launch continues automatically."
+            ),
+            severity="warning",
+            source="workflow_start_git_sync",
+            issue_number=str(issue_number),
+            project_key=str(project_name),
+            actions=[
+                {
+                    "label": "🛑 Block Launch",
+                    "callback_data": f"stop_{issue_number}|{project_name}",
+                }
+            ],
+        )
+    return _wait_for_block_decision(
+        issue_number=str(issue_number),
+        project_name=str(project_name),
+        timeout_seconds=max(1, decision_timeout_seconds),
+        should_block_launch=should_block_launch,
+        sleep_fn=sleep_fn,
+    )
+
+
 def sync_project_repos_on_workflow_start(
     *,
     issue_number: str,
@@ -63,6 +196,8 @@ def sync_project_repos_on_workflow_start(
     project_cfg: dict[str, Any],
     resolve_git_dirs: Callable[[str], dict[str, str]],
     resolve_git_dir: Callable[[str], str | None],
+    resolve_git_dir_for_repo: Callable[[str, str], str | None] | None = None,
+    ensure_workspace_dir: Callable[[str], str | None] | None = None,
     get_repos: Callable[[str], list[str]],
     get_repo_branch: Callable[[str, str], str],
     emit_alert: Callable[..., Any] | None = None,
@@ -81,7 +216,25 @@ def sync_project_repos_on_workflow_start(
     retries = int(git_sync.get("network_auth_retries", 3) or 3)
     backoff_seconds = int(git_sync.get("retry_backoff_seconds", 5) or 5)
     decision_timeout_seconds = int(git_sync.get("decision_timeout_seconds", 120) or 120)
+    bootstrap_missing_workspace = bool(git_sync.get("bootstrap_missing_workspace", False))
+    bootstrap_missing_repos = bool(git_sync.get("bootstrap_missing_repos", False))
 
+    if bootstrap_missing_workspace and callable(ensure_workspace_dir):
+        try:
+            ensure_workspace_dir(project_name)
+        except Exception as exc:
+            if logger:
+                logger.warning(
+                    "Workflow-start git sync bootstrap could not ensure workspace for %s: %s",
+                    project_name,
+                    exc,
+                )
+
+    configured_repos = _project_repo_slugs(
+        project_cfg=cfg,
+        project_name=project_name,
+        get_repos=get_repos,
+    )
     resolved_dirs: dict[str, str] = {}
     try:
         resolved = resolve_git_dirs(project_name)
@@ -99,12 +252,8 @@ def sync_project_repos_on_workflow_start(
     if not resolved_dirs:
         fallback_dir = resolve_git_dir(project_name)
         if fallback_dir:
-            try:
-                repo_names = get_repos(project_name)
-            except Exception:
-                repo_names = []
-            if repo_names:
-                for repo_name in repo_names:
+            if configured_repos:
+                for repo_name in configured_repos:
                     key = str(repo_name).strip()
                     if key:
                         resolved_dirs[key] = str(fallback_dir)
@@ -113,53 +262,66 @@ def sync_project_repos_on_workflow_start(
                 if primary_repo:
                     resolved_dirs[primary_repo] = str(fallback_dir)
 
-    if not resolved_dirs:
-        return {"enabled": True, "skipped": True, "reason": "no_git_dirs"}
-
     synced: list[dict[str, str]] = []
+    bootstrapped: list[dict[str, str]] = []
     failures: list[dict[str, str]] = []
     blocked = False
 
-    for repo_slug, repo_dir in resolved_dirs.items():
-        branch = str(get_repo_branch(project_name, repo_slug) or "main").strip() or "main"
-        max_attempts = max(1, retries + 1)
-
-        for attempt in range(1, max_attempts + 1):
-            result = subprocess.run(
-                [
-                    "git",
-                    "fetch",
-                    "--prune",
-                    "origin",
-                    f"{branch}:refs/remotes/origin/{branch}",
-                ],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-            )
-            if result.returncode == 0:
-                synced.append({"repo": repo_slug, "branch": branch, "dir": repo_dir})
-                break
-
-            stderr = str(result.stderr or "").strip()
-            stdout = str(result.stdout or "").strip()
-            network_or_auth = _is_network_or_auth_failure(stderr, stdout)
-            if network_or_auth and attempt < max_attempts:
+    if bootstrap_missing_repos and callable(resolve_git_dir_for_repo):
+        for repo_slug in configured_repos:
+            if blocked or repo_slug in resolved_dirs:
+                continue
+            try:
+                repo_dir = resolve_git_dir_for_repo(project_name, repo_slug)
+            except Exception as exc:
                 if logger:
                     logger.warning(
-                        "Workflow-start git sync retry %s/%s for %s on %s: %s",
-                        attempt,
-                        max_attempts,
+                        "Workflow-start git bootstrap could not resolve path for %s: %s",
                         repo_slug,
-                        branch,
-                        stderr or stdout or "unknown error",
+                        exc,
                     )
-                sleep_fn(float(max(1, backoff_seconds)))
+                continue
+            if not repo_dir:
                 continue
 
-            error_msg = stderr or stdout or f"git fetch failed (code={result.returncode})"
+            repo_dir = str(repo_dir).strip()
+            if not repo_dir:
+                continue
+            parent = os.path.dirname(repo_dir.rstrip(os.sep))
+            if parent:
+                try:
+                    os.makedirs(parent, exist_ok=True)
+                except Exception as exc:
+                    failures.append(
+                        {
+                            "repo": repo_slug,
+                            "branch": str(get_repo_branch(project_name, repo_slug) or "main").strip()
+                            or "main",
+                            "dir": repo_dir,
+                            "error": f"could not prepare parent directory: {exc}",
+                            "kind": "other",
+                        }
+                    )
+                    continue
+
+            branch = str(get_repo_branch(project_name, repo_slug) or "main").strip() or "main"
+            clone_url = _build_clone_url(repo_slug, cfg)
+            success, error_msg, network_or_auth = _run_git_command_with_retries(
+                cmd=["git", "clone", "--branch", branch, "--single-branch", clone_url, repo_dir],
+                cwd=None,
+                retries=retries,
+                backoff_seconds=backoff_seconds,
+                logger=logger,
+                log_context=f"{repo_slug} bootstrap clone on {branch}",
+                sleep_fn=sleep_fn,
+            )
+            if success:
+                resolved_dirs[repo_slug] = repo_dir
+                bootstrapped.append(
+                    {"repo": repo_slug, "branch": branch, "dir": repo_dir, "clone_url": clone_url}
+                )
+                continue
+
             failures.append(
                 {
                     "repo": repo_slug,
@@ -169,66 +331,114 @@ def sync_project_repos_on_workflow_start(
                     "kind": "network_auth" if network_or_auth else "other",
                 }
             )
-
             if not network_or_auth:
                 if logger:
                     logger.warning(
-                        "Workflow-start git sync warning for %s on %s: %s",
+                        "Workflow-start git bootstrap warning for %s on %s: %s",
                         repo_slug,
                         branch,
                         error_msg,
                     )
-                break
+                continue
 
             if logger:
                 logger.warning(
-                    "Workflow-start git sync exhausted retries for %s on %s: %s",
+                    "Workflow-start git bootstrap exhausted retries for %s on %s: %s",
                     repo_slug,
                     branch,
                     error_msg,
                 )
-
-            if callable(emit_alert):
-                emit_alert(
-                    (
-                        "⚠️ Workflow-start git sync failed after retries.\n"
-                        f"Issue: #{issue_number}\n"
-                        f"Project: {project_name}\n"
-                        f"Repo: {repo_slug}\n"
-                        f"Branch: {branch}\n"
-                        f"Error: {error_msg}\n\n"
-                        "Choose whether to block launch now. "
-                        "If no action is taken, launch continues automatically."
-                    ),
-                    severity="warning",
-                    source="workflow_start_git_sync",
-                    issue_number=str(issue_number),
-                    project_key=str(project_name),
-                    actions=[
-                        {
-                            "label": "🛑 Block Launch",
-                            "callback_data": f"stop_{issue_number}|{project_name}",
-                        }
-                    ],
-                )
-
-            blocked = _wait_for_block_decision(
+            blocked = _alert_and_wait_for_decision(
                 issue_number=str(issue_number),
                 project_name=str(project_name),
-                timeout_seconds=max(1, decision_timeout_seconds),
+                repo_slug=repo_slug,
+                branch=branch,
+                error_msg=error_msg,
+                decision_timeout_seconds=decision_timeout_seconds,
                 should_block_launch=should_block_launch,
                 sleep_fn=sleep_fn,
+                emit_alert=emit_alert,
+                operation="bootstrap",
             )
-            break
 
+    if not resolved_dirs:
+        return {
+            "enabled": True,
+            "skipped": True,
+            "reason": "no_git_dirs",
+            "blocked": blocked,
+            "synced": synced,
+            "bootstrapped": bootstrapped,
+            "failures": failures,
+        }
+
+    for repo_slug, repo_dir in resolved_dirs.items():
         if blocked:
             break
+        branch = str(get_repo_branch(project_name, repo_slug) or "main").strip() or "main"
+        success, error_msg, network_or_auth = _run_git_command_with_retries(
+            cmd=[
+                "git",
+                "fetch",
+                "--prune",
+                "origin",
+                f"{branch}:refs/remotes/origin/{branch}",
+            ],
+            cwd=repo_dir,
+            retries=retries,
+            backoff_seconds=backoff_seconds,
+            logger=logger,
+            log_context=f"{repo_slug} fetch on {branch}",
+            sleep_fn=sleep_fn,
+        )
+        if success:
+            synced.append({"repo": repo_slug, "branch": branch, "dir": repo_dir})
+            continue
+
+        failures.append(
+            {
+                "repo": repo_slug,
+                "branch": branch,
+                "dir": repo_dir,
+                "error": error_msg,
+                "kind": "network_auth" if network_or_auth else "other",
+            }
+        )
+        if not network_or_auth:
+            if logger:
+                logger.warning(
+                    "Workflow-start git sync warning for %s on %s: %s",
+                    repo_slug,
+                    branch,
+                    error_msg,
+                )
+            continue
+
+        if logger:
+            logger.warning(
+                "Workflow-start git sync exhausted retries for %s on %s: %s",
+                repo_slug,
+                branch,
+                error_msg,
+            )
+        blocked = _alert_and_wait_for_decision(
+            issue_number=str(issue_number),
+            project_name=str(project_name),
+            repo_slug=repo_slug,
+            branch=branch,
+            error_msg=error_msg,
+            decision_timeout_seconds=decision_timeout_seconds,
+            should_block_launch=should_block_launch,
+            sleep_fn=sleep_fn,
+            emit_alert=emit_alert,
+            operation="sync",
+        )
 
     return {
         "enabled": True,
         "skipped": False,
         "blocked": blocked,
         "synced": synced,
+        "bootstrapped": bootstrapped,
         "failures": failures,
     }
-

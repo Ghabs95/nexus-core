@@ -260,6 +260,7 @@ def handle_new_task(
     get_repos_for_project: Callable[[str], list[str]] | None = None,
     get_repo_branch_for_project: Callable[[str, str], str] | None = None,
     resolve_git_dir_for_project: Callable[[str], str | None] | None = None,
+    resolve_git_dir_for_repo_for_project: Callable[[str, str], str | None] | None = None,
     resolve_git_dirs_for_project: Callable[[str], dict[str, str]] | None = None,
     run_workflow_start_git_sync: Callable[..., dict[str, Any]] | None = None,
     requester_nexus_id: str | None = None,
@@ -547,6 +548,25 @@ def handle_new_task(
                     return candidate
             return None
 
+        def _resolve_repo_checkout_dir(_project: str, repo_slug: str) -> str | None:
+            if callable(resolve_git_dir_for_repo_for_project):
+                try:
+                    resolved = resolve_git_dir_for_repo_for_project(_project, repo_slug)
+                    if resolved:
+                        return str(resolved)
+                except Exception:
+                    pass
+
+            workspace_abs = str(project_root)
+            repo_base = str(repo_slug or "").split("/")[-1].strip()
+            if not repo_base:
+                return None
+
+            workspace_base = os.path.basename(workspace_abs.rstrip(os.sep))
+            if len(configured_repos) == 1 and workspace_base == repo_base:
+                return workspace_abs
+            return os.path.join(workspace_abs, repo_base)
+
         def _resolve_multi_git_dirs(_project: str) -> dict[str, str]:
             if callable(resolve_git_dirs_for_project):
                 try:
@@ -575,6 +595,13 @@ def handle_new_task(
                     resolved[repo_slug] = candidate
             return resolved
 
+        def _ensure_workspace_dir(_project: str) -> str | None:
+            workspace_abs = str(project_root)
+            if not workspace_abs:
+                return None
+            os.makedirs(workspace_abs, exist_ok=True)
+            return workspace_abs
+
         def _get_repos(_project: str) -> list[str]:
             return list(configured_repos)
 
@@ -596,6 +623,8 @@ def handle_new_task(
                 project_cfg=config,
                 resolve_git_dirs=_resolve_multi_git_dirs,
                 resolve_git_dir=_resolve_single_git_dir,
+                resolve_git_dir_for_repo=_resolve_repo_checkout_dir,
+                ensure_workspace_dir=_ensure_workspace_dir,
                 get_repos=_get_repos,
                 get_repo_branch=lambda project, repo_slug: _resolve_branch(str(repo_slug)),
                 emit_alert=emit_alert,

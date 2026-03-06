@@ -102,6 +102,8 @@ nexus:
     default: main
   git_sync:
     on_workflow_start: true
+    bootstrap_missing_workspace: false
+    bootstrap_missing_repos: true
     network_auth_retries: 3
     retry_backoff_seconds: 5
     decision_timeout_seconds: 120
@@ -170,6 +172,8 @@ atlas:
       demo-org/atlas: main
   git_sync:
     on_workflow_start: true
+    bootstrap_missing_workspace: true
+    bootstrap_missing_repos: true
     network_auth_retries: 3
     retry_backoff_seconds: 5
     decision_timeout_seconds: 120
@@ -194,6 +198,8 @@ orion:
       demo-org/orion: main
   git_sync:
     on_workflow_start: true
+    bootstrap_missing_workspace: false
+    bootstrap_missing_repos: false
     network_auth_retries: 3
     retry_backoff_seconds: 5
     decision_timeout_seconds: 120

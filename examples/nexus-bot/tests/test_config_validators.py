@@ -98,6 +98,8 @@ def test_validate_project_config_accepts_git_branches_and_git_sync():
             },
             "git_sync": {
                 "on_workflow_start": True,
+                "bootstrap_missing_workspace": True,
+                "bootstrap_missing_repos": False,
                 "network_auth_retries": 3,
                 "retry_backoff_seconds": 5,
                 "decision_timeout_seconds": 120,
@@ -134,6 +136,23 @@ def test_validate_project_config_rejects_invalid_git_sync_numeric():
             "git_sync": {
                 "on_workflow_start": True,
                 "network_auth_retries": 0,
+            },
+        }
+    }
+    with pytest.raises(ValueError):
+        validate_project_config(payload)
+
+
+def test_validate_project_config_rejects_invalid_git_sync_bootstrap_flags():
+    payload = {
+        "nexus": {
+            "workspace": "x",
+            "agents_dir": "a",
+            "git_platform": "github",
+            "git_repo": "acme/workflow",
+            "git_sync": {
+                "on_workflow_start": True,
+                "bootstrap_missing_workspace": "yes",
             },
         }
     }
