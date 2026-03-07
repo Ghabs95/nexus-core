@@ -405,3 +405,35 @@ def test_resolve_workflow_steps_list_falls_back_to_flat_then_first_tier():
         {"x_workflow": {"steps": [{"id": "tier"}]}},
         "",
     ) == [{"id": "tier"}]
+
+
+def test_resolve_workflow_steps_list_workflow_type_falls_back_to_flat():
+    data = {"steps": [{"id": "flat"}]}
+    assert resolve_workflow_steps_list(data, "full") == [{"id": "flat"}]
+
+
+def test_resolve_workflow_steps_list_follows_router_target_file(tmp_path):
+    router = tmp_path / "enterprise_workflow.yaml"
+    full = tmp_path / "enterprise_full_workflow.yaml"
+
+    router.write_text(
+        "steps:\n"
+        "  - id: triage\n"
+        "    agent_type: triage\n"
+        "    routes:\n"
+        "      - when: \"selected == 'full'\"\n"
+        "        then: enterprise_full_workflow\n",
+        encoding="utf-8",
+    )
+    full.write_text(
+        "steps:\n"
+        "  - id: design\n"
+        "    agent_type: designer\n",
+        encoding="utf-8",
+    )
+
+    data = {
+        "__yaml_path": str(router),
+        "steps": [{"id": "triage", "routes": [{"then": "enterprise_full_workflow"}]}],
+    }
+    assert resolve_workflow_steps_list(data, "full") == [{"id": "design", "agent_type": "designer"}]

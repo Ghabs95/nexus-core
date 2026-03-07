@@ -23,7 +23,7 @@ from nexus.core.auth.access_domain import (
     check_project_access,
     check_repo_access,
 )
-from nexus.core.auth.credential_store import get_issue_requester_by_url
+from nexus.core.auth.credential_store import get_issue_requester, get_issue_requester_by_url
 from nexus.core.config import (
     BASE_DIR,
     NEXUS_WEBHOOK_INTERNAL_URL,

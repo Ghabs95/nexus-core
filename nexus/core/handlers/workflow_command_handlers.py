@@ -217,7 +217,11 @@ async def wfstate_handler(
         return
 
     snapshot = state["snapshot"]
-    processor_signal = snapshot.get("processor_signal") or {}
+
+    def _as_dict(value: object) -> dict[str, object]:
+        return value if isinstance(value, dict) else {}
+
+    processor_signal = _as_dict(snapshot.get("processor_signal"))
     processor_type = processor_signal.get("type", "n/a")
     processor_severity = processor_signal.get("severity", "n/a")
     processor_at = processor_signal.get("timestamp", "n/a")
@@ -259,6 +263,9 @@ async def wfstate_handler(
     )
 
     text = f"📊 Workflow Snapshot — Issue #{issue_num}\n\n"
+    local_completion = _as_dict(snapshot.get("local"))
+    latest_signal = _as_dict(snapshot.get("latest_signal"))
+
     summary = {
         "Repo": snapshot.get("repo", "N/A"),
         "Workflow ID": snapshot.get("workflow_id", "N/A"),
@@ -272,17 +279,13 @@ async def wfstate_handler(
         "Workflow File": snapshot.get("workflow_file", "N/A"),
         f"{completion_label_prefix} (from)": snapshot.get("local_from", "N/A"),
         f"{completion_label_prefix} (next)": snapshot.get("local_next", "N/A"),
-        f"{completion_label_prefix} (status)": (snapshot.get("local", {})).get("status", "N/A"),
-        f"{completion_label_prefix} (updated)": (snapshot.get("local", {})).get("mtime", "N/A"),
-        f"{completion_label_prefix} (file)": (snapshot.get("local", {})).get("path", "N/A"),
+        f"{completion_label_prefix} (status)": local_completion.get("status", "N/A"),
+        f"{completion_label_prefix} (updated)": local_completion.get("mtime", "N/A"),
+        f"{completion_label_prefix} (file)": local_completion.get("path", "N/A"),
         "Latest Structured Comment (from)": snapshot.get("comment_from", "N/A"),
         "Latest Structured Comment (next)": snapshot.get("comment_next", "N/A"),
-        "Latest Structured Comment (comment_id)": (snapshot.get("latest_signal", {})).get(
-            "comment_id", "N/A"
-        ),
-        "Latest Structured Comment (created)": (snapshot.get("latest_signal", {})).get(
-            "created", "N/A"
-        ),
+        "Latest Structured Comment (comment_id)": latest_signal.get("comment_id", "N/A"),
+        "Latest Structured Comment (created)": latest_signal.get("created", "N/A"),
         "Latest Processor Signal (type)": processor_type,
         "Latest Processor Signal (severity)": processor_severity,
         "Latest Processor Signal (at)": processor_at,

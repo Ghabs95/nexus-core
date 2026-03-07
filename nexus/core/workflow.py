@@ -554,6 +554,8 @@ class WorkflowDefinition:
         """
         with open(yaml_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
+        if isinstance(data, dict):
+            data["__yaml_path"] = yaml_path
         return WorkflowDefinition.from_dict(
             data,
             workflow_id=workflow_id,
@@ -665,6 +667,8 @@ class WorkflowDefinition:
                 data = yaml.safe_load(f)
         except Exception:
             return []
+        if isinstance(data, dict):
+            data["__yaml_path"] = yaml_path
 
         steps = WorkflowDefinition._resolve_steps(data, workflow_type)
         return resolve_next_agent_types_from_steps(
@@ -749,6 +753,8 @@ class WorkflowDefinition:
         try:
             with open(yaml_path) as f:
                 data = yaml.safe_load(f)
+            if isinstance(data, dict):
+                data["__yaml_path"] = yaml_path
 
             steps = WorkflowDefinition._resolve_steps(data, workflow_type)
             if not steps:

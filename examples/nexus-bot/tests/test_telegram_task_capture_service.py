@@ -276,6 +276,50 @@ async def test_save_task_selection_postgres_queues_task(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_save_task_selection_omits_sensitive_requester_fields(tmp_path: Path):
+    msg = _MsgObj(text="raw text", message_id=654)
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=7),
+        message=msg,
+        effective_chat=SimpleNamespace(id=99),
+    )
+    ctx = _Context({"project": "proj", "type": "bug"})
+    ctx.bot = SimpleNamespace(delete_message=lambda **_k: None)
+
+    end = object()
+
+    async def _transcribe_unused(*_a, **_k):
+        return None
+
+    out = await handle_save_task_selection(
+        update=update,
+        context=ctx,
+        logger=logging.getLogger("test"),
+        orchestrator=object(),
+        projects={"proj": "Project A"},
+        types_map={"bug": "Bug"},
+        project_config={"proj": {"workspace": "ws"}},
+        base_dir=str(tmp_path),
+        get_inbox_storage_backend=lambda: "filesystem",
+        enqueue_task=lambda **_k: 0,
+        get_inbox_dir=lambda root, project: str(tmp_path / "inbox" / project),
+        transcribe_voice_message=_transcribe_unused,
+        conversation_end=end,
+        requester_context_builder=lambda _user: {
+            "nexus_id": "31efac50-8610-4b4b-9129-6a48e96a110c",
+            "platform": "telegram",
+            "platform_user_id": "47168736",
+        },
+    )
+
+    assert out is end
+    content = (tmp_path / "inbox" / "proj" / "bug_654.md").read_text()
+    assert "**Requester Nexus ID:**" not in content
+    assert "**Requester Platform:**" not in content
+    assert "**Requester Platform User ID:**" not in content
+
+
+@pytest.mark.asyncio
 async def test_save_task_selection_failed_transcription_returns_end():
     voice = SimpleNamespace(file_id="v1")
     msg = _MsgObj(text=None, voice=voice, message_id=8)

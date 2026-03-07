@@ -25,6 +25,8 @@ def render_checklist_from_workflow(
             definition = yaml.safe_load(handle)
     except Exception:
         return ""
+    if isinstance(definition, dict):
+        definition["__yaml_path"] = workflow_path
 
     workflow_type = WorkflowDefinition.normalize_workflow_type(
         tier_name,

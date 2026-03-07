@@ -5,6 +5,7 @@ Requires the ``discord`` optional extra::
     pip install nexus-arc[discord]
 """
 
+import asyncio
 import logging
 
 from nexus.adapters.notifications.base import Message, NotificationChannel
@@ -96,6 +97,8 @@ class DiscordNotificationChannel(NotificationChannel):
         self._bot_token = normalized_bot_token
         self._alert_channel_id = alert_channel_id
         self._guild_id = str(guild_id or "").strip() or None
+        self._session = None
+        self._session_loop = None
 
     # ------------------------------------------------------------------
     # NotificationChannel interface
@@ -286,9 +289,18 @@ class DiscordNotificationChannel(NotificationChannel):
 
     def _get_session(self) -> "aiohttp.ClientSession":
         """Return a shared aiohttp session, creating it on first use."""
+        current_loop = asyncio.get_running_loop()
         session = getattr(self, "_session", None)
-        if session is None or session.closed:
+        session_loop = getattr(self, "_session_loop", None)
+
+        # Recreate session if prior one belongs to a different event loop,
+        # which can happen after runtime/plugin reloads.
+        if session is not None and (session.closed or session_loop is not current_loop):
+            session = None
+
+        if session is None:
             self._session = aiohttp.ClientSession()
+            self._session_loop = current_loop
         return self._session  # type: ignore[return-value]
 
     async def aclose(self) -> None:
@@ -296,6 +308,8 @@ class DiscordNotificationChannel(NotificationChannel):
         session = getattr(self, "_session", None)
         if session is not None and not session.closed:
             await session.close()
+        self._session = None
+        self._session_loop = None
 
     async def _post_webhook(self, payload: dict) -> str:
         """POST payload to the webhook URL; returns the message ID."""

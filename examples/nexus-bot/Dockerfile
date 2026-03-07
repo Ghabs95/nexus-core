@@ -9,6 +9,7 @@ RUN apt-get update \
         git \
         curl \
         ca-certificates \
+        procps \
         gpg \
     && rm -rf /var/lib/apt/lists/*
 

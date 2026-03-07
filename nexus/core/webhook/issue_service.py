@@ -70,12 +70,14 @@ def handle_issue_opened_event(
 
     workflow_labels = [l for l in issue_labels if str(l).startswith("workflow:")]
     if action == "opened" and workflow_labels:
+        message = policy.build_issue_created_message(event, "workflow")
+        notify_lifecycle(message)
         logger.info(
-            "⏭️ Skipping self-created issue #%s (has workflow label: %s)",
+            "⏭️ Self-created issue #%s (workflow labels: %s): notified lifecycle only; skipping inbox task creation",
             issue_number,
             workflow_labels,
         )
-        return {"status": "ignored", "reason": "self-created issue (has workflow label)"}
+        return {"status": "notified_only", "reason": "self-created issue (has workflow label)"}
 
     if get_inbox_storage_backend is None:
         get_inbox_storage_backend = lambda: "filesystem"

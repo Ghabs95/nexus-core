@@ -183,3 +183,33 @@ def test_handle_issue_labeled_without_plan_label_is_ignored(tmp_path):
 
     assert result["status"] == "ignored"
     assert result["reason"] == "labeled action without agent:plan-requested"
+
+
+def test_handle_issue_opened_with_workflow_label_notifies_but_skips_task_creation(tmp_path):
+    notifications = []
+    result = handle_issue_opened_event(
+        event={
+            "action": "opened",
+            "number": 110,
+            "title": "Workflow-generated issue",
+            "body": "Generated from inbox flow",
+            "author": "nexus-bot",
+            "url": "https://github.com/acme/repo/issues/110",
+            "labels": ["workflow:full"],
+            "repo": "acme/repo",
+        },
+        logger=MagicMock(),
+        policy=_Policy(),
+        notify_lifecycle=lambda m: notifications.append(m) or True,
+        emit_alert=lambda *args, **kwargs: True,
+        project_config={"proj-a": {"workspace": "workspace-a", "git_repo": "acme/repo"}},
+        base_dir=str(tmp_path),
+        project_repos=lambda key, cfg, get_repos: [cfg.get("git_repo")],
+        get_repos=lambda _key: [],
+        get_tasks_active_dir=lambda root, project: str(tmp_path / "active"),
+        get_inbox_dir=lambda root, project: str(tmp_path / "inbox"),
+    )
+
+    assert result["status"] == "notified_only"
+    assert result["reason"] == "self-created issue (has workflow label)"
+    assert notifications == ["created:110:workflow"]

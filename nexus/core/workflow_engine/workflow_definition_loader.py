@@ -1,4 +1,7 @@
+import os
 from typing import Any, Callable
+
+import yaml
 
 from nexus.core.models import Agent, WorkflowStep
 
@@ -53,6 +56,60 @@ def resolve_workflow_steps_list(
             if isinstance(tier, dict) and tier.get("steps"):
                 steps = tier["steps"]
                 return steps if isinstance(steps, list) else []
+
+        # Router definitions can dispatch to tier-specific workflow files
+        # (e.g. enterprise_full_workflow.yaml). If present, follow the route.
+        source_path = data.get("__yaml_path")
+        if isinstance(source_path, str) and source_path:
+            mapped_norm = mapped_type.replace("-", "_").lower()
+            targets: list[str] = []
+            for step in data.get("steps", []):
+                if not isinstance(step, dict):
+                    continue
+                for route in step.get("routes", []):
+                    if not isinstance(route, dict):
+                        continue
+                    for key in ("then", "goto", "default"):
+                        target = route.get(key)
+                        if not isinstance(target, str):
+                            continue
+                        target_name = target.strip()
+                        if not target_name:
+                            continue
+                        if mapped_norm not in target_name.replace("-", "_").lower():
+                            continue
+                        if target_name not in targets:
+                            targets.append(target_name)
+
+            base_dir = os.path.dirname(source_path)
+            for target in targets:
+                candidate_files = (
+                    [target]
+                    if target.endswith((".yaml", ".yml"))
+                    else [f"{target}.yaml", f"{target}.yml"]
+                )
+                for candidate in candidate_files:
+                    candidate_path = os.path.join(base_dir, candidate)
+                    if os.path.abspath(candidate_path) == os.path.abspath(source_path):
+                        continue
+                    if not os.path.exists(candidate_path):
+                        continue
+                    try:
+                        with open(candidate_path, encoding="utf-8") as handle:
+                            routed_data = yaml.safe_load(handle)
+                    except Exception:
+                        continue
+                    if not isinstance(routed_data, dict):
+                        continue
+                    routed_data["__yaml_path"] = candidate_path
+                    routed_steps = resolve_workflow_steps_list(routed_data, workflow_type)
+                    if routed_steps:
+                        return routed_steps
+
+        # If no tier mapping is present, permit flat layout as fallback.
+        flat = data.get("steps", [])
+        if isinstance(flat, list) and flat:
+            return flat
         return []
 
     flat = data.get("steps", [])

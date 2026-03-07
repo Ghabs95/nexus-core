@@ -162,7 +162,7 @@ def test_agent_launcher_resolves_issue_body_from_matching_project_repo(monkeypat
     monkeypatch.setattr(
         agent_launcher,
         "_get_git_platform_client",
-        lambda repo, project_name=None: plugins.get(repo),
+        lambda repo, project_name=None, token_override=None: plugins.get(repo),
     )
 
     body, repo, task_file = agent_launcher._load_issue_body_from_project_repo("43")
@@ -316,7 +316,11 @@ def test_issue_body_resolution_skips_project_probe_failures(monkeypatch):
     monkeypatch.setattr(agent_launcher, "is_postgres_backend", lambda _backend: True)
     monkeypatch.setattr(agent_launcher, "get_repos", lambda _project: [])
 
-    def _fake_client(repo_name: str, project_name: str | None = None):
+    def _fake_client(
+        repo_name: str,
+        project_name: str | None = None,
+        token_override: str | None = None,
+    ):
         if project_name == "project_alpha":
             raise ValueError("GITLAB_TOKEN is required for gitlab projects")
         return _Platform()

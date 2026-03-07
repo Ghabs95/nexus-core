@@ -3,6 +3,7 @@
 import logging
 import os
 import re
+import shutil
 import subprocess
 from typing import Any
 
@@ -19,6 +20,8 @@ class RuntimeOpsPlugin:
         self.process_name = self.config.get("process_name", "copilot|codex|gemini")
         self.pgrep_timeout = int(self.config.get("pgrep_timeout", 5))
         self.kill_timeout = int(self.config.get("kill_timeout", 5))
+        self._pgrep_path = shutil.which("pgrep")
+        self._pgrep_missing_logged = False
 
     def build_issue_pattern(self, issue_number: str) -> str:
         """Return pgrep regex pattern for issue-linked process detection."""
@@ -29,10 +32,18 @@ class RuntimeOpsPlugin:
 
     def find_issue_processes(self, issue_number: str) -> list[dict[str, Any]]:
         """Return process matches for an issue number."""
+        if not self._pgrep_path:
+            if not self._pgrep_missing_logged:
+                logger.warning(
+                    "pgrep command not found; runtime process detection disabled for issue checks."
+                )
+                self._pgrep_missing_logged = True
+            return []
+
         pattern = self.build_issue_pattern(issue_number)
         try:
             result = subprocess.run(
-                ["pgrep", "-af", pattern],
+                [self._pgrep_path, "-af", pattern],
                 text=True,
                 capture_output=True,
                 timeout=self.pgrep_timeout,

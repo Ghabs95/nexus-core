@@ -146,22 +146,10 @@ async def handle_save_task_selection(
 
     filename = f"{task_type}_{update.message.message_id}.md"
     task_name_line = f"**Task Name:** {task_name}\n" if task_name else ""
-    requester_lines: list[str] = []
-    requester_nexus_id = str(requester_context.get("nexus_id") or "").strip()
-    requester_platform = str(requester_context.get("platform") or "").strip()
-    requester_platform_user_id = str(requester_context.get("platform_user_id") or "").strip()
-    if requester_nexus_id:
-        requester_lines.append(f"**Requester Nexus ID:** `{requester_nexus_id}`")
-    if requester_platform:
-        requester_lines.append(f"**Requester Platform:** {requester_platform}")
-    if requester_platform_user_id:
-        requester_lines.append(f"**Requester Platform User ID:** `{requester_platform_user_id}`")
-    requester_block = ("\n" + "\n".join(requester_lines)) if requester_lines else ""
     markdown_content = (
         f"# {types_map[task_type]}\n**Project:** {projects[project]}\n**Type:** {task_type}\n"
         f"{task_name_line}**Status:** Pending\n\n"
         f"{refined_text}\n\n"
-        f"{requester_block}\n"
         f"---\n"
         f"**Source:** inbox\n"
         f"---\n"

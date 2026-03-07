@@ -15,7 +15,8 @@ def test_find_issue_processes_parses_pgrep_output(monkeypatch):
     plugin = RuntimeOpsPlugin({"process_name": "copilot"})
 
     def _fake_run(cmd, text, capture_output, timeout, check):
-        assert cmd[0:2] == ["pgrep", "-af"]
+        assert cmd[0].endswith("pgrep")
+        assert cmd[1] == "-af"
         return _Result("1234 copilot -p prompt issues/42\n5678 copilot --other issues/42\n")
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
@@ -39,6 +40,19 @@ def test_find_issue_processes_returns_empty_on_error(monkeypatch):
 
     assert plugin.find_issue_processes("42") == []
     assert plugin.find_agent_pid_for_issue("42") is None
+
+
+def test_find_issue_processes_returns_empty_when_pgrep_missing(monkeypatch):
+    plugin = RuntimeOpsPlugin()
+    monkeypatch.setattr(plugin, "_pgrep_path", None)
+
+    def _fake_run(*_args, **_kwargs):
+        raise AssertionError("subprocess.run should not be called when pgrep is missing")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    assert plugin.find_issue_processes("42") == []
+    assert plugin.find_issue_processes("42") == []
 
 
 def test_kill_process_and_stop_issue_agent(monkeypatch):
@@ -76,7 +90,8 @@ def test_find_issue_processes_skips_ide_extension_host(monkeypatch):
     plugin = RuntimeOpsPlugin({"process_name": "copilot|codex"})
 
     def _fake_run(cmd, text, capture_output, timeout, check):
-        assert cmd[0:2] == ["pgrep", "-af"]
+        assert cmd[0].endswith("pgrep")
+        assert cmd[1] == "-af"
         return _Result(
             "1111 /Applications/Visual Studio Code.app/Contents/MacOS/Electron "
             "--ms-enable-electron-run-as-node extensionHost issues/42 codex\n"
@@ -96,7 +111,8 @@ def test_find_issue_processes_accepts_wrapped_cli_invocation(monkeypatch):
     plugin = RuntimeOpsPlugin({"process_name": "copilot|codex"})
 
     def _fake_run(cmd, text, capture_output, timeout, check):
-        assert cmd[0:2] == ["pgrep", "-af"]
+        assert cmd[0].endswith("pgrep")
+        assert cmd[1] == "-af"
         return _Result("3333 bash -lc codex exec --issue https://github.com/acme/repo/issues/42\n")
 
     monkeypatch.setattr(subprocess, "run", _fake_run)

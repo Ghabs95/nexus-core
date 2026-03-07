@@ -34,21 +34,6 @@ def _render_task_markdown(
     raw_text: str,
     requester_context: dict[str, Any] | None = None,
 ) -> str:
-    requester_context = requester_context if isinstance(requester_context, dict) else {}
-    requester_nexus_id = str(requester_context.get("nexus_id") or "").strip()
-    requester_platform = str(requester_context.get("platform") or "").strip()
-    requester_platform_user_id = str(requester_context.get("platform_user_id") or "").strip()
-    requester_block = ""
-    if requester_nexus_id:
-        requester_lines = [f"**Requester Nexus ID:** `{requester_nexus_id}`"]
-        if requester_platform:
-            requester_lines.append(f"**Requester Platform:** {requester_platform}")
-        if requester_platform_user_id:
-            requester_lines.append(
-                f"**Requester Platform User ID:** `{requester_platform_user_id}`"
-            )
-        requester_block = "\n" + "\n".join(requester_lines)
-
     return (
         f"# {TYPES.get(task_type, 'Task')}\n"
         f"**Project:** {PROJECTS.get(project, project)}\n"
@@ -56,7 +41,6 @@ def _render_task_markdown(
         f"**Task Name:** {task_name}\n"
         f"**Status:** Pending\n\n"
         f"{content}\n\n"
-        f"{requester_block}\n"
         f"---\n"
         f"**Source:** inbox\n"
         f"---\n"

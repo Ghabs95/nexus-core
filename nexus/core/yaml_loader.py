@@ -104,6 +104,8 @@ class YamlWorkflowLoader:
                 data = yaml.safe_load(fh)
             except yaml.YAMLError as exc:
                 raise ValueError(f"Failed to parse YAML from {yaml_path}: {exc}") from exc
+        if isinstance(data, dict):
+            data["__yaml_path"] = str(path)
 
         return YamlWorkflowLoader.load_from_dict(
             data,

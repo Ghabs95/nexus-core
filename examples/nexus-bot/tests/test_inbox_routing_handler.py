@@ -176,3 +176,22 @@ async def test_process_inbox_task_generates_task_name_from_wrapped_response(tmp_
     assert task_file.exists()
     content = task_file.read_text(encoding="utf-8")
     assert "**Task Name:** adapter-configurable-persistence" in content
+
+
+def test_render_task_markdown_omits_sensitive_requester_fields():
+    content = routing._render_task_markdown(
+        project="nexus",
+        task_type="feature",
+        task_name="privacy-test",
+        content="Implement privacy-safe task rendering",
+        raw_text="raw text",
+        requester_context={
+            "nexus_id": "31efac50-8610-4b4b-9129-6a48e96a110c",
+            "platform": "telegram",
+            "platform_user_id": "47168736",
+        },
+    )
+
+    assert "**Requester Nexus ID:**" not in content
+    assert "**Requester Platform:**" not in content
+    assert "**Requester Platform User ID:**" not in content

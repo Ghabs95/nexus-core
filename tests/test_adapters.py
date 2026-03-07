@@ -6,11 +6,10 @@ extras installed.
 """
 
 import asyncio
-import json
 import os
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -988,6 +987,31 @@ class TestDiscordNotificationChannel:
         with patch.object(channel, "_patch_channel_message") as mock_patch:
             await channel.update_message("chan123:msg456", "New content")
         mock_patch.assert_called_once_with("chan123", "msg456", {"content": "New content"})
+
+    async def test_get_session_recreates_when_loop_changes(self, monkeypatch):
+        import nexus.adapters.notifications.discord as discord_mod
+
+        channel = self._make_channel()
+
+        class _Session:
+            def __init__(self):
+                self.closed = False
+
+        created = []
+
+        def _fake_client_session():
+            sess = _Session()
+            created.append(sess)
+            return sess
+
+        monkeypatch.setattr(discord_mod.aiohttp, "ClientSession", _fake_client_session)
+        channel._session = _Session()
+        channel._session_loop = object()
+
+        session = channel._get_session()
+
+        assert session is created[0]
+        assert channel._session_loop is asyncio.get_running_loop()
 
     def test_requires_aiohttp_without_install(self):
         import nexus.adapters.notifications.discord as _mod
