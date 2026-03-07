@@ -41,6 +41,7 @@ class OpsHandlerDeps:
     get_chat_history: Callable[[int], str]
     append_message: Callable[[int, str, str], None]
     create_chat: Callable[..., str]
+    requester_context_builder: Callable[[int], dict[str, Any]] | None = None
 
 
 def _normalize_agent_key(value: str) -> str:

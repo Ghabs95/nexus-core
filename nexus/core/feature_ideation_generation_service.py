@@ -70,6 +70,7 @@ def build_feature_suggestions(
     logger: Any | None,
     normalize_generated_features: Callable[[Any, int], list[dict[str, Any]]],
     extract_json_payload: Callable[[str], Any],
+    requester_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     try:
         persona_budget = apply_prompt_budget(
@@ -101,6 +102,7 @@ def build_feature_suggestions(
             task="chat",
             persona=str(persona_budget["text"]),
             project_name=project_key,
+            requester_context=requester_context,
         )
         raw_text = result.get("text", "") if isinstance(result, dict) else ""
         if logger:
@@ -154,7 +156,18 @@ def build_feature_suggestions(
     try:
         run_fallback = getattr(orchestrator, "_run_fallback_analysis", None) or getattr(orchestrator, "_run_copilot_analysis", None)
         if callable(run_fallback):
-            fallback_result = run_fallback(text, task="chat", persona=persona)
+            fallback_kwargs: dict[str, Any] = {"task": "chat", "persona": persona}
+            resolve_env = getattr(orchestrator, "_resolve_analysis_provider_env", None)
+            if callable(resolve_env):
+                provider_env, _env_error = resolve_env(requester_context)
+                if isinstance(provider_env, dict) and provider_env:
+                    fallback_kwargs["_provider_env"] = provider_env
+            resolve_cwd = getattr(orchestrator, "_resolve_analysis_cwd", None)
+            if callable(resolve_cwd):
+                analysis_cwd = resolve_cwd(project_key)
+                if isinstance(analysis_cwd, str) and analysis_cwd.strip():
+                    fallback_kwargs["_analysis_cwd"] = analysis_cwd
+            fallback_result = run_fallback(text, **fallback_kwargs)
             generated = _extract_items_from_result(
                 fallback_result or {},
                 feature_count=feature_count,

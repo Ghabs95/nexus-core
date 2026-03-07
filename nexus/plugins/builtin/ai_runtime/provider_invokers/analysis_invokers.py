@@ -21,6 +21,8 @@ def run_gemini_analysis_cli(
     task: str,
     timeout: int,
     kwargs: dict[str, Any],
+    env: dict[str, str] | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     if not check_tool_available(gemini_provider):
         raise tool_unavailable_error("Gemini CLI not available")
@@ -30,7 +32,7 @@ def run_gemini_analysis_cli(
         cmd = [gemini_cli_path, "-p", prompt]
         if gemini_model:
             cmd.extend(["--model", gemini_model])
-        result = run_cli_prompt(cmd, timeout=timeout)
+        result = run_cli_prompt(cmd, timeout=timeout, env=env, cwd=cwd)
         if result.returncode != 0:
             stderr = result.stderr or ""
             if "rate limit" in stderr.lower() or "quota" in stderr.lower():
@@ -55,6 +57,8 @@ def run_copilot_analysis_cli(
     task: str,
     timeout: int,
     kwargs: dict[str, Any],
+    env: dict[str, str] | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     if not check_tool_available(copilot_provider):
         raise tool_unavailable_error("Copilot CLI not available")
@@ -64,7 +68,7 @@ def run_copilot_analysis_cli(
         cmd = [copilot_cli_path, "-p", prompt]
         if copilot_model and copilot_supports_model:
             cmd.extend(["--model", copilot_model])
-        result = run_cli_prompt(cmd, timeout=timeout)
+        result = run_cli_prompt(cmd, timeout=timeout, env=env, cwd=cwd)
         if result.returncode != 0:
             raise Exception(f"Copilot error: {result.stderr}")
         return parse_analysis_result(result.stdout or "", task)
@@ -86,6 +90,8 @@ def run_codex_analysis_cli(
     task: str,
     timeout: int,
     kwargs: dict[str, Any],
+    env: dict[str, str] | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     if not check_tool_available(codex_provider):
         raise tool_unavailable_error("Codex CLI not available")
@@ -97,7 +103,7 @@ def run_codex_analysis_cli(
     cmd.append(prompt)
 
     try:
-        result = run_cli_prompt(cmd, timeout=timeout)
+        result = run_cli_prompt(cmd, timeout=timeout, env=env, cwd=cwd)
         if result.returncode != 0:
             stderr = result.stderr or ""
             stdout = result.stdout or ""
@@ -124,6 +130,8 @@ def run_claude_analysis_cli(
     task: str,
     timeout: int,
     kwargs: dict[str, Any],
+    env: dict[str, str] | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     if not check_tool_available(claude_provider):
         raise tool_unavailable_error("Claude CLI not available")
@@ -135,7 +143,7 @@ def run_claude_analysis_cli(
     cmd.append(prompt)
 
     try:
-        result = run_cli_prompt(cmd, timeout=timeout)
+        result = run_cli_prompt(cmd, timeout=timeout, env=env, cwd=cwd)
         if result.returncode != 0:
             stderr = result.stderr or ""
             stdout = result.stdout or ""

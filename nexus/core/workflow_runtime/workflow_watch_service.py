@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from nexus.core.config import WEBHOOK_PORT
+from nexus.core.config import NEXUS_WEBHOOK_INTERNAL_URL, WEBHOOK_PORT
 from nexus.core.state_manager import HostStateManager
 
 try:
@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_NAMESPACE = "/visualizer"
 _DEFAULT_THROTTLE_SECONDS = 2.0
+_VISUALIZER_TOKEN_HEADER = "X-Nexus-Visualizer-Token"
 
 
 @dataclass
@@ -223,7 +224,7 @@ class WorkflowWatchService:
         HostStateManager.save_workflow_watch_subscriptions(payload)
 
     def _socket_url(self) -> str:
-        default_url = f"http://127.0.0.1:{WEBHOOK_PORT}"
+        default_url = NEXUS_WEBHOOK_INTERNAL_URL or f"http://127.0.0.1:{WEBHOOK_PORT}"
         return os.getenv("NEXUS_TELEGRAM_WATCH_URL", default_url).strip() or default_url
 
     def _socket_namespace(self) -> str:
@@ -234,6 +235,15 @@ class WorkflowWatchService:
             raw = "/" + raw
         return raw
 
+    def _socket_headers(self) -> dict[str, str]:
+        token = str(
+            os.getenv("NEXUS_TELEGRAM_WATCH_SHARED_TOKEN", "")
+            or os.getenv("NEXUS_VISUALIZER_SHARED_TOKEN", "")
+        ).strip()
+        if not token:
+            return {}
+        return {_VISUALIZER_TOKEN_HEADER: token}
+
     def _run_socket_worker(self) -> None:
         if socketio is None:  # pragma: no cover - import fallback
             logger.warning("Workflow watch disabled: python-socketio client not available")
@@ -241,6 +251,7 @@ class WorkflowWatchService:
 
         namespace = self._socket_namespace()
         url = self._socket_url()
+        headers = self._socket_headers()
         backoff = 1.0
 
         client = socketio.Client(
@@ -287,7 +298,13 @@ class WorkflowWatchService:
 
         while not self._stop_event.is_set():
             try:
-                client.connect(url, namespaces=[namespace], wait_timeout=5, transports=transports)
+                client.connect(
+                    url,
+                    namespaces=[namespace],
+                    wait_timeout=5,
+                    transports=transports,
+                    headers=headers or None,
+                )
                 while client.connected and not self._stop_event.wait(0.25):
                     pass
             except Exception as exc:

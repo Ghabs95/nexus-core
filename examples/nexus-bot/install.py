@@ -199,8 +199,8 @@ TASK_CONFIRMATION_MODE=smart
 # ================================
 BASE_DIR={base_dir}
 PROJECT_CONFIG_PATH=config/project_config.yaml
-NEXUS_RUNTIME_DIR=./data
-LOGS_DIR=./logs
+NEXUS_RUNTIME_DIR=/var/lib/nexus
+LOGS_DIR=/var/lib/nexus/logs
 
 # ================================
 # GIT PLATFORMS

@@ -12,7 +12,7 @@ def load_path_config_from_env() -> dict[str, str]:
     nexus_state_dir = os.getenv("DATA_DIR")
     if not nexus_state_dir:
         nexus_state_dir = os.path.join(nexus_runtime_dir, "state")
-    logs_dir = os.getenv("LOGS_DIR", "/var/log/nexus")
+    logs_dir = os.getenv("LOGS_DIR") or os.path.join(nexus_runtime_dir, "logs")
     return {
         "BASE_DIR": base_dir,
         "NEXUS_RUNTIME_DIR": nexus_runtime_dir,

@@ -26,6 +26,7 @@ from nexus.core.auth.access_domain import (
 from nexus.core.auth.credential_store import get_issue_requester_by_url
 from nexus.core.config import (
     BASE_DIR,
+    NEXUS_WEBHOOK_INTERNAL_URL,
     ORCHESTRATOR_CONFIG,
     NEXUS_STORAGE_BACKEND,
     PROJECT_CONFIG,
@@ -282,7 +283,7 @@ def _get_launch_policy_plugin():
     default_system_operations = get_system_operations(default_project) if default_project else {}
 
     completion_backend = "postgres" if is_postgres_backend(NEXUS_STORAGE_BACKEND) else "filesystem"
-    webhook_url = f"http://127.0.0.1:{WEBHOOK_PORT}"
+    webhook_url = NEXUS_WEBHOOK_INTERNAL_URL or f"http://127.0.0.1:{WEBHOOK_PORT}"
 
     plugin = get_profiled_plugin(
         "agent_launch_policy",

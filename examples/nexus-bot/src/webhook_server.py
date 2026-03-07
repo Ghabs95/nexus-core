@@ -50,7 +50,6 @@ from nexus.core.workspace import WorkspaceManager
 
 from nexus.core.config import (
     BASE_DIR,
-    LOGS_DIR,
     DISCORD_TOKEN,
     NEXUS_ACCESS_SYNC_INTERVAL_MINUTES,
     NEXUS_AUTH_ENABLED,
@@ -119,26 +118,10 @@ from nexus.core.auth.credential_store import get_auth_session as _svc_get_auth_s
 from nexus.core.auth.credential_store import get_auth_session_by_state as _svc_get_auth_session_by_state
 from nexus.core.runtime_mode import is_issue_process_running
 
-# Configure logging
-os.makedirs(LOGS_DIR, exist_ok=True)
-
-
-def _build_webhook_logging_handlers() -> list[logging.Handler]:
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
-    try:
-        handlers.insert(0, logging.FileHandler(os.path.join(LOGS_DIR, "webhook.log")))
-    except Exception as exc:
-        logging.getLogger(__name__).warning(
-            "File logging unavailable for webhook server (%s); using stream handler only.",
-            exc,
-        )
-    return handlers
-
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=_build_webhook_logging_handlers(),
+    handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 

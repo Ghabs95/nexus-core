@@ -5,6 +5,7 @@ from typing import Any, Awaitable, Callable
 
 from nexus.adapters.notifications.interactive import InteractiveClientPlugin
 from nexus.adapters.registry import AdapterRegistry
+from nexus.core.command_visibility import is_command_visible
 from nexus.core.config.bootstrap import initialize_runtime
 from nexus.core.interactive.context import InteractiveContext
 
@@ -222,13 +223,18 @@ def _bind_handlers(plugin: InteractiveClientPlugin) -> None:
     plugin.register_command("untrack", _wrap_command_handler(untrack_handler, issue_deps))
 
     # Monitoring Commands
-    plugin.register_command("active", _wrap_command_handler(active_handler, monitoring_deps))
+    if is_command_visible("active"):
+        plugin.register_command("active", _wrap_command_handler(active_handler, monitoring_deps))
     plugin.register_command("fuse", _wrap_command_handler(fuse_handler, monitoring_deps))
-    plugin.register_command("logs", _wrap_command_handler(logs_handler, monitoring_deps))
-    plugin.register_command("logsfull", _wrap_command_handler(logsfull_handler, monitoring_deps))
+    if is_command_visible("logs"):
+        plugin.register_command("logs", _wrap_command_handler(logs_handler, monitoring_deps))
+    if is_command_visible("logsfull"):
+        plugin.register_command("logsfull", _wrap_command_handler(logsfull_handler, monitoring_deps))
     plugin.register_command("status", _wrap_command_handler(status_handler, monitoring_deps))
-    plugin.register_command("tail", _wrap_command_handler(tail_handler, monitoring_deps))
-    plugin.register_command("tailstop", _wrap_command_handler(tailstop_handler, monitoring_deps))
+    if is_command_visible("tail"):
+        plugin.register_command("tail", _wrap_command_handler(tail_handler, monitoring_deps))
+    if is_command_visible("tailstop"):
+        plugin.register_command("tailstop", _wrap_command_handler(tailstop_handler, monitoring_deps))
 
     # Ops Commands
     plugin.register_command("agents", _wrap_command_handler(agents_handler, ops_deps))

@@ -59,6 +59,7 @@ def invoke_ollama_agent_cli(
             log_path=log_path,
             logger=logger,
             launched_message="🚀 Ollama launched (PID: %s)",
+            output_label="ollama",
         )
 
         # Detect near-immediate startup failure so orchestrator can fallback

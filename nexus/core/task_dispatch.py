@@ -246,7 +246,7 @@ def handle_new_task(
     refine_issue_content: Callable[[str, str], str],
     extract_inline_task_name: Callable[[str], str],
     slugify: Callable[[str], str],
-    generate_issue_name: Callable[[str, str], str],
+    generate_issue_name: Callable[..., str],
     get_sop_tier: Callable[..., tuple[str, str, str]],
     render_checklist_from_workflow: Callable[[str, str], str],
     render_fallback_checklist: Callable[[str], str],
@@ -264,11 +264,19 @@ def handle_new_task(
     resolve_git_dirs_for_project: Callable[[str], dict[str, str]] | None = None,
     run_workflow_start_git_sync: Callable[..., dict[str, Any]] | None = None,
     requester_nexus_id: str | None = None,
+    requester_context: dict[str, Any] | None = None,
     bind_issue_requester: Callable[..., None] | None = None,
     ensure_project_and_repo_access: Callable[[str, str, str], tuple[bool, str]] | None = None,
 ) -> None:
     """Handle standard (non-webhook) inbox task end-to-end."""
-    content = refine_issue_content(content, str(project_name))
+    try:
+        content = refine_issue_content(
+            content,
+            str(project_name),
+            requester_context=requester_context,
+        )
+    except TypeError:
+        content = refine_issue_content(content, str(project_name))
 
     precomputed_task_name = extract_inline_task_name(content)
     if precomputed_task_name:
@@ -276,9 +284,23 @@ def handle_new_task(
         if slug:
             logger.info("✅ Using pre-generated task name: %s", slug)
         else:
-            slug = generate_issue_name(content, project_name)
+            try:
+                slug = generate_issue_name(
+                    content,
+                    project_name,
+                    requester_context=requester_context,
+                )
+            except TypeError:
+                slug = generate_issue_name(content, project_name)
     else:
-        slug = generate_issue_name(content, project_name)
+        try:
+            slug = generate_issue_name(
+                content,
+                project_name,
+                requester_context=requester_context,
+            )
+        except TypeError:
+            slug = generate_issue_name(content, project_name)
 
     tier_name, sop_template, workflow_label = get_sop_tier(
         task_type=task_type,

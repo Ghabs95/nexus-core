@@ -78,9 +78,22 @@ async def handle_direct_request(
             deps.append_message(user_id, "user", message)
             history = deps.get_chat_history(user_id)
             persona = build_direct_chat_persona(deps.ai_persona, project, agent, agent_type)
-            chat_result = deps.orchestrator.run_text_to_speech_analysis(
-                text=message, task="chat", history=history, persona=persona, project_name=project
-            )
+            requester_context = None
+            if callable(getattr(deps, "requester_context_builder", None)):
+                try:
+                    requester_context = deps.requester_context_builder(user_id)
+                except Exception:
+                    requester_context = None
+            analysis_kwargs = {
+                "text": message,
+                "task": "chat",
+                "history": history,
+                "persona": persona,
+                "project_name": project,
+            }
+            if isinstance(requester_context, dict) and requester_context:
+                analysis_kwargs["requester_context"] = requester_context
+            chat_result = deps.orchestrator.run_text_to_speech_analysis(**analysis_kwargs)
             reply_text = chat_result.get("text", "I couldn't generate a response right now.")
             deps.append_message(user_id, "assistant", reply_text)
             await ctx.edit_message_text(

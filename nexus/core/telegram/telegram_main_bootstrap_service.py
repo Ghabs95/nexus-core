@@ -3,6 +3,8 @@ from collections.abc import Mapping
 from inspect import isawaitable
 from typing import Any
 
+from nexus.core.command_visibility import filter_visible_commands
+from nexus.core.storage.capabilities import get_storage_capabilities
 from telegram import Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler
 
@@ -72,8 +74,9 @@ def register_application_handlers(
 
         return wrapped
 
+    local_task_files = get_storage_capabilities().local_task_files
     app.add_handler(conv_handler)
-    for cmd, handler_name, action in (
+    command_specs = [
         ("start", "start_handler", "onboarding"),
         ("help", "help_handler", "help"),
         ("menu", "menu_handler", "onboarding"),
@@ -121,7 +124,13 @@ def register_application_handlers(
         ("feature_forget", "feature_forget_handler", "execute"),
         ("chat", "chat_menu_handler", "execute"),
         ("chatagents", "chat_agents_handler", "execute"),
-    ):
+    ]
+    visible_commands = set(
+        filter_visible_commands((cmd for cmd, _handler_name, _action in command_specs), local_task_files=local_task_files)
+    )
+    for cmd, handler_name, action in command_specs:
+        if cmd not in visible_commands:
+            continue
         app.add_handler(CommandHandler(cmd, _wrap(handlers[handler_name], command=cmd, action=action)))
 
     app.add_handler(CallbackQueryHandler(_wrap(handlers["chat_callback_handler"]), pattern=r"^chat:"))

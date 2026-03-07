@@ -4,6 +4,7 @@ from typing import Any
 
 from nexus.adapters.notifications.base import Button
 from nexus.core.callbacks.callback_registry_service import dispatch_callback_action
+from nexus.core.storage.capabilities import get_storage_capabilities
 
 
 def menu_root_buttons() -> list[list[Button]]:
@@ -20,6 +21,27 @@ def menu_root_buttons() -> list[list[Button]]:
 
 
 def menu_section_text(menu_key: str) -> str:
+    caps = get_storage_capabilities()
+    monitor_lines = [
+        "📊 **Monitoring**",
+        "- /status — View pending tasks in inbox",
+        "- /inboxq [limit] — Inspect inbox queue status",
+        "- /myissues — View your tracked issues",
+        "- /fuse <project> <issue#> — View retry fuse state",
+        "- /audit <project> <issue#> — View workflow audit trail",
+        "- /stats [days] — View system analytics (default: 30 days)",
+        "- /comments <project> <issue#> — View issue comments",
+        "- /track <project> <issue#> — Subscribe to updates",
+        "- /untrack <project> <issue#> — Stop tracking",
+    ]
+    if caps.local_task_files:
+        monitor_lines[2:2] = [
+            "- /active — View tasks currently being worked on",
+            "- /logs <project> <issue#> — View task logs",
+            "- /logsfull <project> <issue#> — Full log lines (no truncation)",
+            "- /tail <project> <issue#> [lines] [seconds] — Follow live logs",
+            "- /tailstop — Stop current live tail session",
+        ]
     menu_texts = {
         "chat": (
             "🗣️ **Chat**\n"
@@ -34,23 +56,7 @@ def menu_section_text(menu_key: str) -> str:
             "- /cancel — Abort the current guided process\n\n"
             "Tip: send a voice note or text to auto-create a task."
         ),
-        "monitor": (
-            "📊 **Monitoring**\n"
-            "- /status — View pending tasks in inbox\n"
-            "- /inboxq [limit] — Inspect inbox queue status\n"
-            "- /active — View tasks currently being worked on\n"
-            "- /myissues — View your tracked issues\n"
-            "- /logs <project> <issue#> — View task logs\n"
-            "- /logsfull <project> <issue#> — Full log lines (no truncation)\n"
-            "- /tail <project> <issue#> [lines] [seconds] — Follow live logs\n"
-            "- /tailstop — Stop current live tail session\n"
-            "- /fuse <project> <issue#> — View retry fuse state\n"
-            "- /audit <project> <issue#> — View workflow audit trail\n"
-            "- /stats [days] — View system analytics (default: 30 days)\n"
-            "- /comments <project> <issue#> — View issue comments\n"
-            "- /track <project> <issue#> — Subscribe to updates\n"
-            "- /untrack <project> <issue#> — Stop tracking"
-        ),
+        "monitor": "\n".join(monitor_lines),
         "workflow": (
             "🔁 **Workflow Control**\n"
             "- /visualize <project> <issue#> — Show Mermaid workflow diagram\n"

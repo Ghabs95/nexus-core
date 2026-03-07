@@ -17,7 +17,7 @@ async def handle_feature_ideation_callback(
     feature_generation_retry_text: Callable[[str, Any], str],
     feature_list_text: Callable[..., str],
     feature_list_keyboard: Callable[..., list[list[Button]]],
-    feature_count_prompt_text: Callable[[str, Any], str],
+    feature_count_prompt_text: Callable[[str | None, Any, int | None], str],
     feature_count_keyboard: Callable[..., list[list[Button]]],
     feature_to_task_text: Callable[[str, dict[str, Any], Any], str],
     log_unauthorized_callback_access: Callable[[Any, Any], None],
@@ -70,6 +70,11 @@ async def handle_feature_ideation_callback(
         project_key = feature_state.get("project")
         preferred_agent_type = feature_state.get("agent_type")
         source_text = str(feature_state.get("source_text") or "")
+        requester_context = (
+            feature_state.get("requester_context")
+            if isinstance(feature_state.get("requester_context"), dict)
+            else None
+        )
         ctx.user_state[feature_state_key] = {
             **feature_state,
             "feature_count": feature_count,
@@ -94,6 +99,7 @@ async def handle_feature_ideation_callback(
             deps=deps,
             preferred_agent_type=preferred_agent_type,
             feature_count=feature_count,
+            requester_context=requester_context,
         )
         ctx.user_state[feature_state_key] = {
             **feature_state,
@@ -173,8 +179,14 @@ async def handle_feature_ideation_callback(
             return
 
         source_text = str(feature_state.get("source_text") or "")
+        requester_context = (
+            feature_state.get("requester_context")
+            if isinstance(feature_state.get("requester_context"), dict)
+            else None
+        )
         feature_count_raw = feature_state.get("feature_count")
         if feature_count_raw is None:
+            requested_count = feature_state.get("requested_feature_count")
             ctx.user_state[feature_state_key] = {
                 **feature_state,
                 "project": project_key,
@@ -182,7 +194,7 @@ async def handle_feature_ideation_callback(
                 "selected_items": [],
             }
             await ctx.edit_message_text(
-                text=feature_count_prompt_text(project_key, deps),
+                text=feature_count_prompt_text(project_key, deps, requested_count),
                 buttons=feature_count_keyboard(allow_project_change=not project_locked),
             )
             return
@@ -195,6 +207,7 @@ async def handle_feature_ideation_callback(
             deps=deps,
             preferred_agent_type=preferred_agent_type,
             feature_count=feature_count,
+            requester_context=requester_context,
         )
         ctx.user_state[feature_state_key] = {
             **feature_state,

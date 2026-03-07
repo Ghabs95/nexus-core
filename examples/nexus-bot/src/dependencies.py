@@ -87,7 +87,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
     force=True,
-    handlers=[logging.StreamHandler(), logging.FileHandler(TELEGRAM_BOT_LOG_FILE)],
+    handlers=[logging.StreamHandler()],
 )
 
 
@@ -266,4 +266,9 @@ def _ops_handler_deps() -> OpsHandlerDeps:
         get_chat_history=get_chat_history,
         append_message=append_message,
         create_chat=create_chat,
+        requester_context_builder=lambda user_id: {
+            "platform": "telegram",
+            "platform_user_id": str(user_id),
+            "nexus_id": str(user_manager.resolve_nexus_id("telegram", str(user_id)) or ""),
+        },
     )

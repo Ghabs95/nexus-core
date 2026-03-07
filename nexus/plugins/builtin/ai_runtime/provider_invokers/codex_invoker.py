@@ -3,6 +3,9 @@ import subprocess
 import time
 from typing import Any, Callable
 
+from .agent_invokers import _start_output_tee
+from .agent_invokers import _monitor_process_lifecycle, _redact_command_for_logs
+
 
 def _cleanup_empty_rollout_files(*, logger: Any, codex_home: str | None = None) -> int:
     """Remove zero-byte Codex rollout session files that can crash reconcile startup."""
@@ -88,9 +91,7 @@ def invoke_codex_cli(
     logger.info("   Workspace: %s", workspace_dir)
     logger.info("   Log: %s", log_path)
 
-    log_file = None
     try:
-        log_file = open(log_path, "w", encoding="utf-8")
         merged_env = {**os.environ}
         if env:
             merged_env.update(env)
@@ -101,18 +102,33 @@ def invoke_codex_cli(
             cmd,
             cwd=workspace_dir,
             stdin=subprocess.DEVNULL,
-            stdout=log_file,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             env=merged_env,
+            text=True,
+            bufsize=1,
         )
-        log_file.close()
+        logger.info(
+            "[agent:%s] launch pid=%s cwd=%s log=%s cmd=%s",
+            "codex",
+            process.pid,
+            workspace_dir,
+            log_path,
+            _redact_command_for_logs(cmd),
+        )
+        _start_output_tee(
+            process=process,
+            log_path=log_path,
+            logger=logger,
+            output_label="codex",
+        )
+        _monitor_process_lifecycle(
+            process=process,
+            logger=logger,
+            output_label="codex",
+        )
         logger.info("🚀 Codex launched (PID: %s)", process.pid)
         return process.pid
     except Exception as exc:
-        try:
-            if log_file:
-                log_file.close()
-        except Exception:
-            pass
         logger.error("❌ Codex launch failed: %s", exc)
         raise

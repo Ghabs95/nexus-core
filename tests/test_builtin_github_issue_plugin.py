@@ -1,6 +1,7 @@
 """Tests for built-in GitHub issue plugin."""
 
 import subprocess
+from unittest.mock import MagicMock
 
 from nexus.plugins.builtin.github_issue_plugin import GitHubIssueCLIPlugin
 
@@ -12,6 +13,7 @@ class _Result:
 
 
 def test_builtin_plugin_retries_without_labels(monkeypatch):
+    monkeypatch.setenv("NEXUS_GIT_PLATFORM_TRANSPORT", "cli")
     plugin = GitHubIssueCLIPlugin({"repo": "owner/repo", "max_attempts": 3, "timeout": 30})
     calls = {"count": 0}
 
@@ -34,6 +36,7 @@ def test_builtin_plugin_retries_without_labels(monkeypatch):
 
 
 def test_builtin_plugin_add_comment(monkeypatch):
+    monkeypatch.setenv("NEXUS_GIT_PLATFORM_TRANSPORT", "cli")
     plugin = GitHubIssueCLIPlugin({"repo": "owner/repo", "max_attempts": 2, "timeout": 30})
     captured = {"cmd": None}
 
@@ -59,6 +62,7 @@ def test_builtin_plugin_add_comment(monkeypatch):
 
 
 def test_builtin_plugin_issue_ops(monkeypatch):
+    monkeypatch.setenv("NEXUS_GIT_PLATFORM_TRANSPORT", "cli")
     plugin = GitHubIssueCLIPlugin({"repo": "owner/repo", "max_attempts": 2, "timeout": 30})
     commands = []
 
@@ -99,6 +103,7 @@ def test_builtin_plugin_issue_ops(monkeypatch):
 
 
 def test_builtin_plugin_ensure_label_returns_true_when_label_exists(monkeypatch):
+    monkeypatch.setenv("NEXUS_GIT_PLATFORM_TRANSPORT", "cli")
     plugin = GitHubIssueCLIPlugin({"repo": "owner/repo", "max_attempts": 2, "timeout": 30})
 
     class _ExistsResult:
@@ -112,3 +117,24 @@ def test_builtin_plugin_ensure_label_returns_true_when_label_exists(monkeypatch)
     monkeypatch.setattr("nexus.plugins.builtin.github_issue_plugin.subprocess.run", _fake_run)
 
     assert plugin.ensure_label("agent:requested", "E6E6FA", "Requested") is True
+
+
+def test_builtin_plugin_lists_issues_via_api(monkeypatch):
+    monkeypatch.setenv("NEXUS_GIT_PLATFORM_TRANSPORT", "api")
+    plugin = GitHubIssueCLIPlugin({"repo": "owner/repo", "max_attempts": 2, "timeout": 30})
+    data = [
+        {"number": 1, "title": "A", "state": "open", "labels": [], "html_url": "u1"},
+        {"number": 2, "title": "PR", "state": "open", "pull_request": {}, "labels": []},
+    ]
+
+    platform = MagicMock()
+    platform._sync_request.return_value = data
+    monkeypatch.setattr(plugin, "_platform", lambda: platform)
+
+    issues = plugin.list_issues(state="open", limit=5)
+
+    assert issues == [{"number": 1, "title": "A", "state": "open"}]
+    platform._sync_request.assert_called_once_with(
+        "GET",
+        "repos/owner/repo/issues?state=open&per_page=5",
+    )

@@ -1225,6 +1225,15 @@ class AIOrchestrator:
         analysis_kwargs["_codex_model_override"] = model_overrides["codex"]
         analysis_kwargs["_claude_model_override"] = model_overrides["claude"]
         analysis_kwargs["_ollama_model_override"] = model_overrides["ollama"]
+        provider_env, env_error = self._resolve_analysis_provider_env(kwargs.get("requester_context"))
+        if provider_env:
+            analysis_kwargs["_provider_env"] = provider_env
+        elif env_error and task == "chat":
+            logger.info("Requester-scoped analysis auth unavailable for task=%s: %s", task, env_error)
+
+        analysis_cwd = self._resolve_analysis_cwd(project_name)
+        if analysis_cwd:
+            analysis_kwargs["_analysis_cwd"] = analysis_cwd
         logger.info(
             "🧾 Analysis prompt metrics: input_chars=%s history_chars=%s prefix_fp=%s task=%s",
             len(text),
@@ -1250,6 +1259,55 @@ class AIOrchestrator:
             get_default_analysis_result=self._get_default_analysis_result,
             logger=logger,
         )
+
+    def _resolve_analysis_provider_env(
+        self, requester_context: Mapping[str, Any] | None
+    ) -> tuple[dict[str, str] | None, str | None]:
+        if not isinstance(requester_context, Mapping):
+            return None, None
+
+        nexus_id = str(requester_context.get("nexus_id") or "").strip()
+        if not nexus_id:
+            return None, None
+
+        try:
+            from nexus.core.auth.access_domain import build_execution_env
+
+            env, err = build_execution_env(nexus_id)
+        except Exception as exc:
+            logger.warning(
+                "Could not resolve requester-scoped analysis auth for nexus_id=%s: %s",
+                nexus_id,
+                exc,
+            )
+            return None, str(exc)
+
+        if err:
+            return None, err
+        return env or None, None
+
+    def _resolve_analysis_cwd(self, project_name: str | None) -> str | None:
+        project_key = str(project_name or "").strip()
+        if not project_key:
+            return None
+
+        try:
+            from nexus.core.config import BASE_DIR, PROJECT_CONFIG
+        except Exception as exc:
+            logger.warning("Could not resolve analysis cwd for project=%s: %s", project_key, exc)
+            return None
+
+        project_cfg = PROJECT_CONFIG.get(project_key)
+        if not isinstance(project_cfg, Mapping):
+            return None
+
+        workspace = str(project_cfg.get("workspace") or "").strip()
+        if not workspace:
+            return None
+
+        candidate = workspace if os.path.isabs(workspace) else os.path.join(BASE_DIR, workspace)
+        candidate = os.path.abspath(candidate)
+        return candidate if os.path.isdir(candidate) else None
 
     def _resolve_analysis_mapped_agent(
         self,
@@ -1316,6 +1374,8 @@ class AIOrchestrator:
 
     def _run_gemini_cli_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
         gemini_model = str(kwargs.get("_gemini_model_override") or "").strip() or self.gemini_model
+        provider_env = kwargs.get("_provider_env")
+        analysis_cwd = kwargs.get("_analysis_cwd")
         prompt_kwargs = {k: v for k, v in kwargs.items() if not str(k).startswith("_")}
         return run_gemini_analysis_cli_impl(
             check_tool_available=self.check_tool_available,
@@ -1330,6 +1390,8 @@ class AIOrchestrator:
             task=task,
             timeout=self.analysis_timeout,
             kwargs=prompt_kwargs,
+            env=provider_env if isinstance(provider_env, dict) else None,
+            cwd=analysis_cwd if isinstance(analysis_cwd, str) and analysis_cwd.strip() else None,
         )
 
     def _run_copilot_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
@@ -1341,6 +1403,8 @@ class AIOrchestrator:
         copilot_model = (
             str(kwargs.get("_copilot_model_override") or "").strip() or self.copilot_model
         )
+        provider_env = kwargs.get("_provider_env")
+        analysis_cwd = kwargs.get("_analysis_cwd")
         prompt_kwargs = {k: v for k, v in kwargs.items() if not str(k).startswith("_")}
         return run_copilot_analysis_cli_impl(
             check_tool_available=self.check_tool_available,
@@ -1355,6 +1419,8 @@ class AIOrchestrator:
             task=task,
             timeout=timeout,
             kwargs=prompt_kwargs,
+            env=provider_env if isinstance(provider_env, dict) else None,
+            cwd=analysis_cwd if isinstance(analysis_cwd, str) and analysis_cwd.strip() else None,
         )
 
     def _run_codex_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
@@ -1364,6 +1430,8 @@ class AIOrchestrator:
             else self.analysis_timeout
         )
         codex_model = str(kwargs.get("_codex_model_override") or "").strip() or self.codex_model
+        provider_env = kwargs.get("_provider_env")
+        analysis_cwd = kwargs.get("_analysis_cwd")
         prompt_kwargs = {k: v for k, v in kwargs.items() if not str(k).startswith("_")}
         return run_codex_analysis_cli_impl(
             check_tool_available=self.check_tool_available,
@@ -1378,6 +1446,8 @@ class AIOrchestrator:
             task=task,
             timeout=timeout,
             kwargs=prompt_kwargs,
+            env=provider_env if isinstance(provider_env, dict) else None,
+            cwd=analysis_cwd if isinstance(analysis_cwd, str) and analysis_cwd.strip() else None,
         )
 
     def _run_claude_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
@@ -1387,6 +1457,8 @@ class AIOrchestrator:
             else self.analysis_timeout
         )
         claude_model = str(kwargs.get("_claude_model_override") or "").strip() or self.claude_model
+        provider_env = kwargs.get("_provider_env")
+        analysis_cwd = kwargs.get("_analysis_cwd")
         prompt_kwargs = {k: v for k, v in kwargs.items() if not str(k).startswith("_")}
         return run_claude_analysis_cli_impl(
             check_tool_available=self.check_tool_available,
@@ -1401,6 +1473,8 @@ class AIOrchestrator:
             task=task,
             timeout=timeout,
             kwargs=prompt_kwargs,
+            env=provider_env if isinstance(provider_env, dict) else None,
+            cwd=analysis_cwd if isinstance(analysis_cwd, str) and analysis_cwd.strip() else None,
         )
 
     def _run_ollama_analysis(self, text: str, task: str, **kwargs) -> dict[str, Any]:
@@ -1468,7 +1542,19 @@ class AIOrchestrator:
                 "reason": "default-no-match",
             }
         if task == "chat":
-            return {"text": "I'm offline right now, how can I help you later?"}
+            attempted = kwargs.get("attempted_providers") or []
+            attempted_names = [
+                str(item).strip() for item in attempted if isinstance(item, str) and str(item).strip()
+            ]
+            attempted_label = ", ".join(attempted_names) if attempted_names else "configured providers"
+            last_error = str(kwargs.get("last_error") or "").strip().splitlines()[0].strip()
+            text = (
+                "I couldn't generate a reply right now because these chat providers failed: "
+                f"{attempted_label}. Check provider authentication and try again."
+            )
+            if last_error:
+                text += f"\n\nLast error: {last_error}"
+            return {"text": text}
         return {}
 
 

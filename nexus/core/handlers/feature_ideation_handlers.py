@@ -36,6 +36,7 @@ from nexus.core.handlers.agent_context_utils import (
 )
 from nexus.core.handlers.common_routing import extract_json_dict
 from nexus.core.utils.log_utils import log_unauthorized_callback_access
+from nexus.core.config.env import get_int_env
 
 FEATURE_STATE_KEY = "feature_suggestions"
 FEATURE_MIN_COUNT = 1
@@ -46,6 +47,9 @@ FEATURE_IDEATION_CONTEXT_MAX_CHARS_DEFAULT = int(
     os.getenv("FEATURE_IDEATION_CONTEXT_MAX_CHARS", "6000")
 )
 FEATURE_IDEATION_CONTEXT_SUMMARY_MAX_CHARS = int(os.getenv("AI_CONTEXT_SUMMARY_MAX_CHARS", "1200"))
+FEATURE_LIST_SUMMARY_MAX_CHARS = get_int_env("AI_FEATURE_LIST_SUMMARY_MAX_CHARS", 120)
+FEATURE_LIST_MESSAGE_MAX_CHARS = get_int_env("AI_FEATURE_LIST_MESSAGE_MAX_CHARS", 1800)
+FEATURE_BUTTON_LABEL_MAX_CHARS = get_int_env("AI_FEATURE_BUTTON_LABEL_MAX_CHARS", 48)
 
 
 @dataclass
@@ -58,6 +62,7 @@ class FeatureIdeationHandlerDeps:
     base_dir: str = ""
     project_config: dict[str, Any] | None = None
     create_feature_task: Callable[[str, str, str], Awaitable[dict[str, Any]]] | None = None
+    requester_context_builder: Callable[[int], dict[str, Any]] | None = None
     feature_registry_service: Any | None = None
     dedup_similarity: float = 0.86
 
@@ -249,10 +254,10 @@ def detect_feature_project(text: str, projects: dict[str, str] | None = None) ->
     return None
 
 
-def _requested_feature_count(text: str, default_count: int = 3, max_count: int = 5) -> int:
+def _requested_feature_count(text: str, max_count: int = 5) -> int | None:
     candidate = (text or "").lower()
     if not candidate:
-        return default_count
+        return None
 
     if "top 5" in candidate or "max 5" in candidate or "five" in candidate:
         return max_count
@@ -266,7 +271,7 @@ def _requested_feature_count(text: str, default_count: int = 3, max_count: int =
         requested = int(number_match.group(1))
         return max(1, min(max_count, requested))
 
-    return default_count
+    return None
 
 
 def _clamp_feature_count(value: Any, default_count: int = FEATURE_DEFAULT_COUNT) -> int:
@@ -498,6 +503,7 @@ def _build_feature_suggestions(
     deps: FeatureIdeationHandlerDeps,
     preferred_agent_type: str | None,
     feature_count: int,
+    requester_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     project_label = deps.get_project_label(project_key)
     routed_agent_type = str(preferred_agent_type or "").strip().lower()
@@ -551,6 +557,7 @@ def _build_feature_suggestions(
         logger=getattr(deps, "logger", None),
         normalize_generated_features=_normalize_generated_features,
         extract_json_payload=_extract_json_payload,
+        requester_context=requester_context,
     )
 
     if not generated or feature_registry is None:
@@ -600,7 +607,20 @@ def _feature_list_text(
         "Tap one option:",
     ]
     for index, item in enumerate(features, start=1):
-        lines.append(f"{index}. *{item['title']}* — {item['summary']}")
+        summary = " ".join(str(item.get("summary") or "").split())
+        if len(summary) > FEATURE_LIST_SUMMARY_MAX_CHARS:
+            summary = f"{summary[: FEATURE_LIST_SUMMARY_MAX_CHARS - 3].rstrip()}..."
+        candidate_lines = [f"{index}. *{item['title']}*"]
+        if summary:
+            candidate_lines.append(f"   {summary}")
+        candidate_block = "\n".join(candidate_lines)
+        rendered = "\n".join(lines + [candidate_block])
+        if len(rendered) > FEATURE_LIST_MESSAGE_MAX_CHARS:
+            remaining = max(0, len(features) - index + 1)
+            if remaining:
+                lines.append(f"...and {remaining} more option(s). Use the buttons below to pick.")
+            break
+        lines.extend(candidate_lines)
     done_items = selected_features if isinstance(selected_features, list) else []
     if done_items:
         lines.append("")
@@ -617,7 +637,16 @@ def _feature_list_keyboard(
     allow_project_change: bool,
 ) -> list[list[Button]]:
     keyboard = [
-        [Button(item["title"], callback_data=f"feat:pick:{idx}")]
+        [
+            Button(
+                (
+                    f"{str(item['title'])[: FEATURE_BUTTON_LABEL_MAX_CHARS - 3].rstrip()}..."
+                    if len(str(item["title"])) > FEATURE_BUTTON_LABEL_MAX_CHARS
+                    else str(item["title"])
+                ),
+                callback_data=f"feat:pick:{idx}",
+            )
+        ]
         for idx, item in enumerate(features)
     ]
     if allow_project_change:
@@ -636,13 +665,21 @@ def _feature_count_keyboard(allow_project_change: bool) -> list[list[Button]]:
     return keyboard
 
 
-def _feature_count_prompt_text(project_key: str | None, deps: FeatureIdeationHandlerDeps) -> str:
+def _feature_count_prompt_text(
+    project_key: str | None,
+    deps: FeatureIdeationHandlerDeps,
+    requested_count: int | None = None,
+) -> str:
     project_label = deps.get_project_label(project_key) if project_key else "not selected"
-    return (
+    lines = [
         "🔢 How many feature proposals do you want?\n"
         "Choose between 1 and 5.\n\n"
         f"Current project: *{project_label}*"
-    )
+    ]
+    if isinstance(requested_count, int):
+        lines.append(f"\nDetected from your message: *{_clamp_feature_count(requested_count)}*")
+        lines.append("Tap a number to confirm.")
+    return "".join(lines)
 
 
 def _feature_to_task_text(
@@ -676,9 +713,10 @@ async def _prompt_feature_count(
     feature_state = ctx.user_state.get(FEATURE_STATE_KEY) or {}
     project_key = feature_state.get("project")
     project_locked = _is_project_locked(feature_state)
+    requested_count = feature_state.get("requested_feature_count")
     await ctx.edit_message_text(
         message_id=status_msg_id,
-        text=_feature_count_prompt_text(project_key, deps),
+        text=_feature_count_prompt_text(project_key, deps, requested_count),
         buttons=_feature_count_keyboard(allow_project_change=not project_locked),
     )
 
@@ -728,12 +766,18 @@ async def show_feature_suggestions(
     deps: FeatureIdeationHandlerDeps,
 ) -> None:
     feature_state = ctx.user_state.get(FEATURE_STATE_KEY) or {}
+    requester_context = (
+        feature_state.get("requester_context")
+        if isinstance(feature_state.get("requester_context"), dict)
+        else None
+    )
     features = _build_feature_suggestions(
         project_key=project_key,
         text=text,
         deps=deps,
         preferred_agent_type=preferred_agent_type,
         feature_count=feature_count,
+        requester_context=requester_context,
     )
     ctx.user_state[FEATURE_STATE_KEY] = {
         "project": project_key,
@@ -825,6 +869,12 @@ async def handle_feature_ideation_request(
     project_locked = bool(project_key)
     if not project_key:
         project_key = None
+    requester_context = None
+    if callable(getattr(deps, "requester_context_builder", None)) and str(getattr(ctx, "user_id", "")).isdigit():
+        try:
+            requester_context = deps.requester_context_builder(int(str(ctx.user_id)))
+        except Exception:
+            requester_context = None
 
     ctx.user_state[FEATURE_STATE_KEY] = {
         "project": project_key,
@@ -835,6 +885,7 @@ async def handle_feature_ideation_request(
         "feature_count": None,
         "source_text": text,
         "requested_feature_count": _requested_feature_count(text),
+        "requester_context": requester_context,
     }
     await _prompt_feature_count(ctx, status_msg_id, deps)
     return True

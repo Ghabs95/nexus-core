@@ -51,6 +51,26 @@ class TestAdapterRegistry:
 
         assert isinstance(git, GitLabPlatform)
 
+    def test_create_git_platform_uses_cli_transport_when_enabled(self, monkeypatch):
+        from nexus.adapters.registry import AdapterRegistry
+        from nexus.adapters.git.github_cli import GitHubPlatform as GitHubCLIPlatform
+
+        monkeypatch.setenv("NEXUS_GIT_PLATFORM_TRANSPORT", "cli")
+        with patch.object(GitHubCLIPlatform, "_check_gh_cli", return_value=None):
+            git = AdapterRegistry().create_git("github", repo="owner/repo", token="ghp-test")
+
+        assert isinstance(git, GitHubCLIPlatform)
+
+    def test_create_git_platform_accepts_http_alias_for_api(self, monkeypatch):
+        from nexus.adapters.registry import AdapterRegistry
+        from nexus.adapters.git.github import GitHubPlatform
+
+        monkeypatch.setenv("NEXUS_GIT_PLATFORM_TRANSPORT", "http")
+        with patch.object(GitHubPlatform, "_check_gh_cli", return_value=None):
+            git = AdapterRegistry().create_git("github", repo="owner/repo", token="ghp-test")
+
+        assert isinstance(git, GitHubPlatform)
+
     def test_create_copilot_ai(self):
         from nexus.adapters.registry import AdapterRegistry
 
@@ -237,62 +257,64 @@ class TestGitHubPlatform:
 
     def test_ensure_label_returns_true_on_success(self):
         platform = self._make_platform()
-        with patch("nexus.adapters.git.github.subprocess.run") as mock_run:
-            mock_run.return_value = Mock(returncode=0, stderr="", stdout="")
+        with patch.object(platform, "_post", new=AsyncMock(return_value={"name": "bug"})) as mock_post:
             ok = asyncio.run(platform.ensure_label("bug", color="FF0000", description="Bug label"))
         assert ok is True
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args.args[0]
-        assert cmd[:4] == ["gh", "label", "create", "bug"]
-        assert "--repo" in cmd
-        assert "--color" in cmd
-        assert "--description" in cmd
+        path_arg, payload = mock_post.await_args.args
+        assert path_arg == "repos/owner/repo/labels"
+        assert payload["name"] == "bug"
+        assert payload["color"] == "FF0000"
+        assert payload["description"] == "Bug label"
 
     def test_ensure_label_returns_true_when_already_exists(self):
+        import urllib.error
+
         platform = self._make_platform()
-        with patch("nexus.adapters.git.github.subprocess.run") as mock_run:
-            mock_run.return_value = Mock(
-                returncode=1,
-                stderr='label with name "bug" already exists; use `--force` to update',
-                stdout="",
-            )
+        exc = urllib.error.HTTPError("url", 422, "Validation Failed", cast(Any, {}), None)
+        setattr(exc, "_nexus_body", '{"errors":[{"code":"already_exists"}]}')
+        with patch.object(platform, "_post", new=AsyncMock(side_effect=exc)):
             ok = asyncio.run(platform.ensure_label("bug", color="FF0000"))
         assert ok is True
 
-    def test_create_issue_uses_create_then_view_json(self):
+    def test_create_issue_calls_github_api(self):
         platform = self._make_platform()
         created_issue = {
+            "id": 1230,
             "number": 123,
             "title": "New issue",
             "body": "Body",
-            "state": "OPEN",
+            "state": "open",
             "labels": [],
-            "createdAt": "2026-02-01T10:00:00Z",
-            "updatedAt": "2026-02-01T10:00:00Z",
-            "url": "https://github.com/owner/repo/issues/123",
+            "created_at": "2026-02-01T10:00:00Z",
+            "updated_at": "2026-02-01T10:00:00Z",
+            "html_url": "https://github.com/owner/repo/issues/123",
         }
-        side_effects = ["https://github.com/owner/repo/issues/123", json.dumps(created_issue)]
-        with patch.object(platform, "_run_gh_command", side_effect=side_effects) as mock_run:
+        with patch.object(platform, "_post", new=AsyncMock(return_value=created_issue)) as mock_post:
             issue = asyncio.run(platform.create_issue("New issue", "Body", labels=["bug"]))
 
         assert issue.number == 123
         assert issue.url.endswith("/123")
-        create_args = mock_run.call_args_list[0].args[0]
-        assert create_args[:3] == ["issue", "create", "--title"]
-        assert "--json" not in create_args
-        view_args = mock_run.call_args_list[1].args[0]
-        assert view_args[:3] == ["issue", "view", "123"]
+        path_arg, payload = mock_post.await_args.args
+        assert path_arg == "repos/owner/repo/issues"
+        assert payload["title"] == "New issue"
+        assert payload["body"] == "Body"
+        assert payload["labels"] == ["bug"]
 
-    def test_merge_pull_request_builds_expected_flags(self):
+    def test_merge_pull_request_uses_github_api(self):
         platform = self._make_platform()
-        with patch.object(platform, "_run_gh_command", return_value="queued") as mock_run:
-            result = asyncio.run(
-                platform.merge_pull_request("12", squash=True, delete_branch=True, auto=True)
-            )
-        assert result == "queued"
-        mock_run.assert_called_once()
-        args = mock_run.call_args.args[0]
-        assert args == ["pr", "merge", "12", "--squash", "--delete-branch", "--auto"]
+        pr_data = {"head": {"ref": "feature/test"}}
+        merge_data = {"merged": True}
+        with patch.object(platform, "_get", new=AsyncMock(return_value=pr_data)) as mock_get:
+            with patch.object(platform, "_put", new=AsyncMock(return_value=merge_data)) as mock_put:
+                with patch.object(platform, "_delete", new=AsyncMock(return_value={})) as mock_delete:
+                    result = asyncio.run(
+                        platform.merge_pull_request("12", squash=True, delete_branch=True, auto=True)
+                    )
+        assert result == "merged=true auto_requested=true"
+        assert mock_get.await_args.args[0] == "repos/owner/repo/pulls/12"
+        assert mock_put.await_args.args[0] == "repos/owner/repo/pulls/12/merge"
+        assert mock_put.await_args.args[1]["merge_method"] == "squash"
+        assert mock_delete.await_args.args[0] == "repos/owner/repo/git/refs/heads/feature%2Ftest"
 
 
 # ---------------------------------------------------------------------------

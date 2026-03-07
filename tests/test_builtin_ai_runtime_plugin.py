@@ -2,6 +2,8 @@
 
 import subprocess
 
+import nexus.core.config as config_mod
+import nexus.core.auth.access_domain as access_domain
 from nexus.plugins.builtin.ai_runtime_plugin import AIOrchestrator, AIProvider, RateLimitedError
 
 
@@ -212,6 +214,96 @@ def test_chat_defaults_to_project_chat_agent(monkeypatch):
     assert called["copilot"] == 0
 
 
+def test_chat_falls_through_full_provider_chain_and_returns_honest_default(monkeypatch):
+    orchestrator = AIOrchestrator(
+        {
+            "tool_preferences": {
+                "triage": {"provider": "copilot", "profile": "small"},
+                "designer": {"provider": "gemini", "profile": "small"},
+            },
+            "system_operations": {"default": "triage"},
+            "chat_agent_types_resolver": lambda project: ["designer"],
+        }
+    )
+    call_order: list[str] = []
+
+    def _gemini(*_args, **_kwargs):
+        call_order.append("gemini")
+        raise Exception("gemini auth missing")
+
+    def _copilot(*_args, **_kwargs):
+        call_order.append("copilot")
+        raise Exception("copilot auth missing")
+
+    def _claude(*_args, **_kwargs):
+        call_order.append("claude")
+        raise Exception("claude auth missing")
+
+    def _codex(*_args, **_kwargs):
+        call_order.append("codex")
+        raise Exception("codex auth missing")
+
+    def _ollama(*_args, **_kwargs):
+        call_order.append("ollama")
+        raise Exception("ollama unavailable")
+
+    monkeypatch.setattr(orchestrator, "_run_gemini_cli_analysis", _gemini)
+    monkeypatch.setattr(orchestrator, "_run_copilot_analysis", _copilot)
+    monkeypatch.setattr(orchestrator, "_run_claude_analysis", _claude)
+    monkeypatch.setattr(orchestrator, "_run_codex_analysis", _codex)
+    monkeypatch.setattr(orchestrator, "_run_ollama_analysis", _ollama)
+
+    result = orchestrator.run_text_to_speech_analysis(
+        "hello",
+        task="chat",
+        project_name="nexus",
+    )
+
+    assert call_order == ["gemini", "copilot", "claude", "codex", "ollama"]
+    assert "couldn't generate a reply right now" in result["text"].lower()
+    assert "gemini, copilot, claude, codex, ollama" in result["text"].lower()
+    assert "last error: ollama unavailable" in result["text"].lower()
+
+
+def test_chat_analysis_uses_requester_scoped_env_and_project_cwd(monkeypatch, tmp_path):
+    project_root = tmp_path / "workspace"
+    project_root.mkdir()
+    captured = {}
+    orchestrator = AIOrchestrator(
+        {
+            "tool_preferences": {
+                "designer": {"provider": "copilot", "profile": "small"},
+            },
+            "chat_agent_types_resolver": lambda _project: ["designer"],
+        }
+    )
+
+    monkeypatch.setattr(access_domain, "build_execution_env", lambda _nexus_id: ({"GITHUB_TOKEN": "user-token"}, None))
+    monkeypatch.setattr(config_mod, "BASE_DIR", str(tmp_path))
+    monkeypatch.setattr(config_mod, "PROJECT_CONFIG", {"nexus": {"workspace": "workspace"}})
+
+    def _capture_provider(tool, text, task, **kwargs):
+        captured["tool"] = tool
+        captured["text"] = text
+        captured["task"] = task
+        captured["kwargs"] = kwargs
+        return {"text": "ok"}
+
+    monkeypatch.setattr(orchestrator, "_run_analysis_with_provider", _capture_provider)
+
+    result = orchestrator.run_text_to_speech_analysis(
+        "hello",
+        task="chat",
+        project_name="nexus",
+        requester_context={"nexus_id": "nexus-42"},
+    )
+
+    assert result["text"] == "ok"
+    assert captured["task"] == "chat"
+    assert captured["kwargs"]["_provider_env"] == {"GITHUB_TOKEN": "user-token"}
+    assert captured["kwargs"]["_analysis_cwd"] == str(project_root)
+
+
 def test_copilot_analysis_timeout_respects_config(monkeypatch):
     orchestrator = AIOrchestrator({"analysis_timeout": 45})
     captured = {"timeout": None}
@@ -228,6 +320,61 @@ def test_copilot_analysis_timeout_respects_config(monkeypatch):
 
     assert captured["timeout"] == 45
     assert result["project"] == "nexus"
+
+
+def test_copilot_analysis_passes_provider_env_and_cwd(monkeypatch, tmp_path):
+    orchestrator = AIOrchestrator()
+    captured = {"env": None, "cwd": None}
+
+    monkeypatch.setattr(orchestrator, "check_tool_available", lambda _tool: True)
+
+    def _fake_run(*_args, **kwargs):
+        captured["env"] = kwargs.get("env")
+        captured["cwd"] = kwargs.get("cwd")
+        return _FakeCompletedProcess('{"project": "nexus", "type": "feature", "task_name": "abc"}')
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = orchestrator._run_copilot_analysis(
+        "input",
+        "classify",
+        _provider_env={"GITHUB_TOKEN": "user-token"},
+        _analysis_cwd=str(tmp_path),
+    )
+
+    assert result["project"] == "nexus"
+    assert captured["env"] == {"GITHUB_TOKEN": "user-token"}
+    assert captured["cwd"] == str(tmp_path)
+
+
+def test_analysis_without_project_workspace_does_not_pass_string_none_cwd(monkeypatch):
+    orchestrator = AIOrchestrator(
+        {
+            "tool_preferences": {
+                "triage": {"provider": "copilot", "profile": "small"},
+            },
+            "system_operations": {"default": "triage"},
+        }
+    )
+    captured = {"cwd": "unset"}
+
+    monkeypatch.setattr(config_mod, "PROJECT_CONFIG", {})
+    monkeypatch.setattr(orchestrator, "check_tool_available", lambda _tool: True)
+
+    def _fake_run(*_args, **kwargs):
+        captured["cwd"] = kwargs.get("cwd")
+        return _FakeCompletedProcess('{"project": "nexus", "type": "question", "task_name": "ok"}')
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = orchestrator.run_text_to_speech_analysis(
+        "Which new features could we add to the framework?",
+        task="detect_intent",
+        project_name="default",
+    )
+
+    assert result["project"] == "nexus"
+    assert captured["cwd"] is None
 
 
 def test_gemini_analysis_uses_analysis_timeout(monkeypatch):

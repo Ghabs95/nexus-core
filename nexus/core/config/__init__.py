@@ -94,6 +94,7 @@ AI_PERSONA = os.getenv(
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # --- GIT PLATFORM CONFIGURATION ---
+NEXUS_GIT_PLATFORM_TRANSPORT = str(os.getenv("NEXUS_GIT_PLATFORM_TRANSPORT", "api")).strip().lower() or "api"
 # Note: PROJECT_CONFIG_PATH is read from environment each time it's needed (for testing with monkeypatch)
 
 # Lazy-load PROJECT_CONFIG to support testing with monkeypatch
@@ -146,6 +147,9 @@ PROJECT_CONFIG = _get_project_config()
 # --- WEBHOOK CONFIGURATION ---
 WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8081"))
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")  # Git webhook secret for signature verification
+NEXUS_WEBHOOK_INTERNAL_URL = str(
+    os.getenv("NEXUS_WEBHOOK_INTERNAL_URL", f"http://127.0.0.1:{WEBHOOK_PORT}")
+).strip().rstrip("/")
 
 # --- AUTH / CREDENTIALS CONFIGURATION ---
 NEXUS_AUTH_ENABLED = str(os.getenv("NEXUS_AUTH_ENABLED", "false")).strip().lower() in {
@@ -900,6 +904,5 @@ def initialize_runtime_directories() -> None:
     try:
         ensure_state_dir()
         ensure_nexus_storage_dir()
-        ensure_logs_dir()
     except Exception as e:
         logger.warning(f"Could not initialize directories: {e}")

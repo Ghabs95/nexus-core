@@ -35,7 +35,9 @@ def run_analysis_attempts(
 ) -> dict[str, Any]:
     """Execute provider attempts for an analysis task with fallback and defaults."""
     last_error: Exception | None = None
+    attempted_tools: list[str] = []
     for index, tool in enumerate(tool_order):
+        attempted_tools.append(str(getattr(tool, "value", tool)))
         try:
             result = invoke_provider(tool, text, task, kwargs)
             if result:
@@ -55,10 +57,26 @@ def run_analysis_attempts(
             logger.warning("⚠️  %s analysis failed: %s", tool.value, exc)
 
     if last_error:
-        logger.error("❌ All analysis providers failed for %s: %s", task, last_error)
+        logger.error(
+            "❌ All analysis providers failed for %s after attempts=%s: %s",
+            task,
+            " -> ".join(attempted_tools) or "none",
+            last_error,
+        )
 
-    logger.warning("⚠️  All tools failed for %s, returning default", task)
-    return get_default_analysis_result(task, text=text, original_text=text, **kwargs)
+    logger.warning(
+        "⚠️  All tools failed for %s after attempts=%s, returning default",
+        task,
+        " -> ".join(attempted_tools) or "none",
+    )
+    return get_default_analysis_result(
+        task,
+        text=text,
+        original_text=text,
+        attempted_providers=attempted_tools,
+        last_error=str(last_error) if last_error else "",
+        **kwargs,
+    )
 
 
 def strip_cli_tool_output(text: str) -> str:

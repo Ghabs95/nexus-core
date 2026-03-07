@@ -5,6 +5,7 @@ import os
 import shlex
 import sys
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 
 import discord
@@ -22,6 +23,7 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+_discord_chat_sessions: set[int] = set()
 
 from nexus.core.config import (
     AI_PERSONA,
@@ -57,6 +59,9 @@ from nexus.core.handlers.feature_ideation_handlers import (
     _build_feature_suggestions,
     detect_feature_project,
     is_feature_ideation_request,
+)
+from nexus.core.handlers.hands_free_routing_handler import (
+    _looks_like_explicit_task_request,
 )
 from nexus.core.handlers.inbox_routing_handler import PROJECTS as ROUTING_PROJECTS
 from nexus.core.handlers.inbox_routing_handler import TYPES as ROUTING_TASK_TYPES
@@ -129,6 +134,8 @@ from nexus.core.command_contract import (
     validate_command_parity,
     validate_required_command_interface,
 )
+from nexus.core.command_visibility import FILESYSTEM_ONLY_COMMANDS
+from nexus.core.storage.capabilities import get_storage_capabilities
 from nexus.core.chat.chat_context_service import (
     CHAT_MODES,
     agent_display_label,
@@ -1138,6 +1145,7 @@ def _discord_feature_ideation_handler_deps() -> FeatureIdeationHandlerDeps:
         base_dir=BASE_DIR,
         project_config=PROJECT_CONFIG,
         process_inbox_task=process_inbox_task,
+        requester_context_builder=lambda user_id: _requester_context_for_discord_user_id(user_id),
     )
 
 
@@ -1494,6 +1502,12 @@ def _requester_context_for_discord_user(discord_user: Any) -> dict[str, str]:
     }
 
 
+def _requester_context_for_discord_user_id(user_id: int) -> dict[str, str]:
+    return _requester_context_for_discord_user(
+        SimpleNamespace(id=int(user_id), name=None, display_name=None)
+    )
+
+
 def _authorize_project_for_requester(
     project_key: str,
     requester_context: dict[str, Any] | None,
@@ -1798,6 +1812,7 @@ class ChatMenuView(discord.ui.View):
             return
 
         create_chat(interaction.user.id)
+        _discord_chat_sessions.add(int(interaction.user.id))
         # Re-render the menu
         await send_chat_menu(interaction, interaction.user.id)
 
@@ -1818,6 +1833,7 @@ class ChatMenuView(discord.ui.View):
         if not check_permission(interaction.user.id):
             return
 
+        _discord_chat_sessions.add(int(interaction.user.id))
         await send_chat_context(interaction, interaction.user.id)
 
     @discord.ui.button(
@@ -1850,6 +1866,23 @@ class ChatMenuView(discord.ui.View):
 
         # After deleting, send the main menu which will pick the next active chat or create a default
         await send_chat_menu(interaction, interaction.user.id)
+
+    @discord.ui.button(
+        label="🚪 Exit Chat Mode", style=discord.ButtonStyle.secondary, custom_id="chat:exit"
+    )
+    async def exit_chat_mode(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not check_permission(interaction.user.id):
+            return
+
+        _discord_chat_sessions.discard(int(interaction.user.id))
+        await interaction.response.edit_message(
+            content=(
+                "🚪 **Chat mode exited.**\n\n"
+                "Plain text and voice messages will use hands-free task creation again.\n"
+                "Use `/chat` to re-enter conversational mode."
+            ),
+            view=None,
+        )
 
 
 class ChatListView(discord.ui.View):
@@ -1900,6 +1933,7 @@ class ChatListView(discord.ui.View):
 
 async def send_chat_menu(interaction: discord.Interaction, user_id: int, notice: str = ""):
     """Helper to send or edit the current message with the main chat menu."""
+    _discord_chat_sessions.add(int(user_id))
     active_chat_id = get_active_chat(user_id)
     auto_selected, selected_project = _autoselect_chat_project_from_auth(user_id, active_chat_id)
     chats = list_chats(user_id)
@@ -1922,7 +1956,10 @@ async def send_chat_menu(interaction: discord.Interaction, user_id: int, notice:
         )
     text += f"**Active Chat:** {active_chat_title}\n"
     text += f"{chat_context_summary(active_chat, ROUTING_PROJECTS, markdown_style='discord')}\n"
-    text += "_(All conversational history is saved under this thread)_"
+    text += (
+        "_(All conversational history is saved under this thread)_\n"
+        "_Plain text now stays in chat mode. Exit chat mode to use hands-free task creation._"
+    )
 
     view = ChatMenuView(user_id)
 
@@ -1934,6 +1971,7 @@ async def send_chat_menu(interaction: discord.Interaction, user_id: int, notice:
 
 
 async def send_chat_context(interaction: discord.Interaction, user_id: int, notice: str = ""):
+    _discord_chat_sessions.add(int(user_id))
     active_chat_id = get_active_chat(user_id)
     _autoselect_chat_project_from_auth(user_id, active_chat_id)
     active_chat = get_chat(user_id, active_chat_id)
@@ -2957,6 +2995,7 @@ async def chat_command(interaction: discord.Interaction):
         return
 
     user_id = interaction.user.id
+    _discord_chat_sessions.add(int(user_id))
     active_chat_id = get_active_chat(user_id)
     _autoselect_chat_project_from_auth(user_id, active_chat_id)
     chats = list_chats(user_id)
@@ -2972,7 +3011,10 @@ async def chat_command(interaction: discord.Interaction):
     text = "🗣️ **Nexus Chat Menu**\n\n"
     text += f"**Active Chat:** {active_chat_title}\n"
     text += f"{chat_context_summary(active_chat, ROUTING_PROJECTS, markdown_style='discord')}\n"
-    text += "_(All conversational history is saved under this thread)_"
+    text += (
+        "_(All conversational history is saved under this thread)_\n"
+        "_Plain text now stays in chat mode. Exit chat mode to use hands-free task creation._"
+    )
 
     view = ChatMenuView(user_id)
     await interaction.response.send_message(content=text, view=view)
@@ -3223,6 +3265,32 @@ async def on_message(message: discord.Message):
         await status_msg.delete()
         return
 
+    if message.author.id in _discord_chat_sessions:
+        if _looks_like_explicit_task_request(text):
+            await status_msg.edit(
+                content=(
+                    "🗣️ Chat mode is active.\n\n"
+                    "Exit chat mode before using hands-free task creation, or use `/new` for guided task creation."
+                )
+            )
+            return
+
+        await status_msg.edit(content="🤖 **Nexus:** Thinking...")
+        reply_text = run_conversation_turn(
+            user_id=message.author.id,
+            text=text,
+            orchestrator=orchestrator,
+            get_chat_history=get_chat_history,
+            append_message=append_message,
+            persona=AI_PERSONA,
+            project_name=((get_chat(message.author.id) or {}).get("metadata", {}) or {}).get(
+                "project_key"
+            ),
+            requester_context=requester_context,
+        )
+        await status_msg.edit(content=f"🤖 **Nexus**: \n\n{reply_text}")
+        return
+
     pending_new = _pending_new_task_capture.get(message.author.id)
     if isinstance(pending_new, dict):
         candidate = str(text or "").strip().lower()
@@ -3294,7 +3362,12 @@ async def on_message(message: discord.Message):
         return
 
     logger.info(f"Detecting intent for: {text[:50]}...")
-    intent_result = parse_intent_result(orchestrator, text, extract_json_dict)
+    intent_result = parse_intent_result(
+        orchestrator,
+        text,
+        extract_json_dict,
+        requester_context=requester_context,
+    )
     intent = intent_result.get("intent", "task")
 
     if intent == "conversation":
@@ -3309,6 +3382,7 @@ async def on_message(message: discord.Message):
             append_message=append_message,
             persona=AI_PERSONA,
             project_name=((get_chat(user_id) or {}).get("metadata", {}) or {}).get("project_key"),
+            requester_context=requester_context,
         )
 
         await status_msg.edit(content=f"🤖 **Nexus**: \n\n{reply_text}")
@@ -3355,6 +3429,10 @@ async def on_ready():
 
 @bot.event
 async def setup_hook():
+    if not get_storage_capabilities().local_task_files:
+        for command_name in FILESYSTEM_ONLY_COMMANDS:
+            bot.tree.remove_command(command_name)
+
     # Sync slash commands during setup.
     # If a guild is configured, keep commands guild-scoped to avoid duplicate
     # command listings from having both global + guild registrations.

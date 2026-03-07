@@ -386,18 +386,7 @@ def get_completion_replay_window_seconds() -> int:
 
 
 def _build_inbox_logging_handlers() -> list[logging.Handler]:
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
-    log_dir = os.path.dirname(INBOX_PROCESSOR_LOG_FILE)
-    try:
-        if log_dir:
-            os.makedirs(log_dir, exist_ok=True)
-        handlers.append(logging.FileHandler(INBOX_PROCESSOR_LOG_FILE))
-    except Exception as exc:
-        logging.getLogger(__name__).warning(
-            "File logging unavailable for inbox processor (%s); using stream handler only.",
-            exc,
-        )
-    return handlers
+    return [logging.StreamHandler()]
 
 
 # Logging — force=True overrides the root handler set by config.py at import time
@@ -1176,14 +1165,23 @@ def check_agent_comments():
             return True
         return bool(_get_cached_polling_token(project_key))
 
-    def _polling_git_platform(repo: str, project_name: str | None = None):
+    def _polling_git_platform(
+        repo: str,
+        project_name: str | None = None,
+        token_override: str | None = None,
+    ):
         project_key = str(project_name or get_default_project()).strip()
-        token_override: str | None = None
+        resolved_token_override = token_override
         if _auth_enabled():
             cached = _get_cached_polling_token(project_key)
-            token_override = cached or None
+            if not resolved_token_override:
+                resolved_token_override = cached or None
 
-        return get_git_platform(repo, project_name=project_name, token_override=token_override)
+        return get_git_platform(
+            repo,
+            project_name=project_name,
+            token_override=resolved_token_override,
+        )
 
     _run_comment_monitor_cycle(
         logger=logger,
@@ -1281,7 +1279,11 @@ def get_sop_tier(task_type, title=None, body=None):
     )
 
 
-def generate_issue_name(content, project_name):
+def generate_issue_name(
+    content,
+    project_name,
+    requester_context: dict[str, Any] | None = None,
+):
     """Generate a concise task name using orchestrator (CLI only).
 
     Returns a slugified name in format: "this-is-the-task-name"
@@ -1293,15 +1295,21 @@ def generate_issue_name(content, project_name):
         run_analysis=orchestrator.run_text_to_speech_analysis,
         slugify=slugify,
         logger=logger,
+        requester_context=requester_context,
     )
 
 
-def _refine_issue_content(content: str, project_name: str) -> str:
+def _refine_issue_content(
+    content: str,
+    project_name: str,
+    requester_context: dict[str, Any] | None = None,
+) -> str:
     return _svc_refine_issue_content_with_ai(
         content=content,
         project_name=project_name,
         run_analysis=orchestrator.run_text_to_speech_analysis,
         logger=logger,
+        requester_context=requester_context,
     )
 
 

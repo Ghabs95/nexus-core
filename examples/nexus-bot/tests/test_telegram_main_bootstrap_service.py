@@ -93,3 +93,64 @@ def test_register_application_handlers_registers_plan_command(monkeypatch):
 
     commands = [h.command for h in app.handlers if isinstance(h, _CaptureCommandHandler)]
     assert "plan" in commands
+
+
+def test_register_application_handlers_hides_filesystem_commands_in_db_mode(monkeypatch):
+    async def _dummy(*_args, **_kwargs):
+        return None
+
+    class _CaptureCommandHandler:
+        def __init__(self, command, callback):
+            self.command = command
+            self.callback = callback
+
+    class _CaptureCallbackQueryHandler:
+        def __init__(self, callback, pattern=None):
+            self.callback = callback
+            self.pattern = pattern
+
+    class _CaptureMessageHandler:
+        def __init__(self, filters, callback):
+            self.filters = filters
+            self.callback = callback
+
+    class _App:
+        def __init__(self):
+            self.handlers = []
+
+        def add_handler(self, handler):
+            self.handlers.append(handler)
+
+        def add_error_handler(self, handler):
+            self.error_handler = handler
+
+    class _Handlers(dict):
+        def __missing__(self, _key):
+            return _dummy
+
+    monkeypatch.setattr(svc, "CommandHandler", _CaptureCommandHandler)
+    monkeypatch.setattr(svc, "CallbackQueryHandler", _CaptureCallbackQueryHandler)
+    monkeypatch.setattr(svc, "MessageHandler", _CaptureMessageHandler)
+    monkeypatch.setattr(
+        svc,
+        "get_storage_capabilities",
+        lambda: type("Caps", (), {"local_task_files": False})(),
+    )
+
+    app = _App()
+    handlers = _Handlers()
+    svc.register_application_handlers(
+        app=app,
+        conv_handler=object(),
+        handlers=handlers,
+        filters_module=type("F", (), {"TEXT": 1, "VOICE": 2, "COMMAND": 4})(),
+    )
+
+    commands = [h.command for h in app.handlers if isinstance(h, _CaptureCommandHandler)]
+    assert "active" not in commands
+    assert "logs" not in commands
+    assert "logsfull" not in commands
+    assert "tail" not in commands
+    assert "tailstop" not in commands
+    assert "status" in commands
+    assert "wfstate" in commands

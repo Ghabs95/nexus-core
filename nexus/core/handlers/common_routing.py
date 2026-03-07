@@ -40,9 +40,13 @@ def parse_intent_result(
     orchestrator: Any,
     text: str,
     extract_json_dict: Callable[[str], dict[str, Any]],
+    requester_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run intent detection and normalize JSON-wrapped outputs."""
-    intent_result = orchestrator.run_text_to_speech_analysis(text=text, task="detect_intent")
+    analysis_kwargs: dict[str, Any] = {"text": text, "task": "detect_intent"}
+    if requester_context is not None:
+        analysis_kwargs["requester_context"] = requester_context
+    intent_result = orchestrator.run_text_to_speech_analysis(**analysis_kwargs)
     if not isinstance(intent_result, dict):
         return {"intent": "task"}
 
@@ -74,6 +78,7 @@ def run_conversation_turn(
     append_message: Callable[[int, str, str], None],
     persona: str,
     project_name: str | None = None,
+    requester_context: dict[str, Any] | None = None,
 ) -> str:
     """Execute one shared conversation turn and persist memory."""
     history = get_chat_history(user_id)
@@ -85,6 +90,7 @@ def run_conversation_turn(
         history=history,
         persona=persona,
         project_name=project_name,
+        requester_context=requester_context,
     )
 
     reply_text = "I'm offline right now, how can I help later?"

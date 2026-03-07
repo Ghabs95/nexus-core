@@ -93,7 +93,11 @@ def resolve_analysis_tool_order(
     if not base_order:
         base_order = default_tools
 
-    ordered = [preferred] + [tool for tool in base_order if tool != preferred]
+    ordered = (
+        [preferred]
+        + [tool for tool in base_order if tool != preferred]
+        + [tool for tool in default_tools if tool != preferred and tool not in base_order]
+    )
     filtered = [tool for tool in unique_tools(ordered) if supports_analysis(tool)]
     if not filtered:
         filtered = default_tools[:2] if len(default_tools) >= 2 else default_tools

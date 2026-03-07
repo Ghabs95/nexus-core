@@ -9,7 +9,7 @@ import logging
 import os
 from typing import Any
 
-from nexus.adapters.git.github import GitHubPlatform
+from nexus.adapters.git.factory import resolve_git_platform_class
 from nexus.adapters.git.gitlab import GitLabPlatform
 from nexus.adapters.storage.file import FileStorage
 from nexus.core.audit_store import AuditStore
@@ -273,6 +273,8 @@ def get_git_platform(
         if should_fallback:
             token = str((os.getenv(token_var, "")).strip() if allow_service_token_fallback else "")
 
+    platform_cls = resolve_git_platform_class(platform_type)
+
     if platform_type == "gitlab":
         if not token:
             raise ValueError(
@@ -281,7 +283,7 @@ def get_git_platform(
                 "Provide a requester-scoped token_override "
                 f"(env fallback disabled for token var '{token_var}')."
             )
-        return GitLabPlatform(
+        return platform_cls(
             token=token,
             repo=repo_name,
             base_url=get_gitlab_base_url(project_key),
@@ -293,7 +295,7 @@ def get_git_platform(
             "Provide requester-scoped token_override (env fallback may be disabled).",
             project_key,
         )
-    return GitHubPlatform(repo=repo_name, token=token)
+    return platform_cls(repo=repo_name, token=token)
 
 
 def get_workflow_definition_path(project_name: str) -> str | None:

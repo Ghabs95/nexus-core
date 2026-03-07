@@ -56,6 +56,7 @@ def invoke_claude_cli(
             log_path=log_path,
             logger=logger,
             launched_message="🚀 Claude launched (PID: %s)",
+            output_label="claude",
         )
 
         # Simple startup probe (similar to Gemini/Copilot)

@@ -17,7 +17,11 @@ class _IntentOrchestrator:
 
 
 class _ConversationOrchestrator:
+    def __init__(self):
+        self.calls = []
+
     def run_text_to_speech_analysis(self, **kwargs):
+        self.calls.append(kwargs)
         assert kwargs.get("task") == "chat"
         return {"text": "ok"}
 
@@ -40,6 +44,7 @@ def test_parse_intent_result_reparses_embedded_json():
 
 def test_run_conversation_turn_persists_user_and_assistant_messages():
     saved = []
+    orchestrator = _ConversationOrchestrator()
 
     def append_message(_user_id, role, text):
         saved.append((role, text))
@@ -47,14 +52,35 @@ def test_run_conversation_turn_persists_user_and_assistant_messages():
     result = run_conversation_turn(
         user_id=1,
         text="hello",
-        orchestrator=_ConversationOrchestrator(),
+        orchestrator=orchestrator,
         get_chat_history=lambda _uid: "history",
         append_message=append_message,
         persona="persona",
+        requester_context={"nexus_id": "nexus-1"},
     )
 
     assert result == "ok"
     assert saved == [("user", "hello"), ("assistant", "ok")]
+    assert orchestrator.calls[0]["requester_context"] == {"nexus_id": "nexus-1"}
+
+
+def test_parse_intent_result_passes_requester_context():
+    captured = {}
+
+    class _IntentCaptureOrchestrator:
+        def run_text_to_speech_analysis(self, **kwargs):
+            captured.update(kwargs)
+            return {"intent": "conversation"}
+
+    result = parse_intent_result(
+        _IntentCaptureOrchestrator(),
+        "hello",
+        extract_json_dict,
+        requester_context={"nexus_id": "nexus-7"},
+    )
+
+    assert result["intent"] == "conversation"
+    assert captured["requester_context"] == {"nexus_id": "nexus-7"}
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,8 @@
 from typing import Any
 
+from nexus.core.command_visibility import is_command_visible
+from nexus.core.storage.capabilities import get_storage_capabilities
+
 
 def build_menu_keyboard(
     *,
@@ -16,6 +19,33 @@ def build_menu_keyboard(
 
 
 def build_help_text() -> str:
+    caps = get_storage_capabilities()
+    monitoring_lines = [
+        "/status [project|all] - View pending tasks in inbox",
+        "/inboxq [limit] - Inspect inbox queue status (postgres mode)",
+    ]
+    if caps.local_task_files:
+        monitoring_lines.extend(
+            [
+                "/active [project|all] [cleanup] - View tasks currently being worked on",
+                "/logs <project> <issue#> - View task logs",
+                "/logsfull <project> <issue#> - Full log lines (no truncation)",
+                "/tail <project> <issue#> [lines] [seconds] - Follow live log tail",
+                "/tailstop - Stop current live tail session",
+            ]
+        )
+    monitoring_lines.extend(
+        [
+            "/track <project> <issue#> - Track issue per-project",
+            "/tracked - View active globally tracked issues",
+            "/untrack <project> <issue#> - Stop tracking per-project",
+            "/myissues - View all your tracked issues",
+            "/fuse <project> <issue#> - View retry fuse state",
+            "/audit <project> <issue#> - View workflow audit trail",
+            "/stats [days] - View system analytics (default: 30 days)",
+            "/comments <project> <issue#> - View issue comments",
+        ]
+    )
     return (
         "🤖 **Nexus Commands**\n\n"
         "Use /menu for a categorized, button-driven view.\n\n"
@@ -41,21 +71,8 @@ def build_help_text() -> str:
         "• ✨ Feature → full (triage → design → develop → review → compliance → deploy → close)\n"
         "• ✨ Simple Feature → fast-track (skip design)\n\n"
         "📊 **Monitoring & Tracking:**\n"
-        "/status [project|all] - View pending tasks in inbox\n"
-        "/inboxq [limit] - Inspect inbox queue status (postgres mode)\n"
-        "/active [project|all] [cleanup] - View tasks currently being worked on\n"
-        "/track <project> <issue#> - Track issue per-project\n"
-        "/tracked - View active globally tracked issues\n"
-        "/untrack <project> <issue#> - Stop tracking per-project\n"
-        "/myissues - View all your tracked issues\n"
-        "/logs <project> <issue#> - View task logs\n"
-        "/logsfull <project> <issue#> - Full log lines (no truncation)\n"
-        "/tail <project> <issue#> [lines] [seconds] - Follow live log tail\n"
-        "/tailstop - Stop current live tail session\n"
-        "/fuse <project> <issue#> - View retry fuse state\n"
-        "/audit <project> <issue#> - View workflow audit trail\n"
-        "/stats [days] - View system analytics (default: 30 days)\n"
-        "/comments <project> <issue#> - View issue comments\n\n"
+        + "\n".join(monitoring_lines)
+        + "\n\n"
         "🔁 **Recovery & Control:**\n"
         "/reprocess <project> <issue#> - Re-run agent processing\n"
         "/wfstate <project> <issue#> - Show workflow state and drift snapshot\n"
@@ -139,7 +156,12 @@ async def handle_start(
         "• ✨ Feature/Improvement → 9 steps (full)\n\n"
         "Type /help for all commands."
     )
-    keyboard = [["/menu"], ["/chat"], ["/new"], ["/status"], ["/active"], ["/help"]]
+    keyboard = [["/menu"], ["/chat"], ["/new"], ["/status"]]
+    if is_command_visible("active"):
+        keyboard.append(["/active"])
+    else:
+        keyboard.append(["/inboxq"])
+    keyboard.append(["/help"])
     reply_markup = reply_keyboard_markup_cls(
         keyboard, resize_keyboard=True, one_time_keyboard=False
     )
@@ -147,14 +169,16 @@ async def handle_start(
 
 
 def build_startup_commands(*, bot_command_cls) -> list[Any]:
-    return [
+    commands = [
         bot_command_cls("menu", "Open command menu"),
         bot_command_cls("chat", "Open chat menu"),
         bot_command_cls("new", "Start task creation"),
         bot_command_cls("status", "Show pending tasks"),
-        bot_command_cls("active", "Show active tasks"),
         bot_command_cls("help", "Show help"),
     ]
+    if is_command_visible("active"):
+        commands.insert(4, bot_command_cls("active", "Show active tasks"))
+    return commands
 
 
 async def check_tool_health(

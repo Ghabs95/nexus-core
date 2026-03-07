@@ -20,6 +20,7 @@ def generate_task_name(
     content: str,
     project_name: str,
     logger: Any | None = None,
+    requester_context: dict[str, Any] | None = None,
 ) -> str:
     def _extract_candidate_name(payload: Any) -> str:
         if isinstance(payload, str):
@@ -56,11 +57,14 @@ def generate_task_name(
         return ""
 
     try:
-        result = orchestrator.run_text_to_speech_analysis(
-            text=str(content or "")[:300],
-            task="generate_name",
-            project_name=project_name,
-        )
+        analysis_kwargs: dict[str, Any] = {
+            "text": str(content or "")[:300],
+            "task": "generate_name",
+            "project_name": project_name,
+        }
+        if isinstance(requester_context, dict) and requester_context:
+            analysis_kwargs["requester_context"] = requester_context
+        result = orchestrator.run_text_to_speech_analysis(**analysis_kwargs)
         return normalize_task_name(_extract_candidate_name(result))
     except Exception as exc:
         if logger is not None:

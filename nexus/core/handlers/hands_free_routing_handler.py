@@ -28,6 +28,7 @@ from nexus.core.handlers.common_routing import (
 )
 from nexus.core.handlers.feature_ideation_handlers import (
     FEATURE_STATE_KEY,
+    detect_feature_ideation_intent,
     handle_feature_ideation_request,
 )
 
@@ -283,6 +284,10 @@ def _has_active_feature_ideation(ctx: InteractiveContext) -> bool:
     return isinstance(items, list) and len(items) > 0
 
 
+def _has_active_chat_session(ctx: InteractiveContext) -> bool:
+    return bool(ctx.user_state.get("chat_session_active"))
+
+
 def _looks_like_explicit_task_request(text: str) -> bool:
     candidate = str(text or "").strip().lower()
     if not candidate:
@@ -351,11 +356,28 @@ async def resolve_pending_project_selection(
 
 async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingDeps) -> None:
     text = ctx.text
+    requester_context = (
+        deps.requester_context_builder(int(ctx.user_id))
+        if callable(deps.requester_context_builder) and str(ctx.user_id).isdigit()
+        else None
+    )
+    user_numeric_id = int(ctx.user_id) if str(ctx.user_id).isdigit() else 0
+    chat_data = deps.get_chat(user_numeric_id) or {}
+    metadata = chat_data.get("metadata") if isinstance(chat_data, dict) else {}
+    metadata = metadata if isinstance(metadata, dict) else {}
 
     # First check if we're resolving a project selection
     if await resolve_pending_project_selection(ctx, deps):
         return
 
+    if _has_active_chat_session(ctx) and _looks_like_explicit_task_request(text):
+        await ctx.reply_text(
+            "🗣️ Chat mode is active.\n\n"
+            "Exit chat mode before using hands-free task creation, or use /new for guided task creation."
+        )
+        return
+
+    active_chat_session = _has_active_chat_session(ctx)
     force_conversation = _has_active_feature_ideation(
         ctx
     ) and not _looks_like_explicit_task_request(text)
@@ -368,11 +390,20 @@ async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingD
             "intent": "conversation",
             "feature_ideation": False,
             "confidence": 0.0,
-            "reason": "active_feature_ideation_followup",
+            "reason": (
+                "chat_session_active"
+                if _has_active_chat_session(ctx)
+                else "active_feature_ideation_followup"
+            ),
         }
     else:
         deps.logger.info("Detecting intent for: %s...", text[:50])
-        intent_result = parse_intent_result(deps.orchestrator, text, deps.extract_json_dict)
+        intent_result = parse_intent_result(
+            deps.orchestrator,
+            text,
+            deps.extract_json_dict,
+            requester_context=requester_context,
+        )
 
     intent = intent_result.get("intent", "task")
     raw_feature_ideation = intent_result.get("feature_ideation")
@@ -386,12 +417,25 @@ async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingD
     except (TypeError, ValueError):
         fi_confidence = 0.0
     fi_reason = str(intent_result.get("feature_ideation_reason", "")).strip() or "not_provided"
+    feature_detector = getattr(deps.orchestrator, "run_text_to_speech_analysis", None)
+    if (
+        not feature_ideation
+        and not force_conversation
+        and callable(feature_detector)
+    ):
+        feature_ideation, fi_confidence, fi_reason = detect_feature_ideation_intent(
+            text,
+            run_analysis=feature_detector,
+            logger=deps.logger,
+        )
     deps.logger.info(
         "Feature ideation detection: matched=%s confidence=%.2f reason=%s",
         feature_ideation,
         fi_confidence,
         fi_reason,
     )
+    if active_chat_session and not feature_ideation:
+        intent = "conversation"
     if feature_ideation:
         deps.logger.info("Feature ideation request detected in hands-free text: %s", text[:50])
         status_msg = await ctx.reply_text("🧠 *Thinking about features...*")
@@ -400,6 +444,8 @@ async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingD
             status_msg_id=status_msg,
             text=text,
             deps=deps.feature_ideation_deps,
+            preferred_project_key=str(metadata.get("project_key") or "").strip() or None,
+            preferred_agent_type=str(metadata.get("primary_agent_type") or "").strip() or None,
             detected_feature_ideation=True,
             detection_confidence=fi_confidence,
             detection_reason=fi_reason,
@@ -414,10 +460,6 @@ async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingD
     status_msg_id = await ctx.reply_text("🤖 *Nexus:* Thinking...")
 
     if intent == "conversation":
-        user_id = int(ctx.user_id) if str(ctx.user_id).isdigit() else 0
-        chat_data = deps.get_chat(user_id) or {}
-        metadata = chat_data.get("metadata") if isinstance(chat_data, dict) else {}
-        metadata = metadata if isinstance(metadata, dict) else {}
         routed_agent_type, detected_intent, routing_reason = _select_conversation_agent_type(
             metadata, text
         )
@@ -429,7 +471,7 @@ async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingD
         )
         persona = _build_chat_persona(
             deps,
-            user_id,
+            user_numeric_id,
             routed_agent_type,
             detected_intent,
             routing_reason,
@@ -437,13 +479,14 @@ async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingD
         )
 
         reply_text = run_conversation_turn(
-            user_id=user_id,
+            user_id=user_numeric_id,
             text=text,
             orchestrator=deps.orchestrator,
             get_chat_history=deps.get_chat_history,
             append_message=deps.append_message,
             persona=persona,
             project_name=metadata.get("project_key"),
+            requester_context=requester_context,
         )
 
         await ctx.edit_message_text(
@@ -464,10 +507,6 @@ async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingD
     except (TypeError, ValueError):
         confidence_value = None
 
-    user_numeric_id = int(ctx.user_id) if str(ctx.user_id).isdigit() else 0
-    chat_data = deps.get_chat(user_numeric_id) or {}
-    metadata = chat_data.get("metadata") if isinstance(chat_data, dict) else {}
-    metadata = metadata if isinstance(metadata, dict) else {}
     has_project_context = bool(metadata.get("project_key"))
 
     should_confirm = False
@@ -515,11 +554,6 @@ async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingD
         )
         return
 
-    requester_context = (
-        deps.requester_context_builder(user_numeric_id)
-        if callable(deps.requester_context_builder)
-        else None
-    )
     result = await route_task_with_context(
         user_id=user_numeric_id,
         text=text,

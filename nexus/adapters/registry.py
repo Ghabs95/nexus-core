@@ -56,14 +56,10 @@ def _load_builtin_storage(type_name: str) -> type[StorageBackend] | None:
 
 
 def _load_builtin_git(type_name: str) -> type[GitPlatform] | None:
-    if type_name == "github":
-        from nexus.adapters.git.github import GitHubPlatform
+    from nexus.adapters.git.factory import resolve_git_platform_class
 
-        return GitHubPlatform
-    if type_name == "gitlab":
-        from nexus.adapters.git.gitlab import GitLabPlatform
-
-        return GitLabPlatform
+    if type_name in {"github", "gitlab"}:
+        return resolve_git_platform_class(type_name)
     return None
 
 

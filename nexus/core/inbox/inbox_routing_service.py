@@ -71,12 +71,15 @@ def process_inbox_task_request(
         }
     else:
         logger.info("Running task classification...")
-        result = orchestrator.run_text_to_speech_analysis(
-            text=text,
-            task="classify",
-            projects=list(known_projects.keys()),
-            types=list(types_map.keys()),
-        )
+        analysis_kwargs: dict[str, Any] = {
+            "text": text,
+            "task": "classify",
+            "projects": list(known_projects.keys()),
+            "types": list(types_map.keys()),
+        }
+        if isinstance(requester_context, dict) and requester_context:
+            analysis_kwargs["requester_context"] = requester_context
+        result = orchestrator.run_text_to_speech_analysis(**analysis_kwargs)
         logger.info("Analysis result: %s", result)
 
     try:
@@ -130,6 +133,7 @@ def process_inbox_task_request(
                 content,
                 known_projects.get(str(project), str(project)),
                 logger=logger,
+                requester_context=requester_context,
             )
         logger.info("Parsed: project=%s, type=%s, task_name=%s", project, task_type, task_name)
     except Exception as exc:
@@ -240,8 +244,6 @@ def save_resolved_inbox_task_request(
     if task_type not in types_map:
         task_type = "feature"
     text = str(pending_project.get("raw_text", "")).strip()
-    content = refine_task_description(str(pending_project.get("content", text)).strip(), project)
-    task_name = str(pending_project.get("task_name", "")).strip()
     resolved_requester_context = (
         requester_context
         if isinstance(requester_context, dict)
@@ -249,6 +251,15 @@ def save_resolved_inbox_task_request(
     )
     if not isinstance(resolved_requester_context, dict):
         resolved_requester_context = {}
+    try:
+        content = refine_task_description(
+            str(pending_project.get("content", text)).strip(),
+            project,
+            resolved_requester_context,
+        )
+    except TypeError:
+        content = refine_task_description(str(pending_project.get("content", text)).strip(), project)
+    task_name = str(pending_project.get("task_name", "")).strip()
 
     if callable(authorize_project):
         try:

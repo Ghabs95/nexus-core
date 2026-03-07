@@ -1,3 +1,4 @@
+import io
 import os
 
 from nexus.plugins.builtin.ai_runtime.agent_invoke_service import (
@@ -131,6 +132,37 @@ def test_resolve_analysis_tool_order_chat_uses_default_chat_agent():
         default_tools=[AIProvider.GEMINI, AIProvider.COPILOT],
     )
     assert order == [AIProvider.COPILOT]
+
+
+def test_resolve_analysis_tool_order_appends_builtin_fallbacks_after_preferences():
+    order = resolve_analysis_tool_order(
+        task="chat",
+        text="hello",
+        project_name="nexus",
+        fallback_enabled=True,
+        system_operations={"default": "triage"},
+        default_chat_agent_type="designer",
+        resolve_issue_override_agent=lambda **kwargs: kwargs["mapped_agent"],
+        get_primary_tool=lambda agent, project: (
+            AIProvider.COPILOT if agent == "designer" else AIProvider.GEMINI
+        ),
+        fallback_order_from_preferences_fn=lambda project: [AIProvider.GEMINI, AIProvider.COPILOT],
+        unique_tools=lambda items: list(dict.fromkeys(items)),
+        supports_analysis=lambda tool: tool != AIProvider.OLLAMA,
+        default_tools=[
+            AIProvider.GEMINI,
+            AIProvider.COPILOT,
+            AIProvider.CLAUDE,
+            AIProvider.CODEX,
+            AIProvider.OLLAMA,
+        ],
+    )
+    assert order == [
+        AIProvider.COPILOT,
+        AIProvider.GEMINI,
+        AIProvider.CLAUDE,
+        AIProvider.CODEX,
+    ]
 
 
 def test_resolve_transcription_attempts_uses_mapped_agent_primary():
@@ -475,15 +507,19 @@ def test_codex_invoker_unavailable_and_success(monkeypatch, tmp_path):
 
     class _Proc:
         pid = 4321
+        stdout = None
 
-    def _fake_popen(cmd, cwd, stdin, stdout, stderr, env):
+    def _fake_popen(cmd, cwd, stdin, stdout, stderr, env, text, bufsize):
         captured["cmd"] = cmd
         captured["cwd"] = cwd
         captured["env"] = env
-        captured["stdout_name"] = getattr(stdout, "name", "")
+        captured["stdout"] = stdout
+        captured["text"] = text
+        captured["bufsize"] = bufsize
         return _Proc()
 
     monkeypatch.setattr(codex_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(codex_mod, "_start_output_tee", lambda **kwargs: None)
     pid = invoke_codex_cli(
         check_tool_available=lambda provider: True,
         codex_provider=AIProvider.CODEX,
@@ -511,7 +547,9 @@ def test_codex_invoker_unavailable_and_success(monkeypatch, tmp_path):
         "do work",
     ]
     assert captured["cwd"] == str(tmp_path / "repo")
-    assert str(captured["stdout_name"]).endswith("codex_83_20260101_120000.log")
+    assert captured["stdout"] == codex_mod.subprocess.PIPE
+    assert captured["text"] is True
+    assert captured["bufsize"] == 1
     assert isinstance(captured["env"], dict) and captured["env"]["FOO"] == "BAR"
     assert os.path.exists(non_empty_rollout)
     assert not os.path.exists(empty_rollout)
@@ -532,18 +570,22 @@ def test_copilot_agent_invoker_success(monkeypatch, tmp_path):
 
     class _Proc:
         pid = 9876
+        stdout = None
 
         def poll(self):
             return None
 
-    def _fake_popen(cmd, cwd, stdin, stdout, stderr, env):
+    def _fake_popen(cmd, cwd, stdin, stdout, stderr, env, text, bufsize):
         captured["cmd"] = cmd
         captured["cwd"] = cwd
         captured["env"] = env
-        captured["stdout_name"] = getattr(stdout, "name", "")
+        captured["stdout"] = stdout
+        captured["text"] = text
+        captured["bufsize"] = bufsize
         return _Proc()
 
     monkeypatch.setattr(agent_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(agent_mod, "_start_output_tee", lambda **kwargs: None)
     pid = invoke_copilot_agent_cli(
         check_tool_available=lambda provider: True,
         copilot_provider=AIProvider.COPILOT,
@@ -565,7 +607,9 @@ def test_copilot_agent_invoker_success(monkeypatch, tmp_path):
     assert "--allow-all-tools" in captured["cmd"]
     assert "--model" in captured["cmd"]
     assert "gpt-5-mini" in captured["cmd"]
-    assert str(captured["stdout_name"]).endswith("copilot_10_20260101_120000.log")
+    assert captured["stdout"] == agent_mod.subprocess.PIPE
+    assert captured["text"] is True
+    assert captured["bufsize"] == 1
     assert isinstance(captured["env"], dict) and captured["env"]["X"] == "1"
 
 
@@ -586,16 +630,25 @@ def test_copilot_agent_invoker_immediate_exit_rate_limit(monkeypatch, tmp_path):
 
     class _Proc:
         pid = 456
+        stdout = io.StringIO("Copilot error: 402 You have no quota\n")
 
         def poll(self):
             return 1
 
-    def _fake_popen(cmd, cwd, stdin, stdout, stderr, env):
-        stdout.write("Copilot error: 402 You have no quota\n")
-        stdout.flush()
+    def _fake_popen(cmd, cwd, stdin, stdout, stderr, env, text, bufsize):
         return _Proc()
 
     monkeypatch.setattr(agent_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(
+        agent_mod,
+        "_start_output_tee",
+        lambda **kwargs: agent_mod._stream_process_output(
+            stream=kwargs["process"].stdout,
+            log_path=kwargs["log_path"],
+            logger=kwargs["logger"],
+            output_label=kwargs["output_label"],
+        ),
+    )
     monkeypatch.setattr(agent_mod.time, "sleep", lambda seconds: None)
 
     try:
@@ -637,16 +690,25 @@ def test_gemini_agent_invoker_immediate_exit_rate_limit(monkeypatch, tmp_path):
 
     class _Proc:
         pid = 123
+        stdout = io.StringIO("RateLimitExceeded: 429\n")
 
         def poll(self):
             return 1
 
-    def _fake_popen(cmd, cwd, stdin, stdout, stderr, env):
-        stdout.write("RateLimitExceeded: 429\n")
-        stdout.flush()
+    def _fake_popen(cmd, cwd, stdin, stdout, stderr, env, text, bufsize):
         return _Proc()
 
     monkeypatch.setattr(agent_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(
+        agent_mod,
+        "_start_output_tee",
+        lambda **kwargs: agent_mod._stream_process_output(
+            stream=kwargs["process"].stdout,
+            log_path=kwargs["log_path"],
+            logger=kwargs["logger"],
+            output_label=kwargs["output_label"],
+        ),
+    )
     monkeypatch.setattr(agent_mod.time, "sleep", lambda seconds: None)
 
     try:
@@ -667,6 +729,75 @@ def test_gemini_agent_invoker_immediate_exit_rate_limit(monkeypatch, tmp_path):
         assert False, "expected rate-limited immediate-exit error"
     except _RateLimited as exc:
         assert "rate limit" in str(exc).lower()
+
+
+def test_agent_output_tee_writes_log_and_emits_lines(tmp_path):
+    import nexus.plugins.builtin.ai_runtime.provider_invokers.agent_invokers as agent_mod
+
+    class _Logger:
+        def __init__(self):
+            self.messages = []
+
+        def info(self, msg, *args):
+            self.messages.append(msg % args if args else msg)
+
+    logger = _Logger()
+    log_path = tmp_path / "agent.log"
+
+    agent_mod._stream_process_output(
+        stream=io.StringIO("first line\nsecond line\n"),
+        log_path=str(log_path),
+        logger=logger,
+        output_label="codex",
+    )
+
+    assert log_path.read_text(encoding="utf-8") == "first line\nsecond line\n"
+    assert "[codex] first line" in logger.messages
+    assert "[codex] second line" in logger.messages
+
+
+def test_agent_lifecycle_logging_redacts_prompt_and_logs_exit(monkeypatch):
+    import nexus.plugins.builtin.ai_runtime.provider_invokers.agent_invokers as agent_mod
+
+    class _Logger:
+        def __init__(self):
+            self.messages = []
+
+        def info(self, msg, *args):
+            self.messages.append(msg % args if args else msg)
+
+        def warning(self, msg, *args):
+            self.messages.append(msg % args if args else msg)
+
+    class _Proc:
+        pid = 321
+
+        def wait(self):
+            return 0
+
+    class _ImmediateThread:
+        def __init__(self, *, target, daemon):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    logger = _Logger()
+    monkeypatch.setattr(agent_mod.threading, "Thread", _ImmediateThread)
+
+    agent_mod._monitor_process_lifecycle(
+        process=_Proc(),
+        logger=logger,
+        output_label="copilot",
+    )
+
+    rendered = agent_mod._redact_command_for_logs(
+        ["copilot", "-p", "very secret prompt", "--allow-all-tools"]
+    )
+
+    assert "<prompt>" in rendered
+    assert "very secret prompt" not in rendered
+    assert "[agent:copilot] exit pid=321 code=0" in logger.messages
 
 
 def test_gemini_transcription_invoker_rate_limit_and_artifact(monkeypatch, tmp_path):

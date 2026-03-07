@@ -242,3 +242,58 @@ def test_handle_new_task_blocks_initial_launch_when_sync_blocks(tmp_path):
     )
 
     assert invoked["count"] == 0
+
+
+def test_handle_new_task_passes_requester_context_to_refiner(tmp_path):
+    inbox_file = tmp_path / "feature_123.md"
+    inbox_file.write_text("placeholder")
+
+    captured: dict[str, Any] = {}
+
+    def _refine(content, project_name, requester_context=None):
+        captured["content"] = content
+        captured["project_name"] = project_name
+        captured["requester_context"] = requester_context
+        return content
+
+    async def _create_workflow_for_issue(**_kwargs):
+        return "wf-1"
+
+    async def _start_workflow(*_args, **_kwargs):
+        return True
+
+    handle_new_task(
+        filepath=str(inbox_file),
+        content="Implement feature",
+        task_type="feature",
+        project_name="proj-a",
+        project_root=str(tmp_path),
+        config={"workspace": "ws", "agents_dir": None},
+        base_dir=str(tmp_path),
+        logger=MagicMock(),
+        emit_alert=MagicMock(),
+        get_repo_for_project=lambda _p: "acme/repo",
+        get_tasks_active_dir=lambda _root, _proj: str(tmp_path / "active"),
+        refine_issue_content=_refine,
+        extract_inline_task_name=lambda _c: "Nice feature",
+        slugify=lambda _s: "nice-feature",
+        generate_issue_name=lambda _c, _p: "fallback-name",
+        get_sop_tier=lambda **kwargs: ("full", "SOP", "workflow:full"),
+        render_checklist_from_workflow=lambda _p, _t: "",
+        render_fallback_checklist=lambda _t: "- [ ] do thing",
+        create_issue=lambda **_kwargs: "https://github.com/acme/repo/issues/77",
+        rename_task_file_and_sync_issue_body=lambda **kwargs: kwargs["task_file_path"],
+        get_workflow_state_plugin=lambda **_kwargs: types.SimpleNamespace(
+            create_workflow_for_issue=_create_workflow_for_issue
+        ),
+        workflow_state_plugin_kwargs={},
+        start_workflow=_start_workflow,
+        get_initial_agent_from_workflow=lambda _p: "",
+        invoke_ai_agent=lambda **_kwargs: (None, None),
+        requester_nexus_id="nexus-42",
+        requester_context={"nexus_id": "nexus-42", "platform": "telegram"},
+    )
+
+    assert captured["content"] == "Implement feature"
+    assert captured["project_name"] == "proj-a"
+    assert captured["requester_context"] == {"nexus_id": "nexus-42", "platform": "telegram"}

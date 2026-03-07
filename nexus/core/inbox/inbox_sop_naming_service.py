@@ -110,11 +110,19 @@ def generate_issue_name_with_ai(
     run_analysis: Callable[..., dict[str, Any]],
     slugify: Callable[[str], str],
     logger: Any,
+    requester_context: dict[str, Any] | None = None,
 ) -> str:
     """Generate concise issue slug, falling back to content-based slug."""
     try:
         logger.info("Generating concise task name with orchestrator...")
-        result = run_analysis(text=content[:500], task="generate_name", project_name=project_name)
+        analysis_kwargs: dict[str, Any] = {
+            "text": content[:500],
+            "task": "generate_name",
+            "project_name": project_name,
+        }
+        if isinstance(requester_context, dict) and requester_context:
+            analysis_kwargs["requester_context"] = requester_context
+        result = run_analysis(**analysis_kwargs)
         suggested_name = str(result.get("text", "")).strip().strip("\"`'").strip()
         slug = slugify(suggested_name)
         if slug:
@@ -134,6 +142,7 @@ def refine_issue_content_with_ai(
     project_name: str,
     run_analysis: Callable[..., dict[str, Any]],
     logger: Any,
+    requester_context: dict[str, Any] | None = None,
 ) -> str:
     """Refine task text before issue creation, preserving original on failure."""
     source = str(content or "").strip()
@@ -141,7 +150,14 @@ def refine_issue_content_with_ai(
         return source
     try:
         logger.info("Refining issue content with orchestrator (len=%s)", len(source))
-        result = run_analysis(text=source, task="refine_description", project_name=project_name)
+        analysis_kwargs: dict[str, Any] = {
+            "text": source,
+            "task": "refine_description",
+            "project_name": project_name,
+        }
+        if isinstance(requester_context, dict) and requester_context:
+            analysis_kwargs["requester_context"] = requester_context
+        result = run_analysis(**analysis_kwargs)
         candidate = str((result or {}).get("text", "")).strip()
         if candidate:
             return candidate

@@ -146,3 +146,25 @@ async def test_prompt_project_selection_multi_project_shows_buttons():
     assert text == "Select a project for /status:"
     assert [row[0].text for row in markup.keyboard] == ["L-a", "L-b", "❌ Close"]
     assert ctx.user_data["pending_command"] == "status"
+
+
+@pytest.mark.asyncio
+async def test_prompt_issue_selection_ignores_noop_edit_error():
+    class _NoopQuery(_Query):
+        async def edit_message_text(self, text, reply_markup=None):
+            raise RuntimeError("BadRequest: Message is not modified")
+
+    query = _NoopQuery()
+    update = SimpleNamespace(effective_message=_Msg(), callback_query=query)
+
+    await prompt_issue_selection(
+        update=update,
+        command="logs",
+        project_key="proj",
+        list_project_issues=lambda *_a, **_k: [],
+        get_project_label=lambda _k: "Project One",
+        inline_keyboard_button_cls=_Btn,
+        inline_keyboard_markup_cls=_Markup,
+        issue_state="closed",
+        edit_message=True,
+    )

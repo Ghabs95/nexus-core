@@ -65,7 +65,7 @@ from nexus.core import WorkflowEngine, YamlWorkflowLoader
 from nexus.adapters.storage.file import FileStorage
 
 # Configure storage
-storage = FileStorage(base_path="./data")
+storage = FileStorage(base_path="/var/lib/nexus")
 
 # Create workflow engine
 engine = WorkflowEngine(storage=storage)

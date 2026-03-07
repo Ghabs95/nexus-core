@@ -1,7 +1,9 @@
 import os
+import shlex
 import subprocess
+import threading
 import time
-from typing import Any, Callable
+from typing import Any, Callable, TextIO
 
 
 def _prepare_log_path(
@@ -19,6 +21,107 @@ def _prepare_log_path(
     return os.path.join(log_dir, f"{prefix}_{log_suffix}.log")
 
 
+def _stream_process_output(
+    *,
+    stream: TextIO | None,
+    log_path: str,
+    logger: Any,
+    output_label: str,
+) -> None:
+    if stream is None:
+        return
+
+    with stream:
+        with open(log_path, "w", encoding="utf-8") as log_file:
+            for chunk in iter(stream.readline, ""):
+                if not chunk:
+                    break
+                log_file.write(chunk)
+                log_file.flush()
+                text = chunk.rstrip()
+                if text:
+                    logger.info("[%s] %s", output_label, text)
+
+
+def _start_output_tee(
+    *,
+    process: subprocess.Popen[Any],
+    log_path: str,
+    logger: Any,
+    output_label: str,
+) -> None:
+    stream = getattr(process, "stdout", None)
+    if stream is None:
+        with open(log_path, "w", encoding="utf-8"):
+            pass
+        return
+
+    threading.Thread(
+        target=_stream_process_output,
+        kwargs={
+            "stream": stream,
+            "log_path": log_path,
+            "logger": logger,
+            "output_label": output_label,
+        },
+        daemon=True,
+    ).start()
+
+
+def _redact_command_for_logs(cmd: list[str]) -> str:
+    if not cmd:
+        return ""
+
+    rendered: list[str] = []
+    redact_next = False
+    for index, part in enumerate(cmd):
+        text = str(part)
+        if redact_next:
+            rendered.append("<prompt>")
+            redact_next = False
+            continue
+        if text in {"-p", "--prompt"}:
+            rendered.append(text)
+            redact_next = True
+            continue
+        if index == len(cmd) - 1 and len(text) > 120:
+            rendered.append("<prompt>")
+            continue
+        rendered.append(shlex.quote(text))
+    return " ".join(rendered)
+
+
+def _monitor_process_lifecycle(
+    *,
+    process: subprocess.Popen[Any],
+    logger: Any,
+    output_label: str,
+) -> None:
+    def _runner() -> None:
+        exit_code = None
+        try:
+            wait_fn = getattr(process, "wait", None)
+            if callable(wait_fn):
+                exit_code = wait_fn()
+            else:
+                while True:
+                    exit_code = process.poll()
+                    if exit_code is not None:
+                        break
+                    time.sleep(0.5)
+        except Exception as exc:
+            log_warning = getattr(logger, "warning", None)
+            if callable(log_warning):
+                log_warning("[agent:%s] lifecycle monitoring failed: %s", output_label, exc)
+            return
+
+        log_info = getattr(logger, "info", None)
+        if callable(log_info):
+            log_info("[agent:%s] exit pid=%s code=%s", output_label, process.pid, exit_code)
+
+    threading.Thread(target=_runner, daemon=True).start()
+
+
 def _launch_process_with_log(
     *,
     cmd: list[str],
@@ -27,10 +130,9 @@ def _launch_process_with_log(
     log_path: str,
     logger: Any,
     launched_message: str,
+    output_label: str,
 ) -> subprocess.Popen[Any]:
-    log_file = None
     try:
-        log_file = open(log_path, "w", encoding="utf-8")
         merged_env = {**os.environ}
         if env:
             merged_env.update(env)
@@ -38,19 +140,34 @@ def _launch_process_with_log(
             cmd,
             cwd=workspace_dir,
             stdin=subprocess.DEVNULL,
-            stdout=log_file,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             env=merged_env,
+            text=True,
+            bufsize=1,
         )
-        log_file.close()
+        logger.info(
+            "[agent:%s] launch pid=%s cwd=%s log=%s cmd=%s",
+            output_label,
+            process.pid,
+            workspace_dir,
+            log_path,
+            _redact_command_for_logs(cmd),
+        )
+        _start_output_tee(
+            process=process,
+            log_path=log_path,
+            logger=logger,
+            output_label=output_label,
+        )
+        _monitor_process_lifecycle(
+            process=process,
+            logger=logger,
+            output_label=output_label,
+        )
         logger.info(launched_message, process.pid)
         return process
     except Exception:
-        try:
-            if log_file:
-                log_file.close()
-        except Exception:
-            pass
         raise
 
 
@@ -110,6 +227,7 @@ def invoke_copilot_agent_cli(
             log_path=log_path,
             logger=logger,
             launched_message="🚀 Copilot launched (PID: %s)",
+            output_label="copilot",
         )
 
         def _read_log_excerpt(max_chars: int = 2000) -> str:
@@ -239,6 +357,7 @@ def invoke_gemini_agent_cli(
             log_path=log_path,
             logger=logger,
             launched_message="🚀 Gemini launched (PID: %s)",
+            output_label="gemini",
         )
 
         # Startup probe: detect both immediate exits and live quota/rate-limit loops.

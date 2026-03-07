@@ -98,6 +98,16 @@ def process_task_context(*, task_ctx: dict[str, object], filepath: str, deps) ->
     project_root = task_ctx["project_root"]
     config = task_ctx["config"]
     requester_nexus_id = str(task_ctx.get("requester_nexus_id") or "").strip() or None
+    requester_platform = str(task_ctx.get("requester_platform") or "").strip() or None
+    requester_platform_user_id = (
+        str(task_ctx.get("requester_platform_user_id") or "").strip() or None
+    )
+    requester_context = {
+        "nexus_id": requester_nexus_id,
+        "platform": requester_platform,
+        "platform_user_id": requester_platform_user_id,
+    }
+    requester_context = {key: value for key, value in requester_context.items() if value}
 
     deps["logger"].info(f"Project: {project_name}")
 
@@ -152,6 +162,7 @@ def process_task_context(*, task_ctx: dict[str, object], filepath: str, deps) ->
         get_initial_agent_from_workflow=deps["get_initial_agent_from_workflow"],
         invoke_ai_agent=deps["invoke_ai_agent"],
         requester_nexus_id=requester_nexus_id,
+        requester_context=requester_context,
         bind_issue_requester=deps.get("bind_issue_requester"),
         ensure_project_and_repo_access=deps.get("ensure_project_and_repo_access"),
         get_repos_for_project=deps.get("get_repos_for_project"),

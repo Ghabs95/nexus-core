@@ -113,6 +113,7 @@ def build_feature_ideation_handler_deps(
         base_dir=base_dir,
         project_config=project_config,
         create_feature_task=_create_feature_task,
+        requester_context_builder=requester_context_builder,
         feature_registry_service=feature_registry_service,
         dedup_similarity=dedup_similarity,
     )

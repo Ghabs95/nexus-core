@@ -1,6 +1,15 @@
 from typing import Any, Callable
 
 
+async def _safe_edit_message_text(query: Any, text: str, reply_markup: Any) -> None:
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except Exception as exc:
+        if "Message is not modified" in str(exc):
+            return
+        raise
+
+
 def resolve_issue_choices(
     *,
     list_project_issues: Callable[..., list[dict]],
@@ -103,8 +112,10 @@ async def prompt_issue_selection(
 
         text = f"No {state_label} issues found for {get_project_label(project_key)}."
         if edit_message and getattr(update, "callback_query", None):
-            await update.callback_query.edit_message_text(
-                text, reply_markup=inline_keyboard_markup_cls(keyboard)
+            await _safe_edit_message_text(
+                update.callback_query,
+                text,
+                inline_keyboard_markup_cls(keyboard),
             )
         else:
             await update.effective_message.reply_text(
@@ -158,8 +169,10 @@ async def prompt_issue_selection(
     emoji = "📋" if issue_state == "open" else "📦"
     text = f"{emoji} {state_label.capitalize()} issues for /{command} ({get_project_label(project_key)}):"
     if edit_message and getattr(update, "callback_query", None):
-        await update.callback_query.edit_message_text(
-            text, reply_markup=inline_keyboard_markup_cls(keyboard)
+        await _safe_edit_message_text(
+            update.callback_query,
+            text,
+            inline_keyboard_markup_cls(keyboard),
         )
     else:
         await update.effective_message.reply_text(

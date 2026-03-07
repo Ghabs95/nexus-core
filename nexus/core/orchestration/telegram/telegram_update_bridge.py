@@ -59,6 +59,13 @@ def _is_parse_entity_error(exc: Exception) -> bool:
     return "Can't parse entities" in str(exc)
 
 
+def _is_message_not_modified_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "message is not modified" in message or (
+        "specified new message content and reply markup are exactly the same" in message
+    )
+
+
 async def _reply_with_parse_fallback(
     effective_message: Any,
     text: str,
@@ -104,6 +111,9 @@ async def _edit_with_parse_fallback(
             disable_web_page_preview=disable_web_page_preview,
         )
     except Exception as exc:
+        if _is_message_not_modified_error(exc):
+            logger.debug("Skipping Telegram message edit because content is unchanged")
+            return None
         if parse_mode and _is_parse_entity_error(exc):
             logger.warning(
                 "Retrying edit_message_text without parse_mode due to Telegram entity parsing"
@@ -173,7 +183,18 @@ def build_telegram_interactive_ctx(
             disable_web_page_preview: bool = True,
         ) -> None:
             reply_markup = buttons_to_reply_markup_fn(buttons)
-            if query_obj is not None and hasattr(query_obj, "edit_message_text"):
+            callback_message_id = str(
+                getattr(getattr(query_obj, "message", None), "message_id", "") or ""
+            )
+            should_edit_callback_message = (
+                query_obj is not None
+                and hasattr(query_obj, "edit_message_text")
+                and (
+                    message_id is None
+                    or (callback_message_id and str(message_id) == callback_message_id)
+                )
+            )
+            if should_edit_callback_message:
                 await _edit_with_parse_fallback(
                     query_obj.edit_message_text,
                     text=text,

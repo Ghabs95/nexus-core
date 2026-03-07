@@ -1,12 +1,20 @@
 import subprocess
 
 
-def run_cli_prompt(command: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
+def run_cli_prompt(
+    command: list[str],
+    *,
+    timeout: int,
+    env: dict[str, str] | None = None,
+    cwd: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
         capture_output=True,
         text=True,
         timeout=timeout,
+        env=env,
+        cwd=cwd,
     )
 
 

@@ -41,6 +41,7 @@ def _build_main_menu_keyboard(active_chat_id: str) -> list[list[Button]]:
             Button("✏️ Rename", callback_data="chat:rename"),
         ],
         [Button("🗑️ Delete Current", callback_data=f"chat:delete:{active_chat_id}")],
+        [Button("🚪 Exit Chat Mode", callback_data="chat:exit")],
     ]
     return keyboard
 
@@ -146,6 +147,7 @@ def _agent_picker_keyboard(chat_data: dict) -> list[list[Button]]:
 async def chat_menu_handler(ctx: InteractiveContext):
     """Handler for the /chat command to show the active chat and options."""
     user_id = int(ctx.user_id)
+    ctx.user_state["chat_session_active"] = True
 
     active_chat_id = get_active_chat(user_id)
     chats = list_chats(user_id)
@@ -156,7 +158,10 @@ async def chat_menu_handler(ctx: InteractiveContext):
     text = "🗣️ *Nexus Chat Menu*\n\n"
     text += f"*Active Chat:* {active_chat_title}\n"
     text += f"{chat_context_summary(active_chat, PROJECTS)}\n"
-    text += "_(All conversational history is saved under this thread)_"
+    text += (
+        "_(All conversational history is saved under this thread)_\n"
+        "_Plain text now stays in chat mode. Exit chat mode to use hands-free task creation._"
+    )
 
     await ctx.reply_text(text=text, buttons=_build_main_menu_keyboard(active_chat_id))
 
@@ -167,6 +172,7 @@ async def chat_callback_handler(ctx: InteractiveContext):
         return
 
     await ctx.answer_callback_query()
+    ctx.user_state["chat_session_active"] = True
 
     user_id = int(ctx.user_id)
     data = ctx.query.action_data
@@ -304,6 +310,18 @@ async def chat_callback_handler(ctx: InteractiveContext):
     elif data == "chat:menu":
         ctx.user_state.pop("pending_chat_rename", None)
         await _render_menu(ctx, user_id)
+    elif data == "chat:exit":
+        ctx.user_state.pop("pending_chat_rename", None)
+        ctx.user_state.pop("chat_session_active", None)
+        await ctx.edit_message_text(
+            message_id=message_id,
+            text=(
+                "🚪 *Chat mode exited.*\n\n"
+                "Plain text and voice messages will use hands-free task creation again.\n"
+                "Use /chat to re-enter conversational mode."
+            ),
+            buttons=[],
+        )
 
 
 async def chat_agents_handler(ctx: InteractiveContext):

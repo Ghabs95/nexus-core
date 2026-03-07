@@ -95,3 +95,75 @@ def test_save_resolved_inbox_task_request_file_backend(tmp_path: Path):
     )
     assert out["success"] is True
     assert (tmp_path / "inbox" / "acme" / "task_8.md").exists()
+
+
+def test_save_resolved_inbox_task_request_passes_requester_context_to_refiner(tmp_path: Path):
+    captured = {}
+
+    def _refine(content, project, requester_context=None):
+        captured["content"] = content
+        captured["project"] = project
+        captured["requester_context"] = requester_context
+        return f"{project}:{content}"
+
+    out = save_resolved_inbox_task_request(
+        pending_project={
+            "raw_text": "raw",
+            "content": "content",
+            "task_type": "feature",
+            "task_name": "n",
+            "requester_context": {"nexus_id": "nexus-42"},
+        },
+        selected_project="acme",
+        message_id_or_unique_id="9",
+        normalize_project_key=lambda s: s.strip().lower() if s else None,
+        get_inbox_storage_backend=lambda: "file",
+        types_map={"feature": "Feature"},
+        project_config={"acme": {"workspace": "ws"}},
+        refine_task_description=_refine,
+        render_task_markdown=_render_task_markdown,
+        enqueue_task=lambda **_k: 1,
+        base_dir=str(tmp_path),
+        get_inbox_dir=lambda root, project: str(tmp_path / "inbox" / project),
+        logger=logging.getLogger("test"),
+    )
+
+    assert out["success"] is True
+    assert captured["requester_context"] == {"nexus_id": "nexus-42"}
+
+
+def test_process_inbox_task_request_passes_requester_context_to_name_generator(tmp_path: Path):
+    captured = {}
+
+    class _Orch:
+        def run_text_to_speech_analysis(self, **kwargs):
+            return {"project": "acme", "type": "feature", "content": "hello", "task_name": ""}
+
+    def _generate_task_name(*_args, **kwargs):
+        captured["requester_context"] = kwargs.get("requester_context")
+        return "auto-name"
+
+    out = process_inbox_task_request(
+        text="hello",
+        orchestrator=_Orch(),
+        message_id_or_unique_id="123",
+        project_hint=None,
+        logger=logging.getLogger("test"),
+        normalize_project_key=lambda s: s.strip().lower() if s else None,
+        projects={"acme": "Acme"},
+        project_config={"acme": {"workspace": "ws"}},
+        types_map={"feature": "Feature"},
+        parse_classification_result=lambda r: r,
+        refine_task_description=lambda content, project: f"{project}:{content}",
+        generate_task_name=_generate_task_name,
+        normalize_task_name=lambda s: str(s or "").strip(),
+        render_task_markdown=_render_task_markdown,
+        get_inbox_storage_backend=lambda: "file",
+        enqueue_task=lambda **_k: 1,
+        base_dir=str(tmp_path),
+        get_inbox_dir=lambda root, project: str(tmp_path / "inbox" / project),
+        requester_context={"nexus_id": "nexus-42"},
+    )
+
+    assert out["success"] is True
+    assert captured["requester_context"] == {"nexus_id": "nexus-42"}

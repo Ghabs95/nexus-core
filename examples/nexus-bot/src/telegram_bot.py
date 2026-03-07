@@ -23,7 +23,7 @@ from telegram.ext import (
     filters,
 )
 
-from alerting import init_alerting_system
+from src.alerting import init_alerting_system
 from nexus.core.config.bootstrap import initialize_runtime
 
 initialize_runtime(configure_logging=False)
@@ -533,7 +533,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
     force=True,
-    handlers=[logging.StreamHandler(), logging.FileHandler(TELEGRAM_BOT_LOG_FILE)],
+    handlers=[logging.StreamHandler()],
 )
 
 
@@ -880,6 +880,7 @@ def _ops_handler_deps() -> OpsHandlerDeps:
         get_chat_history=get_chat_history,
         append_message=append_message,
         create_chat=create_chat,
+        requester_context_builder=_requester_context_for_telegram_user_id,
     )
 
 
@@ -1597,11 +1598,10 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sent = await update.effective_message.reply_text(
             (
                 "🔐 Setup required before task execution.\n\n"
-                f"Session reference: `{session_ref}`\n"
+                f"Session reference: {session_ref}\n"
                 "Choose your Git provider to continue OAuth onboarding."
             ),
             reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown",
             disable_web_page_preview=True,
         )
         try:
@@ -1634,13 +1634,12 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sent = await update.effective_message.reply_text(
         (
             "🔐 Setup required before task execution.\n\n"
-            f"Session reference: `{session_ref}`\n"
+            f"Session reference: {session_ref}\n"
             f"1. Open: {login_url}\n"
             f"2. Sign in with {requested_provider.title()}\n"
             "3. Add Codex/OpenAI, Gemini, and/or Claude key, or use Copilot with linked GitHub OAuth\n"
             "4. Run `/setup_status`"
         ),
-        parse_mode="Markdown",
         disable_web_page_preview=True,
     )
     try:

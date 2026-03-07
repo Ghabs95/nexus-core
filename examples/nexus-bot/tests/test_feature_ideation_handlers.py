@@ -104,8 +104,10 @@ def test_detect_feature_ideation_intent_phrase_fallback_when_model_errors():
 class _CaptureOrchestrator:
     def __init__(self):
         self.persona = ""
+        self.last_kwargs = {}
 
     def run_text_to_speech_analysis(self, **kwargs):
+        self.last_kwargs = dict(kwargs)
         self.persona = str(kwargs.get("persona", ""))
         return {
             "items": [
@@ -188,10 +190,16 @@ class _WrappedResponseOrchestrator:
 
 
 class _CopilotFallbackSuccessOrchestrator:
+    def __init__(self):
+        self.last_kwargs = {}
+        self.fallback_kwargs = {}
+
     def run_text_to_speech_analysis(self, **_kwargs):
+        self.last_kwargs = dict(_kwargs)
         return {"text": "not-json"}
 
     def _run_copilot_analysis(self, *_args, **_kwargs):
+        self.fallback_kwargs = dict(_kwargs)
         return {
             "items": [
                 {
@@ -785,6 +793,48 @@ def test_build_feature_suggestions_accepts_wrapped_response_json_string(tmp_path
     assert not any("retrying with Copilot" in msg for msg in logger.messages)
 
 
+def test_build_feature_suggestions_passes_requester_context_to_primary(tmp_path):
+    workspace_root = tmp_path / "workspace"
+    agents_dir = workspace_root / "agents"
+    agents_dir.mkdir(parents=True)
+    (agents_dir / "business.yaml").write_text(
+        "spec:\n"
+        "  agent_type: business\n"
+        "  prompt_template: |\n"
+        "    Dedicated Advisor Prompt\n",
+        encoding="utf-8",
+    )
+
+    orchestrator = _CaptureOrchestrator()
+    deps = handlers.FeatureIdeationHandlerDeps(
+        logger=_CaptureLogger(),
+        allowed_user_ids=[],
+        projects={"acme": "Acme"},
+        get_project_label=lambda key: "Acme" if key == "acme" else key,
+        orchestrator=orchestrator,
+        base_dir=str(tmp_path),
+        project_config={
+            "acme": {
+                "workspace": "workspace",
+                "agents_dir": "workspace/agents",
+                "system_operations": {"chat": {"business": {}}},
+            }
+        },
+    )
+
+    handlers._build_feature_suggestions(
+        project_key="acme",
+        text="Propose top 1 feature",
+        deps=deps,
+        preferred_agent_type="business",
+        feature_count=1,
+        requester_context={"nexus_id": "nexus-42"},
+    )
+
+    assert orchestrator.last_kwargs["requester_context"] == {"nexus_id": "nexus-42"}
+    assert orchestrator.last_kwargs["project_name"] == "acme"
+
+
 def test_build_feature_suggestions_logs_success_when_copilot_fallback_succeeds(tmp_path):
     workspace_root = tmp_path / "workspace"
     agents_dir = workspace_root / "agents"
@@ -838,6 +888,53 @@ def test_build_feature_suggestions_logs_success_when_copilot_fallback_succeeds(t
     )
 
 
+def test_build_feature_suggestions_passes_requester_context_to_fallback(tmp_path):
+    workspace_root = tmp_path / "workspace"
+    agents_dir = workspace_root / "agents"
+    agents_dir.mkdir(parents=True)
+    (agents_dir / "business.yaml").write_text(
+        "spec:\n"
+        "  agent_type: business\n"
+        "  prompt_template: |\n"
+        "    Dedicated Advisor Prompt\n",
+        encoding="utf-8",
+    )
+
+    orchestrator = _CopilotFallbackSuccessOrchestrator()
+    orchestrator._resolve_analysis_provider_env = lambda requester: (
+        {"GITHUB_TOKEN": "user-token"} if requester else None,
+        None,
+    )
+    orchestrator._resolve_analysis_cwd = lambda project_key: str(workspace_root) if project_key == "acme" else None
+    deps = handlers.FeatureIdeationHandlerDeps(
+        logger=_CaptureLogger(),
+        allowed_user_ids=[],
+        projects={"acme": "Acme"},
+        get_project_label=lambda key: "Acme" if key == "acme" else key,
+        orchestrator=orchestrator,
+        base_dir=str(tmp_path),
+        project_config={
+            "acme": {
+                "workspace": "workspace",
+                "agents_dir": "workspace/agents",
+                "system_operations": {"chat": {"business": {}}},
+            }
+        },
+    )
+
+    handlers._build_feature_suggestions(
+        project_key="acme",
+        text="Propose top 1 feature",
+        deps=deps,
+        preferred_agent_type="business",
+        feature_count=1,
+        requester_context={"nexus_id": "nexus-42"},
+    )
+
+    assert orchestrator.fallback_kwargs["_provider_env"] == {"GITHUB_TOKEN": "user-token"}
+    assert orchestrator.fallback_kwargs["_analysis_cwd"] == str(workspace_root)
+
+
 def test_handle_feature_ideation_request_prompts_count_first(tmp_path):
     workspace_root = tmp_path / "workspace"
     agents_dir = workspace_root / "agents"
@@ -856,6 +953,7 @@ def test_handle_feature_ideation_request_prompts_count_first(tmp_path):
         projects={"acme": "Acme"},
         get_project_label=lambda key: "Acme" if key == "acme" else key,
         orchestrator=_CaptureOrchestrator(),
+        requester_context_builder=lambda user_id: {"nexus_id": f"nexus-{user_id}"},
         base_dir=str(tmp_path),
         project_config={
             "acme": {
@@ -891,10 +989,83 @@ def test_handle_feature_ideation_request_prompts_count_first(tmp_path):
     assert context.user_data[handlers.FEATURE_STATE_KEY]["project"] == "acme"
     assert context.user_data[handlers.FEATURE_STATE_KEY]["feature_count"] is None
     assert context.user_data[handlers.FEATURE_STATE_KEY]["project_locked"] is True
+    assert context.user_data[handlers.FEATURE_STATE_KEY]["requester_context"] == {
+        "nexus_id": "nexus-777"
+    }
     assert context.bot.edits
     assert "How many feature proposals" in context.bot.edits[-1]["text"]
     callbacks = _keyboard_callback_data(context.bot.edits[-1]["reply_markup"])
     assert "feat:choose_project" not in callbacks
+
+
+def test_handle_feature_ideation_request_shows_detected_count_hint(tmp_path):
+    deps = handlers.FeatureIdeationHandlerDeps(
+        logger=_CaptureLogger(),
+        allowed_user_ids=[],
+        projects={"acme": "Acme"},
+        get_project_label=lambda key: "Acme" if key == "acme" else key,
+        orchestrator=_CaptureOrchestrator(),
+    )
+
+    update = _StubUpdate()
+    context = _StubContext()
+    status_msg = _StubMessage(message_id=42)
+
+    handled = asyncio.run(
+        handlers.handle_feature_ideation_request(
+            update=update,
+            context=context,
+            status_msg=status_msg,
+            text="Please propose 4 new features for acme",
+            deps=deps,
+            preferred_project_key=None,
+            preferred_agent_type="business",
+            detected_feature_ideation=True,
+            detection_confidence=0.92,
+            detection_reason="test_preclassified",
+        )
+    )
+
+    assert handled is True
+    assert context.user_data[handlers.FEATURE_STATE_KEY]["requested_feature_count"] == 4
+    assert "Detected from your message: *4*" in context.bot.edits[-1]["text"]
+
+
+def test_feature_list_text_and_buttons_are_clipped_for_telegram(monkeypatch):
+    monkeypatch.setattr(handlers, "FEATURE_LIST_SUMMARY_MAX_CHARS", 40)
+    monkeypatch.setattr(handlers, "FEATURE_LIST_MESSAGE_MAX_CHARS", 260)
+    monkeypatch.setattr(handlers, "FEATURE_BUTTON_LABEL_MAX_CHARS", 24)
+
+    deps = handlers.FeatureIdeationHandlerDeps(
+        logger=_CaptureLogger(),
+        allowed_user_ids=[],
+        projects={"acme": "Acme"},
+        get_project_label=lambda key: "Acme" if key == "acme" else key,
+        orchestrator=_CaptureOrchestrator(),
+    )
+    features = [
+        {
+            "title": f"Feature option {idx} with an excessively long title suffix",
+            "summary": "This is a deliberately long summary that should be clipped to keep Telegram message payloads well under the edit limit.",
+            "why": "Improves reliability.",
+            "steps": ["Step 1", "Step 2"],
+        }
+        for idx in range(1, 6)
+    ]
+
+    rendered = handlers._feature_list_text(
+        "acme",
+        features,
+        deps,
+        preferred_agent_type="business",
+    )
+    keyboard = handlers._feature_list_keyboard(features, allow_project_change=True)
+
+    assert len(rendered) <= handlers.FEATURE_LIST_MESSAGE_MAX_CHARS + 64
+    assert "...and" in rendered
+    assert len(keyboard) >= 2
+    assert keyboard[0][0].label.endswith("...")
+    assert len(keyboard[0][0].label) <= handlers.FEATURE_BUTTON_LABEL_MAX_CHARS
 
 
 def test_feature_pick_starts_task_flow_with_selected_project(tmp_path):

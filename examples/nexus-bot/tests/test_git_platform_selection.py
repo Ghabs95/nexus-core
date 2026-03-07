@@ -8,6 +8,7 @@ def test_get_git_platform_returns_github_by_default(monkeypatch):
 
     monkeypatch.setattr(nexus_core_helpers, "get_project_platform", lambda _project: "github")
     monkeypatch.setattr(nexus_core_helpers, "get_git_repo", lambda _project: "org/repo")
+    monkeypatch.delenv("NEXUS_GIT_PLATFORM_TRANSPORT", raising=False)
 
     platform = nexus_core_helpers.get_git_platform(project_name="nexus")
 
@@ -25,6 +26,7 @@ def test_get_git_platform_returns_gitlab_for_gitlab_project(monkeypatch):
         nexus_core_helpers, "get_gitlab_base_url", lambda _project: "https://gitlab.com"
     )
     monkeypatch.setenv("GITLAB_TOKEN", "glpat-test")
+    monkeypatch.delenv("NEXUS_GIT_PLATFORM_TRANSPORT", raising=False)
 
     platform = nexus_core_helpers.get_git_platform(project_name="sampleco")
 
@@ -40,7 +42,7 @@ def test_get_git_platform_raises_when_gitlab_token_missing(monkeypatch):
     monkeypatch.setattr(nexus_core_helpers, "get_git_repo", lambda _project: "sampleco/backend")
     monkeypatch.delenv("GITLAB_TOKEN", raising=False)
 
-    with pytest.raises(ValueError, match="GITLAB_TOKEN"):
+    with pytest.raises(ValueError, match="token"):
         nexus_core_helpers.get_git_platform(project_name="sampleco")
 
 
@@ -58,8 +60,43 @@ def test_get_git_platform_uses_custom_token_var(monkeypatch):
     monkeypatch.setattr(nexus_core_helpers, "get_git_repo", lambda _project: "sampleco/app")
 
     monkeypatch.setenv("SAMPLECO_GITHUB_TOKEN", "ghp_custom_token_123")
+    monkeypatch.delenv("NEXUS_GIT_PLATFORM_TRANSPORT", raising=False)
 
     platform = nexus_core_helpers.get_git_platform(project_name="sampleco")
 
     assert isinstance(platform, GitHubPlatform)
     assert platform.token == "ghp_custom_token_123"
+
+
+def test_get_git_platform_returns_github_cli_when_transport_is_cli(monkeypatch):
+    from nexus.adapters.git.github_cli import GitHubPlatform as GitHubCLIPlatform
+
+    import nexus.core.orchestration.nexus_core_helpers as nexus_core_helpers
+
+    monkeypatch.setattr(nexus_core_helpers, "get_project_platform", lambda _project: "github")
+    monkeypatch.setattr(nexus_core_helpers, "get_git_repo", lambda _project: "org/repo")
+    monkeypatch.setenv("NEXUS_GIT_PLATFORM_TRANSPORT", "cli")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp-test")
+
+    platform = nexus_core_helpers.get_git_platform(project_name="nexus")
+
+    assert isinstance(platform, GitHubCLIPlatform)
+
+
+def test_get_git_platform_returns_gitlab_cli_when_transport_is_cli(monkeypatch):
+    from nexus.adapters.git.gitlab_cli import GitLabCLIPlatform
+
+    import nexus.core.orchestration.nexus_core_helpers as nexus_core_helpers
+
+    monkeypatch.setattr(nexus_core_helpers, "get_project_platform", lambda _project: "gitlab")
+    monkeypatch.setattr(nexus_core_helpers, "get_git_repo", lambda _project: "sampleco/backend")
+    monkeypatch.setattr(
+        nexus_core_helpers, "get_gitlab_base_url", lambda _project: "https://gitlab.com"
+    )
+    monkeypatch.setenv("NEXUS_GIT_PLATFORM_TRANSPORT", "cli")
+    monkeypatch.setenv("GITLAB_TOKEN", "glpat-test")
+    monkeypatch.setattr(GitLabCLIPlatform, "_check_glab_cli", lambda self: None)
+
+    platform = nexus_core_helpers.get_git_platform(project_name="sampleco")
+
+    assert isinstance(platform, GitLabCLIPlatform)
