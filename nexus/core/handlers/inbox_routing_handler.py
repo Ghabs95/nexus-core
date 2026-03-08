@@ -33,7 +33,23 @@ def _render_task_markdown(
     content: str,
     raw_text: str,
     requester_context: dict[str, Any] | None = None,
+    attachments: list[Any] | None = None,
 ) -> str:
+    context = requester_context if isinstance(requester_context, dict) else {}
+    requester_nexus_id = str(context.get("nexus_id") or "").strip()
+    requester_block = (
+        f"\n**Requester Nexus ID:** `{requester_nexus_id}`"
+        if requester_nexus_id
+        else ""
+    )
+    attachments_block = ""
+    if attachments:
+        lines = []
+        for i, att in enumerate(attachments):
+            file_id = getattr(att, "file_id", None) or str(att)
+            filename = getattr(att, "filename", None) or f"image_{i + 1}"
+            lines.append(f"- `{filename}` (file_id: `{file_id}`)")
+        attachments_block = "\n## Attachments\n" + "\n".join(lines) + "\n"
     return (
         f"# {TYPES.get(task_type, 'Task')}\n"
         f"**Project:** {PROJECTS.get(project, project)}\n"
@@ -41,8 +57,10 @@ def _render_task_markdown(
         f"**Task Name:** {task_name}\n"
         f"**Status:** Pending\n\n"
         f"{content}\n\n"
+        f"{attachments_block}"
         f"---\n"
         f"**Source:** inbox\n"
+        f"{requester_block}\n"
         f"---\n"
         f"**Raw Input:**\n{raw_text}"
     )
@@ -87,6 +105,7 @@ async def process_inbox_task(
     project_hint: str | None = None,
     requester_context: dict[str, Any] | None = None,
     authorize_project=None,
+    attachments: list[Any] | None = None,
 ) -> dict[str, Any]:
     """
     Core logic for processing a task from natural language text.
@@ -120,6 +139,7 @@ async def process_inbox_task(
         get_inbox_dir=get_inbox_dir,
         requester_context=requester_context,
         authorize_project=authorize_project,
+        attachments=attachments,
     )
 
 

@@ -56,6 +56,7 @@ async def handle_task_confirmation_callback(
     message_id = str(
         pending.get("message_id") or getattr(getattr(query, "message", None), "message_id", "")
     )
+    pending_attachments = pending.get("attachments") or []
     context.user_data.pop("pending_task_confirmation", None)
 
     requester_context = (
@@ -70,6 +71,7 @@ async def handle_task_confirmation_callback(
         process_inbox_task=process_inbox_task,
         requester_context=requester_context,
         authorize_project=authorize_project,
+        attachments=pending_attachments or None,
     )
     if not result.get("success") and "pending_resolution" in result:
         context.user_data["pending_task_project_resolution"] = result["pending_resolution"]
@@ -144,6 +146,13 @@ async def handle_save_task_selection(
             await update.message.reply_text(error_message or "🔒 Unauthorized project access.")
             return conversation_end
 
+    requester_nexus_id = str(requester_context.get("nexus_id") or "").strip()
+    requester_block = (
+        f"\n**Requester Nexus ID:** `{requester_nexus_id}`"
+        if requester_nexus_id
+        else ""
+    )
+
     filename = f"{task_type}_{update.message.message_id}.md"
     task_name_line = f"**Task Name:** {task_name}\n" if task_name else ""
     markdown_content = (
@@ -152,6 +161,7 @@ async def handle_save_task_selection(
         f"{refined_text}\n\n"
         f"---\n"
         f"**Source:** inbox\n"
+        f"{requester_block}\n"
         f"---\n"
         f"**Raw Input:**\n{text}"
     )

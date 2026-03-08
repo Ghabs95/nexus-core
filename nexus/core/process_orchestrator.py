@@ -449,6 +449,28 @@ class ProcessOrchestrator:
                             "skipping auto-chain"
                         )
                         continue
+
+                    # Some workflow engines expose active-agent labels such as
+                    # "close_loop (summarizer)" for final steps. If completion
+                    # already indicates terminal and the label canonicalizes to
+                    # the same agent, finalize instead of re-launching it.
+                    completed_canonical = _canonical_agent_ref(completed_agent)
+                    next_canonical = _canonical_agent_ref(next_agent)
+                    if (
+                        summary.is_workflow_done
+                        and completed_canonical
+                        and next_canonical
+                        and completed_canonical == next_canonical
+                    ):
+                        self._handle_workflow_done(
+                            issue_num,
+                            repo,
+                            completed_agent,
+                            project_name or "",
+                            reason="engine-terminal-self-loop",
+                        )
+                        continue
+
                     logger.info(f"🔀 Engine routed #{issue_num}: {completed_agent} → {next_agent}")
 
                 else:
@@ -1044,3 +1066,18 @@ def _is_terminal(agent_ref: str) -> bool:
     from nexus.core.completion import _TERMINAL_VALUES
 
     return agent_ref.strip().lower() in _TERMINAL_VALUES
+
+
+def _canonical_agent_ref(agent_ref: str | None) -> str:
+    """Normalize agent refs for equality checks in auto-chain decisions."""
+    raw = str(agent_ref or "").strip().lstrip("@").strip().strip("`")
+    if not raw:
+        return ""
+
+    alias_match = re.search(r"\(([^()]+)\)\s*$", raw)
+    if alias_match:
+        raw = alias_match.group(1).strip()
+
+    return raw.lower()
+
+

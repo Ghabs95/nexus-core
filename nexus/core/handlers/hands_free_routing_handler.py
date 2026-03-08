@@ -529,6 +529,7 @@ async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingD
         ctx.user_state["pending_task_confirmation"] = {
             "text": text,
             "message_id": str(trigger_message_id),
+            "attachments": ctx.attachments or [],
         }
         reason = "voice input" if is_voice else "auto-routing safety check"
         if not has_project_context:
@@ -563,6 +564,7 @@ async def route_hands_free_text(ctx: InteractiveContext, deps: HandsFreeRoutingD
         process_inbox_task=deps.process_inbox_task,
         requester_context=requester_context,
         authorize_project=deps.authorize_project,
+        attachments=ctx.attachments or None,
     )
 
     if not result["success"] and "pending_resolution" in result:

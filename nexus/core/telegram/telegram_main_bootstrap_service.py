@@ -88,6 +88,7 @@ def register_application_handlers(
         ("cancel", "cancel", "execute"),
         ("status", "status_handler", "execute"),
         ("inboxq", "inboxq_handler", "execute"),
+        ("inboxretry", "inboxretry_handler", "execute"),
         ("active", "active_handler", "execute"),
         ("progress", "progress_handler", "execute"),
         ("track", "track_handler", "execute"),
@@ -157,7 +158,7 @@ def register_application_handlers(
     )
     app.add_handler(
         MessageHandler(
-            (filters_module.TEXT | filters_module.VOICE) & (~filters_module.COMMAND),
+            (filters_module.TEXT | filters_module.VOICE | filters_module.PHOTO) & (~filters_module.COMMAND),
             _wrap(handlers["hands_free_handler"]),
         )
     )
@@ -181,6 +182,7 @@ def build_command_handler_map(**handlers):
         "status": handlers["status_handler"],
         "active": handlers["active_handler"],
         "inboxq": handlers["inboxq_handler"],
+        "inboxretry": handlers["inboxretry_handler"],
         "stats": handlers["stats_handler"],
         "logs": handlers["logs_handler"],
         "logsfull": handlers["logsfull_handler"],

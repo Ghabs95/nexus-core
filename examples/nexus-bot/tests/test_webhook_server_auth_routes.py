@@ -75,6 +75,25 @@ def test_visualizer_accepts_session_query_and_sets_cookie(monkeypatch):
     assert b"Nexus Workflow Visualizer" in second.data
 
 
+def test_visualizer_trailing_slash_is_served(monkeypatch):
+    import webhook_server
+
+    monkeypatch.setattr(webhook_server, "_VISUALIZER_ENABLED", True)
+    monkeypatch.setattr(webhook_server, "_VISUALIZER_SHARED_TOKEN", "")
+    monkeypatch.setattr(webhook_server, "NEXUS_AUTH_ENABLED", True)
+    monkeypatch.setattr(
+        webhook_server,
+        "_svc_get_session_and_setup_status",
+        lambda session_id: _ready_session_payload(str(session_id)),
+    )
+
+    client = webhook_server.app.test_client()
+    response = client.get("/visualizer/?session=sess-123")
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/visualizer")
+
+
 def test_visualizer_snapshot_requires_auth_when_enabled(monkeypatch):
     import webhook_server
 

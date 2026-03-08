@@ -124,6 +124,7 @@ async def route_task_with_context(
     process_inbox_task: Any,
     requester_context: dict[str, Any] | None = None,
     authorize_project=None,
+    attachments: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Route task through shared inbox logic using active chat project context."""
     active_chat = get_chat(user_id)
@@ -136,6 +137,8 @@ async def route_task_with_context(
         kwargs["requester_context"] = requester_context
     if authorize_project is not None:
         kwargs["authorize_project"] = authorize_project
+    if attachments:
+        kwargs["attachments"] = attachments
 
     try:
         return await process_inbox_task(
