@@ -81,12 +81,22 @@ class TelegramInteractivePlugin(InteractiveClientPlugin):
 
             async def _msg_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 user_id = str(update.effective_user.id) if update.effective_user else ""
-                text = update.message.text if update.message and update.message.text else ""
-                # Ignore empty texts or commands
-                if text and not text.startswith("/"):
-                    await self.message_handler(user_id=user_id, text=text, raw_event=update)  # type: ignore
+                text = update.message.text or update.message.caption or ""
+                images = []
+                if update.message and update.message.photo:
+                    try:
+                        photo = update.message.photo[-1]
+                        file = await context.bot.get_file(photo.file_id)
+                        image_bytes = await file.download_as_bytearray()
+                        images.append(bytes(image_bytes))
+                    except Exception as e:
+                        logger.error(f"Failed to read telegram photo: {e}")
 
-            self._app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), _msg_handler))
+                # Ignore empty texts or commands, unless there's an image
+                if (text and not text.startswith("/")) or images:
+                    await self.message_handler(user_id=user_id, text=text, raw_event=update, images=images)  # type: ignore
+
+            self._app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & (~filters.COMMAND), _msg_handler))
 
         await self._app.initialize()
         await self._app.start()

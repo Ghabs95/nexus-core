@@ -120,11 +120,21 @@ class DiscordInteractivePlugin(InteractiveClientPlugin):
                 return
 
             text = message.content or ""
+            
+            images = []
+            if message.attachments:
+                for attachment in message.attachments:
+                    if attachment.content_type and attachment.content_type.startswith("image/"):
+                        try:
+                            image_bytes = await attachment.read()
+                            images.append(image_bytes)
+                        except Exception as e:
+                            logger.error(f"Failed to read discord attachment: {e}")
 
             if self.message_handler:
                 try:
                     await self.message_handler(
-                        user_id=str(message.author.id), text=text, raw_event=message
+                        user_id=str(message.author.id), text=text, raw_event=message, images=images
                     )
                 except Exception as e:
                     logger.error(f"Error in Discord message handler: {e}", exc_info=True)

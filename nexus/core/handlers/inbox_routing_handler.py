@@ -87,6 +87,7 @@ async def process_inbox_task(
     project_hint: str | None = None,
     requester_context: dict[str, Any] | None = None,
     authorize_project=None,
+    images: list[bytes] | None = None,
 ) -> dict[str, Any]:
     """
     Core logic for processing a task from natural language text.
@@ -120,6 +121,7 @@ async def process_inbox_task(
         get_inbox_dir=get_inbox_dir,
         requester_context=requester_context,
         authorize_project=authorize_project,
+        images=images,
     )
 
 

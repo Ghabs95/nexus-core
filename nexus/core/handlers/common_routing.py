@@ -124,6 +124,7 @@ async def route_task_with_context(
     process_inbox_task: Any,
     requester_context: dict[str, Any] | None = None,
     authorize_project=None,
+    images: list[bytes] | None = None,
 ) -> dict[str, Any]:
     """Route task through shared inbox logic using active chat project context."""
     active_chat = get_chat(user_id)
