@@ -157,7 +157,7 @@ def register_application_handlers(
     )
     app.add_handler(
         MessageHandler(
-            (filters_module.TEXT | filters_module.VOICE) & (~filters_module.COMMAND),
+            (filters_module.TEXT | filters_module.VOICE | filters_module.PHOTO) & (~filters_module.COMMAND),
             _wrap(handlers["hands_free_handler"]),
         )
     )

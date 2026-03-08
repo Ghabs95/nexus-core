@@ -2288,7 +2288,7 @@ def main():
                 CallbackQueryHandler(flow_close_handler, pattern=r"^flow:close$"),
             ],
             INPUT_TASK: [
-                MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.VOICE, save_task)
+                MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.VOICE | filters.PHOTO, save_task)
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],

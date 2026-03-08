@@ -3257,6 +3257,16 @@ async def on_message(message: discord.Message):
         )
         return
 
+    images = []
+    if message.attachments:
+        for attachment in message.attachments:
+            if attachment.content_type and attachment.content_type.startswith("image/"):
+                try:
+                    img_data = await attachment.read()
+                    images.append(img_data)
+                except Exception as e:
+                    logger.error(f"Failed to read image attachment: {e}")
+
     if await _handle_pending_feature_ideation(message, text):
         await status_msg.delete()
         return
@@ -3324,6 +3334,7 @@ async def on_message(message: discord.Message):
             project_hint=project_key,
             requester_context=requester_context,
             authorize_project=_authorize_project_for_requester,
+            images=images if images else None,
         )
         if not result.get("success") and "pending_resolution" in result:
             _pending_project_resolution[message.author.id] = result["pending_resolution"]
@@ -3398,6 +3409,7 @@ async def on_message(message: discord.Message):
         process_inbox_task=process_inbox_task,
         requester_context=requester_context,
         authorize_project=_authorize_project_for_requester,
+        images=images if images else None,
     )
 
     # Store pending_resolution state if manual project selection is needed

@@ -137,6 +137,8 @@ async def route_task_with_context(
         kwargs["requester_context"] = requester_context
     if authorize_project is not None:
         kwargs["authorize_project"] = authorize_project
+    if images is not None:
+        kwargs["images"] = images
 
     try:
         return await process_inbox_task(
