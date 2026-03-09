@@ -30,12 +30,14 @@ import logging
 import os
 import re
 import signal
+import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 
 from nexus.core.completion import (
+    CompletionSummary,
     DetectedCompletion,
     build_completion_comment,
     scan_for_completions,
@@ -300,6 +302,18 @@ class ProcessOrchestrator:
         self._dead_pid_miss_counts: dict[str, int] = {}
         # Per-session set of orphaned-running-step alerts.
         self._orphaned_step_alerted: set[str] = set()
+        # Per-issue lock to serialize completion processing and launch transitions.
+        self._issue_locks: dict[str, threading.RLock] = {}
+        self._issue_locks_guard = threading.Lock()
+
+    def _get_issue_lock(self, issue_number: str) -> threading.RLock:
+        issue_key = str(issue_number)
+        with self._issue_locks_guard:
+            lock = self._issue_locks.get(issue_key)
+            if lock is None:
+                lock = threading.RLock()
+                self._issue_locks[issue_key] = lock
+            return lock
 
     # ------------------------------------------------------------------
     # Completion scanning / auto-chain
@@ -408,179 +422,192 @@ class ProcessOrchestrator:
 
                 completed_agent = summary.agent_type
                 logger.info(f"📋 Agent completed for issue #{issue_num} ({completed_agent})")
-
-                # Ask the workflow engine what happens next.
-                engine_workflow = asyncio.run(
-                    self._complete_step_fn(
-                        issue_num,
-                        completed_agent,
-                        summary.to_dict(),
-                        event_id=comment_key,
-                    )
-                )
-
-                next_agent: str | None = None
-
-                if engine_workflow is not None:
-                    from nexus.core.models import WorkflowState
-
-                    if engine_workflow.state in (
-                        WorkflowState.COMPLETED,
-                        WorkflowState.FAILED,
-                    ):
-                        self._handle_workflow_done(
+                issue_lock = self._get_issue_lock(issue_num)
+                with issue_lock:
+                    # Ask the workflow engine what happens next.
+                    engine_workflow = asyncio.run(
+                        self._complete_step_fn(
                             issue_num,
-                            repo,
                             completed_agent,
-                            project_name or "",
-                            reason=str(engine_workflow.state.value),
+                            summary.to_dict(),
+                            event_id=comment_key,
                         )
-                        dedup_seen.add(comment_key)
-                        continue
-
-                    next_agent = engine_workflow.active_agent_type
-                    if not next_agent:
-                        logger.warning(
-                            f"Engine returned no active agent for issue #{issue_num}; "
-                            "skipping auto-chain"
-                        )
-                        continue
-
-                    # Some workflow engines expose active-agent labels such as
-                    # "close_loop (summarizer)" for final steps. If completion
-                    # already indicates terminal and the label canonicalizes to
-                    # the same agent, finalize instead of re-launching it.
-                    completed_canonical = _canonical_agent_ref(completed_agent)
-                    next_canonical = _canonical_agent_ref(next_agent)
-                    if (
-                        summary.is_workflow_done
-                        and completed_canonical
-                        and next_canonical
-                        and completed_canonical == next_canonical
-                    ):
-                        self._handle_workflow_done(
-                            issue_num,
-                            repo,
-                            completed_agent,
-                            project_name or "",
-                            reason="engine-terminal-self-loop",
-                        )
-                        dedup_seen.add(comment_key)
-                        continue
-
-                    logger.info(f"🔀 Engine routed #{issue_num}: {completed_agent} → {next_agent}")
-
-                else:
-                    # Manual fallback (no engine workflow mapped to this issue).
-                    if summary.is_workflow_done:
-                        self._handle_workflow_done(
-                            issue_num,
-                            repo,
-                            completed_agent,
-                            project_name or "",
-                            reason="manual",
-                        )
-                        dedup_seen.add(comment_key)
-                        continue
-
-                    next_agent = summary.next_agent.strip()
-                    if _is_terminal(next_agent):
-                        self._handle_workflow_done(
-                            issue_num,
-                            repo,
-                            completed_agent,
-                            project_name or "",
-                            reason="terminal-agent-ref",
-                        )
-                        dedup_seen.add(comment_key)
-                        continue
-
-                comment_summary = summary
-                if next_agent is not None and next_agent != summary.next_agent:
-                    comment_summary = type(summary)(
-                        status=summary.status,
-                        agent_type=summary.agent_type,
-                        step_id=summary.step_id,
-                        step_num=summary.step_num,
-                        summary=summary.summary,
-                        key_findings=summary.key_findings,
-                        next_agent=next_agent,
-                        verdict=summary.verdict,
-                        effort_breakdown=summary.effort_breakdown,
-                        alignment_score=summary.alignment_score,
-                        alignment_summary=summary.alignment_summary,
-                        alignment_artifacts=summary.alignment_artifacts,
-                        raw=summary.raw,
                     )
 
-                comment_body = build_completion_comment(comment_summary)
+                    if engine_workflow is not None:
+                        metadata = dict(getattr(engine_workflow, "metadata", {}) or {})
+                        if metadata.get("_nexus_completion_applied") is False:
+                            logger.info(
+                                "Skipping duplicate completion no-op for issue #%s (%s): %s",
+                                issue_num,
+                                completed_agent,
+                                metadata.get("_nexus_completion_reason", "duplicate"),
+                            )
+                            dedup_seen.add(comment_key)
+                            continue
 
-                issue_open = self._runtime.is_issue_open(issue_num, repo)
-                if issue_open is False:
-                    logger.info(
-                        "Skipping completion comment/chain for now-closed issue #%s",
-                        issue_num,
-                    )
-                    dedup_seen.add(comment_key)
-                    continue
+                    next_agent: str | None = None
 
-                if not self._runtime.post_completion_comment(issue_num, repo, comment_body):
-                    issue_open_after_fail = self._runtime.is_issue_open(issue_num, repo)
-                    if issue_open_after_fail is False:
+                    if engine_workflow is not None:
+                        from nexus.core.models import WorkflowState
+
+                        if engine_workflow.state in (
+                            WorkflowState.COMPLETED,
+                            WorkflowState.FAILED,
+                        ):
+                            self._handle_workflow_done(
+                                issue_num,
+                                repo,
+                                completed_agent,
+                                project_name or "",
+                                reason=str(engine_workflow.state.value),
+                            )
+                            dedup_seen.add(comment_key)
+                            continue
+
+                        next_agent = engine_workflow.active_agent_type
+                        if not next_agent:
+                            logger.warning(
+                                f"Engine returned no active agent for issue #{issue_num}; "
+                                "skipping auto-chain"
+                            )
+                            continue
+
+                        # Some workflow engines expose active-agent labels such as
+                        # "close_loop (summarizer)" for final steps. If completion
+                        # already indicates terminal and the label canonicalizes to
+                        # the same agent, finalize instead of re-launching it.
+                        completed_canonical = _canonical_agent_ref(completed_agent)
+                        next_canonical = _canonical_agent_ref(next_agent)
+                        if (
+                            summary.is_workflow_done
+                            and completed_canonical
+                            and next_canonical
+                            and completed_canonical == next_canonical
+                        ):
+                            self._handle_workflow_done(
+                                issue_num,
+                                repo,
+                                completed_agent,
+                                project_name or "",
+                                reason="engine-terminal-self-loop",
+                            )
+                            dedup_seen.add(comment_key)
+                            continue
+
+                        logger.info(f"🔀 Engine routed #{issue_num}: {completed_agent} → {next_agent}")
+
+                    else:
+                        # Manual fallback (no engine workflow mapped to this issue).
+                        if summary.is_workflow_done:
+                            self._handle_workflow_done(
+                                issue_num,
+                                repo,
+                                completed_agent,
+                                project_name or "",
+                                reason="manual",
+                            )
+                            dedup_seen.add(comment_key)
+                            continue
+
+                        next_agent = summary.next_agent.strip()
+                        if _is_terminal(next_agent):
+                            self._handle_workflow_done(
+                                issue_num,
+                                repo,
+                                completed_agent,
+                                project_name or "",
+                                reason="terminal-agent-ref",
+                            )
+                            dedup_seen.add(comment_key)
+                            continue
+
+                    comment_summary = CompletionSummary.from_dict(summary.to_dict())
+                    if next_agent is not None and next_agent != comment_summary.next_agent:
+                        comment_summary.next_agent = str(next_agent)
+                        comment_summary.raw["next_agent"] = str(next_agent)
+
+                    comment_body = str(
+                        comment_summary.raw.get("comment_markdown")
+                        or getattr(comment_summary, "comment_markdown", "")
+                        or ""
+                    ).strip()
+                    if not comment_body:
+                        comment_body = build_completion_comment(comment_summary)
+
+                    issue_open = self._runtime.is_issue_open(issue_num, repo)
+                    if issue_open is False:
                         logger.info(
-                            "Comment delivery skipped for closed issue #%s",
+                            "Skipping completion comment/chain for now-closed issue #%s",
                             issue_num,
                         )
                         dedup_seen.add(comment_key)
                         continue
-                    self._runtime.send_alert(
-                        "⚠️ Completion detected but Git comment delivery failed; "
-                        f"auto-chain blocked for issue #{issue_num} ({completed_agent})."
-                    )
-                    continue
 
-                dedup_seen.add(comment_key)
+                    if not self._runtime.post_completion_comment(issue_num, repo, comment_body):
+                        issue_open_after_fail = self._runtime.is_issue_open(issue_num, repo)
+                        if issue_open_after_fail is False:
+                            logger.info(
+                                "Comment delivery skipped for closed issue #%s",
+                                issue_num,
+                            )
+                            dedup_seen.add(comment_key)
+                            continue
+                        self._runtime.send_alert(
+                            "⚠️ Completion detected but Git comment delivery failed; "
+                            f"auto-chain blocked for issue #{issue_num} ({completed_agent})."
+                        )
+                        continue
 
-                # Send transition alert.
-                if build_transition_message:
-                    msg = build_transition_message(
-                        issue_number=issue_num,
-                        completed_agent=completed_agent,
-                        next_agent=next_agent,
-                        repo=repo,
-                    )
-                else:
-                    msg = f"🔀 Chaining #{issue_num}: {completed_agent} → {next_agent}"
-                self._runtime.send_alert(msg)
+                    dedup_seen.add(comment_key)
 
-                pid, tool_used = self._runtime.launch_agent(
-                    issue_num, str(next_agent), trigger_source="completion-scan"
-                )
-                if pid:
-                    logger.info(
-                        f"🔗 Auto-chained {completed_agent} → {next_agent} "
-                        f"for issue #{issue_num} (PID: {pid}, tool: {tool_used})"
-                    )
-                elif tool_used in {"duplicate-suppressed", "workflow-terminal", "launch-skipped"}:
-                    logger.info(
-                        f"⏭️ Auto-chain launch skipped for issue #{issue_num} "
-                        f"({completed_agent} → {next_agent}, reason: {tool_used})"
-                    )
-                else:
-                    logger.error(f"❌ Failed to auto-chain to {next_agent} for issue #{issue_num}")
-                    if build_autochain_failed_message:
-                        fail_msg = build_autochain_failed_message(
+                    # Send transition alert.
+                    if build_transition_message:
+                        msg = build_transition_message(
                             issue_number=issue_num,
                             completed_agent=completed_agent,
                             next_agent=next_agent,
                             repo=repo,
                         )
                     else:
-                        fail_msg = (
-                            f"❌ Auto-chain failed for issue #{issue_num}: "
-                            f"could not launch {next_agent} after {completed_agent}"
+                        msg = f"🔀 Chaining #{issue_num}: {completed_agent} → {next_agent}"
+                    self._runtime.send_alert(msg)
+
+                    if self._runtime.is_process_running(issue_num):
+                        logger.info(
+                            "Skipping auto-chain launch for issue #%s because process is already running",
+                            issue_num,
                         )
-                    self._runtime.send_alert(fail_msg)
+                        continue
+
+                    pid, tool_used = self._runtime.launch_agent(
+                        issue_num, str(next_agent), trigger_source="completion-scan"
+                    )
+                    if pid:
+                        logger.info(
+                            f"🔗 Auto-chained {completed_agent} → {next_agent} "
+                            f"for issue #{issue_num} (PID: {pid}, tool: {tool_used})"
+                        )
+                    elif tool_used in {"duplicate-suppressed", "workflow-terminal", "launch-skipped"}:
+                        logger.info(
+                            f"⏭️ Auto-chain launch skipped for issue #{issue_num} "
+                            f"({completed_agent} → {next_agent}, reason: {tool_used})"
+                        )
+                    else:
+                        logger.error(f"❌ Failed to auto-chain to {next_agent} for issue #{issue_num}")
+                        if build_autochain_failed_message:
+                            fail_msg = build_autochain_failed_message(
+                                issue_number=issue_num,
+                                completed_agent=completed_agent,
+                                next_agent=next_agent,
+                                repo=repo,
+                            )
+                        else:
+                            fail_msg = (
+                                f"❌ Auto-chain failed for issue #{issue_num}: "
+                                f"could not launch {next_agent} after {completed_agent}"
+                            )
+                        self._runtime.send_alert(fail_msg)
 
             except Exception as exc:
                 if isinstance(exc, CompletionStaleError):
@@ -914,7 +941,7 @@ class ProcessOrchestrator:
         # Safety guard: never kill or notify timeout for unresolved/unknown agents.
         # This avoids false-positive kills when tracker metadata is stale or missing.
         if not normalized_agent_type or normalized_agent_type in {"unknown", "none", "n/a"}:
-            logger.warning(
+            logger.info(
                 "Skipping timeout handling for issue #%s: unresolved agent identity (pid=%s)",
                 issue_num,
                 effective_pid,

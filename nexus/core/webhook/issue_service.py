@@ -5,6 +5,23 @@ from pathlib import Path
 from typing import Any
 
 
+def _notify_lifecycle_dedup(
+    notify_lifecycle,
+    message: str,
+    *,
+    dedup_key: str | None = None,
+) -> bool:
+    """Invoke lifecycle notifier while preserving compatibility with old call signatures."""
+    if not callable(notify_lifecycle):
+        return False
+    if dedup_key:
+        try:
+            return bool(notify_lifecycle(message, dedup_key=dedup_key))
+        except TypeError:
+            pass
+    return bool(notify_lifecycle(message))
+
+
 def _write_webhook_task_file(inbox_dir: str, task_filename: str, task_content: str) -> str:
     Path(inbox_dir).mkdir(parents=True, exist_ok=True)
     task_file = Path(inbox_dir) / task_filename
@@ -46,7 +63,7 @@ def handle_issue_opened_event(
 
     if action == "closed":
         message = policy.build_issue_closed_message(event)
-        notify_lifecycle(message)
+        _notify_lifecycle_dedup(notify_lifecycle, message)
         cleanup_ok = None
         if callable(cleanup_worktree_for_issue):
             try:
@@ -74,7 +91,11 @@ def handle_issue_opened_event(
     workflow_labels = [l for l in issue_labels if str(l).startswith("workflow:")]
     if action == "opened" and workflow_labels:
         message = policy.build_issue_created_message(event, "workflow")
-        notify_lifecycle(message)
+        _notify_lifecycle_dedup(
+            notify_lifecycle,
+            message,
+            dedup_key=f"issue-created:{repo_name}:{issue_number}",
+        )
         logger.info(
             "⏭️ Self-created issue #%s (workflow labels: %s): notified lifecycle only; skipping inbox task creation",
             issue_number,
@@ -261,7 +282,11 @@ The actual agent assignment depends on the current project's workflow configurat
             logger.info("✅ Created task file: %s (agent_type: %s)", task_file_str, agent_type)
 
         message = policy.build_issue_created_message(event, agent_type)
-        notify_lifecycle(message)
+        _notify_lifecycle_dedup(
+            notify_lifecycle,
+            message,
+            dedup_key=f"issue-created:{repo_name}:{issue_number}",
+        )
 
         return {
             # Keep external webhook contract stable while still exposing queue_id.

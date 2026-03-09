@@ -9,6 +9,7 @@ from typing import Any
 
 from nexus.adapters.storage._workflow_serde import dict_to_workflow, workflow_to_dict
 from nexus.adapters.storage.base import StorageBackend
+from nexus.core.completion import build_completion_step_dedup_key
 from nexus.core.models import AuditEvent, Workflow, WorkflowState
 
 logger = logging.getLogger(__name__)
@@ -237,7 +238,11 @@ class FileStorage(StorageBackend):
         self, issue_number: str, agent_type: str, data: dict[str, Any]
     ) -> str:
         """Persist completion summary payload to JSON file."""
-        dedup_key = f"{issue_number}:{agent_type}:{data.get('status', 'complete')}"
+        dedup_key = build_completion_step_dedup_key(
+            issue_number=str(issue_number),
+            agent_type=str(agent_type),
+            payload=data,
+        )
         completion_file = self._safe_path(self.completions_dir, f"{issue_number}.json")
 
         payload = {

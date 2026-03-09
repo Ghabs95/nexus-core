@@ -129,7 +129,7 @@ class TestBuildCompletionComment:
     def test_basic_comment(self):
         s = CompletionSummary(summary="Analyzed the issue", agent_type="triage")
         comment = build_completion_comment(s)
-        assert "### ✅ Agent Completed" in comment
+        assert "## ✅ Agent Complete — triage" in comment
         assert "Analyzed the issue" in comment
 
     def test_includes_key_findings(self):
@@ -147,7 +147,7 @@ class TestBuildCompletionComment:
     def test_includes_next_agent(self):
         s = CompletionSummary(next_agent="summarizer")
         comment = build_completion_comment(s)
-        assert "@Summarizer" in comment
+        assert "Ready for **@Summarizer**" in comment
 
     def test_omits_next_when_workflow_done(self):
         s = CompletionSummary(next_agent="none")
@@ -200,6 +200,7 @@ class TestGenerateCompletionInstructions:
         text = generate_completion_instructions("1", "writer", "close_loop", 4)
         assert "Never write `@none`" in text
         assert "omit this line when next_agent is terminal/`none`" in text
+        assert "Do NOT post issue comments directly" in text
 
     def test_removes_legacy_summarizer_example(self):
         text = generate_completion_instructions("1", "writer", "close_loop", 4)
@@ -271,7 +272,7 @@ class TestScanForCompletions:
         (completion_dir / "completion_summary_10.json").write_text(json.dumps(data))
 
         results = scan_for_completions(str(tmp_path))
-        assert results[0].dedup_key == "10:debug:completion_summary_10.json"
+        assert results[0].dedup_key == "10:unknown-workflow:unknown-step:debug"
 
     def test_uses_newest_completion_per_issue_across_paths(self, tmp_path):
         older_dir = tmp_path / ".nexus" / "tasks" / "project_a" / "completions"
@@ -328,13 +329,13 @@ class TestScanForCompletions:
 
 class TestDetectedCompletion:
     def test_dedup_key_format(self):
-        s = CompletionSummary(agent_type="design")
+        s = CompletionSummary(agent_type="design", workflow_id="wf-5", step_id="build")
         d = DetectedCompletion(
             file_path="/some/path/completion_summary_5.json",
             issue_number="5",
             summary=s,
         )
-        assert d.dedup_key == "5:design:completion_summary_5.json"
+        assert d.dedup_key == "5:wf-5:build:design"
 
 
 class _FakeCompletionStorage:
@@ -346,7 +347,7 @@ class _FakeCompletionStorage:
 
 
 class TestCompletionStore:
-    def test_postgres_scan_uses_versioned_db_identity_for_dedup(self):
+    def test_postgres_scan_uses_step_identity_for_dedup(self):
         row_v1 = {
             "_db_id": 10,
             "_issue_number": "113",
@@ -374,6 +375,5 @@ class TestCompletionStore:
         assert len(second) == 1
         second_key = second[0].dedup_key
 
-        assert first_key.startswith("113:developer:")
-        assert second_key.startswith("113:developer:")
-        assert first_key != second_key
+        assert first_key == "113:unknown-workflow:unknown-step:developer"
+        assert second_key == "113:unknown-workflow:unknown-step:developer"

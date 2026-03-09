@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.completion import (
     CompletionSummary,
     DetectedCompletion,
+    build_completion_step_dedup_key,
     budget_completion_payload,
     scan_for_completions,
 )
@@ -126,7 +127,11 @@ class CompletionStore:
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(normalized, fh, indent=2)
 
-        dedup_key = f"{issue_number}:{agent_type}:{os.path.basename(path)}"
+        dedup_key = build_completion_step_dedup_key(
+            issue_number=str(issue_number),
+            agent_type=str(agent_type),
+            payload=normalized,
+        )
         logger.info("Saved filesystem completion: %s", path)
         return dedup_key
 

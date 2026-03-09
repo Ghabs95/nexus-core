@@ -5,8 +5,10 @@ Provides rich Telegram notifications with interactive buttons for quick actions.
 
 import asyncio
 import logging
+import os
 import re
 import threading
+import time
 from typing import Any, Sequence
 
 from nexus.adapters.git.utils import build_issue_url
@@ -18,6 +20,33 @@ logger = logging.getLogger(__name__)
 _EVENTBUS_LOOP_LOCK = threading.Lock()
 _EVENTBUS_LOOP: asyncio.AbstractEventLoop | None = None
 _EVENTBUS_LOOP_THREAD: threading.Thread | None = None
+_ALERT_DEDUP_LOCK = threading.Lock()
+_ALERT_DEDUP_CACHE: dict[str, float] = {}
+_ALERT_DEDUP_TTL_SECONDS = max(
+    0,
+    int(os.getenv("NEXUS_ALERT_DEDUP_TTL_SECONDS", "120")),
+)
+
+
+def _is_duplicate_alert(dedup_key: str, *, ttl_seconds: int) -> bool:
+    if not dedup_key or ttl_seconds <= 0:
+        return False
+    now = time.time()
+    with _ALERT_DEDUP_LOCK:
+        expired = [key for key, ts in _ALERT_DEDUP_CACHE.items() if now - ts > ttl_seconds]
+        for key in expired:
+            _ALERT_DEDUP_CACHE.pop(key, None)
+        seen_at = _ALERT_DEDUP_CACHE.get(dedup_key)
+        if seen_at is None:
+            return False
+        return now - seen_at <= ttl_seconds
+
+
+def _record_alert_dedup(dedup_key: str) -> None:
+    if not dedup_key:
+        return
+    with _ALERT_DEDUP_LOCK:
+        _ALERT_DEDUP_CACHE[dedup_key] = time.time()
 
 
 def _run_eventbus_loop(loop: asyncio.AbstractEventLoop) -> None:
@@ -784,6 +813,8 @@ def emit_alert(
     issue_number: str | None = None,
     project_key: str | None = None,
     actions: Sequence[dict[str, Any]] | None = None,
+    dedup_key: str | None = None,
+    dedup_ttl_seconds: int | None = None,
 ) -> bool:
     """Emit a :class:`SystemAlert` on the shared EventBus.
 
@@ -800,6 +831,8 @@ def emit_alert(
         issue_number: Optional issue identifier used for action routing.
         project_key: Optional project key used for command routing.
         actions: Optional action descriptors (``label``, ``callback_data``, ``url``).
+        dedup_key: Optional alert idempotency key; identical keys within TTL are skipped.
+        dedup_ttl_seconds: Override dedupe TTL in seconds for this call.
 
     Returns:
         ``True`` if the alert was delivered by at least one channel.
@@ -816,6 +849,22 @@ def emit_alert(
     resolved_issue = str(issue_number or "").strip() or _extract_issue_number(message)
     resolved_project = str(project_key or "").strip()
     resolved_actions = _normalize_alert_actions(actions)
+    resolved_dedup_key = str(dedup_key or "").strip()
+    dedup_ttl = (
+        int(dedup_ttl_seconds)
+        if isinstance(dedup_ttl_seconds, int) and dedup_ttl_seconds >= 0
+        else _ALERT_DEDUP_TTL_SECONDS
+    )
+    if resolved_dedup_key and _is_duplicate_alert(resolved_dedup_key, ttl_seconds=dedup_ttl):
+        logger.info(
+            "Skipping duplicate alert (dedup_key=%s severity=%s source=%s issue=%s project=%s)",
+            resolved_dedup_key,
+            severity,
+            source,
+            resolved_issue,
+            resolved_project,
+        )
+        return True
     if not resolved_actions:
         resolved_actions = _default_alert_actions(
             severity,
@@ -870,6 +919,7 @@ def emit_alert(
                     resolved_issue,
                     resolved_project,
                 )
+            _record_alert_dedup(resolved_dedup_key)
             return True
         except Exception as exc:
             logger.warning("EventBus emit failed, falling back to direct send: %s", exc)
@@ -887,15 +937,21 @@ def emit_alert(
                     "error": "❌",
                     "critical": "🚨",
                 }.get(str(severity or "info").lower(), "ℹ️")
-                return bool(
+                ok = bool(
                     plugin.send_message_sync(
                         f"{icon} {normalized}",
                         parse_mode="Markdown",
                         reply_markup=fallback_markup,
                     )
                 )
+                if ok:
+                    _record_alert_dedup(resolved_dedup_key)
+                return ok
             if hasattr(plugin, "send_alert_sync"):
-                return bool(plugin.send_alert_sync(normalized, severity=severity))
+                ok = bool(plugin.send_alert_sync(normalized, severity=severity))
+                if ok:
+                    _record_alert_dedup(resolved_dedup_key)
+                return ok
         except Exception as exc:
             logger.warning("Direct Telegram alert failed: %s", exc)
 

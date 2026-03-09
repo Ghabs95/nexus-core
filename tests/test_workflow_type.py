@@ -1,5 +1,7 @@
 """Tests for workflow_type normalization and issue label extraction."""
 
+import io
+import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -83,3 +85,51 @@ class TestGetWorkflowTypeFromIssue:
     def test_first_matching_label_wins(self, platform):
         self._mock_issue_labels(platform, ["workflow:full", "workflow:shortened"])
         assert platform.get_workflow_type_from_issue(42) == "full"
+
+
+def test_sync_request_does_not_log_error_for_label_already_exists_422():
+    with patch.object(GitHubPlatform, "_check_gh_cli"):
+        platform = GitHubPlatform("owner/repo", token="t")
+
+    http_error = urllib.error.HTTPError(
+        url="https://api.github.com/repos/owner/repo/labels",
+        code=422,
+        msg="Validation Failed",
+        hdrs=None,
+        fp=io.BytesIO(
+            b'{"message":"Validation Failed","errors":[{"resource":"Label","code":"already_exists","field":"name"}]}'
+        ),
+    )
+
+    with (
+        patch("urllib.request.urlopen", side_effect=http_error),
+        patch("nexus.adapters.git.github.logger.error") as mock_error,
+        patch("nexus.adapters.git.github.logger.info") as mock_info,
+        pytest.raises(urllib.error.HTTPError),
+    ):
+        platform._sync_request("POST", "repos/owner/repo/labels", {"name": "bug"})
+
+    mock_error.assert_not_called()
+    assert mock_info.call_count == 1
+
+
+def test_sync_request_keeps_error_log_for_other_http_errors():
+    with patch.object(GitHubPlatform, "_check_gh_cli"):
+        platform = GitHubPlatform("owner/repo", token="t")
+
+    http_error = urllib.error.HTTPError(
+        url="https://api.github.com/repos/owner/repo/issues",
+        code=422,
+        msg="Validation Failed",
+        hdrs=None,
+        fp=io.BytesIO(b'{"message":"Validation Failed"}'),
+    )
+
+    with (
+        patch("urllib.request.urlopen", side_effect=http_error),
+        patch("nexus.adapters.git.github.logger.error") as mock_error,
+        pytest.raises(urllib.error.HTTPError),
+    ):
+        platform._sync_request("POST", "repos/owner/repo/issues", {"title": "x"})
+
+    assert mock_error.call_count == 1

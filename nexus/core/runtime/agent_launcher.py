@@ -1219,7 +1219,7 @@ def invoke_ai_agent(
         agent_env = {"GITHUB_TOKEN": token, "GITLAB_TOKEN": token}
 
     try:
-        from nexus.core.workspace import WorkspaceManager
+        from nexus.core.workspace import WorktreeProvisionError, WorkspaceManager
 
         # Extract issue number for tracking
         issue_match = re.search(r"/issues/(\d+)", issue_url or "")
@@ -1267,12 +1267,72 @@ def invoke_ai_agent(
                     base_branch = "main"
                 normalized_base = str(base_branch or "").strip() or "main"
                 start_ref = f"origin/{normalized_base}"
-            isolated_workspace = WorkspaceManager.provision_worktree(
-                worktree_base_repo,
-                issue_num,
-                branch_name=branch_for_worktree,
-                start_ref=start_ref,
-            )
+            try:
+                isolated_workspace = WorkspaceManager.provision_worktree(
+                    worktree_base_repo,
+                    issue_num,
+                    branch_name=branch_for_worktree,
+                    start_ref=start_ref,
+                )
+                removed_helpers = WorkspaceManager.sanitize_worktree_helper_scripts(
+                    isolated_workspace
+                )
+                if removed_helpers:
+                    logger.warning(
+                        "Removed deprecated helper scripts before agent launch for issue #%s",
+                        issue_num,
+                    )
+            except WorktreeProvisionError as exc:
+                failure_reason = str(exc)
+                logger.error(
+                    "Worktree provisioning failed for issue #%s (project=%s): %s",
+                    issue_num,
+                    project_name or log_subdir or "nexus",
+                    failure_reason,
+                )
+                paused = False
+                try:
+                    from nexus.core.orchestration.nexus_core_helpers import pause_workflow
+
+                    paused = bool(
+                        _run_coro_sync(
+                            lambda: pause_workflow(
+                                str(issue_num),
+                                reason="Paused: isolated worktree provisioning failed",
+                            )
+                        )
+                    )
+                except Exception as pause_exc:
+                    logger.warning(
+                        "Could not pause workflow for issue #%s after worktree failure: %s",
+                        issue_num,
+                        pause_exc,
+                    )
+
+                if paused:
+                    pause_note = " Workflow has been paused."
+                else:
+                    pause_note = " Workflow pause attempt failed; please run /pause manually."
+
+                emit_alert(
+                    (
+                        f"❌ Could not create isolated worktree for issue #{issue_num}."
+                        f"{pause_note}"
+                    ),
+                    severity="error",
+                    source="agent_launcher",
+                    issue_number=str(issue_num),
+                    project_key=str(project_name or log_subdir or "nexus"),
+                )
+                try:
+                    AuditStore.audit_log(
+                        int(issue_num),
+                        "WORKTREE_PROVISION_FAILED",
+                        failure_reason,
+                    )
+                except Exception:
+                    pass
+                return None, None
         elif issue_num != "unknown":
             logger.warning(
                 "Skipping worktree provisioning for issue %s: not a git repo (%s)",
@@ -1294,7 +1354,7 @@ def invoke_ai_agent(
             env=agent_env,
         )
 
-        tool_name = tool_used.value
+        tool_name = str(getattr(tool_used, "value", tool_used))
         logger.info(f"🚀 Agent launched with {tool_name} (PID: {pid})")
 
         # Save to launched agents tracker and emit audit, but never fail launch

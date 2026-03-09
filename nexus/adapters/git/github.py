@@ -373,7 +373,23 @@ class GitHubPlatform(GitPlatform):
         except urllib.error.HTTPError as exc:
             body = exc.read().decode(errors="replace")
             setattr(exc, "_nexus_body", body)
-            logger.error("GitHub API %s %s → HTTP %d: %s", method, path, exc.code, body)
+            normalized_method = str(method or "").strip().upper()
+            normalized_path = str(path or "").strip().lstrip("/")
+            is_label_exists = (
+                normalized_method == "POST"
+                and bool(re.fullmatch(r"repos/[^/]+/[^/]+/labels", normalized_path))
+                and exc.code == 422
+                and "already_exists" in body.lower()
+            )
+            if is_label_exists:
+                logger.info(
+                    "GitHub label already exists; treating as idempotent (%s %s): %s",
+                    normalized_method,
+                    normalized_path,
+                    body,
+                )
+            else:
+                logger.error("GitHub API %s %s → HTTP %d: %s", method, path, exc.code, body)
             raise
         except urllib.error.URLError as exc:
             raise RuntimeError(f"GitHub API request failed: {exc.reason}") from exc

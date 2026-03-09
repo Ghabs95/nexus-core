@@ -721,3 +721,34 @@ async def test_complete_step_for_issue_no_event_id_always_advances(tmp_path):
     from nexus.core.models import WorkflowState as WS
 
     assert updated.state == WS.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_complete_step_for_issue_duplicate_step_returns_noop_success():
+    """Replaying a completed step key should return success without advancing."""
+    step1 = _step(1, "triage", "triage")
+    step2 = _step(2, "develop", "developer")
+    wf = _make_workflow("wf-dup-step", [step1, step2])
+    plugin, _ = await _plugin_with_workflow(wf, "dup-step")
+
+    first = await _complete(plugin, "dup-step", "triage", {"summary": "first"})
+    assert first is not None
+    assert first.active_agent_type == "developer"
+
+    replay = await plugin.complete_step_for_issue(
+        issue_number="dup-step",
+        completed_agent_type="triage",
+        outputs={
+            "status": "complete",
+            "agent_type": "triage",
+            "workflow_id": "wf-dup-step",
+            "step_id": "triage",
+            "step_num": 1,
+            "summary": "replay",
+            "next_agent": "developer",
+        },
+        event_id="replay-1",
+    )
+    assert replay is not None
+    assert replay.active_agent_type == "developer"
+    assert replay.metadata.get("_nexus_completion_applied") is False
