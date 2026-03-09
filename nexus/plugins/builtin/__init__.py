@@ -36,28 +36,28 @@ from nexus.plugins.builtin.git_webhook_policy_plugin import (
 from nexus.plugins.builtin.git_webhook_policy_plugin import (
     register_plugins as register_git_webhook_policy_plugins,
 )
-from nexus.plugins.builtin.github_issue_plugin import (
-    GitHubIssuePlugin,
-)
-from nexus.plugins.builtin.github_issue_plugin import (
-    register_plugins as register_github_issue_plugins,
-)
 from nexus.plugins.builtin.github_issue_cli_plugin import (
     GitHubIssueCLIPlugin,
 )
 from nexus.plugins.builtin.github_issue_cli_plugin import (
     register_plugins as register_github_issue_plugins,
 )
-from nexus.plugins.builtin.gitlab_issue_plugin import (
-    GitLabIssuePlugin,
+from nexus.plugins.builtin.github_issue_plugin import (
+    GitHubIssuePlugin,
 )
-from nexus.plugins.builtin.gitlab_issue_plugin import (
-    register_plugins as register_gitlab_issue_plugins,
+from nexus.plugins.builtin.github_issue_plugin import (
+    register_plugins as register_github_issue_plugins,
 )
 from nexus.plugins.builtin.gitlab_issue_cli_plugin import (
     GitLabIssueCLIPlugin,
 )
 from nexus.plugins.builtin.gitlab_issue_cli_plugin import (
+    register_plugins as register_gitlab_issue_plugins,
+)
+from nexus.plugins.builtin.gitlab_issue_plugin import (
+    GitLabIssuePlugin,
+)
+from nexus.plugins.builtin.gitlab_issue_plugin import (
     register_plugins as register_gitlab_issue_plugins,
 )
 from nexus.plugins.builtin.json_state_plugin import (

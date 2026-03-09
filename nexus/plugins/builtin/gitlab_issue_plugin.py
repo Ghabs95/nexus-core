@@ -6,8 +6,8 @@ import urllib.error
 import urllib.parse
 from typing import Any
 
-from nexus.adapters.git.utils import build_issue_url
 from nexus.adapters.git.gitlab import GitLabPlatform
+from nexus.adapters.git.utils import build_issue_url
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,12 @@ class GitLabIssuePlugin:
     def _platform(self, issue_number: str | None = None) -> GitLabPlatform:
         return GitLabPlatform(token=self._token(issue_number), repo=self.repo, base_url=self.base_url)
 
+    def _issue_platform(self, issue_number: str | None = None) -> GitLabPlatform:
+        try:
+            return self._platform(issue_number)
+        except TypeError:
+            return self._platform()
+
     @staticmethod
     def _normalize_state(state: str | None) -> str:
         value = str(state or "opened").strip().lower()
@@ -160,7 +166,7 @@ class GitLabIssuePlugin:
 
     def add_comment(self, issue_number: str, body: str) -> bool:
         try:
-            self._platform(issue_number)._sync_request(
+            self._issue_platform(issue_number)._sync_request(
                 "POST",
                 f"projects/{self._project_path()}/issues/{issue_number}/notes",
                 {"body": body},
@@ -189,7 +195,7 @@ class GitLabIssuePlugin:
 
     def add_label(self, issue_number: str, label: str) -> bool:
         try:
-            platform = self._platform(issue_number)
+            platform = self._issue_platform(issue_number)
             data = platform._sync_request(
                 "GET", f"projects/{self._project_path()}/issues/{issue_number}"
             )
@@ -212,7 +218,7 @@ class GitLabIssuePlugin:
             return False
 
         try:
-            platform = self._platform(issue_number)
+            platform = self._issue_platform(issue_number)
             user_id: int | None = None
             if assignee_name == "me":
                 me = platform._sync_request("GET", "user")
@@ -268,7 +274,7 @@ class GitLabIssuePlugin:
 
     def get_issue(self, issue_number: str, fields: list[str]) -> dict[str, Any] | None:
         try:
-            platform = self._platform(issue_number)
+            platform = self._issue_platform(issue_number)
             data = platform._sync_request("GET", f"projects/{self._project_path()}/issues/{issue_number}")
             comments: list[dict[str, Any]] = []
             if "comments" in fields:
@@ -315,7 +321,7 @@ class GitLabIssuePlugin:
 
     def update_issue_body(self, issue_number: str, body: str) -> bool:
         try:
-            self._platform(issue_number)._sync_request(
+            self._issue_platform(issue_number)._sync_request(
                 "PUT",
                 f"projects/{self._project_path()}/issues/{issue_number}",
                 {"description": body},
@@ -327,7 +333,7 @@ class GitLabIssuePlugin:
 
     def close_issue(self, issue_number: str) -> bool:
         try:
-            self._platform(issue_number)._sync_request(
+            self._issue_platform(issue_number)._sync_request(
                 "PUT",
                 f"projects/{self._project_path()}/issues/{issue_number}",
                 {"state_event": "close"},

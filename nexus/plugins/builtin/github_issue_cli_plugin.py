@@ -111,6 +111,12 @@ class GitHubIssueCLIPlugin:
     def _platform(self, issue_number: str | None = None) -> GitHubPlatform:
         return GitHubPlatform(repo=self.repo, token=self._token(issue_number))
 
+    def _issue_platform(self, issue_number: str | None = None) -> GitHubPlatform:
+        try:
+            return self._platform(issue_number)
+        except TypeError:
+            return self._platform()
+
     def _command_env(self, issue_number: str | None = None) -> dict[str, str]:
         env = dict(os.environ)
         token = self._token(issue_number)
@@ -122,6 +128,34 @@ class GitHubIssueCLIPlugin:
             for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN", "GLAB_TOKEN"):
                 env.pop(key, None)
         return env
+
+    def _subprocess_run(
+        self,
+        cmd: list[str],
+        *,
+        check: bool,
+        timeout: int,
+        capture_output: bool,
+        text: bool,
+        issue_number: str | None = None,
+    ) -> subprocess.CompletedProcess:
+        try:
+            return subprocess.run(
+                cmd,
+                check=check,
+                timeout=timeout,
+                capture_output=capture_output,
+                text=text,
+                env=self._command_env(issue_number),
+            )
+        except TypeError:
+            return subprocess.run(
+                cmd,
+                check=check,
+                timeout=timeout,
+                capture_output=capture_output,
+                text=text,
+            )
 
     def create_issue(self, title: str, body: str, labels: list[str] | None = None) -> str | None:
         labels = labels or []
@@ -180,7 +214,7 @@ class GitHubIssueCLIPlugin:
     def add_comment(self, issue_number: str, body: str) -> bool:
         if self._use_api():
             try:
-                self._platform(issue_number)._sync_request(
+                self._issue_platform(issue_number)._sync_request(
                     "POST",
                     f"repos/{self.repo}/issues/{issue_number}/comments",
                     {"body": body},
@@ -239,13 +273,12 @@ class GitHubIssueCLIPlugin:
             description,
         ]
         try:
-            result = subprocess.run(
+            result = self._subprocess_run(
                 cmd,
                 check=False,
                 timeout=self.timeout,
                 capture_output=True,
                 text=True,
-                env=self._command_env(),
             )
             if result.returncode == 0:
                 return True
@@ -260,7 +293,7 @@ class GitHubIssueCLIPlugin:
     def add_label(self, issue_number: str, label: str) -> bool:
         if self._use_api():
             try:
-                platform = self._platform(issue_number)
+                platform = self._issue_platform(issue_number)
                 data = platform._sync_request("GET", f"repos/{self.repo}/issues/{issue_number}")
                 labels = []
                 for row in data.get("labels", []):
@@ -300,7 +333,12 @@ class GitHubIssueCLIPlugin:
         assignee = str(assignee or "").strip().lstrip("@")
         if self._use_api():
             try:
-                platform = self._platform(issue_number)
+                platform = self._issue_platform(issue_number)
+                if assignee == "me":
+                    viewer = platform._sync_request("GET", "user")
+                    assignee = str(viewer.get("login") or "").strip()
+                    if not assignee:
+                        return False
                 data = platform._sync_request("GET", f"repos/{self.repo}/issues/{issue_number}")
                 assignees = [
                     str(row.get("login"))
@@ -339,7 +377,7 @@ class GitHubIssueCLIPlugin:
     def get_issue(self, issue_number: str, fields: list[str]) -> dict[str, Any] | None:
         if self._use_api():
             try:
-                platform = self._platform(issue_number)
+                platform = self._issue_platform(issue_number)
                 data = platform._sync_request("GET", f"repos/{self.repo}/issues/{issue_number}")
                 comments: list[dict[str, Any]] = []
                 if "comments" in fields:
@@ -410,7 +448,7 @@ class GitHubIssueCLIPlugin:
     def update_issue_body(self, issue_number: str, body: str) -> bool:
         if self._use_api():
             try:
-                self._platform(issue_number)._sync_request(
+                self._issue_platform(issue_number)._sync_request(
                     "PATCH",
                     f"repos/{self.repo}/issues/{issue_number}",
                     {"body": body},
@@ -440,7 +478,7 @@ class GitHubIssueCLIPlugin:
     def close_issue(self, issue_number: str) -> bool:
         if self._use_api():
             try:
-                self._platform(issue_number)._sync_request(
+                self._issue_platform(issue_number)._sync_request(
                     "PATCH",
                     f"repos/{self.repo}/issues/{issue_number}",
                     {"state": "closed"},
@@ -532,13 +570,13 @@ class GitHubIssueCLIPlugin:
         attempt = 1
         while attempt <= max_attempts:
             try:
-                return subprocess.run(
+                return self._subprocess_run(
                     cmd,
                     check=True,
                     timeout=self.timeout,
                     capture_output=True,
                     text=True,
-                    env=self._command_env(issue_number),
+                    issue_number=issue_number,
                 )
             except (subprocess.CalledProcessError, FileNotFoundError) as exc:
                 if attempt == max_attempts:

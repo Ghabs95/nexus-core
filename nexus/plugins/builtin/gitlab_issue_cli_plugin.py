@@ -112,6 +112,22 @@ class GitLabIssueCLIPlugin:
                 env.pop(key, None)
         return env
 
+    def _run_with_retry_for_issue(
+        self,
+        cmd: list[str],
+        *,
+        max_attempts: int,
+        issue_number: str | None = None,
+    ) -> subprocess.CompletedProcess:
+        try:
+            return self._run_with_retry(
+                cmd,
+                max_attempts=max_attempts,
+                issue_number=issue_number,
+            )
+        except TypeError:
+            return self._run_with_retry(cmd, max_attempts=max_attempts)
+
     def create_issue(self, title: str, body: str, labels: list[str] | None = None) -> str | None:
         """Create issue and return URL, or None when all attempts fail."""
         labels = labels or []
@@ -257,7 +273,11 @@ class GitLabIssueCLIPlugin:
             f"projects/{self.repo.replace('/', '%2F')}/issues/{issue_number}",
         ]
         try:
-            result = self._run_with_retry(cmd, max_attempts=self.max_attempts, issue_number=str(issue_number))
+            result = self._run_with_retry_for_issue(
+                cmd,
+                max_attempts=self.max_attempts,
+                issue_number=str(issue_number),
+            )
             data = json.loads(result.stdout or "{}")
             comments: list[dict[str, Any]] = []
             if "comments" in (fields or []):
@@ -269,7 +289,7 @@ class GitLabIssueCLIPlugin:
                         f"{issue_number}/notes"
                     ),
                 ]
-                notes_result = self._run_with_retry(
+                notes_result = self._run_with_retry_for_issue(
                     notes_cmd,
                     max_attempts=self.max_attempts,
                     issue_number=str(issue_number),

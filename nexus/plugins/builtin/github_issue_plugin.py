@@ -5,8 +5,8 @@ import os
 import urllib.error
 from typing import Any
 
-from nexus.adapters.git.utils import build_issue_url
 from nexus.adapters.git.github import GitHubPlatform
+from nexus.adapters.git.utils import build_issue_url
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +96,15 @@ class GitHubIssuePlugin:
     def _platform(self, issue_number: str | None = None) -> GitHubPlatform:
         return GitHubPlatform(repo=self.repo, token=self._token(issue_number))
 
+    def _issue_platform(self, issue_number: str | None = None) -> GitHubPlatform:
+        try:
+            return self._platform(issue_number)
+        except TypeError:
+            return self._platform()
+
     def create_issue(self, title: str, body: str, labels: list[str] | None = None) -> str | None:
         labels = labels or []
-        payload = {"title": title, "body": body}
+        payload: dict[str, Any] = {"title": title, "body": body}
         if labels:
             payload["labels"] = labels
         try:
@@ -134,7 +140,7 @@ class GitHubIssuePlugin:
 
     def add_comment(self, issue_number: str, body: str) -> bool:
         try:
-            self._platform(issue_number)._sync_request(
+            self._issue_platform(issue_number)._sync_request(
                 "POST",
                 f"repos/{self.repo}/issues/{issue_number}/comments",
                 {"body": body},
@@ -166,7 +172,7 @@ class GitHubIssuePlugin:
 
     def add_label(self, issue_number: str, label: str) -> bool:
         try:
-            platform = self._platform(issue_number)
+            platform = self._issue_platform(issue_number)
             data = platform._sync_request("GET", f"repos/{self.repo}/issues/{issue_number}")
             labels = []
             for row in data.get("labels", []):
@@ -191,7 +197,7 @@ class GitHubIssuePlugin:
             return False
 
         try:
-            platform = self._platform(issue_number)
+            platform = self._issue_platform(issue_number)
             if assignee == "me":
                 viewer = platform._sync_request("GET", "user")
                 assignee = str(viewer.get("login") or "").strip()
@@ -218,7 +224,7 @@ class GitHubIssuePlugin:
 
     def get_issue(self, issue_number: str, fields: list[str]) -> dict[str, Any] | None:
         try:
-            platform = self._platform(issue_number)
+            platform = self._issue_platform(issue_number)
             data = platform._sync_request("GET", f"repos/{self.repo}/issues/{issue_number}")
             comments: list[dict[str, Any]] = []
             if "comments" in fields:
@@ -266,7 +272,7 @@ class GitHubIssuePlugin:
 
     def update_issue_body(self, issue_number: str, body: str) -> bool:
         try:
-            self._platform(issue_number)._sync_request(
+            self._issue_platform(issue_number)._sync_request(
                 "PATCH",
                 f"repos/{self.repo}/issues/{issue_number}",
                 {"body": body},
@@ -278,7 +284,7 @@ class GitHubIssuePlugin:
 
     def close_issue(self, issue_number: str) -> bool:
         try:
-            self._platform(issue_number)._sync_request(
+            self._issue_platform(issue_number)._sync_request(
                 "PATCH",
                 f"repos/{self.repo}/issues/{issue_number}",
                 {"state": "closed"},
