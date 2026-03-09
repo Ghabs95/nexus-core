@@ -1,3 +1,5 @@
+import pytest
+
 from nexus.core.orchestration import nexus_core_helpers as helpers
 
 
@@ -14,7 +16,7 @@ class _GitLabDummy:
         self.base_url = base_url
 
 
-def test_get_git_platform_uses_polling_token_for_github(monkeypatch):
+def test_get_git_platform_github_without_fallback_uses_empty_token(monkeypatch):
     monkeypatch.setattr(
         helpers,
         "_get_project_config",
@@ -24,11 +26,6 @@ def test_get_git_platform_uses_polling_token_for_github(monkeypatch):
     monkeypatch.setattr(helpers, "get_git_repo", lambda _p: "Ghabs95/nexus-arc")
     monkeypatch.setattr(helpers, "get_project_platform", lambda _p: "github")
     monkeypatch.setattr(helpers, "resolve_git_platform_class", lambda _p: _GitHubDummy)
-    monkeypatch.setattr(
-        "nexus.core.auth.access_domain.resolve_project_polling_git_token",
-        lambda _project_key: ("gho_polling_token", "u-1"),
-    )
-
     platform = helpers.get_git_platform(
         repo="Ghabs95/nexus-arc",
         project_name="nexus",
@@ -37,10 +34,10 @@ def test_get_git_platform_uses_polling_token_for_github(monkeypatch):
     )
 
     assert isinstance(platform, _GitHubDummy)
-    assert platform.token == "gho_polling_token"
+    assert platform.token == ""
 
 
-def test_get_git_platform_uses_polling_token_for_gitlab(monkeypatch):
+def test_get_git_platform_gitlab_without_fallback_requires_token(monkeypatch):
     monkeypatch.setattr(
         helpers,
         "_get_project_config",
@@ -51,17 +48,10 @@ def test_get_git_platform_uses_polling_token_for_gitlab(monkeypatch):
     monkeypatch.setattr(helpers, "get_project_platform", lambda _p: "gitlab")
     monkeypatch.setattr(helpers, "get_gitlab_base_url", lambda _p: "https://gitlab.com")
     monkeypatch.setattr(helpers, "resolve_git_platform_class", lambda _p: _GitLabDummy)
-    monkeypatch.setattr(
-        "nexus.core.auth.access_domain.resolve_project_polling_git_token",
-        lambda _project_key: ("glpat_polling_token", "u-2"),
-    )
-
-    platform = helpers.get_git_platform(
-        repo="wallible/wlbl-workflow-os",
-        project_name="wlbl",
-        token_override=None,
-        allow_env_token_fallback=False,
-    )
-
-    assert isinstance(platform, _GitLabDummy)
-    assert platform.token == "glpat_polling_token"
+    with pytest.raises(ValueError, match="GitLab token required"):
+        helpers.get_git_platform(
+            repo="wallible/wlbl-workflow-os",
+            project_name="wlbl",
+            token_override=None,
+            allow_env_token_fallback=False,
+        )

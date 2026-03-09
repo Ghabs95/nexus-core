@@ -581,6 +581,11 @@ def test_codex_invoker_unavailable_and_success(monkeypatch, tmp_path):
     assert captured["bufsize"] == 1
     assert isinstance(captured["env"], dict) and captured["env"]["FOO"] == "BAR"
     assert captured["env"]["OPENAI_API_KEY"] == "test-key"
+    assert captured["env"]["NEXUS_GIT_PLATFORM_TRANSPORT"] == "api"
+    assert captured["env"]["NEXUS_GIT_CLI_DISABLED"] == "1"
+    shim_dir = captured["env"]["PATH"].split(":", 1)[0]
+    assert os.path.exists(os.path.join(shim_dir, "gh"))
+    assert os.path.exists(os.path.join(shim_dir, "glab"))
     assert any(
         "Codex auth diagnostic: issue=83 requester=31efac50... has_openai_key=True openai_key_len=8 env_has_openai=True" in message
         for level, message in logger.messages
@@ -646,6 +651,60 @@ def test_copilot_agent_invoker_success(monkeypatch, tmp_path):
     assert captured["text"] is True
     assert captured["bufsize"] == 1
     assert isinstance(captured["env"], dict) and captured["env"]["X"] == "1"
+    assert captured["env"]["NEXUS_GIT_PLATFORM_TRANSPORT"] == "api"
+    assert captured["env"]["NEXUS_GIT_CLI_DISABLED"] == "1"
+    shim_dir = captured["env"]["PATH"].split(":", 1)[0]
+    assert os.path.exists(os.path.join(shim_dir, "gh"))
+    assert os.path.exists(os.path.join(shim_dir, "glab"))
+
+
+def test_copilot_agent_invoker_does_not_block_git_cli_in_cli_mode(monkeypatch, tmp_path):
+    import nexus.plugins.builtin.ai_runtime.provider_invokers.agent_invokers as agent_mod
+
+    class _Logger:
+        def info(self, *args, **kwargs):
+            pass
+
+        def error(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(agent_mod.time, "strftime", lambda fmt: "20260101_120000")
+    monkeypatch.setenv("NEXUS_GIT_PLATFORM_TRANSPORT", "cli")
+    captured: dict[str, Any] = {}
+
+    class _Proc:
+        pid = 7777
+        stdout = None
+
+        def poll(self):
+            return None
+
+    def _fake_popen(cmd, cwd, stdin, stdout, stderr, env, text, bufsize):
+        captured["env"] = env
+        return _Proc()
+
+    monkeypatch.setattr(agent_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(agent_mod, "_start_output_tee", lambda **kwargs: None)
+    pid = invoke_copilot_agent_cli(
+        check_tool_available=lambda provider: True,
+        copilot_provider=AIProvider.COPILOT,
+        copilot_cli_path="copilot",
+        copilot_model="",
+        copilot_supports_model=False,
+        get_tasks_logs_dir=lambda workspace, subdir: str(tmp_path / "logs"),
+        tool_unavailable_error=RuntimeError,
+        rate_limited_error=RuntimeError,
+        logger=_Logger(),
+        agent_prompt="run agent",
+        workspace_dir=str(tmp_path / "repo"),
+        agents_dir=str(tmp_path / "repo" / "agents"),
+        base_dir=str(tmp_path),
+        issue_num="10",
+        env={"X": "1"},
+    )
+    assert pid == 7777
+    assert captured["env"]["NEXUS_GIT_PLATFORM_TRANSPORT"] == "cli"
+    assert "NEXUS_GIT_CLI_DISABLED" not in captured["env"]
 
 
 def test_copilot_agent_invoker_immediate_exit_rate_limit(monkeypatch, tmp_path):

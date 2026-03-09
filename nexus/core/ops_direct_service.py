@@ -65,6 +65,18 @@ async def handle_direct_request(
         available_agent_types=project_chat_agent_types,
     )
 
+    requester_context = None
+    if callable(getattr(deps, "requester_context_builder", None)):
+        try:
+            requester_context = deps.requester_context_builder(int(str(ctx.user_id)))
+        except Exception:
+            requester_context = None
+    requester_nexus_id = (
+        str(requester_context.get("nexus_id") or "").strip()
+        if isinstance(requester_context, dict)
+        else ""
+    ) or None
+
     if agent_type and agent_type in project_chat_agent_types:
         msg_id = await ctx.reply_text(f"🤖 Asking @{agent} directly...")
         try:
@@ -78,12 +90,6 @@ async def handle_direct_request(
             deps.append_message(user_id, "user", message)
             history = deps.get_chat_history(user_id)
             persona = build_direct_chat_persona(deps.ai_persona, project, agent, agent_type)
-            requester_context = None
-            if callable(getattr(deps, "requester_context_builder", None)):
-                try:
-                    requester_context = deps.requester_context_builder(user_id)
-                except Exception:
-                    requester_context = None
             analysis_kwargs = {
                 "text": message,
                 "task": "chat",
@@ -127,7 +133,10 @@ async def handle_direct_request(
 *Created via /direct command - invoke {agent} immediately*"""
 
         repo = deps.get_repo(project)
-        plugin = deps.get_direct_issue_plugin(repo)
+        try:
+            plugin = deps.get_direct_issue_plugin(repo, requester_nexus_id=requester_nexus_id)
+        except TypeError:
+            plugin = deps.get_direct_issue_plugin(repo)
         if not plugin:
             await ctx.edit_message_text(
                 message_id=msg_id,

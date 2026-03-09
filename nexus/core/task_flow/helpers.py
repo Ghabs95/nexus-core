@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from nexus.adapters.git.utils import build_issue_url
 from nexus.core.config import BASE_DIR, NEXUS_CORE_STORAGE_DIR, PROJECT_CONFIG, get_repo_branch
 from nexus.core.config import get_tasks_active_dir, get_tasks_closed_dir
 from nexus.core.inbox.inbox_repo_path_service import resolve_git_dir, resolve_git_dirs
@@ -34,6 +35,69 @@ _WORKFLOW_STATE_PLUGIN_KWARGS = {
     "issue_to_workflow_id": lambda n: get_workflow_state().get_workflow_id(n),
     "issue_to_workflow_map_setter": lambda n, w: get_workflow_state().map_issue(n, w),
 }
+
+
+def _resolve_issue_requester_token(
+    *,
+    project_name: str,
+    repo: str,
+    issue_number: str,
+) -> str | None:
+    try:
+        from nexus.core.auth.access_domain import auth_enabled, build_execution_env
+        from nexus.core.auth.credential_store import get_issue_requester, get_issue_requester_by_url
+        from nexus.core.config import get_project_platform
+    except Exception:
+        return None
+
+    if not auth_enabled():
+        return None
+
+    try:
+        requester_nexus_id = get_issue_requester(str(repo), str(issue_number))
+    except Exception:
+        requester_nexus_id = None
+    if not requester_nexus_id:
+        platform = str(get_project_platform(str(project_name)) or "github").strip().lower()
+        issue_url = build_issue_url(
+            str(repo),
+            str(issue_number),
+            {"git_platform": platform},
+        )
+        try:
+            requester_nexus_id = get_issue_requester_by_url(issue_url)
+        except Exception:
+            requester_nexus_id = None
+    if not requester_nexus_id:
+        return None
+
+    user_env, env_error = build_execution_env(str(requester_nexus_id))
+    if env_error:
+        logger.warning(
+            "Requester token unavailable for %s#%s requester=%s: %s",
+            repo,
+            issue_number,
+            requester_nexus_id,
+            env_error,
+        )
+        return None
+
+    platform = str(get_project_platform(str(project_name)) or "github").strip().lower()
+    if platform == "gitlab":
+        return str(
+            user_env.get("GITLAB_TOKEN")
+            or user_env.get("GLAB_TOKEN")
+            or user_env.get("GITHUB_TOKEN")
+            or user_env.get("GH_TOKEN")
+            or ""
+        ).strip() or None
+    return str(
+        user_env.get("GITHUB_TOKEN")
+        or user_env.get("GH_TOKEN")
+        or user_env.get("GITLAB_TOKEN")
+        or user_env.get("GLAB_TOKEN")
+        or ""
+    ).strip() or None
 
 
 def normalize_agent_reference(agent_ref: str | None) -> str | None:
@@ -85,6 +149,11 @@ def finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name: 
             body=kwargs["body"],
             issue_repo=kwargs.get("issue_repo"),
             base_branch=kwargs.get("base_branch"),
+            token_override=_resolve_issue_requester_token(
+                project_name=project_name,
+                repo=str(kwargs["repo"]),
+                issue_number=str(kwargs["issue_number"]),
+            ),
         ),
         resolve_repo_branch_fn=lambda **kwargs: get_repo_branch(
             project_name,
@@ -94,6 +163,11 @@ def finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name: 
             project_name=project_name,
             repo=kwargs["repo"],
             issue_number=str(kwargs["issue_number"]),
+            token_override=_resolve_issue_requester_token(
+                project_name=project_name,
+                repo=str(kwargs["repo"]),
+                issue_number=str(kwargs["issue_number"]),
+            ),
         ),
         cleanup_worktree_fn=lambda **kwargs: _cleanup_worktree(
             repo_dir=kwargs["repo_dir"],
@@ -107,6 +181,11 @@ def finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name: 
             repo=kwargs["repo"],
             issue_number=str(kwargs["issue_number"]),
             comment=kwargs.get("comment"),
+            token_override=_resolve_issue_requester_token(
+                project_name=project_name,
+                repo=str(kwargs["repo"]),
+                issue_number=str(kwargs["issue_number"]),
+            ),
         ),
         send_notification=_notify,
         enqueue_merge_queue_prs=enqueue_merge_queue_prs,

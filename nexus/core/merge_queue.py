@@ -40,10 +40,19 @@ def _emit_alert(*args, **kwargs):
     return emit_alert(*args, **kwargs)
 
 
-def _get_git_platform(repo_key: str, *, project_name: str | None):
+def _get_git_platform(
+    repo_key: str,
+    *,
+    project_name: str | None,
+    token_override: str | None = None,
+):
     from nexus.core.orchestration.nexus_core_helpers import get_git_platform
 
-    return get_git_platform(repo_key, project_name=project_name)
+    return get_git_platform(
+        repo_key,
+        project_name=project_name,
+        token_override=token_override,
+    )
 
 
 def _state_manager():

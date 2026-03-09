@@ -37,10 +37,24 @@ def default_issue_url(*, issue_num: str, default_repo: str, get_default_project,
         return f"https://github.com/{default_repo}/issues/{issue_num}"
 
 
-def get_issue_details(*, issue_num: str, repo: str | None, default_repo: str, get_direct_issue_plugin, logger):
+def get_issue_details(
+    *,
+    issue_num: str,
+    repo: str | None,
+    default_repo: str,
+    get_direct_issue_plugin,
+    logger,
+    requester_nexus_id: str | None = None,
+):
     try:
         resolved_repo = repo or default_repo
-        plugin = get_direct_issue_plugin(resolved_repo)
+        try:
+            plugin = get_direct_issue_plugin(
+                resolved_repo,
+                requester_nexus_id=requester_nexus_id,
+            )
+        except TypeError:
+            plugin = get_direct_issue_plugin(resolved_repo)
         if not plugin:
             return None
         return plugin.get_issue(

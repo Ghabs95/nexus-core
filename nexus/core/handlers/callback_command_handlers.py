@@ -31,6 +31,20 @@ class CallbackHandlerDeps:
     workflow_state_plugin_kwargs: dict[str, Any]
     action_handlers: dict[str, Callable[..., Awaitable[None]]]
     report_bug_action: Callable[[InteractiveContext, str, str], Awaitable[None]]
+    requester_context_builder: Callable[[int], dict[str, Any]] | None = None
+
+
+def _resolve_direct_issue_plugin(
+    deps: CallbackHandlerDeps,
+    repo: str,
+    requester_nexus_id: str | None,
+):
+    if requester_nexus_id:
+        try:
+            return deps.get_direct_issue_plugin(repo, requester_nexus_id=requester_nexus_id)
+        except TypeError:
+            return deps.get_direct_issue_plugin(repo)
+    return deps.get_direct_issue_plugin(repo)
 
 
 async def core_callback_router(ctx: InteractiveContext, deps: CallbackHandlerDeps):
@@ -274,8 +288,12 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
         )
 
         try:
+            requester_nexus_id = None
+            if callable(deps.requester_context_builder):
+                requester_context = deps.requester_context_builder(int(str(ctx.user_id)))
+                requester_nexus_id = str(requester_context.get("nexus_id") or "").strip() or None
             repo = deps.get_repo(project_hint)
-            plugin = deps.get_direct_issue_plugin(repo)
+            plugin = _resolve_direct_issue_plugin(deps, repo, requester_nexus_id)
             if not plugin or not plugin.add_comment(
                 issue_num,
                 "✅ Implementation approved. Please proceed.",
@@ -305,8 +323,12 @@ async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandler
         )
 
         try:
+            requester_nexus_id = None
+            if callable(deps.requester_context_builder):
+                requester_context = deps.requester_context_builder(int(str(ctx.user_id)))
+                requester_nexus_id = str(requester_context.get("nexus_id") or "").strip() or None
             repo = deps.get_repo(project_hint)
-            plugin = deps.get_direct_issue_plugin(repo)
+            plugin = _resolve_direct_issue_plugin(deps, repo, requester_nexus_id)
             if not plugin or not plugin.add_comment(
                 issue_num,
                 "❌ Implementation rejected. Please revise.",

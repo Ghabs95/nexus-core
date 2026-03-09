@@ -14,10 +14,19 @@ def _emit_alert(*args, **kwargs):
     return emit_alert(*args, **kwargs)
 
 
-def _get_git_platform(repo: str, *, project_name: str | None):
+def _get_git_platform(
+    repo: str,
+    *,
+    project_name: str | None,
+    token_override: str | None = None,
+):
     from nexus.core.orchestration.nexus_core_helpers import get_git_platform
 
-    return get_git_platform(repo, project_name=project_name)
+    return get_git_platform(
+        repo,
+        project_name=project_name,
+        token_override=token_override,
+    )
 
 
 def _get_sop_tier_from_issue(issue_num: str, project_name: str, *, repo_override: str) -> str | None:

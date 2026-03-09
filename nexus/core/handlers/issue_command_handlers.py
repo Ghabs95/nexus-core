@@ -47,6 +47,54 @@ class IssueHandlerDeps:
     track_short_projects: list[str]
 
 
+def _resolve_requester_nexus_id(ctx: InteractiveContext, deps: IssueHandlerDeps) -> str | None:
+    try:
+        platform = str(ctx.platform or "").strip().lower()
+        user_id = str(ctx.user_id or "").strip()
+        if not platform or not user_id:
+            return None
+        return str(deps.user_manager.resolve_nexus_id(platform, user_id) or "").strip() or None
+    except Exception:
+        return None
+
+
+def _resolve_direct_issue_plugin(
+    deps: IssueHandlerDeps,
+    repo: str,
+    requester_nexus_id: str | None,
+):
+    if requester_nexus_id:
+        try:
+            return deps.get_direct_issue_plugin(repo, requester_nexus_id=requester_nexus_id)
+        except TypeError:
+            return deps.get_direct_issue_plugin(repo)
+    return deps.get_direct_issue_plugin(repo)
+
+
+def _resolve_issue_details(
+    deps: IssueHandlerDeps,
+    issue_num: str,
+    *,
+    repo: str | None = None,
+    requester_nexus_id: str | None = None,
+):
+    kwargs: dict[str, Any] = {}
+    if repo is not None:
+        kwargs["repo"] = repo
+    if requester_nexus_id:
+        kwargs["requester_nexus_id"] = requester_nexus_id
+    try:
+        return deps.get_issue_details(issue_num, **kwargs)
+    except TypeError:
+        kwargs.pop("requester_nexus_id", None)
+        try:
+            return deps.get_issue_details(issue_num, **kwargs)
+        except TypeError:
+            if repo is None:
+                return deps.get_issue_details(issue_num)
+            return deps.get_issue_details(issue_num, repo)
+
+
 async def assign_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> None:
     deps.logger.info(f"Assign triggered by user: {ctx.user_id}")
     if deps.allowed_user_ids and int(ctx.user_id) not in deps.allowed_user_ids:
@@ -75,7 +123,11 @@ async def assign_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> Non
     msg_id = await ctx.reply_text(f"🔄 Assigning issue #{issue_number}...")
 
     try:
-        plugin = deps.get_direct_issue_plugin(repo)
+        plugin = _resolve_direct_issue_plugin(
+            deps,
+            repo,
+            _resolve_requester_nexus_id(ctx, deps),
+        )
         if not plugin or not plugin.add_assignee(issue_number, assignee):
             await ctx.edit_message_text(
                 message_id=msg_id,
@@ -119,7 +171,11 @@ async def implement_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> 
     )
 
     try:
-        plugin = deps.get_direct_issue_plugin(repo)
+        plugin = _resolve_direct_issue_plugin(
+            deps,
+            repo,
+            _resolve_requester_nexus_id(ctx, deps),
+        )
         if not plugin:
             await ctx.edit_message_text(
                 message_id=msg_id,
@@ -188,7 +244,11 @@ async def plan_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> None:
     )
 
     try:
-        plugin = deps.get_direct_issue_plugin(repo)
+        plugin = _resolve_direct_issue_plugin(
+            deps,
+            repo,
+            _resolve_requester_nexus_id(ctx, deps),
+        )
         if not plugin:
             await ctx.edit_message_text(
                 message_id=msg_id,
@@ -254,7 +314,11 @@ async def prepare_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
     msg_id = await ctx.reply_text(f"🔧 Preparing issue #{issue_number} for AI implementation...")
 
     try:
-        plugin = deps.get_direct_issue_plugin(repo)
+        plugin = _resolve_direct_issue_plugin(
+            deps,
+            repo,
+            _resolve_requester_nexus_id(ctx, deps),
+        )
         if not plugin:
             await ctx.edit_message_text(
                 message_id=msg_id,
@@ -372,7 +436,11 @@ async def track_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> None
             await ctx.reply_text("❌ Invalid issue number.")
             return
 
-        details = deps.get_issue_details(issue_num)
+        details = _resolve_issue_details(
+            deps,
+            issue_num,
+            requester_nexus_id=_resolve_requester_nexus_id(ctx, deps),
+        )
         issue_title = details.get("title", "") if isinstance(details, dict) else ""
 
         deps.tracked_issues_ref[issue_num] = {
@@ -528,7 +596,11 @@ async def comments_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> N
     msg_id = await ctx.reply_text(f"💬 Fetching comments for issue #{issue_num}...")
 
     try:
-        plugin = deps.get_direct_issue_plugin(repo)
+        plugin = _resolve_direct_issue_plugin(
+            deps,
+            repo,
+            _resolve_requester_nexus_id(ctx, deps),
+        )
         if not plugin:
             await ctx.edit_message_text(
                 message_id=msg_id,
@@ -637,7 +709,12 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
             else deps.find_task_file_by_issue(issue_num)
         )
         if not task_file:
-            details = deps.get_issue_details(issue_num, repo)
+            details = _resolve_issue_details(
+                deps,
+                issue_num,
+                repo=repo,
+                requester_nexus_id=_resolve_requester_nexus_id(ctx, deps),
+            )
             if details and not is_postgres_backend(NEXUS_STORAGE_BACKEND):
                 body = details.get("body", "")
                 match = re.search(r"Task File:\s*`([^`]+)`", body)
@@ -671,7 +748,11 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
 
             repo = deps.resolve_repo(config, deps.default_repo)
 
-        plugin = deps.get_direct_issue_plugin(repo)
+        plugin = _resolve_direct_issue_plugin(
+            deps,
+            repo,
+            _resolve_requester_nexus_id(ctx, deps),
+        )
         if not plugin or not plugin.add_comment(issue_num, response_text):
             await ctx.edit_message_text(
                 message_id=msg_id,
@@ -685,7 +766,12 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
         )
 
         if not details:
-            details = deps.get_issue_details(issue_num, repo)
+            details = _resolve_issue_details(
+                deps,
+                issue_num,
+                repo=repo,
+                requester_nexus_id=_resolve_requester_nexus_id(ctx, deps),
+            )
             if not details:
                 await ctx.reply_text(
                     "⚠️ Posted comment but couldn't fetch issue details to continue agent."

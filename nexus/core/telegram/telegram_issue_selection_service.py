@@ -7,6 +7,7 @@ def list_project_issues(
     logger,
     state: str = "open",
     limit: int = 10,
+    requester_nexus_id: str | None = None,
 ) -> list[dict]:
     config = project_config.get(project_key, {})
     if not isinstance(config, dict):
@@ -34,7 +35,10 @@ def list_project_issues(
     multi_repo = len(repo_candidates) > 1
     for repo in repo_candidates:
         try:
-            plugin = get_direct_issue_plugin(repo)
+            try:
+                plugin = get_direct_issue_plugin(repo, requester_nexus_id=requester_nexus_id)
+            except TypeError:
+                plugin = get_direct_issue_plugin(repo)
             if not plugin:
                 continue
             rows = plugin.list_issues(state=state, limit=limit, fields=["number", "title", "state"])

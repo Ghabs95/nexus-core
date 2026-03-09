@@ -395,6 +395,37 @@ class TestNexusAgentRuntimeSendAlert:
 
 
 class TestNexusAgentRuntimePostCompletionComment:
+    def test_uses_requester_scoped_token_override(self):
+        from nexus.core.runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        mock_platform = MagicMock()
+        mock_platform.add_comment = AsyncMock(return_value=True)
+        mock_platform.get_comments = AsyncMock(return_value=[])
+
+        with (
+            patch(
+                "nexus.core.runtime.nexus_agent_runtime._resolve_project_name_for_repo",
+                return_value="nexus",
+            ),
+            patch(
+                "nexus.core.runtime.nexus_agent_runtime._resolve_requester_token_override",
+                return_value="requester-token",
+            ),
+            patch(
+                "nexus.core.orchestration.nexus_core_helpers.get_git_platform",
+                return_value=mock_platform,
+            ) as mock_get_platform,
+        ):
+            result = runtime.post_completion_comment("44", "owner/repo", "body")
+
+        assert result is True
+        mock_get_platform.assert_called_once_with(
+            "owner/repo",
+            project_name="nexus",
+            token_override="requester-token",
+        )
+
     def test_returns_true_on_success(self):
         from nexus.core.runtime.nexus_agent_runtime import NexusAgentRuntime
 
@@ -522,6 +553,49 @@ class TestNexusAgentRuntimePostCompletionComment:
 
 
 class TestNexusAgentRuntimeIsIssueOpen:
+    def test_uses_requester_scoped_token_override(self):
+        from nexus.adapters.git.base import Issue
+        from nexus.core.runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        mock_platform = MagicMock()
+        mock_platform.get_issue = AsyncMock(
+            return_value=Issue(
+                id="83",
+                number=83,
+                title="x",
+                body="",
+                state="open",
+                labels=[],
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+                url="https://github.com/owner/repo/issues/83",
+            )
+        )
+
+        with (
+            patch(
+                "nexus.core.runtime.nexus_agent_runtime._resolve_project_name_for_repo",
+                return_value="nexus",
+            ),
+            patch(
+                "nexus.core.runtime.nexus_agent_runtime._resolve_requester_token_override",
+                return_value="requester-token",
+            ),
+            patch(
+                "nexus.core.orchestration.nexus_core_helpers.get_git_platform",
+                return_value=mock_platform,
+            ) as mock_get_platform,
+        ):
+            result = runtime.is_issue_open("83", "owner/repo")
+
+        assert result is True
+        mock_get_platform.assert_called_once_with(
+            "owner/repo",
+            project_name="nexus",
+            token_override="requester-token",
+        )
+
     def test_calls_platform_get_issue_with_single_argument(self):
         from nexus.adapters.git.base import Issue
         from nexus.core.runtime.nexus_agent_runtime import NexusAgentRuntime

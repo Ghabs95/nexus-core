@@ -37,15 +37,27 @@ from nexus.plugins.builtin.git_webhook_policy_plugin import (
     register_plugins as register_git_webhook_policy_plugins,
 )
 from nexus.plugins.builtin.github_issue_plugin import (
-    GitHubIssueCLIPlugin,
+    GitHubIssuePlugin,
 )
 from nexus.plugins.builtin.github_issue_plugin import (
     register_plugins as register_github_issue_plugins,
 )
-from nexus.plugins.builtin.gitlab_issue_plugin import (
-    GitLabIssueCLIPlugin,
+from nexus.plugins.builtin.github_issue_cli_plugin import (
+    GitHubIssueCLIPlugin,
+)
+from nexus.plugins.builtin.github_issue_cli_plugin import (
+    register_plugins as register_github_issue_plugins,
 )
 from nexus.plugins.builtin.gitlab_issue_plugin import (
+    GitLabIssuePlugin,
+)
+from nexus.plugins.builtin.gitlab_issue_plugin import (
+    register_plugins as register_gitlab_issue_plugins,
+)
+from nexus.plugins.builtin.gitlab_issue_cli_plugin import (
+    GitLabIssueCLIPlugin,
+)
+from nexus.plugins.builtin.gitlab_issue_cli_plugin import (
     register_plugins as register_gitlab_issue_plugins,
 )
 from nexus.plugins.builtin.json_state_plugin import (
@@ -110,7 +122,9 @@ __all__ = [
     "RateLimitedError",
     "BaseChatEventHandler",
     "ToolUnavailableError",
+    "GitHubIssuePlugin",
     "GitHubIssueCLIPlugin",
+    "GitLabIssuePlugin",
     "GitLabIssueCLIPlugin",
     "JsonStateStorePlugin",
     "TelegramNotificationPlugin",
@@ -127,6 +141,8 @@ __all__ = [
     "register_ai_runtime_plugins",
     "register_agent_launch_policy_plugins",
     "register_github_issue_plugins",
+    "register_github_issue_plugins",
+    "register_gitlab_issue_plugins",
     "register_gitlab_issue_plugins",
     "register_json_state_plugins",
     "register_telegram_notification_plugins",

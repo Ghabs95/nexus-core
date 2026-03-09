@@ -1,9 +1,53 @@
 import os
 import shlex
 import subprocess
+import tempfile
 import threading
 import time
 from typing import Any, Callable, TextIO
+
+_BLOCKED_GIT_CLI_BIN_DIR: str | None = None
+
+
+def _resolve_git_transport(env: dict[str, str] | None = None) -> str:
+    raw = str(
+        (env or {}).get("NEXUS_GIT_PLATFORM_TRANSPORT")
+        or os.getenv("NEXUS_GIT_PLATFORM_TRANSPORT", "api")
+    ).strip().lower()
+    return raw if raw in {"api", "cli"} else "api"
+
+
+def _blocked_git_cli_dir() -> str:
+    global _BLOCKED_GIT_CLI_BIN_DIR
+    if _BLOCKED_GIT_CLI_BIN_DIR and os.path.isdir(_BLOCKED_GIT_CLI_BIN_DIR):
+        return _BLOCKED_GIT_CLI_BIN_DIR
+
+    bin_dir = tempfile.mkdtemp(prefix="nexus-block-git-cli-")
+    shim_body = (
+        "#!/bin/sh\n"
+        'echo "nexus: gh/glab disabled when NEXUS_GIT_PLATFORM_TRANSPORT=api" >&2\n'
+        "exit 127\n"
+    )
+    for name in ("gh", "glab"):
+        path = os.path.join(bin_dir, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(shim_body)
+        os.chmod(path, 0o755)
+    _BLOCKED_GIT_CLI_BIN_DIR = bin_dir
+    return bin_dir
+
+
+def apply_git_transport_env_policy(merged_env: dict[str, str]) -> dict[str, str]:
+    transport = _resolve_git_transport(merged_env)
+    merged_env["NEXUS_GIT_PLATFORM_TRANSPORT"] = transport
+    if transport == "api":
+        blocked_dir = _blocked_git_cli_dir()
+        current_path = str(merged_env.get("PATH") or "")
+        merged_env["PATH"] = f"{blocked_dir}:{current_path}" if current_path else blocked_dir
+        merged_env["NEXUS_GIT_CLI_DISABLED"] = "1"
+    else:
+        merged_env.pop("NEXUS_GIT_CLI_DISABLED", None)
+    return merged_env
 
 
 def _prepare_log_path(
@@ -136,6 +180,7 @@ def _launch_process_with_log(
         merged_env = {**os.environ}
         if env:
             merged_env.update(env)
+        merged_env = apply_git_transport_env_policy(merged_env)
         process = subprocess.Popen(
             cmd,
             cwd=workspace_dir,

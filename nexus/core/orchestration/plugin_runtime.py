@@ -5,6 +5,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from nexus.adapters.git.factory import get_git_platform_transport
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -49,12 +51,12 @@ _PLUGIN_PROFILES: dict[str, dict[str, Any]] = {
     },
     "git_agent_launcher": {
         "kind": "GIT_PLATFORM",
-        "name": "github-issue-cli",
+        "name": "github-issue-api",
         "config": {},
     },
     "gitlab_agent_launcher": {
         "kind": "GIT_PLATFORM",
-        "name": "gitlab-issue-cli",
+        "name": "gitlab-issue-api",
         "config": {},
     },
     "workflow_state_engine": {
@@ -92,7 +94,9 @@ _BUILTIN_REGISTER_MODULES = (
     "nexus.plugins.builtin.ai_runtime_plugin",
     "nexus.plugins.builtin.agent_launch_policy_plugin",
     "nexus.plugins.builtin.github_issue_plugin",
+    "nexus.plugins.builtin.github_issue_cli_plugin",
     "nexus.plugins.builtin.gitlab_issue_plugin",
+    "nexus.plugins.builtin.gitlab_issue_cli_plugin",
     "nexus.plugins.builtin.telegram_notification_plugin",
     "nexus.plugins.builtin.telegram_interactive_plugin",
     "nexus.plugins.builtin.telegram_event_handler_plugin",
@@ -188,13 +192,19 @@ def get_profiled_plugin(
     if not spec:
         raise ValueError(f"Unknown plugin profile: {profile}")
 
+    name = spec["name"]
+    if profile == "git_agent_launcher":
+        name = "github-issue-cli" if get_git_platform_transport() == "cli" else "github-issue-api"
+    elif profile == "gitlab_agent_launcher":
+        name = "gitlab-issue-cli" if get_git_platform_transport() == "cli" else "gitlab-issue-api"
+
     config = dict(spec.get("config", {}))
     if overrides:
         config.update(overrides)
 
     return get_builtin_plugin(
         kind=spec["kind"],
-        name=spec["name"],
+        name=name,
         config=config,
         cache_key=cache_key,
     )

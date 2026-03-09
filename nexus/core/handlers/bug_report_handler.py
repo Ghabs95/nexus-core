@@ -16,6 +16,7 @@ async def handle_report_bug(
     issue_num: str,
     repo_key: str,
     get_direct_issue_plugin: Any,
+    requester_nexus_id: str | None = None,
 ):
     """Report a bug for a specific issue as a comment and a new issue if needed."""
     try:
@@ -23,7 +24,10 @@ async def handle_report_bug(
         await ctx.edit_message_text(f"🐞 Reporting bug for issue #{issue_num}...")
 
         # 2. Get issue details for context
-        plugin = get_direct_issue_plugin(repo_key)
+        try:
+            plugin = get_direct_issue_plugin(repo_key, requester_nexus_id=requester_nexus_id)
+        except TypeError:
+            plugin = get_direct_issue_plugin(repo_key)
         if not plugin:
             await ctx.edit_message_text(f"❌ Could not initialize issue plugin for {repo_key}")
             return

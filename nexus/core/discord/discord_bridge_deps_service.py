@@ -225,8 +225,12 @@ def _default_issue_url(issue_num: str) -> str:
     )
 
 
-def _get_direct_issue_plugin(repo: str):
-    return _svc_get_direct_issue_plugin(repo=repo, get_profiled_plugin=get_profiled_plugin)
+def _get_direct_issue_plugin(repo: str, requester_nexus_id: str | None = None):
+    return _svc_get_direct_issue_plugin(
+        repo=repo,
+        get_profiled_plugin=get_profiled_plugin,
+        requester_nexus_id=requester_nexus_id,
+    )
 
 
 def _get_orchestrator():
@@ -264,13 +268,18 @@ def _get_feature_registry_service() -> FeatureRegistryService:
     return _feature_registry_service
 
 
-def get_issue_details(issue_num: str, repo: str | None = None):
+def get_issue_details(
+    issue_num: str,
+    repo: str | None = None,
+    requester_nexus_id: str | None = None,
+):
     return _svc_get_issue_details(
         issue_num=str(issue_num),
         repo=repo,
         default_repo=DEFAULT_REPO,
         get_direct_issue_plugin=_get_direct_issue_plugin,
         logger=logger,
+        requester_nexus_id=requester_nexus_id,
     )
 
 
@@ -572,7 +581,13 @@ def feature_registry_bridge_deps(*, allowed_user_ids):
     )
 
 
-def list_project_issues_bridge(*, project_key: str, state: str, limit: int = 25) -> list[dict[str, Any]]:
+def list_project_issues_bridge(
+    *,
+    project_key: str,
+    state: str,
+    limit: int = 25,
+    requester_nexus_id: str | None = None,
+) -> list[dict[str, Any]]:
     return _svc_list_project_issues(
         project_key=project_key,
         project_config=PROJECT_CONFIG,
@@ -581,4 +596,5 @@ def list_project_issues_bridge(*, project_key: str, state: str, limit: int = 25)
         logger=logger,
         state=state,
         limit=limit,
+        requester_nexus_id=requester_nexus_id,
     )

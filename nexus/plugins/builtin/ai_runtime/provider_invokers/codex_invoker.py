@@ -4,7 +4,7 @@ import time
 from typing import Any, Callable
 
 from .agent_invokers import _monitor_process_lifecycle, _redact_command_for_logs
-from .agent_invokers import _start_output_tee
+from .agent_invokers import _start_output_tee, apply_git_transport_env_policy
 
 
 def _cleanup_empty_rollout_files(*, logger: Any, codex_home: str | None = None) -> int:
@@ -119,6 +119,7 @@ def invoke_codex_cli(
         merged_env = {**os.environ}
         if env:
             merged_env.update(env)
+        merged_env = apply_git_transport_env_policy(merged_env)
         # Ensure inherited host sandbox flags don't force-disable network for
         # Codex child commands (e.g., gh issue comment/view).
         merged_env.pop("CODEX_SANDBOX_NETWORK_DISABLED", None)

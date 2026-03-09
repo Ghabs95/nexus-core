@@ -1069,9 +1069,10 @@ def invoke_ai_agent(
 
     # Use orchestrator to launch agent
     orchestrator = get_orchestrator(ORCHESTRATOR_CONFIG)
+    auth_is_enabled = bool(auth_enabled())
 
     effective_requester_nexus_id = str(requester_nexus_id or "").strip() or None
-    if auth_enabled() and not effective_requester_nexus_id and issue_url:
+    if auth_is_enabled and not effective_requester_nexus_id and issue_url:
         issue_url_str = str(issue_url)
         effective_requester_nexus_id = get_issue_requester_by_url(issue_url_str)
         if not effective_requester_nexus_id:
@@ -1090,12 +1091,10 @@ def invoke_ai_agent(
     git_platform = project_cfg.get("git_platform", "github")
     default_token_var = "GITLAB_TOKEN" if git_platform == "gitlab" else "GITHUB_TOKEN"
     token_var = project_cfg.get("git_token_var_name", default_token_var)
-    token = os.getenv(token_var)
+    token = os.getenv(token_var) if not auth_is_enabled else None
 
     agent_env = None
-    if auth_enabled():
-        source_match = re.search(r"\*\*Source:\*\*\s*(.+)", str(task_content or ""))
-        source = source_match.group(1).strip().lower() if source_match else ""
+    if auth_is_enabled:
         if effective_requester_nexus_id:
             if project_name:
                 allowed_project, error_project = check_project_access(
@@ -1140,7 +1139,7 @@ def invoke_ai_agent(
             # Propagate requester context into provider invokers for masked auth diagnostics.
             resolved_env["NEXUS_REQUESTER_ID"] = str(effective_requester_nexus_id)
             agent_env = resolved_env
-        elif source != "webhook":
+        else:
             logger.error(
                 "Auth is enabled but no requester identity is available for launch "
                 "(project=%s issue=%s).",
@@ -1149,7 +1148,7 @@ def invoke_ai_agent(
             )
             return None, None
 
-    if agent_env is None and token:
+    if agent_env is None and token and not auth_is_enabled:
         # Backward-compat fallback for non-auth runtime paths.
         agent_env = {"GITHUB_TOKEN": token, "GITLAB_TOKEN": token}
 

@@ -43,6 +43,13 @@ async def test_direct_service_handles_issue_fallback_path():
         create_issue=lambda **_k: "https://github.com/acme/repo/issues/12",
         add_comment=lambda *_a, **_k: None,
     )
+    captured = {}
+
+    def _get_direct_issue_plugin(repo, requester_nexus_id=None):
+        captured["repo"] = repo
+        captured["requester_nexus_id"] = requester_nexus_id
+        return plugin
+
     deps = SimpleNamespace(
         logger=logging.getLogger("test"),
         allowed_user_ids=[],
@@ -50,7 +57,8 @@ async def test_direct_service_handles_issue_fallback_path():
         base_dir="/tmp",
         nexus_dir_name="nexus",
         get_repo=lambda project: "acme/repo",
-        get_direct_issue_plugin=lambda repo: plugin,
+        get_direct_issue_plugin=_get_direct_issue_plugin,
+        requester_context_builder=lambda user_id: {"nexus_id": f"nexus-{user_id}"},
     )
     original = svc.resolve_agents_for_project
     try:
@@ -66,6 +74,8 @@ async def test_direct_service_handles_issue_fallback_path():
     assert handled is True
     assert ctx.edits
     assert "Direct request created" in str(ctx.edits[-1].get("text", ""))
+    assert captured["repo"] == "acme/repo"
+    assert captured["requester_nexus_id"] == "nexus-1"
 
 
 @pytest.mark.asyncio

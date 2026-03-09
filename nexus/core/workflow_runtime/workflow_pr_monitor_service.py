@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any, Callable, Iterable
 
 
@@ -16,6 +17,16 @@ def build_workflow_issue_number_lister(
     def _list_workflow_issue_numbers(project_name: str, repo: str) -> list[int]:
         if callable(list_bound_issue_numbers):
             return list_bound_issue_numbers(project_name, repo)
+        auth_enabled = str(os.getenv("NEXUS_AUTH_ENABLED", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if auth_enabled:
+            # In auth-enabled mode issue listing must be requester-scoped.
+            # Without binding-based issue discovery we cannot derive requester identity.
+            return []
         monitor_policy = get_workflow_monitor_policy_plugin(
             list_open_issues=lambda **kwargs: asyncio.run(
                 get_git_platform(kwargs["repo"], project_name=project_name).list_open_issues(

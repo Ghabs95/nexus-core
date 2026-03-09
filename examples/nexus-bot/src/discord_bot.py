@@ -744,19 +744,22 @@ def _list_issue_options_for_project(
     *,
     issue_state: str = "open",
     limit: int = 25,
+    requester_nexus_id: str | None = None,
 ) -> list[dict[str, str]]:
     return resolve_issue_choices(
         list_project_issues=lambda project_key, state, limit=25: _svc_list_project_issues(
             project_key=project_key,
             project_config=PROJECT_CONFIG,
             get_repos=get_repos,
-            get_direct_issue_plugin=lambda repo: _svc_get_direct_issue_plugin(
+            get_direct_issue_plugin=lambda repo, requester_nexus_id=None: _svc_get_direct_issue_plugin(
                 repo=repo,
                 get_profiled_plugin=get_profiled_plugin,
+                requester_nexus_id=requester_nexus_id,
             ),
             logger=logger,
             state=state,
             limit=limit,
+            requester_nexus_id=requester_nexus_id,
         ),
         project_key=project_key,
         issue_state=issue_state,
@@ -775,6 +778,7 @@ class CommandIssueSelect(discord.ui.Select):
         extra_args: list[str] | None = None,
         text_modal: dict[str, Any] | None = None,
         issue_state: str = "any",
+        requester_nexus_id: str | None = None,
     ):
         self.project_key = project_key
         self.command_name = command_name
@@ -783,8 +787,13 @@ class CommandIssueSelect(discord.ui.Select):
         self.extra_args = list(extra_args or [])
         self.text_modal = dict(text_modal or {})
         self.issue_state = issue_state
+        self.requester_nexus_id = requester_nexus_id
 
-        rows = _list_issue_options_for_project(project_key, issue_state=issue_state)
+        rows = _list_issue_options_for_project(
+            project_key,
+            issue_state=issue_state,
+            requester_nexus_id=requester_nexus_id,
+        )
         select_options: list[discord.SelectOption] = []
         for row in rows[:25]:
             issue_num = row["number"]
@@ -859,6 +868,7 @@ class CommandIssueSelectView(discord.ui.View):
         extra_args: list[str] | None = None,
         text_modal: dict[str, Any] | None = None,
         issue_state: str = "any",
+        requester_nexus_id: str | None = None,
     ):
         super().__init__(timeout=120)
         self.add_item(
@@ -870,6 +880,7 @@ class CommandIssueSelectView(discord.ui.View):
                 extra_args=extra_args,
                 text_modal=text_modal,
                 issue_state=issue_state,
+                requester_nexus_id=requester_nexus_id,
             )
         )
 
@@ -952,6 +963,10 @@ class CommandProjectSelect(discord.ui.Select):
                 extra_args=self.extra_args,
                 text_modal=self.text_modal,
                 issue_state=self.issue_state,
+                requester_nexus_id=str(
+                    _requester_context_for_discord_user(interaction.user).get("nexus_id") or ""
+                ).strip()
+                or None,
             ),
         )
 
@@ -1098,6 +1113,10 @@ async def _run_bridge_with_picker(
                 extra_args=extra_args,
                 text_modal=text_modal,
                 issue_state=resolved_issue_state,
+                requester_nexus_id=str(
+                    _requester_context_for_discord_user(interaction.user).get("nexus_id") or ""
+                ).strip()
+                or None,
             ),
             ephemeral=True,
         )

@@ -251,12 +251,8 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def _allow_env_token_fallback_default() -> bool:
-    """Allow global env-token fallback only for local/test runtime modes."""
-    if not _env_bool("NEXUS_AUTH_ENABLED", False):
-        return True
-    storage_raw = str(os.getenv("NEXUS_STORAGE_BACKEND", "")).strip().lower()
-    # Kept as explicit opt-in alias for local/test mode as requested.
-    return storage_raw == "database"
+    """Allow global env-token fallback only when auth is disabled."""
+    return not _env_bool("NEXUS_AUTH_ENABLED", False)
 
 
 def get_git_platform(
@@ -276,12 +272,13 @@ def get_git_platform(
     project_config = _get_project_config().get(project_key, {})
     default_token_var = "GITLAB_TOKEN" if platform_type == "gitlab" else "GITHUB_TOKEN"
     token_var = project_config.get("git_token_var_name", default_token_var)
+    auth_is_enabled = _env_bool("NEXUS_AUTH_ENABLED", False)
     allow_service_token_fallback = str(
         os.getenv("NEXUS_ALLOW_SERVICE_GIT_TOKEN_FALLBACK", "true")
     ).strip().lower() in {"1", "true", "yes", "on"}
     override_token = str(token_override or "").strip()
     token = override_token
-    if not token:
+    if not token and not auth_is_enabled:
         should_fallback = (
             _allow_env_token_fallback_default()
             if allow_env_token_fallback is None
@@ -295,14 +292,18 @@ def get_git_platform(
         if not token:
             raise ValueError(
                 f"GitLab token required for project '{project_key}'. "
-                "Provide user token context or enable NEXUS_ALLOW_SERVICE_GIT_TOKEN_FALLBACK. "
-                "Provide a requester-scoped token_override "
-                f"(env fallback disabled for token var '{token_var}')."
+                "Provide requester-scoped token_override."
             )
         return platform_cls(
             token=token,
             repo=repo_name,
             base_url=get_gitlab_base_url(project_key),
+        )
+
+    if auth_is_enabled and not token:
+        raise ValueError(
+            f"GitHub token required for project '{project_key}'. "
+            "Provide requester-scoped token_override."
         )
 
     if not token:

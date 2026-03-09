@@ -894,6 +894,7 @@ def _callback_handler_deps() -> CallbackHandlerDeps:
         get_direct_issue_plugin=_get_direct_issue_plugin,
         get_workflow_state_plugin=get_workflow_state_plugin,
         workflow_state_plugin_kwargs=_WORKFLOW_STATE_PLUGIN_KWARGS,
+        requester_context_builder=_requester_context_for_telegram_user_id,
         action_handlers=_svc_build_callback_action_handlers(
             ctx_call_telegram_handler=_ctx_call_telegram_handler,
             logs_handler=logs_handler,
@@ -968,9 +969,13 @@ def _hands_free_routing_handler_deps() -> HandsFreeRoutingDeps:
     )
 
 
-def _get_direct_issue_plugin(repo: str):
+def _get_direct_issue_plugin(repo: str, requester_nexus_id: str | None = None):
     """Return issue plugin for direct Telegram operations."""
-    return _svc_get_direct_issue_plugin(repo=repo, get_profiled_plugin=get_profiled_plugin)
+    return _svc_get_direct_issue_plugin(
+        repo=repo,
+        get_profiled_plugin=get_profiled_plugin,
+        requester_nexus_id=requester_nexus_id,
+    )
 
 
 # --- RATE LIMITING DECORATOR ---
@@ -991,7 +996,11 @@ def save_tracked_issues(data):
 # Moved `_refine_task_description` to inbox_routing_handler.py
 
 
-def get_issue_details(issue_num, repo: str = None):
+def get_issue_details(
+    issue_num,
+    repo: str = None,
+    requester_nexus_id: str | None = None,
+):
     """Query Git API for issue details."""
     return _svc_get_issue_details(
         issue_num=str(issue_num),
@@ -999,6 +1008,7 @@ def get_issue_details(issue_num, repo: str = None):
         default_repo=DEFAULT_REPO,
         get_direct_issue_plugin=_get_direct_issue_plugin,
         logger=logger,
+        requester_nexus_id=requester_nexus_id,
     )
 
 
@@ -1201,7 +1211,12 @@ async def _prompt_monitor_project_selection(
         await update.effective_message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-def _list_project_issues(project_key: str, state: str = "open", limit: int = 10) -> list[dict]:
+def _list_project_issues(
+    project_key: str,
+    state: str = "open",
+    limit: int = 10,
+    requester_nexus_id: str | None = None,
+) -> list[dict]:
     return _svc_list_project_issues(
         project_key=project_key,
         project_config=PROJECT_CONFIG,
@@ -1210,6 +1225,7 @@ def _list_project_issues(project_key: str, state: str = "open", limit: int = 10)
         logger=logger,
         state=state,
         limit=limit,
+        requester_nexus_id=requester_nexus_id,
     )
 
 
@@ -1222,11 +1238,21 @@ async def _prompt_issue_selection(
     edit_message: bool = False,
     issue_state: str = "open",
 ) -> None:
+    requester_nexus_id: str | None = None
+    if update.effective_user:
+        requester_context = _requester_context_for_telegram_user(update.effective_user)
+        requester_nexus_id = str(requester_context.get("nexus_id") or "").strip() or None
+
     await _svc_prompt_issue_selection(
         update=update,
         command=command,
         project_key=project_key,
-        list_project_issues=_list_project_issues,
+        list_project_issues=lambda key, state, limit=25: _list_project_issues(
+            key,
+            state=state,
+            limit=limit,
+            requester_nexus_id=requester_nexus_id,
+        ),
         get_project_label=_get_project_label,
         inline_keyboard_button_cls=InlineKeyboardButton,
         inline_keyboard_markup_cls=InlineKeyboardMarkup,
@@ -2222,11 +2248,18 @@ async def inline_keyboard_handler(update: Update, context: ContextTypes.DEFAULT_
 
 async def _report_bug_action_wrapper(ctx, issue_num: str, project_key: str):
     repo_key = get_repo(project_key)
+    requester_nexus_id = None
+    try:
+        requester_context = _requester_context_for_telegram_user_id(int(str(ctx.user_id)))
+        requester_nexus_id = str(requester_context.get("nexus_id") or "").strip() or None
+    except Exception:
+        requester_nexus_id = None
     await handle_report_bug(
         ctx,
         issue_num,
         repo_key=repo_key,
         get_direct_issue_plugin=_get_direct_issue_plugin,
+        requester_nexus_id=requester_nexus_id,
     )
 
 

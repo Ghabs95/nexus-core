@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
+from nexus.adapters.git.utils import build_issue_url
 from nexus.core.process_orchestrator import AgentRuntime
 
 logger = logging.getLogger(__name__)
@@ -40,11 +41,168 @@ _last_issue_open_error_log_at: dict[tuple[str, str], float] = {}
 
 
 def _runtime_token_override() -> str | None:
-    token = str(os.getenv("GITHUB_TOKEN", "")).strip()
-    if token:
-        return token
-    token = str(os.getenv("GITLAB_TOKEN", "")).strip()
-    return token or None
+    for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN", "GLAB_TOKEN"):
+        token = str(os.getenv(key, "")).strip()
+        if token:
+            return token
+    return None
+
+
+def _resolve_project_name_for_repo(repo: str) -> str | None:
+    target_repo = str(repo or "").strip()
+    if not target_repo:
+        return None
+
+    try:
+        from nexus.core.config import PROJECT_CONFIG, get_default_project, get_repo, get_repos
+    except Exception:
+        return None
+
+    for project_key, project_cfg in (PROJECT_CONFIG or {}).items():
+        if not isinstance(project_cfg, dict):
+            continue
+        try:
+            repos = [str(item or "").strip() for item in get_repos(str(project_key))]
+        except Exception:
+            continue
+        if target_repo in repos:
+            return str(project_key)
+
+    try:
+        default_project = str(get_default_project() or "").strip()
+        if default_project and str(get_repo(default_project) or "").strip() == target_repo:
+            return default_project
+    except Exception:
+        return None
+
+    return None
+
+
+def _resolve_requester_token_override(
+    issue_number: str,
+    repo: str,
+    project_name: str | None = None,
+) -> str | None:
+    env_token = _runtime_token_override()
+    try:
+        from nexus.core.auth.access_domain import auth_enabled, build_execution_env
+        from nexus.core.auth.credential_store import get_issue_requester, get_issue_requester_by_url
+    except Exception:
+        auth_flag = str(os.getenv("NEXUS_AUTH_ENABLED", "false")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if auth_flag:
+            return None
+        return env_token
+
+    auth_is_enabled = bool(auth_enabled())
+    if not auth_is_enabled:
+        return env_token
+
+    normalized_repo = str(repo or "").strip()
+    normalized_issue = str(issue_number or "").strip()
+    if not normalized_repo or not normalized_issue:
+        return None
+
+    requester_nexus_id = None
+    try:
+        requester_nexus_id = get_issue_requester(normalized_repo, normalized_issue)
+    except Exception:
+        requester_nexus_id = None
+
+    if not requester_nexus_id:
+        candidates: list[str] = []
+        try:
+            project_cfg = {}
+            if project_name:
+                from nexus.core.config import PROJECT_CONFIG
+
+                raw_cfg = (PROJECT_CONFIG or {}).get(str(project_name), {})
+                if isinstance(raw_cfg, dict):
+                    project_cfg = raw_cfg
+            candidates.append(build_issue_url(normalized_repo, normalized_issue, project_cfg))
+        except Exception:
+            pass
+        # Legacy/default-host URL probes for bindings saved by URL.
+        candidates.append(
+            build_issue_url(
+                normalized_repo,
+                normalized_issue,
+                {"git_platform": "github"},
+            )
+        )
+        candidates.append(
+            build_issue_url(
+                normalized_repo,
+                normalized_issue,
+                {"git_platform": "gitlab", "gitlab_base_url": "https://gitlab.com"},
+            )
+        )
+
+        seen: set[str] = set()
+        for issue_url in candidates:
+            url = str(issue_url or "").strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            try:
+                requester_nexus_id = get_issue_requester_by_url(url)
+            except Exception:
+                requester_nexus_id = None
+            if requester_nexus_id:
+                break
+
+    if not requester_nexus_id:
+        logger.warning(
+            "Requester binding missing for issue #%s repo=%s project=%s; refusing service-token fallback.",
+            normalized_issue,
+            normalized_repo,
+            project_name,
+        )
+        return None
+
+    user_env, env_error = build_execution_env(str(requester_nexus_id))
+    if env_error:
+        logger.warning(
+            "Requester token unavailable for issue #%s repo=%s project=%s requester=%s: %s",
+            normalized_issue,
+            normalized_repo,
+            project_name,
+            requester_nexus_id,
+            env_error,
+        )
+        return None
+
+    platform = "github"
+    try:
+        if project_name:
+            from nexus.core.config import get_project_platform
+
+            platform = str(get_project_platform(str(project_name)) or "github").strip().lower()
+    except Exception:
+        platform = "github"
+
+    preferred_keys = (
+        ("GITLAB_TOKEN", "GLAB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN")
+        if platform == "gitlab"
+        else ("GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN", "GLAB_TOKEN")
+    )
+    for key in preferred_keys:
+        token = str(user_env.get(key) or "").strip()
+        if token:
+            return token
+
+    logger.warning(
+        "Requester token missing for issue #%s repo=%s project=%s requester=%s after credential resolution.",
+        normalized_issue,
+        normalized_repo,
+        project_name,
+        requester_nexus_id,
+    )
+    return None
 
 
 def _extract_http_status_code(exc: Exception) -> int | None:
@@ -476,11 +634,13 @@ class NexusAgentRuntime(AgentRuntime):
                     # Fail-open when no Git credentials are configured; in that
                     # state we cannot reliably distinguish "closed" from
                     # "unreachable/unauthorized".
-                    if not (
-                        os.getenv("GITHUB_TOKEN")
-                        or os.getenv("GH_TOKEN")
-                        or os.getenv("GITLAB_TOKEN")
-                    ):
+                    project_name = _resolve_project_name_for_repo(repo_name)
+                    token_override = _resolve_requester_token_override(
+                        str(issue_number),
+                        repo_name,
+                        project_name,
+                    )
+                    if not token_override:
                         continue
                     return False
                 if status is True:
@@ -544,7 +704,16 @@ class NexusAgentRuntime(AgentRuntime):
         from nexus.core.orchestration.nexus_core_helpers import get_git_platform
 
         try:
-            platform = get_git_platform(repo, token_override=_runtime_token_override())
+            project_name = _resolve_project_name_for_repo(str(repo))
+            platform = get_git_platform(
+                repo,
+                project_name=project_name,
+                token_override=_resolve_requester_token_override(
+                    str(issue_number),
+                    str(repo),
+                    project_name,
+                ),
+            )
             import asyncio
 
             if self._has_recent_agent_completion_comment(platform, issue_number):
@@ -573,7 +742,16 @@ class NexusAgentRuntime(AgentRuntime):
 
             from nexus.core.orchestration.nexus_core_helpers import get_git_platform
 
-            platform = get_git_platform(repo, token_override=_runtime_token_override())
+            project_name = _resolve_project_name_for_repo(str(repo))
+            platform = get_git_platform(
+                repo,
+                project_name=project_name,
+                token_override=_resolve_requester_token_override(
+                    str(issue_number),
+                    str(repo),
+                    project_name,
+                ),
+            )
             if not platform:
                 return None
 
@@ -758,7 +936,11 @@ class NexusAgentRuntime(AgentRuntime):
             platform = get_git_platform(
                 repo=repo_name or None,
                 project_name=project_name,
-                token_override=_runtime_token_override(),
+                token_override=_resolve_requester_token_override(
+                    str(issue_num),
+                    str(repo_name),
+                    project_name,
+                ),
             )
             details = platform.get_issue(str(issue_num), ["state"]) if platform else None
             if not details:

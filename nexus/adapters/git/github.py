@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import os
 import re
 import subprocess
 import urllib.error
@@ -30,19 +29,15 @@ class GitHubPlatform(GitPlatform):
         """Backward-compatible init hook.
 
         Historically this validated the ``gh`` CLI. The adapter is API-backed
-        now, so the hook only resolves token fallback from the environment.
+        now, so the hook only validates whether a token is already provided.
         """
 
         if self.token:
             return
-        env_token = str(os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or "").strip()
-        if env_token:
-            self.token = env_token
-        else:
-            logger.warning(
-                "GitHub token missing for repo=%s. Authenticated write operations will fail.",
-                self.repo,
-            )
+        logger.warning(
+            "GitHub token missing for repo=%s. Authenticated write operations will fail.",
+            self.repo,
+        )
 
     async def list_open_issues(
         self,
