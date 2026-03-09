@@ -520,11 +520,16 @@ def _cleanup_worktree_for_issue(repo_name: str, issue_number: str) -> bool:
     )
 
 
-def _notify_lifecycle(message: str) -> bool:
+def _notify_lifecycle(message: str, *, dedup_key: str | None = None) -> bool:
     """Send lifecycle notification via abstract notifier, fallback to Telegram alert."""
     if send_notification(message):
         return True
-    return emit_alert(message, severity="info", source="webhook_server")
+    return emit_alert(
+        message,
+        severity="info",
+        source="webhook_server",
+        dedup_key=dedup_key,
+    )
 
 
 def _get_runtime_workflow_plugin():
@@ -1245,6 +1250,80 @@ def api_v1_completion():
             ),
             400,
         )
+
+    def _normalize_ref(value: str) -> str:
+        return str(value or "").strip().lstrip("@").lower()
+
+    # Strict server-side gate: requester can only complete the currently running step.
+    try:
+        from nexus.core.orchestration.nexus_core_helpers import get_workflow_status
+
+        status = asyncio.run(get_workflow_status(issue_number))
+    except Exception as exc:
+        logger.error("Failed to resolve workflow status for completion gate: %s", exc, exc_info=True)
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Could not validate active workflow step for completion",
+                }
+            ),
+            500,
+        )
+
+    if not isinstance(status, dict):
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": (
+                        f"No active workflow status found for issue #{issue_number}; "
+                        "completion rejected."
+                    ),
+                }
+            ),
+            409,
+        )
+
+    expected_agent = _normalize_ref(
+        str(status.get("current_agent_type") or status.get("current_agent") or "")
+    )
+    expected_step_id = _normalize_ref(str(status.get("current_step_id") or ""))
+    try:
+        expected_step_num = int(status.get("current_step_num") or status.get("current_step") or 0)
+    except (TypeError, ValueError):
+        expected_step_num = 0
+
+    if (
+        _normalize_ref(agent_type) != expected_agent
+        or _normalize_ref(step_id) != expected_step_id
+        or int(step_num) != expected_step_num
+    ):
+        return (
+            jsonify(
+                {
+                    "status": "stale",
+                    "message": (
+                        "Completion does not match currently running workflow step; rejected."
+                    ),
+                    "expected": {
+                        "agent_type": expected_agent,
+                        "step_id": expected_step_id,
+                        "step_num": expected_step_num,
+                    },
+                    "received": {
+                        "agent_type": _normalize_ref(agent_type),
+                        "step_id": _normalize_ref(step_id),
+                        "step_num": int(step_num),
+                    },
+                }
+            ),
+            409,
+        )
+
+    workflow_id = str(status.get("workflow_id") or "").strip()
+    if workflow_id:
+        data["workflow_id"] = workflow_id
 
     logger.info(
         "📬 API v1 completion received: issue #%s, agent=%s",

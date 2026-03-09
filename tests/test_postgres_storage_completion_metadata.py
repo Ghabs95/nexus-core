@@ -133,19 +133,33 @@ def test_sync_list_completions_applies_completion_budget(
     assert len(row["key_findings"]) <= 9
 
 
-def test_sync_save_completion_upsert_refreshes_row_recency() -> None:
+def test_sync_save_completion_duplicate_step_keeps_dedup_identity() -> None:
     backend = PostgreSQLStorageBackend(connection_string="sqlite:///:memory:")
     try:
         backend._sync_save_completion(
             "113",
             "developer",
-            {"status": "complete", "summary": "initial implementation", "next_agent": "reviewer"},
+            {
+                "workflow_id": "wf-113",
+                "step_id": "develop",
+                "step_num": 4,
+                "status": "complete",
+                "summary": "initial implementation",
+                "next_agent": "reviewer",
+            },
         )
         time.sleep(0.01)
         backend._sync_save_completion(
             "113",
             "reviewer",
-            {"status": "complete", "summary": "reviewed", "next_agent": "deployer"},
+            {
+                "workflow_id": "wf-113",
+                "step_id": "review",
+                "step_num": 5,
+                "status": "complete",
+                "summary": "reviewed",
+                "next_agent": "deployer",
+            },
         )
 
         before = backend._sync_list_completions("113")
@@ -155,13 +169,30 @@ def test_sync_save_completion_upsert_refreshes_row_recency() -> None:
         backend._sync_save_completion(
             "113",
             "developer",
-            {"status": "complete", "summary": "updated implementation", "next_agent": "reviewer"},
+            {
+                "workflow_id": "wf-113",
+                "step_id": "develop",
+                "step_num": 4,
+                "status": "complete",
+                "summary": "updated implementation",
+                "next_agent": "reviewer",
+            },
         )
 
-        after = backend._sync_list_completions("113")
-        assert after[0]["agent_type"] == "developer"
-        assert after[0]["summary"] == "updated implementation"
-        assert after[0]["_created_at"] != before[0]["_created_at"]
-        assert after[0]["_updated_at"] == after[0]["_created_at"]
+        from nexus.adapters.storage import postgres as pg
+
+        with pg.Session(backend._engine) as session:
+            rows = (
+                session.query(pg._CompletionRow)
+                .filter(pg._CompletionRow.issue_number == "113")
+                .order_by(pg._CompletionRow.created_at.asc())
+                .all()
+            )
+            assert len(rows) == 2
+            developer = next(row for row in rows if row.agent_type == "developer")
+            reviewer = next(row for row in rows if row.agent_type == "reviewer")
+            assert developer.dedup_key == "113:wf-113:develop:developer"
+            assert reviewer.dedup_key == "113:wf-113:review:reviewer"
+            assert "updated implementation" in str(developer.data)
     finally:
         backend.close()

@@ -476,6 +476,7 @@ def handle_new_task(
                 except Exception as exc:
                     logger.error("Failed to append workflow ID: %s", exc)
 
+        issue_created_scope = str(repo_key or project_name).strip() or str(project_name)
         if workflow_id:
             emit_alert(
                 (
@@ -487,6 +488,7 @@ def handle_new_task(
                 source="inbox_processor",
                 issue_number=str(issue_num),
                 project_key=str(project_name),
+                dedup_key=f"issue-created:{issue_created_scope}:{issue_num}",
             )
         else:
             emit_alert(
@@ -498,6 +500,7 @@ def handle_new_task(
                 source="inbox_processor",
                 issue_number=str(issue_num),
                 project_key=str(project_name),
+                dedup_key=f"issue-created:{issue_created_scope}:{issue_num}",
             )
 
     agents_dir_val = config["agents_dir"]

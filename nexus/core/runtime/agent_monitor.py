@@ -42,7 +42,7 @@ class AgentMonitor:
             runtime_ops = get_runtime_ops_plugin(cache_key="runtime-ops:monitor")
             pid = runtime_ops.find_agent_pid_for_issue(issue_num) if runtime_ops else None
             if pid:
-                logger.warning("Issue #%s: Agent timeout detected (PID: %s)", issue_num, pid)
+                logger.info("Issue #%s: Agent timeout candidate detected (PID: %s)", issue_num, pid)
                 return (True, pid)
 
         return (False, None)

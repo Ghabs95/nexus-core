@@ -10,6 +10,16 @@ import time
 from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+_BLOCKED_HELPERS_ENV = "NEXUS_BLOCKED_WORKTREE_HELPERS"
+_DEFAULT_BLOCKED_HELPERS = (
+    "post_comments.py",
+    "writer_completion.py",
+    "deployer_completion.py",
+)
+
+
+class WorktreeProvisionError(RuntimeError):
+    """Raised when an isolated issue worktree cannot be provisioned."""
 
 
 class WorkspaceManager:
@@ -43,6 +53,37 @@ class WorkspaceManager:
         return WorkspaceManager._is_worktree_clean_dir(
             WorkspaceManager._worktree_dir(base_repo_path, issue_number)
         )
+
+    @staticmethod
+    def sanitize_worktree_helper_scripts(worktree_dir: str) -> list[str]:
+        """Remove deprecated helper scripts from a worktree root.
+
+        These scripts bypass runtime completion/comment safeguards and are no
+        longer supported.
+        """
+        configured = str(os.getenv(_BLOCKED_HELPERS_ENV, "")).strip()
+        if configured:
+            blocked = tuple(item.strip() for item in configured.split(",") if item.strip())
+        else:
+            blocked = _DEFAULT_BLOCKED_HELPERS
+
+        removed: list[str] = []
+        for filename in blocked:
+            candidate = os.path.join(worktree_dir, filename)
+            if not os.path.isfile(candidate):
+                continue
+            try:
+                os.remove(candidate)
+                removed.append(candidate)
+            except Exception as exc:
+                logger.warning("Failed to remove deprecated helper %s: %s", candidate, exc)
+        if removed:
+            logger.warning(
+                "Removed deprecated helper scripts from worktree %s: %s",
+                worktree_dir,
+                ", ".join(os.path.basename(path) for path in removed),
+            )
+        return removed
 
     @staticmethod
     def provision_worktree(
@@ -134,9 +175,53 @@ class WorkspaceManager:
                 logger.info(f"Adding worktree and creating new branch {branch_name}")
 
         except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to provision worktree: {e.stderr}")
-            # Fallback to base repo path
-            return base_repo_path
+            stderr = str(getattr(e, "stderr", "") or "")
+            logger.warning("Initial worktree provision failed for %s: %s", branch_name, stderr)
+
+            # If the target branch is currently checked out in another worktree,
+            # create a dedicated issue branch from it so we can still isolate work.
+            if branch_exists_locally:
+                fallback_branch = f"nexus/issue-{issue_number_str}"
+                if fallback_branch == branch_name:
+                    fallback_branch = f"nexus/issue-{issue_number_str}-wt"
+                fallback_cmd = [
+                    "git",
+                    "worktree",
+                    "add",
+                    "-b",
+                    fallback_branch,
+                    worktree_dir,
+                    branch_name,
+                ]
+                try:
+                    subprocess.run(
+                        fallback_cmd,
+                        cwd=base_repo_path,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                    )
+                    logger.info(
+                        "Created worktree using fallback branch %s from %s",
+                        fallback_branch,
+                        branch_name,
+                    )
+                    return worktree_dir
+                except subprocess.CalledProcessError as fallback_error:
+                    logger.error(
+                        "Fallback worktree provision failed for %s from %s: %s",
+                        fallback_branch,
+                        branch_name,
+                        getattr(fallback_error, "stderr", fallback_error),
+                    )
+
+            message = (
+                f"Failed to provision isolated worktree for issue #{issue_number_str} "
+                f"(branch: {branch_name}): {stderr or 'unknown git error'}"
+            )
+            logger.error(message)
+            raise WorktreeProvisionError(message) from e
 
         return worktree_dir
 

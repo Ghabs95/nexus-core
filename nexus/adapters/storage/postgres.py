@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from nexus.adapters.storage.base import StorageBackend
-from nexus.core.completion import budget_completion_payload
+from nexus.core.completion import budget_completion_payload, build_completion_step_dedup_key
 from nexus.core.models import AuditEvent, Workflow, WorkflowState
 
 try:
@@ -438,18 +438,27 @@ class PostgreSQLStorageBackend(StorageBackend):
         payload.setdefault("agent_type", str(agent_type))
         payload.setdefault("_agent_type", str(agent_type))
 
-        dedup_key = f"{issue_number}:{agent_type}:{status}"
+        dedup_key = build_completion_step_dedup_key(
+            issue_number=str(issue_number),
+            agent_type=str(agent_type),
+            payload=payload,
+        )
         now = datetime.now(tz=UTC)
         with Session(self._engine) as session:
             existing = (
                 session.query(_CompletionRow).filter(_CompletionRow.dedup_key == dedup_key).first()
             )
             if existing:
+                existing_payload: dict[str, Any]
+                try:
+                    existing_payload = json.loads(existing.data or "{}")
+                except Exception:
+                    existing_payload = {}
+                if budget_completion_payload(existing_payload) == payload:
+                    return dedup_key
                 existing.data = json.dumps(payload, default=str)
                 existing.summary_text = payload.get("summary", "")
                 existing.status = status
-                # Keep row recency aligned with latest completion payload updates.
-                existing.created_at = now
             else:
                 session.add(
                     _CompletionRow(

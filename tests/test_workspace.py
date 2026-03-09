@@ -1,10 +1,14 @@
 """Tests for nexus.core.workspace — WorkspaceManager."""
 
 import os
+import subprocess
 import time
 from unittest import mock
 
+import pytest
+
 from nexus.core.workspace import WorkspaceManager
+from nexus.core.workspace import WorktreeProvisionError
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +124,89 @@ class TestProvisionWorktreeCustomBranch:
             os.path.join(base, ".nexus", "worktrees", "issue-42"),
             "origin/develop",
         ]
+
+
+def test_existing_branch_checked_out_uses_fallback_issue_branch(tmp_path):
+    base = str(tmp_path)
+    expected_dir = os.path.join(base, ".nexus", "worktrees", "issue-42")
+
+    def _fake_run(cmd, **kwargs):  # noqa: ANN001
+        if cmd[:3] == ["git", "show-ref", "--verify"]:
+            result = mock.MagicMock()
+            result.returncode = 0  # branch exists locally
+            result.stdout = ""
+            result.stderr = ""
+            return result
+        if cmd[:4] == ["git", "worktree", "add", expected_dir]:
+            raise subprocess.CalledProcessError(
+                128,
+                cmd,
+                stderr="fatal: 'feat/my-feature' is already checked out at '/repo'",
+            )
+        if cmd[:4] == ["git", "worktree", "add", "-b"]:
+            result = mock.MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            return result
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    with (
+        mock.patch("os.path.isdir", return_value=False),
+        mock.patch("os.makedirs"),
+        mock.patch("nexus.core.workspace.subprocess.run", side_effect=_fake_run) as mock_run,
+    ):
+        result = WorkspaceManager.provision_worktree(base, "42", branch_name="feat/my-feature")
+
+    assert result == expected_dir
+    last_cmd = mock_run.call_args_list[-1][0][0]
+    assert last_cmd == [
+        "git",
+        "worktree",
+        "add",
+        "-b",
+        "nexus/issue-42",
+        expected_dir,
+        "feat/my-feature",
+    ]
+
+
+def test_provision_worktree_raises_when_initial_and_fallback_fail(tmp_path):
+    base = str(tmp_path)
+    expected_dir = os.path.join(base, ".nexus", "worktrees", "issue-42")
+
+    def _fake_run(cmd, **kwargs):  # noqa: ANN001
+        if cmd[:3] == ["git", "show-ref", "--verify"]:
+            result = mock.MagicMock()
+            result.returncode = 0  # branch exists locally
+            result.stdout = ""
+            result.stderr = ""
+            return result
+        if cmd[:4] == ["git", "worktree", "add", expected_dir]:
+            raise subprocess.CalledProcessError(128, cmd, stderr="fatal: branch is checked out")
+        if cmd[:4] == ["git", "worktree", "add", "-b"]:
+            raise subprocess.CalledProcessError(128, cmd, stderr="fatal: fallback failed")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    with (
+        mock.patch("os.path.isdir", return_value=False),
+        mock.patch("os.makedirs"),
+        mock.patch("nexus.core.workspace.subprocess.run", side_effect=_fake_run),
+    ):
+        with pytest.raises(WorktreeProvisionError):
+            WorkspaceManager.provision_worktree(base, "42", branch_name="feat/my-feature")
+
+
+def test_sanitize_worktree_helper_scripts_removes_known_files(tmp_path):
+    worktree = tmp_path / ".nexus" / "worktrees" / "issue-42"
+    worktree.mkdir(parents=True)
+    helper = worktree / "post_comments.py"
+    helper.write_text("print('x')")
+
+    removed = WorkspaceManager.sanitize_worktree_helper_scripts(str(worktree))
+
+    assert str(helper) in removed
+    assert not helper.exists()
 
 
 class TestCleanupWorktreeSafety:

@@ -26,6 +26,7 @@ _COMPLETION_VERDICT_MAX_CHARS = int(os.getenv("AI_COMPLETION_VERDICT_MAX_CHARS",
 _COMPLETION_EFFORT_MAX_ITEMS = int(os.getenv("AI_COMPLETION_EFFORT_MAX_ITEMS", "12"))
 _COMPLETION_EFFORT_VALUE_MAX_CHARS = int(os.getenv("AI_COMPLETION_EFFORT_VALUE_MAX_CHARS", "180"))
 _COMPLETION_EXTRA_STRING_MAX_CHARS = int(os.getenv("AI_COMPLETION_EXTRA_STRING_MAX_CHARS", "1200"))
+_COMPLETION_COMMENT_MAX_CHARS = int(os.getenv("AI_COMPLETION_COMMENT_MAX_CHARS", "12000"))
 _CONTEXT_SUMMARY_MAX_CHARS = int(os.getenv("AI_CONTEXT_SUMMARY_MAX_CHARS", "1200"))
 
 # Values that indicate "no next agent" / workflow is done
@@ -100,6 +101,27 @@ def _normalize_step_num(value: Any) -> int:
     return step_num if step_num > 0 else 0
 
 
+def build_completion_step_dedup_key(
+    *,
+    issue_number: str,
+    agent_type: str,
+    payload: dict[str, Any] | None = None,
+) -> str:
+    """Build strict idempotency key for completion processing.
+
+    Key contract: ``issue_number + workflow_id + step_id + agent_type``.
+    """
+    data = dict(payload or {})
+    issue_norm = _budget_token_field(issue_number, max_chars=64) or "unknown-issue"
+    workflow_id = _budget_token_field(data.get("workflow_id", ""), max_chars=160) or "unknown-workflow"
+    step_id = _normalize_step_id(data.get("step_id", "")) or "unknown-step"
+    agent_norm = (
+        _budget_token_field(agent_type or data.get("agent_type", ""), max_chars=80)
+        or "unknown-agent"
+    )
+    return f"{issue_norm}:{workflow_id}:{step_id}:{agent_norm}"
+
+
 def _normalize_effort_breakdown(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
         return {}
@@ -127,6 +149,7 @@ def budget_completion_payload(data: dict[str, Any]) -> dict[str, Any]:
     payload = dict(data or {})
     payload["status"] = _budget_token_field(payload.get("status", "complete"), max_chars=32)
     payload["agent_type"] = _budget_token_field(payload.get("agent_type", "unknown"), max_chars=80)
+    payload["workflow_id"] = _budget_token_field(payload.get("workflow_id", ""), max_chars=160)
     payload["step_id"] = _normalize_step_id(payload.get("step_id", ""))
     payload["step_num"] = _normalize_step_num(payload.get("step_num", 0))
     payload["summary"] = _budget_text_field(
@@ -142,11 +165,17 @@ def budget_completion_payload(data: dict[str, Any]) -> dict[str, Any]:
         summary_cap=min(_CONTEXT_SUMMARY_MAX_CHARS, 220),
     )
     payload["effort_breakdown"] = _normalize_effort_breakdown(payload.get("effort_breakdown", {}))
+    payload["comment_markdown"] = _budget_text_field(
+        payload.get("comment_markdown", ""),
+        max_chars=_COMPLETION_COMMENT_MAX_CHARS,
+        summary_cap=_COMPLETION_COMMENT_MAX_CHARS,
+    )
 
     for key in list(payload.keys()):
         if key in {
             "status",
             "agent_type",
+            "workflow_id",
             "step_id",
             "step_num",
             "summary",
@@ -154,6 +183,7 @@ def budget_completion_payload(data: dict[str, Any]) -> dict[str, Any]:
             "next_agent",
             "verdict",
             "effort_breakdown",
+            "comment_markdown",
         }:
             continue
         value = payload.get(key)
@@ -188,6 +218,7 @@ class CompletionSummary:
 
     status: str = "complete"
     agent_type: str = "unknown"
+    workflow_id: str = ""
     step_id: str = ""
     step_num: int = 0
     summary: str = ""
@@ -198,6 +229,7 @@ class CompletionSummary:
     alignment_score: float | None = None
     alignment_summary: str = ""
     alignment_artifacts: list[str] = field(default_factory=list)
+    comment_markdown: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -220,6 +252,7 @@ class CompletionSummary:
         return CompletionSummary(
             status=str(payload.get("status", "complete")),
             agent_type=str(payload.get("agent_type", "unknown")),
+            workflow_id=str(payload.get("workflow_id", "")),
             step_id=str(payload.get("step_id", "")),
             step_num=_normalize_step_num(payload.get("step_num", 0)),
             summary=str(payload.get("summary", "")),
@@ -230,6 +263,7 @@ class CompletionSummary:
             alignment_score=alignment_score,
             alignment_summary=data.get("alignment_summary", ""),
             alignment_artifacts=list(data.get("alignment_artifacts", []) or []),
+            comment_markdown=str(payload.get("comment_markdown", "")),
             raw=payload,
         )
 
@@ -239,6 +273,7 @@ class CompletionSummary:
             {
                 "status": self.status,
                 "agent_type": self.agent_type,
+                "workflow_id": self.workflow_id,
                 "step_id": self.step_id,
                 "step_num": self.step_num,
                 "summary": self.summary,
@@ -246,6 +281,7 @@ class CompletionSummary:
                 "next_agent": self.next_agent,
                 "verdict": self.verdict,
                 "effort_breakdown": self.effort_breakdown,
+                "comment_markdown": self.comment_markdown,
             }
         )
         if not d.get("verdict"):
@@ -273,8 +309,9 @@ def build_completion_comment(completion: CompletionSummary) -> str:
 
     Returns a Markdown string suitable for ``GitPlatform.add_comment()``.
     """
-    sections: list[str] = []
-    sections.append("### ✅ Agent Completed")
+    sections: list[str] = [f"## ✅ Agent Complete — {completion.agent_type}"]
+    if completion.workflow_id:
+        sections.append(f"**Workflow ID:** `{completion.workflow_id}`")
     if completion.step_id:
         sections.append(f"**Step ID:** `{completion.step_id}`")
     if completion.step_num > 0:
@@ -311,7 +348,7 @@ def build_completion_comment(completion: CompletionSummary) -> str:
 
     if completion.next_agent and not completion.is_workflow_done:
         display_name = completion.next_agent.title()
-        sections.append(f"**Next:** Ready for `@{display_name}`")
+        sections.append(f"Ready for **@{display_name}**")
 
     sections.append("_Automated comment from Nexus._")
     return "\n\n".join(sections)
@@ -362,7 +399,7 @@ def generate_completion_instructions(
     # --- Build Deliverable 2 based on backend ---
     if completion_backend == "postgres":
         deliverable_2 = (
-            f"## Deliverable 2: POST completion summary to the API\n\n"
+            f"## Deliverable 2: POST completion summary + comment payload to the API\n\n"
             f"POST your structured results to the completion endpoint. "
             f"Use this command template:\n\n"
             f"```bash\n"
@@ -376,11 +413,14 @@ def generate_completion_instructions(
             f'    "status": "complete",\n'
             f'    "summary": "<one-line summary of what you did>",\n'
             f'    "key_findings": ["<finding 1>", "<finding 2>"],\n'
-            f'    "next_agent": "<agent_type from workflow steps — NOT the step id or display name>"\n'
+            f'    "next_agent": "<agent_type from workflow steps — NOT the step id or display name>",\n'
+            f'    "comment_markdown": "## 🔍 <Step Name> Complete — {agent_type}\\\\n\\\\n**Step ID:** `{step_id}`\\\\n**Step Num:** {step_num}\\\\n\\\\n- Finding 1\\\\n- Finding 2"\n'
             f"  }}'\n"
             f"```\n\n"
             f"Replace the `<placeholder>` values with real data from your analysis.\n"
-            f"**Do NOT write any local JSON files.**"
+            f"**Do NOT write any local JSON files.**\n"
+            f"**Do NOT post issue comments directly via gh/glab/curl scripts.** "
+            f"Nexus runtime posts the issue comment from `comment_markdown` after step validation."
         )
     else:
         completions_script = (
@@ -396,9 +436,11 @@ def generate_completion_instructions(
             f"(the top-level directory you were launched in). "
             f"Do NOT create a new `{nexus_dir}/` folder inside sub-repos or subdirectories.\n\n"
             + completions_script
-            + f'python3 -c \'import json,os; p=os.path.join(os.environ["COMPLETIONS_DIR"], "completion_summary_{issue_number}.json"); d={{"status":"complete","agent_type":"{agent_type}","step_id":"{step_id}","step_num":{step_num},"summary":"<one-line summary of what you did>","key_findings":["<finding 1>","<finding 2>"],"next_agent":"<agent_type from workflow steps — NOT the step id or display name>"}}; open(p, "w", encoding="utf-8").write(json.dumps(d, indent=2))\'\n'
+            + f'python3 -c \'import json,os; p=os.path.join(os.environ["COMPLETIONS_DIR"], "completion_summary_{issue_number}.json"); d={{"status":"complete","agent_type":"{agent_type}","step_id":"{step_id}","step_num":{step_num},"summary":"<one-line summary of what you did>","key_findings":["<finding 1>","<finding 2>"],"next_agent":"<agent_type from workflow steps — NOT the step id or display name>","comment_markdown":"## 🔍 <Step Name> Complete — {agent_type}\\\\n\\\\n**Step ID:** `{step_id}`\\\\n**Step Num:** {step_num}\\\\n\\\\n- Finding 1\\\\n- Finding 2"}}; open(p, "w", encoding="utf-8").write(json.dumps(d, indent=2))\'\n'
             f"```\n\n"
-            f"Replace the `<placeholder>` values with real data from your analysis."
+            f"Replace the `<placeholder>` values with real data from your analysis.\n"
+            f"**Do NOT post issue comments directly via gh/glab/curl scripts.** "
+            f"Nexus runtime posts the issue comment from `comment_markdown` after step validation."
         )
 
     static_intro = (
@@ -420,10 +462,10 @@ def generate_completion_instructions(
         static_intro
         + f"{workflow_steps_text}\n\n"
         + runtime_context
-        + f"## Deliverable 1: Post a structured issue comment\n\n"
-        f"Use your project's Git platform tooling (CLI/API/integration) to post a "
-        f"**structured** comment on issue #{issue_number}.\n"
-        f"The comment MUST follow this format (adapt sections to your work):\n\n"
+        + f"## Deliverable 1: Build structured issue comment markdown\n\n"
+        f"Build the issue comment markdown and include it in `comment_markdown` in Deliverable 2. "
+        f"Nexus runtime posts it after completion validation.\n"
+        f"The markdown MUST follow this format (adapt sections to your work):\n\n"
         f"```\n"
         f"## 🔍 <Step Name> Complete — <agent_type>\n\n"
         f"**Severity:** <Critical|High|Medium|Low>\n"
@@ -452,12 +494,9 @@ def generate_completion_instructions(
         f"Do NOT use the raw agent_type.\n"
         f"If your `next_agent` is terminal (`none`, `done`, `complete`), do NOT include any "
         f"'Ready for @...' line. Never write `@none` in comments.\n"
-        f"Before posting, quickly check recent comments: if a completion comment from your same "
-        f"agent already exists for this run, do not post a duplicate completion comment.\n\n"
+        f"Do NOT post this comment directly yourself.\n\n"
         f"{deliverable_2}\n\n"
-        f"After posting the comment and "
-        f"{'POSTing the completion' if completion_backend == 'postgres' else 'writing the JSON'}"
-        f", **EXIT immediately**."
+        f"After submitting Deliverable 2, **EXIT immediately**."
     )
     logger.debug(
         "Completion instructions generated: chars=%s issue=%s agent=%s",
@@ -483,9 +522,12 @@ class DetectedCompletion:
 
     @property
     def dedup_key(self) -> str:
-        """Deduplication key: ``{issue}:{agent_type}:{filename}``."""
-        basename = os.path.basename(self.file_path)
-        return f"{self.issue_number}:{self.summary.agent_type}:{basename}"
+        """Deduplication key for completion processing idempotency."""
+        return build_completion_step_dedup_key(
+            issue_number=self.issue_number,
+            agent_type=self.summary.agent_type,
+            payload=self.summary.to_dict(),
+        )
 
 
 def scan_for_completions(

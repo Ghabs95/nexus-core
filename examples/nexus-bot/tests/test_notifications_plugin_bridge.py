@@ -59,3 +59,19 @@ def test_emit_alert_sync_path_uses_background_eventbus_bridge(monkeypatch):
     assert getattr(event, "event_type", "") == "system.alert"
     assert getattr(event, "severity", "") == "warning"
     assert getattr(event, "project_key", "") == "nexus"
+
+
+def test_emit_alert_dedup_key_suppresses_repeat(monkeypatch):
+    import nexus.core.integrations.notifications as notifications
+
+    fake = _FakePlugin()
+
+    monkeypatch.setattr(notifications, "_get_notification_plugin", lambda: fake)
+    monkeypatch.setattr(notifications, "_ALERT_DEDUP_CACHE", {})
+
+    first = notifications.emit_alert("hello", dedup_key="issue-created:nexus:117")
+    second = notifications.emit_alert("hello", dedup_key="issue-created:nexus:117")
+
+    assert first is True
+    assert second is True
+    assert fake.calls == 1

@@ -85,6 +85,52 @@ def test_handle_issue_opened_event_creates_task_file(tmp_path):
     assert notifications
 
 
+def test_handle_issue_opened_event_passes_dedup_key_when_supported(tmp_path):
+    seen: list[tuple[str, str | None]] = []
+
+    def _notify(message, *, dedup_key=None):
+        seen.append((message, dedup_key))
+        return True
+
+    result = handle_issue_opened_event(
+        event={
+            "action": "opened",
+            "number": 79,
+            "title": "Cross-repo feature",
+            "body": "Implement backend + mobile",
+            "author": "alice",
+            "url": "https://github.com/acme/sampleco-mobile/issues/79",
+            "labels": [],
+            "repo": "acme/sampleco-mobile",
+        },
+        logger=MagicMock(),
+        policy=_Policy(),
+        notify_lifecycle=_notify,
+        emit_alert=lambda *args, **kwargs: True,
+        project_config={
+            "sampleco": {
+                "workspace": "workspace-a",
+                "git_repo": "acme/sampleco-backend",
+                "git_repos": ["acme/sampleco-backend", "acme/sampleco-mobile"],
+            },
+            "system_operations": {"inbox": "triage"},
+        },
+        base_dir=str(tmp_path),
+        project_repos=lambda key, cfg, get_repos: cfg.get("git_repos", [cfg.get("git_repo")]),
+        get_repos=lambda _key: [],
+        get_tasks_active_dir=lambda root, project: str(
+            tmp_path / "workspace-a" / ".nexus" / "tasks" / project / "active"
+        ),
+        get_inbox_dir=lambda root, project: str(
+            tmp_path / "workspace-a" / ".nexus" / "inbox" / project
+        ),
+    )
+
+    assert result["status"] == "task_created"
+    assert seen
+    assert seen[0][1] == "issue-created:acme/sampleco-mobile:79"
+
+
 def test_handle_issue_closed_event_triggers_worktree_cleanup():
     notifications = []
     cleanups = []

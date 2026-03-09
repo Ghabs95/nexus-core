@@ -1,8 +1,24 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Awaitable, Callable, Protocol, cast
 
 from nexus.adapters.notifications.base import Button
+
+
+def _build_feature_trigger_message_id(
+    *,
+    base_message_id: str,
+    selected_feature: dict[str, Any],
+    selection_order: int,
+) -> str:
+    """Build a stable per-feature trigger id from a shared callback message id."""
+    title = str(selected_feature.get("title") or "").strip().lower()
+    summary = str(selected_feature.get("summary") or "").strip().lower()
+    digest = hashlib.sha1(f"{title}\n{summary}".encode("utf-8")).hexdigest()[:10]
+    base = str(base_message_id or "feature-pick").strip() or "feature-pick"
+    order = max(1, int(selection_order))
+    return f"{base}-feat-{order}-{digest}"
 
 
 async def handle_feature_ideation_callback(
@@ -288,16 +304,22 @@ async def handle_feature_ideation_callback(
             )
             if hasattr(ctx.raw_event, "message") and hasattr(ctx.raw_event.message, "message_id"):
                 trigger_message_id = str(ctx.raw_event.message.message_id)
+            selection_order = len(selected_items) + 1
+            feature_trigger_id = _build_feature_trigger_message_id(
+                base_message_id=str(trigger_message_id),
+                selected_feature=selected,
+                selection_order=selection_order,
+            )
             create_feature_task_fn = cast(_CreateFeatureTaskFn, create_feature_task)
             try:
                 result = await create_feature_task_fn(
                     task_text,
-                    trigger_message_id,
+                    feature_trigger_id,
                     str(project_key),
                     str(ctx.user_id),
                 )
             except TypeError:
-                result = await create_feature_task_fn(task_text, trigger_message_id, str(project_key))
+                result = await create_feature_task_fn(task_text, feature_trigger_id, str(project_key))
             message = str(result.get("message") or "⚠️ Task processing completed.")
             project_locked = is_project_locked(feature_state)
             keyboard_rows: list[list[Button]] = []

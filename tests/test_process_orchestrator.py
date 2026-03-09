@@ -236,12 +236,16 @@ class TestScanAndProcessCompletions:
     def _fake_summary(self, agent_type="developer", next_agent="reviewer", is_done=False):
         summary = MagicMock()
         summary.agent_type = agent_type
+        summary.workflow_id = "wf-42"
         summary.step_id = agent_type
         summary.step_num = 1
         summary.next_agent = next_agent
         summary.is_workflow_done = is_done
+        summary.comment_markdown = ""
+        summary.raw = {}
         summary.to_dict.return_value = {
             "agent_type": agent_type,
+            "workflow_id": "wf-42",
             "step_id": agent_type,
             "step_num": 1,
             "next_agent": next_agent,
@@ -283,6 +287,46 @@ class TestScanAndProcessCompletions:
         assert len(runtime.posted_comments) == 1
         assert len(runtime.launched) == 1
         assert runtime.launched[0]["agent_type"] == "reviewer"
+
+    def test_engine_noop_completion_skips_comment_and_launch(self):
+        """No-op completions (already applied) must not comment or chain again."""
+        runtime = StubRuntime()
+        wf = _make_workflow(WorkflowState.RUNNING)
+        wf.metadata["_nexus_completion_applied"] = False
+        wf.metadata["_nexus_completion_reason"] = "duplicate-step-noop"
+
+        async def complete(issue, agent, outputs, event_id=""):
+            return wf
+
+        orc = _orchestrator(runtime, complete)
+        dedup_seen = set()
+        det = self._fake_detection(dedup_key="k-noop")
+
+        with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
+            orc.scan_and_process_completions("/base", dedup_seen)
+
+        assert runtime.posted_comments == []
+        assert runtime.launched == []
+        assert "k-noop" in dedup_seen
+
+    def test_comment_markdown_from_completion_payload_is_used(self):
+        """Runtime should post comment_markdown payload instead of rebuilding."""
+        runtime = StubRuntime()
+
+        async def complete(issue, agent, outputs, event_id=""):
+            return None
+
+        orc = _orchestrator(runtime, complete)
+        det = self._fake_detection(next_agent="architect")
+        det.summary.raw = {"comment_markdown": "## Custom Completion Comment"}
+        det.summary.comment_markdown = "## Custom Completion Comment"
+        det.summary.to_dict.return_value["comment_markdown"] = "## Custom Completion Comment"
+
+        with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
+            orc.scan_and_process_completions("/base", set())
+
+        assert len(runtime.posted_comments) == 1
+        assert runtime.posted_comments[0]["body"] == "## Custom Completion Comment"
 
     def test_comment_post_failure_blocks_autochain(self):
         """Completion processing must halt when completion comment cannot be posted."""
