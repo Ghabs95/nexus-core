@@ -107,7 +107,10 @@ class WorkflowStateEnginePlugin:
     def _get_engine(self) -> WorkflowEngine:
         if callable(self.engine_factory):
             return self.engine_factory()
-        return WorkflowEngine(storage=self._build_storage())
+        event_bus = self.config.get("event_bus")
+        if callable(event_bus):
+            event_bus = event_bus()
+        return WorkflowEngine(storage=self._build_storage(), event_bus=event_bus)
 
     def _resolve_workflow_id(self, issue_number: str) -> str | None:
         if callable(self.issue_to_workflow_id):

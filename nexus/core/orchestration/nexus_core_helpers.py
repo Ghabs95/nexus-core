@@ -364,6 +364,7 @@ _WORKFLOW_STATE_PLUGIN_BASE_KWARGS = {
     "set_pending_approval": lambda *a: _get_wf_state().set_pending_approval(*a),
     "clear_pending_approval": lambda n: _get_wf_state().clear_pending_approval(n),
     "audit_log": AuditStore.audit_log,
+    "event_bus": get_event_bus,
 }
 _WORKFLOW_STATE_PLUGIN_CACHE_KEY = "workflow:state-engine"
 
