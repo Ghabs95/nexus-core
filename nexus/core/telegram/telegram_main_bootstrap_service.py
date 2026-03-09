@@ -1,4 +1,5 @@
 import os
+import logging
 from collections.abc import Mapping
 from inspect import isawaitable
 from typing import Any
@@ -8,6 +9,8 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler
 
 from nexus.core.command_visibility import filter_visible_commands
 from nexus.core.storage.capabilities import get_storage_capabilities
+
+logger = logging.getLogger(__name__)
 
 
 def build_post_init_with_scheduler(
@@ -132,7 +135,16 @@ def register_application_handlers(
     for cmd, handler_name, action in command_specs:
         if cmd not in visible_commands:
             continue
-        app.add_handler(CommandHandler(cmd, _wrap(handlers[handler_name], command=cmd, action=action)))
+        try:
+            handler = handlers[handler_name]
+        except KeyError:
+            logger.warning(
+                "Skipping /%s command registration: missing handler key '%s'",
+                cmd,
+                handler_name,
+            )
+            continue
+        app.add_handler(CommandHandler(cmd, _wrap(handler, command=cmd, action=action)))
 
     app.add_handler(CallbackQueryHandler(_wrap(handlers["chat_callback_handler"]), pattern=r"^chat:"))
     app.add_handler(CallbackQueryHandler(_wrap(handlers["menu_callback_handler"]), pattern=r"^menu:"))

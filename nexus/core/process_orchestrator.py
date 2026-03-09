@@ -449,6 +449,28 @@ class ProcessOrchestrator:
                             "skipping auto-chain"
                         )
                         continue
+
+                    # Some workflow engines expose active-agent labels such as
+                    # "close_loop (summarizer)" for final steps. If completion
+                    # already indicates terminal and the label canonicalizes to
+                    # the same agent, finalize instead of re-launching it.
+                    completed_canonical = _canonical_agent_ref(completed_agent)
+                    next_canonical = _canonical_agent_ref(next_agent)
+                    if (
+                        summary.is_workflow_done
+                        and completed_canonical
+                        and next_canonical
+                        and completed_canonical == next_canonical
+                    ):
+                        self._handle_workflow_done(
+                            issue_num,
+                            repo,
+                            completed_agent,
+                            project_name or "",
+                            reason="engine-terminal-self-loop",
+                        )
+                        continue
+
                     logger.info(f"🔀 Engine routed #{issue_num}: {completed_agent} → {next_agent}")
 
                 else:
@@ -754,11 +776,17 @@ class ProcessOrchestrator:
                 self._runtime.clear_launch_guard(issue_num)
 
                 try:
+                    retry_exclusions = self._merge_retry_exclusions(
+                        current_entry.get("exclude_tools")
+                        if isinstance(current_entry, dict)
+                        else None,
+                        crashed_tool,
+                    )
                     pid_new, _ = self._runtime.launch_agent(
                         issue_num,
                         agent_type,
                         trigger_source="dead-agent-retry",
-                        exclude_tools=[crashed_tool] if crashed_tool else None,
+                        exclude_tools=retry_exclusions,
                     )
                     if pid_new:
                         logger.info(f"🔄 Dead-agent retry launched: {agent_type} for #{issue_num}")
@@ -980,10 +1008,15 @@ class ProcessOrchestrator:
             if will_retry:
                 self._runtime.clear_launch_guard(issue_num)
                 try:
+                    retry_exclusions = self._merge_retry_exclusions(
+                        agent_data.get("exclude_tools") if isinstance(agent_data, dict) else None,
+                        crashed_tool,
+                    )
                     self._runtime.launch_agent(
                         issue_num,
                         expected_agent,
                         trigger_source="orphan-timeout-retry",
+                        exclude_tools=retry_exclusions,
                     )
                 except Exception as exc:
                     logger.error(f"Orphaned-step retry exception for issue #{issue_num}: {exc}")
@@ -1009,11 +1042,15 @@ class ProcessOrchestrator:
         if will_retry:
             self._runtime.clear_launch_guard(issue_num)
             try:
+                retry_exclusions = self._merge_retry_exclusions(
+                    agent_data.get("exclude_tools") if isinstance(agent_data, dict) else None,
+                    crashed_tool,
+                )
                 self._runtime.launch_agent(
                     issue_num,
                     agent_type,
                     trigger_source="timeout-retry",
-                    exclude_tools=[crashed_tool] if crashed_tool else None,
+                    exclude_tools=retry_exclusions,
                 )
             except Exception as exc:
                 logger.error(f"Timeout retry exception for issue #{issue_num}: {exc}")
@@ -1033,6 +1070,30 @@ class ProcessOrchestrator:
             return int(timeout)
         return int(os.getenv("NEXUS_AGENT_TIMEOUT", "3600"))
 
+    @staticmethod
+    def _merge_retry_exclusions(
+        existing_exclusions: Any,
+        crashed_tool: str | None,
+    ) -> list[str] | None:
+        merged: list[str] = []
+        seen: set[str] = set()
+
+        def _add(value: Any) -> None:
+            name = str(value or "").strip().lower()
+            if not name or name in seen:
+                return
+            seen.add(name)
+            merged.append(name)
+
+        if isinstance(existing_exclusions, (list, tuple, set)):
+            for value in existing_exclusions:
+                _add(value)
+        elif existing_exclusions:
+            _add(existing_exclusions)
+
+        _add(crashed_tool)
+        return merged or None
+
 
 # ---------------------------------------------------------------------------
 # Module-level helper
@@ -1044,3 +1105,17 @@ def _is_terminal(agent_ref: str) -> bool:
     from nexus.core.completion import _TERMINAL_VALUES
 
     return agent_ref.strip().lower() in _TERMINAL_VALUES
+
+
+def _canonical_agent_ref(agent_ref: str | None) -> str:
+    """Normalize agent refs for equality checks in auto-chain decisions."""
+    raw = str(agent_ref or "").strip().lstrip("@").strip().strip("`")
+    if not raw:
+        return ""
+
+    alias_match = re.search(r"\(([^()]+)\)\s*$", raw)
+    if alias_match:
+        raw = alias_match.group(1).strip()
+
+    return raw.lower()
+

@@ -240,6 +240,15 @@ class Workflow:
 
 
 @dataclass
+class ImageAttachment:
+    """An image attached to a task input."""
+
+    file_id: str
+    filename: str = ""
+    mime_type: str = "image/jpeg"
+
+
+@dataclass
 class Task:
     """Input task to be processed by workflow."""
 
@@ -250,6 +259,7 @@ class Task:
     created_by: str
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = field(default_factory=dict)
+    attachments: list[ImageAttachment] | None = None
 
     def __str__(self) -> str:
         return f"Task #{self.id}: {self.title}"

@@ -184,6 +184,21 @@ class TestGenerateCompletionInstructions:
         assert "Never write `@none`" in text
         assert "omit this line when next_agent is terminal/`none`" in text
 
+    def test_removes_legacy_summarizer_example(self):
+        text = generate_completion_instructions("1", "writer")
+        assert "Summarize & Close" not in text
+        assert "`summarizer`" not in text
+
+    def test_defaults_project_name_to_nexus_path(self):
+        text = generate_completion_instructions("1", "triage", project_name="", nexus_dir=".nexus")
+        assert ".nexus/tasks/nexus/completions" in text
+        assert ".nexus/tasks//completions" not in text
+
+    def test_postgres_uses_endpoint_placeholder_when_missing_webhook_url(self):
+        text = generate_completion_instructions("1", "triage", completion_backend="postgres", webhook_url="")
+        assert "<WEBHOOK_BASE_URL>/api/v1/completion" in text
+        assert "Use this command template" in text
+
 
 # ---------------------------------------------------------------------------
 # scan_for_completions

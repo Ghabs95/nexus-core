@@ -1456,7 +1456,7 @@ def visualizer_access():
     return response
 
 
-@app.route("/visualizer", methods=["GET"])
+@app.route("/visualizer", methods=["GET"], strict_slashes=False)
 def visualizer():
     """Serve the real-time workflow visualizer dashboard."""
     allowed, mode, session_id = _resolve_visualizer_access()

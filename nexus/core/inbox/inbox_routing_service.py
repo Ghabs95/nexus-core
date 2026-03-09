@@ -48,6 +48,7 @@ def process_inbox_task_request(
     requester_context: dict[str, Any] | None = None,
     authorize_project: AuthorizeProjectFn | None = None,
     images: list[bytes] | None = None,
+    attachments: list[Any] | None = None,
 ) -> dict[str, Any]:
     normalized_project_hint = (
         normalize_project_key(str(project_hint or "")) or str(project_hint or "").strip().lower()
@@ -172,6 +173,7 @@ def process_inbox_task_request(
             content=str(content),
             raw_text=str(text),
             requester_context=requester_context,
+            attachments=attachments,
         )
     except TypeError:
         markdown_content = render_task_markdown(
@@ -249,6 +251,7 @@ def save_resolved_inbox_task_request(
     logger: logging.Logger,
     requester_context: dict[str, Any] | None = None,
     authorize_project: AuthorizeProjectFn | None = None,
+    attachments: list[Any] | None = None,
 ) -> dict[str, Any]:
     inbox_backend = get_inbox_storage_backend()
     project = normalize_project_key(selected_project) or selected_project
@@ -301,6 +304,7 @@ def save_resolved_inbox_task_request(
             content=str(content),
             raw_text=str(text),
             requester_context=resolved_requester_context,
+            attachments=attachments,
         )
     except TypeError:
         markdown_content = render_task_markdown(

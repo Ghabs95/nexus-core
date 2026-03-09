@@ -275,6 +275,44 @@ class TestScanAndProcessCompletions:
         assert len(runtime.finalized) == 1
         assert runtime.finalized[0]["issue"] == "42"
 
+    def test_engine_terminal_self_loop_label_finalizes(self):
+        """Decorated final-step labels should not relaunch the same completed agent."""
+        runtime = StubRuntime()
+        wf = _make_workflow(WorkflowState.RUNNING)
+        wf.steps[0].agent.name = "close_loop (summarizer)"
+
+        async def complete(issue, agent, outputs, event_id=""):
+            return wf
+
+        orc = _orchestrator(runtime, complete)
+        det = self._fake_detection(agent_type="summarizer", next_agent="", is_done=True)
+
+        with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
+            orc.scan_and_process_completions("/base", set())
+
+        assert runtime.launched == []
+        assert len(runtime.finalized) == 1
+        assert runtime.finalized[0]["issue"] == "42"
+
+    def test_engine_terminal_self_loop_label_finalizes(self):
+        """Engine labels like 'close_loop (summarizer)' should not relaunch summarizer."""
+        runtime = StubRuntime()
+        wf = _make_workflow(WorkflowState.RUNNING)
+        wf.steps[0].agent.name = "close_loop (summarizer)"
+
+        async def complete(issue, agent, outputs, event_id=""):
+            return wf
+
+        orc = _orchestrator(runtime, complete)
+        det = self._fake_detection(agent_type="summarizer", next_agent="", is_done=True)
+
+        with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
+            orc.scan_and_process_completions("/base", set())
+
+        assert runtime.launched == []
+        assert len(runtime.finalized) == 1
+        assert runtime.finalized[0]["issue"] == "42"
+
     def test_engine_path_failed_finalizes(self):
         """When engine workflow is FAILED, finalize is called."""
         runtime = StubRuntime()
@@ -696,6 +734,22 @@ class TestDetectDeadAgents:
 
         assert runtime.launched[0]["exclude_tools"] == ["gemini"]
 
+    def test_dead_agent_retry_merges_existing_exclusions(self):
+        """Retry must carry forward persisted exclusions, then append crashed tool."""
+        runtime = StubRuntime(retry=True)
+        runtime.tracker = {
+            "74": {
+                **self._entry(pid=7474, agent_type="developer", tool="gemini", age_seconds=7200),
+                "exclude_tools": ["codex", "copilot"],
+            }
+        }
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        with patch.object(runtime, "is_pid_alive", return_value=False):
+            orc.detect_dead_agents()
+
+        assert runtime.launched[0]["exclude_tools"] == ["codex", "copilot", "gemini"]
+
     def test_workflow_ineligible_dead_agent_skips_retry_and_cleans_tracker(self):
         """Dead-agent retries are skipped when workflow no longer expects that agent."""
         runtime = StubRuntime(retry=True)
@@ -845,6 +899,37 @@ class TestCheckStuckAgents:
             for launch in runtime.launched
         )
 
+    def test_orphaned_retry_merges_existing_exclusions(self, tmp_path):
+        """Orphan retries must preserve existing exclusions from tracker state."""
+        log_dir = tmp_path / ".nexus" / "tasks" / "job1" / "logs"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "gemini_46_20260101_120000.log"
+        log_file.write_text("stale output")
+        old_time = time.time() - 120
+        os.utime(log_file, (old_time, old_time))
+
+        runtime = StubRuntime(retry=True)
+        runtime.tracker = {
+            "46": {
+                "timestamp": time.time() - 120,
+                "agent_type": "debug",
+                "tool": "gemini",
+                "exclude_tools": ["codex", "copilot"],
+            }
+        }
+        runtime._running_agents["46"] = "debug"
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        with patch.object(runtime, "check_log_timeout", return_value=(True, None)):
+            orc.check_stuck_agents(str(tmp_path))
+
+        assert any(
+            launch["issue"] == "46"
+            and launch["trigger"] == "orphan-timeout-retry"
+            and launch["exclude_tools"] == ["codex", "copilot", "gemini"]
+            for launch in runtime.launched
+        )
+
     def test_orphaned_running_step_without_expected_agent_is_ignored(self, tmp_path):
         """No expected RUNNING agent means no orphan recovery action is taken."""
         log_dir = tmp_path / ".nexus" / "tasks" / "job1" / "logs"
@@ -863,3 +948,38 @@ class TestCheckStuckAgents:
         assert runtime.alerts == []
         assert runtime.launched == []
         assert not any(event == "STEP_TIMEOUT" for _, event, _ in runtime.audit_events)
+
+    def test_timeout_retry_merges_existing_exclusions(self, tmp_path):
+        """Timeout retries must preserve existing exclusions from tracker state."""
+        log_dir = tmp_path / ".nexus" / "tasks" / "job1" / "logs"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "gemini_47_20260101_120000.log"
+        log_file.write_text("stale output")
+        old_time = time.time() - 120
+        os.utime(log_file, (old_time, old_time))
+
+        runtime = StubRuntime(retry=True)
+        runtime.tracker = {
+            "47": {
+                "pid": 4747,
+                "timestamp": time.time() - 120,
+                "agent_type": "developer",
+                "tool": "gemini",
+                "exclude_tools": ["codex", "copilot"],
+            }
+        }
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        with (
+            patch.object(runtime, "is_pid_alive", return_value=True),
+            patch.object(runtime, "kill_process", return_value=True),
+            patch.object(runtime, "check_log_timeout", return_value=(True, 4747)),
+        ):
+            orc.check_stuck_agents(str(tmp_path))
+
+        assert any(
+            launch["issue"] == "47"
+            and launch["trigger"] == "timeout-retry"
+            and launch["exclude_tools"] == ["codex", "copilot", "gemini"]
+            for launch in runtime.launched
+        )

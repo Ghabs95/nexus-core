@@ -326,15 +326,17 @@ def generate_completion_instructions(
     Returns:
         Prompt text to append to the agent's instructions.
     """
+    resolved_project_name = str(project_name or "").strip() or "nexus"
+    endpoint_base = str(webhook_url or "").strip().rstrip("/") or "<WEBHOOK_BASE_URL>"
 
     # --- Build Deliverable 2 based on backend ---
     if completion_backend == "postgres":
         deliverable_2 = (
             f"## Deliverable 2: POST completion summary to the API\n\n"
             f"POST your structured results to the completion endpoint. "
-            f"Use this exact command:\n\n"
+            f"Use this command template:\n\n"
             f"```bash\n"
-            f"curl -s -X POST {webhook_url}/api/v1/completion \\\n"
+            f"curl -s -X POST {endpoint_base}/api/v1/completion \\\n"
             f'  -H "Content-Type: application/json" \\\n'
             f"  -d '{{\n"
             f'    "issue_number": "{issue_number}",\n'
@@ -352,12 +354,12 @@ def generate_completion_instructions(
         completions_script = (
             f"```bash\n"
             f"WORKSPACE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n"
-            f"COMPLETIONS_DIR=$(find \"$WORKSPACE_ROOT\" -maxdepth 4 -path '*/{nexus_dir}/tasks/{project_name}/completions' -type d 2>/dev/null | head -1)\n"
-            f'if [ -z "$COMPLETIONS_DIR" ]; then COMPLETIONS_DIR="$WORKSPACE_ROOT/{nexus_dir}/tasks/{project_name}/completions"; mkdir -p "$COMPLETIONS_DIR"; fi\n'
+            f"COMPLETIONS_DIR=$(find \"$WORKSPACE_ROOT\" -maxdepth 4 -path '*/{nexus_dir}/tasks/{resolved_project_name}/completions' -type d 2>/dev/null | head -1)\n"
+            f'if [ -z "$COMPLETIONS_DIR" ]; then COMPLETIONS_DIR="$WORKSPACE_ROOT/{nexus_dir}/tasks/{resolved_project_name}/completions"; mkdir -p "$COMPLETIONS_DIR"; fi\n'
         )
         deliverable_2 = (
             f"## Deliverable 2: Write completion summary JSON\n\n"
-            f"Write a JSON file with your structured results. Use this exact command:\n\n"
+            f"Write a JSON file with your structured results. Use this command template:\n\n"
             f"**IMPORTANT:** The `{nexus_dir}/` directory lives at the **workspace root** "
             f"(the top-level directory you were launched in). "
             f"Do NOT create a new `{nexus_dir}/` folder inside sub-repos or subdirectories.\n\n"
@@ -398,15 +400,15 @@ def generate_completion_instructions(
         f"- Finding 2\n"
         f"- Finding 3\n\n"
         f"### SOP Checklist\n\n"
-        f"Use the workflow steps above to build the checklist. Example:\n"
-        f"- [x] 1. Initial Routing — `triage` : Severity + routing ✅\n"
-        f"- [ ] 2. Create Design Proposal — `design`\n"
-        f"- [ ] 3. Summarize & Close — `summarizer`\n\n"
+        f"Build the checklist from the workflow steps above (use those exact step labels and agent_type tokens).\n"
+        f"Mark your completed step as `[x]` and leave future steps as `[ ]`.\n"
+        f"Do NOT invent step names, use legacy agent names, or skip required steps.\n\n"
         f"Ready for **@<Display Name>**  *(omit this line when next_agent is terminal/`none`)*\n"
         f"```\n\n"
         f"**IMPORTANT:** The comment must contain real findings from YOUR analysis, "
         f"not placeholder text.\n"
         f"Adapt the template to your role ({agent_type}). Include concrete details.\n"
+        f"The header must end with your current runtime agent_type token: `{agent_type}`.\n"
         f"For the 'Ready for @...' line, use the **Display Names** mapping from "
         f"the workflow steps above (e.g., `Ready for **@Developer**`). "
         f"Do NOT use the raw agent_type.\n"
@@ -417,8 +419,7 @@ def generate_completion_instructions(
         f"{deliverable_2}\n\n"
         f"After posting the comment and "
         f"{'POSTing the completion' if completion_backend == 'postgres' else 'writing the JSON'}"
-        f", **EXIT immediately**.\n"
-        f"DO NOT attempt to invoke or launch any other agent."
+        f", **EXIT immediately**."
     )
     logger.debug(
         "Completion instructions generated: chars=%s issue=%s agent=%s",

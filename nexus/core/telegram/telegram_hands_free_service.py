@@ -2,6 +2,8 @@ import contextlib
 import logging
 from typing import Any, Awaitable, Callable
 
+from nexus.core.handlers.image_download_handler import ImageDownloadDeps, collect_telegram_photos
+
 
 async def handle_hands_free_message(
     *,
@@ -110,6 +112,7 @@ async def handle_hands_free_message(
             context.user_data["pending_task_confirmation"] = {
                 "text": revised_text,
                 "message_id": str(update.message.message_id),
+                "attachments": [],
             }
             preview = revised_text if len(revised_text) <= 300 else f"{revised_text[:300]}..."
             keyboard = inline_keyboard_markup_cls(
@@ -136,6 +139,7 @@ async def handle_hands_free_message(
             return
 
         text = ""
+        photo_attachments: list[Any] = []
 
         if update.message.voice:
             logger.info("Processing voice message...")
@@ -146,9 +150,19 @@ async def handle_hands_free_message(
                 return
         else:
             logger.info("Processing text input... text=%s", (update.message.text or "")[:50])
-            text = update.message.text
+            text = update.message.text or getattr(update.message, "caption", None) or ""
+            if update.message.photo:
+                photo_attachments = await collect_telegram_photos(
+                    update.message, context, ImageDownloadDeps(logger=logger)
+                )
+                if not text:
+                    await update.message.reply_text(
+                        "📷 Photo received! Please add a text description so I can create the task."
+                    )
+                    return
         interactive_ctx = build_ctx(update, context)
         interactive_ctx.text = text
+        interactive_ctx.attachments = photo_attachments or None
         await route_hands_free_text(interactive_ctx, hands_free_routing_deps_factory())
     except Exception as exc:
         logger.error("Unexpected error in hands_free_handler: %s", exc, exc_info=True)

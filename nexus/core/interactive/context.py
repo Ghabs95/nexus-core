@@ -28,6 +28,7 @@ class InteractiveContext:
     user_state: dict[str, Any]
     query: Optional["InteractiveQuery"] = None
     images: list[bytes] | None = None
+    attachments: list[Any] | None = None
 
     @property
     def platform(self) -> str:

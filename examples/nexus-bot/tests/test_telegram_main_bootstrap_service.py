@@ -9,6 +9,7 @@ def test_build_command_handler_map_includes_plan():
         "status_handler": _dummy,
         "active_handler": _dummy,
         "inboxq_handler": _dummy,
+        "inboxretry_handler": _dummy,
         "stats_handler": _dummy,
         "logs_handler": _dummy,
         "logsfull_handler": _dummy,
@@ -88,7 +89,7 @@ def test_register_application_handlers_registers_plan_command(monkeypatch):
         app=app,
         conv_handler=object(),
         handlers=handlers,
-        filters_module=type("F", (), {"TEXT": 1, "VOICE": 2, "COMMAND": 4})(),
+        filters_module=type("F", (), {"TEXT": 1, "VOICE": 2, "COMMAND": 4, "PHOTO": 8})(),
     )
 
     commands = [h.command for h in app.handlers if isinstance(h, _CaptureCommandHandler)]
@@ -143,7 +144,7 @@ def test_register_application_handlers_hides_filesystem_commands_in_db_mode(monk
         app=app,
         conv_handler=object(),
         handlers=handlers,
-        filters_module=type("F", (), {"TEXT": 1, "VOICE": 2, "COMMAND": 4})(),
+        filters_module=type("F", (), {"TEXT": 1, "VOICE": 2, "COMMAND": 4, "PHOTO": 8})(),
     )
 
     commands = [h.command for h in app.handlers if isinstance(h, _CaptureCommandHandler)]
