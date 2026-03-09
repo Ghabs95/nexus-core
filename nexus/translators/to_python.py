@@ -131,7 +131,7 @@ if __name__ == "__main__":
 
         # Prepare inputs
         inputs = {class_name}Input(
-{chr(10).join('            # TODO: fill in\n' for _ in spec.get('inputs', {}).items())}
+{chr(10).join(f'            # TODO: fill in{chr(10)}' for _ in spec.get('inputs', {}).items())}
         )
 
         # Run agent
