@@ -177,19 +177,14 @@ def detect_feature_ideation_intent(
     confidence_threshold: float = 0.65,
     requester_context: dict[str, Any] | None = None,
     project_name: str | None = None,
+    allow_phrase_fallback: bool = False,
 ) -> tuple[bool, float, str]:
     """Detect feature-ideation intent with model-first classification."""
     phrase_match = is_feature_ideation_request(text)
     if not callable(run_analysis):
-        return (
-            (True, 0.55, "phrase_fallback_no_model")
-            if phrase_match
-            else (
-                False,
-                0.0,
-                "phrase_miss_no_model",
-            )
-        )
+        if allow_phrase_fallback and phrase_match:
+            return True, 0.55, "phrase_fallback_no_model"
+        return False, 0.0, "model_unavailable"
 
     try:
         analysis_kwargs: dict[str, Any] = {"text": text, "task": "detect_feature_ideation"}
@@ -201,15 +196,9 @@ def detect_feature_ideation_intent(
     except Exception as exc:
         if logger:
             logger.warning("Feature ideation detector model fallback failed: %s", exc)
-        return (
-            (True, 0.55, "phrase_fallback_model_error")
-            if phrase_match
-            else (
-                False,
-                0.0,
-                "model_error",
-            )
-        )
+        if allow_phrase_fallback and phrase_match:
+            return True, 0.55, "phrase_fallback_model_error"
+        return False, 0.0, "model_error"
 
     if not isinstance(result, dict):
         return False, 0.0, "model_non_dict"

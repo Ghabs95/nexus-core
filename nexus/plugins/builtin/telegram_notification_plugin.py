@@ -58,9 +58,18 @@ class TelegramNotificationPlugin(NotificationChannel):
         if reply_markup:
             payload["reply_markup"] = reply_markup
 
-        sent = bool(self._post("sendMessage", payload))
+        sent = bool(
+            self._post(
+                "sendMessage",
+                payload,
+                downgrade_parse_entity_error=bool(effective_parse_mode),
+            )
+        )
         if sent:
             return True
+
+        if not effective_parse_mode:
+            return False
 
         # Fallback: retry as plain text when markdown/html parsing fails.
         plain_payload: dict[str, Any] = {
@@ -73,7 +82,10 @@ class TelegramNotificationPlugin(NotificationChannel):
         logger.warning(
             "Telegram send_message_sync retrying without parse_mode after initial failure"
         )
-        return bool(self._post("sendMessage", plain_payload))
+        recovered = bool(self._post("sendMessage", plain_payload))
+        if recovered:
+            logger.info("Telegram send_message_sync recovered via plain-text retry")
+        return recovered
 
     async def update_message(self, message_id: str, new_text: str) -> None:
         payload = {
@@ -105,7 +117,13 @@ class TelegramNotificationPlugin(NotificationChannel):
 
         return self.send_message_sync(f"{icon} {message}", parse_mode=self.parse_mode)
 
-    def _post(self, method: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    def _post(
+        self,
+        method: str,
+        payload: dict[str, Any],
+        *,
+        downgrade_parse_entity_error: bool = False,
+    ) -> dict[str, Any] | None:
         if not self.bot_token:
             return None
 
@@ -131,13 +149,26 @@ class TelegramNotificationPlugin(NotificationChannel):
                 body = exc.read().decode("utf-8")
             except Exception:
                 body = ""
-            logger.error(
-                "Telegram API HTTP error for %s: status=%s reason=%s body=%s",
-                method,
-                getattr(exc, "code", "?"),
-                getattr(exc, "reason", ""),
-                body,
-            )
+            code = getattr(exc, "code", "?")
+            reason = getattr(exc, "reason", "")
+            lowered = str(body or "").lower()
+            parse_entity_error = int(code) == 400 and "can't parse entities" in lowered
+            if downgrade_parse_entity_error and parse_entity_error:
+                logger.warning(
+                    "Telegram API parse error for %s (recoverable): status=%s reason=%s body=%s",
+                    method,
+                    code,
+                    reason,
+                    body,
+                )
+            else:
+                logger.error(
+                    "Telegram API HTTP error for %s: status=%s reason=%s body=%s",
+                    method,
+                    code,
+                    reason,
+                    body,
+                )
             return None
         except Exception as exc:
             logger.error("Telegram API call failed for %s: %s", method, exc)

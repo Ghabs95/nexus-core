@@ -91,10 +91,21 @@ def test_detect_feature_ideation_intent_model_rejects_status_question():
     assert reason == "status question"
 
 
-def test_detect_feature_ideation_intent_phrase_fallback_when_model_errors():
+def test_detect_feature_ideation_intent_model_error_defaults_to_non_ideation():
     matched, confidence, reason = handlers.detect_feature_ideation_intent(
         "Which new feature should I add?",
         run_analysis=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    assert matched is False
+    assert confidence == 0.0
+    assert reason == "model_error"
+
+
+def test_detect_feature_ideation_intent_phrase_fallback_can_be_opted_in():
+    matched, confidence, reason = handlers.detect_feature_ideation_intent(
+        "Which new feature should I add?",
+        run_analysis=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+        allow_phrase_fallback=True,
     )
     assert matched is True
     assert confidence == 0.55

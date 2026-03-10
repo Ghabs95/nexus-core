@@ -113,6 +113,25 @@ def resolve_login_session_id(session_ref_or_id: str) -> str:
     return candidate
 
 
+def setup_status_command_for_platform(chat_platform: str | None) -> str:
+    platform = str(chat_platform or "").strip().lower()
+    if platform == "discord":
+        return "/setup-status"
+    if platform == "telegram":
+        return "/setup_status"
+    return "/setup-status (Discord) or /setup_status (Telegram)"
+
+
+def build_setup_completed_chat_message(*, session_id: str, ready: bool) -> str:
+    command_hint = setup_status_command_for_platform(None)
+    resolved_session_id = resolve_login_session_id(session_id)
+    if resolved_session_id:
+        record = get_auth_session(resolved_session_id)
+        command_hint = setup_status_command_for_platform(getattr(record, "chat_platform", None))
+    prefix = "✅ Setup completed." if ready else "⚠️ Setup updated."
+    return f"{prefix}\nRun {command_hint} to check setup status."
+
+
 def create_login_session_for_user(
     *,
     nexus_id: str,

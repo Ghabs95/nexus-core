@@ -1,5 +1,4 @@
 import glob
-import io
 import logging
 import os
 import shlex
@@ -29,6 +28,7 @@ from nexus.core.config import (
     AI_PERSONA,
     BASE_DIR,
     DISCORD_ALLOWED_USER_IDS,
+    DISCORD_ENABLE_USER_INSTALL_PRIVATE_CHAT,
     DISCORD_GUILD_ID,
     DISCORD_TOKEN,
     NEXUS_AUTH_ENABLED,
@@ -54,11 +54,16 @@ from nexus.core.handlers.common_routing import (
     route_task_with_context,
     run_conversation_turn,
 )
+from nexus.core.handlers.audio_transcription_handler import (
+    AudioTranscriptionDeps,
+    is_audio_attachment,
+    transcribe_discord_attachment,
+)
 from nexus.core.handlers.feature_ideation_handlers import (
     FeatureIdeationHandlerDeps,
     _build_feature_suggestions,
+    detect_feature_ideation_intent,
     detect_feature_project,
-    is_feature_ideation_request,
 )
 from nexus.core.handlers.hands_free_routing_handler import (
     _looks_like_explicit_task_request,
@@ -183,6 +188,12 @@ from nexus.core.discord.discord_bridge_deps_service import (
 from nexus.core.discord.discord_bridge_deps_service import (
     workflow_bridge_deps as _svc_workflow_bridge_deps,
 )
+from nexus.core.discord.discord_command_sync_service import (
+    build_command_sync_plan as _svc_build_command_sync_plan,
+)
+from nexus.core.discord.discord_text_command_service import (
+    parse_discord_text_command as _svc_parse_discord_text_command,
+)
 from nexus.core.auth import (
     check_project_access as _svc_check_project_access,
 )
@@ -231,6 +242,27 @@ _pending_project_resolution: dict[int, dict] = {}
 _pending_feature_ideation: dict[int, dict] = {}
 _pending_new_task_capture: dict[int, dict[str, str]] = {}
 _discord_user_state: dict[int, dict[str, Any]] = {}
+
+
+def _configure_tree_install_and_context_defaults() -> None:
+    allow_user_private = bool(DISCORD_ENABLE_USER_INSTALL_PRIVATE_CHAT)
+    bot.tree.allowed_installs = app_commands.AppInstallationType(
+        guild=True,
+        user=allow_user_private,
+    )
+    bot.tree.allowed_contexts = app_commands.AppCommandContext(
+        guild=True,
+        dm_channel=allow_user_private,
+        private_channel=allow_user_private,
+    )
+    logger.warning(
+        "Discord command discovery defaults: installs(guild=%s,user=%s) contexts(guild=%s,dm=%s,private=%s)",
+        True,
+        allow_user_private,
+        True,
+        allow_user_private,
+        allow_user_private,
+    )
 
 
 class DiscordInteractiveCtx:
@@ -316,6 +348,151 @@ class DiscordInteractiveCtx:
 
     async def answer_callback_query(self, text: str | None = None) -> None:
         return
+
+
+class DiscordMessageInteractiveCtx:
+    _DISCORD_MAX_MESSAGE_LEN = 2000
+
+    def __init__(
+        self,
+        message: discord.Message,
+        *,
+        text: str,
+        args: list[str],
+    ) -> None:
+        self.message = message
+        self.user_id = str(message.author.id)
+        self.chat_id = int(getattr(message.channel, "id", 0) or 0)
+        self.text = text
+        self.args = list(args)
+        self.raw_event = message
+        self.user_state = _discord_user_state.setdefault(message.author.id, {})
+        self.client = type("_Client", (), {"name": "discord"})()
+        self.query = None
+
+    async def reply_text(
+        self,
+        text: str,
+        buttons=None,
+        parse_mode: str | None = "Markdown",
+        disable_web_page_preview: bool = True,
+    ) -> str:
+        content = str(text or "")
+        if buttons:
+            option_lines: list[str] = []
+            for row in buttons:
+                labels = [str(getattr(btn, "label", "")).strip() for btn in row]
+                labels = [label for label in labels if label]
+                if labels:
+                    option_lines.append(" • " + " | ".join(labels))
+            if option_lines:
+                content = f"{content}\n\nOptions:\n" + "\n".join(option_lines)
+
+        chunks = [
+            content[i : i + self._DISCORD_MAX_MESSAGE_LEN]
+            for i in range(0, len(content), self._DISCORD_MAX_MESSAGE_LEN)
+        ] or [""]
+        sent = await self.message.reply(chunks[0])
+        for part in chunks[1:]:
+            await self.message.reply(part)
+        return str(sent.id)
+
+    async def edit_message_text(
+        self,
+        message_id: str,
+        text: str,
+        buttons=None,
+        parse_mode: str | None = "Markdown",
+        disable_web_page_preview: bool = True,
+    ) -> None:
+        content = str(text or "")
+        chunks = [
+            content[i : i + self._DISCORD_MAX_MESSAGE_LEN]
+            for i in range(0, len(content), self._DISCORD_MAX_MESSAGE_LEN)
+        ] or [""]
+        try:
+            if self.message.channel and str(message_id).isdigit():
+                target = await self.message.channel.fetch_message(int(message_id))
+                await target.edit(content=chunks[0])
+                for part in chunks[1:]:
+                    await self.message.reply(part)
+                return
+        except Exception:
+            pass
+        await self.message.reply(chunks[0])
+        for part in chunks[1:]:
+            await self.message.reply(part)
+
+    async def answer_callback_query(self, text: str | None = None) -> None:
+        return
+
+
+def _message_bridge_command_specs():
+    return {
+        "active": (monitoring_active_handler, _monitoring_bridge_deps),
+        "inboxq": (ops_inboxq_handler, _ops_bridge_deps),
+        "stats": (ops_stats_handler, _ops_bridge_deps),
+        "logs": (monitoring_logs_handler, _monitoring_bridge_deps),
+        "logsfull": (monitoring_logsfull_handler, _monitoring_bridge_deps),
+        "tail": (monitoring_tail_handler, _monitoring_bridge_deps),
+        "tailstop": (monitoring_tailstop_handler, _monitoring_bridge_deps),
+        "fuse": (monitoring_fuse_handler, _monitoring_bridge_deps),
+        "audit": (ops_audit_handler, _ops_bridge_deps),
+        "comments": (issue_comments_handler, _issue_bridge_deps),
+        "visualize": (workflow_visualize_handler, _visualize_bridge_deps),
+        "watch": (workflow_watch_handler, _watch_bridge_deps),
+        "wfstate": (workflow_wfstate_handler, _workflow_bridge_deps),
+        "reprocess": (workflow_reprocess_handler, _workflow_bridge_deps),
+        "reconcile": (workflow_reconcile_handler, _workflow_bridge_deps),
+        "continue": (workflow_continue_handler, _workflow_bridge_deps),
+        "forget": (workflow_forget_handler, _workflow_bridge_deps),
+        "kill": (workflow_kill_handler, _workflow_bridge_deps),
+        "pause": (workflow_pause_handler, _workflow_bridge_deps),
+        "resume": (workflow_resume_handler, _workflow_bridge_deps),
+        "stop": (workflow_stop_handler, _workflow_bridge_deps),
+        "agents": (ops_agents_handler, _ops_bridge_deps),
+        "direct": (ops_direct_handler, _ops_bridge_deps),
+        "assign": (issue_assign_handler, _issue_bridge_deps),
+        "implement": (issue_prepare_handler, _issue_bridge_deps),
+        "prepare": (issue_prepare_handler, _issue_bridge_deps),
+        "plan": (issue_plan_handler, _issue_bridge_deps),
+        "respond": (issue_respond_handler, _issue_bridge_deps),
+        "untrack": (issue_untrack_handler, _issue_bridge_deps),
+        "feature_done": (feature_done_command_handler, _feature_registry_bridge_deps),
+        "feature_list": (feature_list_command_handler, _feature_registry_bridge_deps),
+        "feature_forget": (feature_forget_command_handler, _feature_registry_bridge_deps),
+    }
+
+
+async def _dispatch_message_bridge_command(message: discord.Message, raw_content: str) -> bool:
+    parsed = _svc_parse_discord_text_command(
+        raw_content,
+        bot_username=getattr(getattr(bot, "user", None), "name", None),
+    )
+    if not parsed:
+        return False
+
+    command_specs = _message_bridge_command_specs()
+    command_entry = command_specs.get(parsed.name)
+    if not command_entry:
+        return False
+
+    if not check_permission_for_action(message.author.id, action="execute"):
+        await message.reply(_permission_denied_message(message.author.id, action="execute"))
+        return True
+
+    handler, deps_factory = command_entry
+    ctx = DiscordMessageInteractiveCtx(
+        message,
+        text=f"/{parsed.name} {' '.join(parsed.args)}".strip(),
+        args=list(parsed.args),
+    )
+    try:
+        await handler(ctx, deps_factory())
+    except Exception as exc:
+        logger.exception("Discord text command /%s failed for user %s", parsed.name, message.author.id)
+        await message.reply(f"⚠️ /{parsed.name} failed: {exc}")
+    return True
 
 
 async def _ctx_prompt_project_selection_discord(ctx: DiscordInteractiveCtx, command: str) -> None:
@@ -457,9 +634,8 @@ async def _run_bridge_handler_args(
     handler,
     deps_factory,
 ) -> None:
-    # Ack early to avoid Discord's "application did not respond" timeout.
-    if not interaction.response.is_done():
-        await interaction.response.defer(thinking=True, ephemeral=True)
+    if not await _auto_defer_bridge_interaction(interaction):
+        return
 
     if not check_permission_for_action(interaction.user.id, action="execute"):
         await _send_interaction_ephemeral(
@@ -1065,16 +1241,21 @@ async def _run_bridge_with_picker(
     text_modal: dict[str, Any] | None = None,
     issue_state: str | None = None,
 ) -> None:
+    should_open_modal_now = bool(text_modal) and bool(project) and (bool(issue) or not require_issue)
+    if not should_open_modal_now and not await _auto_defer_bridge_interaction(interaction):
+        return
+
     if not check_permission_for_action(interaction.user.id, action="execute"):
-        await interaction.response.send_message(
+        await _send_interaction_ephemeral(
+            interaction,
             _permission_denied_message(interaction.user.id, action="execute"),
-            ephemeral=True,
         )
         return
 
     if not project:
         resolved_issue_state = issue_state or _command_issue_state(command_name)
-        await interaction.response.send_message(
+        await _send_interaction_ephemeral(
+            interaction,
             f"📁 Select a project for `/{command_name}`:",
             view=CommandProjectSelectView(
                 command_name,
@@ -1085,7 +1266,6 @@ async def _run_bridge_with_picker(
                 text_modal=text_modal,
                 issue_state=resolved_issue_state,
             ),
-            ephemeral=True,
         )
         return
 
@@ -1093,15 +1273,16 @@ async def _run_bridge_with_picker(
         normalized_project = _normalize_project_key(project)
         nexus_id = user_manager.resolve_nexus_id("discord", str(interaction.user.id))
         if not nexus_id or not _svc_has_project_access(str(nexus_id), str(normalized_project)):
-            await interaction.response.send_message(
+            await _send_interaction_ephemeral(
+                interaction,
                 f"🔒 You are not authorized for project `{normalized_project}`.",
-                ephemeral=True,
             )
             return
 
     if require_issue and not issue:
         resolved_issue_state = issue_state or _command_issue_state(command_name)
-        await interaction.response.send_message(
+        await _send_interaction_ephemeral(
+            interaction,
             f"📋 Select an issue for `{project}`:",
             view=CommandIssueSelectView(
                 project,
@@ -1116,7 +1297,6 @@ async def _run_bridge_with_picker(
                 ).strip()
                 or None,
             ),
-            ephemeral=True,
         )
         return
 
@@ -1151,6 +1331,13 @@ async def _run_bridge_with_picker(
 
 def transcribe_audio(audio_file_path: str) -> str | None:
     return orchestrator.transcribe_audio(audio_file_path)
+
+
+def _discord_audio_transcription_deps() -> AudioTranscriptionDeps:
+    return AudioTranscriptionDeps(
+        logger=logger,
+        transcribe_audio=transcribe_audio,
+    )
 
 
 def _discord_feature_ideation_handler_deps() -> FeatureIdeationHandlerDeps:
@@ -1232,13 +1419,27 @@ def _parse_count_reply(text: str) -> int | None:
 
 
 async def _begin_feature_ideation(message: discord.Message, text: str) -> bool:
-    if not is_feature_ideation_request(text):
-        return False
-
     user_id = message.author.id
     active_chat = get_chat(user_id) or {}
     metadata = active_chat.get("metadata") if isinstance(active_chat, dict) else {}
     metadata = metadata if isinstance(metadata, dict) else {}
+
+    feature_detector = getattr(orchestrator, "run_text_to_speech_analysis", None)
+    feature_ideation, fi_confidence, fi_reason = detect_feature_ideation_intent(
+        text,
+        run_analysis=feature_detector if callable(feature_detector) else None,
+        logger=logger,
+        requester_context=_requester_context_for_discord_user(message.author),
+        project_name=str(metadata.get("project_key") or "").strip() or None,
+    )
+    if not feature_ideation:
+        return False
+    logger.info(
+        "Discord feature ideation detection: matched=%s confidence=%.2f reason=%s",
+        feature_ideation,
+        fi_confidence,
+        fi_reason,
+    )
 
     preferred_project_key = metadata.get("project_key")
     project_key = detect_feature_project(text, ROUTING_PROJECTS)
@@ -1476,13 +1677,55 @@ def _permission_denied_message(user_id: int, *, action: str = "execute") -> str:
     return "🔐 Complete setup with `/login` and verify with `/setup-status`."
 
 
-async def _send_interaction_ephemeral(interaction: discord.Interaction, content: str) -> None:
+async def _send_interaction_ephemeral(
+    interaction: discord.Interaction,
+    content: str,
+    **kwargs: Any,
+) -> None:
     """Best-effort ephemeral response for both fresh and deferred interactions."""
-    message = str(content or "")
+    await _send_interaction_ephemeral_with_kwargs(interaction, str(content or ""), **kwargs)
+
+
+async def _send_interaction_ephemeral_with_kwargs(
+    interaction: discord.Interaction,
+    content: str,
+    **kwargs: Any,
+) -> None:
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(content, ephemeral=True, **kwargs)
+        else:
+            await interaction.response.send_message(content, ephemeral=True, **kwargs)
+    except discord.NotFound:
+        logger.warning(
+            "Interaction expired before sending response for user %s",
+            getattr(getattr(interaction, "user", None), "id", "unknown"),
+        )
+    except discord.HTTPException:
+        logger.exception(
+            "Discord API error while sending interaction response for user %s",
+            getattr(getattr(interaction, "user", None), "id", "unknown"),
+        )
+
+
+async def _auto_defer_bridge_interaction(interaction: discord.Interaction) -> bool:
     if interaction.response.is_done():
-        await interaction.followup.send(message, ephemeral=True)
-    else:
-        await interaction.response.send_message(message, ephemeral=True)
+        return True
+    try:
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        return True
+    except discord.NotFound:
+        logger.warning(
+            "Interaction expired before defer for user %s",
+            getattr(getattr(interaction, "user", None), "id", "unknown"),
+        )
+        return False
+    except discord.HTTPException:
+        logger.exception(
+            "Discord API error while deferring interaction for user %s",
+            getattr(getattr(interaction, "user", None), "id", "unknown"),
+        )
+        return False
 
 
 def _get_or_create_discord_user(discord_user: Any):
@@ -3205,48 +3448,41 @@ async def on_message(message: discord.Message):
     requester_context = _requester_context_for_discord_user(message.author)
     raw_content = (message.content or "").strip()
 
-    # Ignore slash commands or other prefix commands
-    if raw_content.startswith("!") or raw_content.startswith("/"):
+    # Ignore legacy prefix commands
+    if raw_content.startswith("!"):
+        return
+
+    # Handle typed slash commands in message/chat mode (parity with Telegram command behavior)
+    if raw_content.startswith("/"):
+        if await _dispatch_message_bridge_command(message, raw_content):
+            return
         return
 
     text = ""
     status_msg = await message.reply("⚡ Processing...")
+    saw_audio_attachment = False
 
-    # Check for voice attachments (Discord native voice messages are just .ogg attachments)
     if message.attachments:
-        attachment = message.attachments[0]
-        if attachment.content_type and "audio/ogg" in attachment.content_type:
-            logger.info("Processing voice message...")
-
-            # Download audio to a BytesIO object
-            audio_data = io.BytesIO()
-            await attachment.save(audio_data)
-            audio_data.seek(0)
-
-            # Since our transcribe_audio expects a path, write to a temp file
-            import tempfile
-
-            with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as tmp:
-                tmp.write(audio_data.read())
-                tmp_path = tmp.name
-
-            try:
-                # Transcribe
-                text = transcribe_audio(tmp_path)
-            finally:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-
-            if not text:
-                logger.warning("Voice transcription returned empty text")
-                await status_msg.edit(content="⚠️ Transcription failed")
-                return
+        audio_deps = _discord_audio_transcription_deps()
+        for attachment in message.attachments:
+            if is_audio_attachment(
+                content_type=getattr(attachment, "content_type", None),
+                filename=getattr(attachment, "filename", None),
+            ):
+                saw_audio_attachment = True
+            transcription = await transcribe_discord_attachment(attachment, audio_deps)
+            if transcription:
+                text = transcription
+                break
 
     # If no voice, or in addition to voice, use message text
     if not text:
         text = message.content
 
     text = (text or "").strip()
+    if not text and saw_audio_attachment:
+        await status_msg.edit(content="⚠️ Transcription failed")
+        return
     if not text:
         await status_msg.edit(
             content=(
@@ -3456,14 +3692,28 @@ async def on_ready():
 
 @bot.event
 async def setup_hook():
+    _configure_tree_install_and_context_defaults()
+
     if not get_storage_capabilities().local_task_files:
         for command_name in FILESYSTEM_ONLY_COMMANDS:
             bot.tree.remove_command(command_name)
 
-    # Sync slash commands during setup.
-    # If a guild is configured, keep commands guild-scoped to avoid duplicate
-    # command listings from having both global + guild registrations.
-    if DISCORD_GUILD_ID:
+    sync_plan = _svc_build_command_sync_plan(
+        guild_id=DISCORD_GUILD_ID,
+        enable_user_install_private_chat=DISCORD_ENABLE_USER_INSTALL_PRIVATE_CHAT,
+    )
+
+    if sync_plan.clear_guild_commands and DISCORD_GUILD_ID:
+        guild = discord.Object(id=DISCORD_GUILD_ID)
+        bot.tree.clear_commands(guild=guild)
+        cleared_guild = await bot.tree.sync(guild=guild)
+        logger.info(
+            "Cleared guild slash commands for %s (remaining count=%s)",
+            DISCORD_GUILD_ID,
+            len(cleared_guild),
+        )
+
+    if sync_plan.sync_guild_commands and DISCORD_GUILD_ID:
         guild = discord.Object(id=DISCORD_GUILD_ID)
         bot.tree.copy_global_to(guild=guild)
         guild_synced = await bot.tree.sync(guild=guild)
@@ -3472,13 +3722,22 @@ async def setup_hook():
             len(guild_synced),
             DISCORD_GUILD_ID,
         )
+
+    if sync_plan.clear_global_commands:
         bot.tree.clear_commands(guild=None)
         cleared_global = await bot.tree.sync()
         logger.info("Cleared global slash commands (remaining count=%s)", len(cleared_global))
         return
 
-    global_synced = await bot.tree.sync()
-    logger.info("Synced %s slash commands globally", len(global_synced))
+    if sync_plan.sync_global_commands:
+        global_synced = await bot.tree.sync()
+        if sync_plan.sync_guild_commands:
+            logger.info(
+                "Synced %s slash commands globally for user-install private chat",
+                len(global_synced),
+            )
+        else:
+            logger.info("Synced %s slash commands globally", len(global_synced))
 
 
 def main() -> None:

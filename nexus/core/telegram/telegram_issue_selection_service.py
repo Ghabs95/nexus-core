@@ -36,9 +36,16 @@ def list_project_issues(
     for repo in repo_candidates:
         try:
             try:
-                plugin = get_direct_issue_plugin(repo, requester_nexus_id=requester_nexus_id)
+                plugin = get_direct_issue_plugin(
+                    repo,
+                    requester_nexus_id=requester_nexus_id,
+                    project_name=project_key,
+                )
             except TypeError:
-                plugin = get_direct_issue_plugin(repo)
+                try:
+                    plugin = get_direct_issue_plugin(repo, requester_nexus_id=requester_nexus_id)
+                except TypeError:
+                    plugin = get_direct_issue_plugin(repo)
             if not plugin:
                 continue
             rows = plugin.list_issues(state=state, limit=limit, fields=["number", "title", "state"])

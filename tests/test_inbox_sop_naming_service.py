@@ -1,4 +1,7 @@
-from nexus.core.inbox.inbox_sop_naming_service import refine_issue_content_with_ai
+from nexus.core.inbox.inbox_sop_naming_service import (
+    refine_issue_content_with_ai,
+    render_checklist_from_workflow,
+)
 
 
 class _Logger:
@@ -58,3 +61,42 @@ def test_refine_issue_content_uses_ai_text_when_available():
     )
 
     assert result == "Cleaned task body"
+
+
+def test_render_checklist_from_workflow_expands_orchestrator_routes(tmp_path):
+    master = tmp_path / "master.yaml"
+    subflow = tmp_path / "new_feature_workflow.yaml"
+
+    master.write_text(
+        "steps:\n"
+        "  - id: triage\n"
+        "    name: Triage\n"
+        "    description: Pick route\n"
+        "    agent_type: triage\n"
+        "    on_success: dispatch\n"
+        "  - id: dispatch\n"
+        "    name: Dispatch\n"
+        "    agent_type: router\n"
+        "    routes:\n"
+        "      - default: new_feature_workflow\n",
+        encoding="utf-8",
+    )
+    subflow.write_text(
+        "steps:\n"
+        "  - id: implementation\n"
+        "    name: Implementation\n"
+        "    description: Build and validate\n"
+        "    agent_type: developer\n"
+        "    final_step: true\n",
+        encoding="utf-8",
+    )
+
+    checklist = render_checklist_from_workflow(
+        project_name="wallible",
+        tier_name="full",
+        get_workflow_definition_path=lambda _project: str(master),
+    )
+
+    assert "## SOP Checklist — Full Flow" in checklist
+    assert "1. **Triage**" in checklist
+    assert "2. **Implementation** — Build and validate" in checklist

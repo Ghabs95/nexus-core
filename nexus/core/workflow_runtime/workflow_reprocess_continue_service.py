@@ -214,6 +214,97 @@ async def _resolve_reprocess_tier(
     return None
 
 
+def _infer_reprocess_task_type(details: dict[str, Any] | None) -> str:
+    labels = details.get("labels") if isinstance(details, dict) else None
+    if isinstance(labels, list):
+        normalized = {str(label or "").strip().lower() for label in labels}
+        if "hotfix" in normalized:
+            return "hotfix"
+        if "bug" in normalized or "type:bug" in normalized:
+            return "bug"
+    return "feature"
+
+
+async def _prepare_reprocess_workflow_instance(
+    ctx: Any,
+    deps: Any,
+    *,
+    issue_num: Any,
+    project_name: str,
+    tier_name: str,
+    details: dict[str, Any] | None,
+) -> bool:
+    workflow_plugin = deps.get_workflow_state_plugin(
+        **deps.workflow_state_plugin_kwargs, cache_key="workflow:state-engine"
+    )
+    if not workflow_plugin:
+        return True
+
+    issue_title = str((details or {}).get("title") or f"issue-{issue_num}").strip() or (
+        f"issue-{issue_num}"
+    )
+    task_type = _infer_reprocess_task_type(details)
+
+    try:
+        create_result = workflow_plugin.create_workflow_for_issue(
+            issue_number=str(issue_num),
+            issue_title=issue_title,
+            project_name=str(project_name),
+            tier_name=str(tier_name),
+            task_type=str(task_type),
+            description=f"Reprocess workflow for issue #{issue_num}",
+            force_new_instance=True,
+        )
+        workflow_id = await create_result if asyncio.iscoroutine(create_result) else create_result
+    except TypeError:
+        create_result = workflow_plugin.create_workflow_for_issue(
+            issue_number=str(issue_num),
+            issue_title=issue_title,
+            project_name=str(project_name),
+            tier_name=str(tier_name),
+            task_type=str(task_type),
+            description=f"Reprocess workflow for issue #{issue_num}",
+        )
+        workflow_id = await create_result if asyncio.iscoroutine(create_result) else create_result
+    except Exception as exc:
+        deps.logger.error(
+            "Failed creating fresh workflow instance for reprocess issue #%s: %s",
+            issue_num,
+            exc,
+            exc_info=True,
+        )
+        await ctx.reply_text(f"❌ Failed to reset workflow for issue #{issue_num}: {exc}")
+        return False
+
+    if not workflow_id:
+        await ctx.reply_text(f"❌ Could not create workflow instance for issue #{issue_num}.")
+        return False
+
+    try:
+        start_result = workflow_plugin.start_workflow(str(workflow_id))
+        started = await start_result if asyncio.iscoroutine(start_result) else start_result
+    except Exception as exc:
+        deps.logger.error(
+            "Failed starting fresh workflow instance %s for reprocess issue #%s: %s",
+            workflow_id,
+            issue_num,
+            exc,
+            exc_info=True,
+        )
+        await ctx.reply_text(f"❌ Failed to start workflow instance for issue #{issue_num}: {exc}")
+        return False
+    if not started:
+        await ctx.reply_text(f"❌ Could not start workflow instance for issue #{issue_num}.")
+        return False
+
+    deps.logger.info(
+        "Reprocess issue #%s will use fresh workflow instance %s",
+        issue_num,
+        workflow_id,
+    )
+    return True
+
+
 async def _launch_reprocess(
     ctx: Any,
     deps: Any,
@@ -292,6 +383,16 @@ async def handle_reprocess(
         ctx, deps, issue_num=issue_num, project_name=project_name, project_key=project_key
     )
     if not tier_name:
+        return
+
+    if not await _prepare_reprocess_workflow_instance(
+        ctx,
+        deps,
+        issue_num=issue_num,
+        project_name=project_name or project_key,
+        tier_name=tier_name,
+        details=details,
+    ):
         return
 
     issue_url = build_issue_url(repo, issue_num, config)

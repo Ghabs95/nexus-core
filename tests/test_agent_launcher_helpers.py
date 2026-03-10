@@ -37,7 +37,7 @@ def test_get_sop_tier_from_issue_uses_sync_bridge(monkeypatch):
         async def get_issue(self, _issue_number):
             return SimpleNamespace(labels=["workflow:full"])
 
-    monkeypatch.setattr(agent_launcher, "get_repo", lambda _project: "Ghabs95/nexus-arc")
+    monkeypatch.setattr(agent_launcher, "get_repo", lambda _project: "acme-org/sample-repo")
     monkeypatch.setattr(
         "nexus.core.orchestration.nexus_core_helpers.get_git_platform",
         lambda *_args, **_kwargs: _Platform(),
@@ -62,7 +62,7 @@ def test_get_sop_tier_from_issue_does_not_call_asyncio_run_directly(monkeypatch)
         return coro_factory()
 
     monkeypatch.setattr(agent_launcher, "_run_coro_sync", _fake_sync_bridge)
-    monkeypatch.setattr(agent_launcher, "get_repo", lambda _project: "Ghabs95/nexus-arc")
+    monkeypatch.setattr(agent_launcher, "get_repo", lambda _project: "acme-org/sample-repo")
     monkeypatch.setattr(
         "nexus.core.orchestration.nexus_core_helpers.get_git_platform",
         lambda *_args, **_kwargs: _Platform(),
@@ -90,7 +90,7 @@ def test_resolve_requester_token_for_issue_falls_back_to_issue_url(monkeypatch):
 
     token = agent_launcher._resolve_requester_token_for_issue(
         issue_number="110",
-        repo="Ghabs95/nexus-arc",
+        repo="acme-org/sample-repo",
         project_name="nexus",
     )
 
@@ -154,7 +154,7 @@ def test_invoke_ai_agent_pauses_and_notifies_when_worktree_provision_fails(monke
     pid, tool = agent_launcher.invoke_ai_agent(
         agents_dir=str(tmp_path / "agents"),
         workspace_dir=str(tmp_path),
-        issue_url="https://github.com/Ghabs95/nexus-arc/issues/42",
+        issue_url="https://github.com/acme-org/sample-repo/issues/42",
         tier_name="full",
         task_content="test",
         continuation=False,
@@ -204,7 +204,7 @@ def test_invoke_ai_agent_sanitizes_deprecated_helper_scripts(monkeypatch, tmp_pa
     pid, tool = agent_launcher.invoke_ai_agent(
         agents_dir=str(tmp_path / "agents"),
         workspace_dir=str(tmp_path),
-        issue_url="https://github.com/Ghabs95/nexus-arc/issues/42",
+        issue_url="https://github.com/acme-org/sample-repo/issues/42",
         tier_name="full",
         task_content="test",
         continuation=False,
@@ -216,6 +216,169 @@ def test_invoke_ai_agent_sanitizes_deprecated_helper_scripts(monkeypatch, tmp_pa
     assert pid == 1234
     assert tool == "gemini"
     assert sanitized.get("path") == str(tmp_path)
+
+
+def test_resolve_worktree_base_repo_supports_gitlab_issue_url(monkeypatch, tmp_path):
+    from nexus.core.runtime import agent_launcher
+
+    workspace_root = tmp_path / "acme-org"
+    repo_dir = workspace_root / "sample-workflow"
+    repo_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        agent_launcher,
+        "_is_git_repo",
+        lambda path: str(path) == str(repo_dir),
+    )
+
+    resolved = agent_launcher._resolve_worktree_base_repo(
+        str(workspace_root),
+        "https://gitlab.com/acme-org/sample-workflow/-/issues/1",
+    )
+
+    assert resolved == str(repo_dir)
+
+
+def test_resolve_step_requires_worktree_by_step_id(tmp_path):
+    from nexus.core.runtime import agent_launcher
+
+    workflow = tmp_path / "workflow.yaml"
+    workflow.write_text(
+        "steps:\n"
+        "  - id: triage-routing\n"
+        "    agent_type: triage\n"
+        "    requires_worktree: false\n"
+        "  - id: implement\n"
+        "    agent_type: developer\n",
+        encoding="utf-8",
+    )
+
+    value = agent_launcher._resolve_step_requires_worktree(
+        workflow_path=str(workflow),
+        tier_name="full",
+        workflow_name="new_feature",
+        step_id="triage-routing",
+        step_num=1,
+    )
+
+    assert value is False
+
+
+def test_resolve_step_requires_worktree_by_step_num(tmp_path):
+    from nexus.core.runtime import agent_launcher
+
+    workflow = tmp_path / "workflow.yaml"
+    workflow.write_text(
+        "steps:\n"
+        "  - id: triage-routing\n"
+        "    agent_type: triage\n"
+        "  - id: implement\n"
+        "    agent_type: developer\n"
+        "    requires_worktree: true\n",
+        encoding="utf-8",
+    )
+
+    value = agent_launcher._resolve_step_requires_worktree(
+        workflow_path=str(workflow),
+        tier_name="full",
+        workflow_name="new_feature",
+        step_id="unknown-step",
+        step_num=2,
+    )
+
+    assert value is True
+
+
+def test_invoke_ai_agent_skips_worktree_provision_for_triage(monkeypatch, tmp_path):
+    from nexus.core.runtime import agent_launcher
+
+    calls = {"provisioned": 0}
+
+    class _Orchestrator:
+        def invoke_agent(self, **kwargs):  # noqa: ANN003
+            return 3210, "gemini"
+
+    monkeypatch.setattr(agent_launcher, "_get_launch_policy_plugin", lambda: None)
+    monkeypatch.setattr(agent_launcher, "_resolve_workflow_path", lambda _project: None)
+    monkeypatch.setattr(agent_launcher, "_resolve_issue_step_context", lambda _url: ("triage", 1))
+    monkeypatch.setattr(agent_launcher, "_ensure_agent_definition", lambda *_a, **_k: True)
+    monkeypatch.setattr(agent_launcher, "get_orchestrator", lambda _cfg: _Orchestrator())
+    monkeypatch.setattr(agent_launcher, "auth_enabled", lambda: False)
+    monkeypatch.setattr(agent_launcher, "_resolve_worktree_base_repo", lambda *_a, **_k: str(tmp_path))
+    monkeypatch.setattr(agent_launcher, "_is_git_repo", lambda _path: False)
+    monkeypatch.setattr(
+        agent_launcher,
+        "_load_issue_body_from_project_repo",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("triage should not load issue branch")),
+    )
+    monkeypatch.setattr(
+        "nexus.core.workspace.WorkspaceManager.provision_worktree",
+        lambda *_a, **_k: calls.__setitem__("provisioned", calls["provisioned"] + 1),
+    )
+
+    pid, tool = agent_launcher.invoke_ai_agent(
+        agents_dir=str(tmp_path / "agents"),
+        workspace_dir=str(tmp_path),
+        issue_url="https://gitlab.com/acme-org/sample-workflow/-/issues/1",
+        tier_name="full",
+        task_content="triage task",
+        continuation=False,
+        agent_type="triage",
+        project_name="sample",
+        log_subdir="sample",
+    )
+
+    assert pid == 3210
+    assert tool == "gemini"
+    assert calls["provisioned"] == 0
+
+
+def test_invoke_ai_agent_honors_step_worktree_override_for_triage(monkeypatch, tmp_path):
+    from nexus.core.runtime import agent_launcher
+
+    calls = {"provisioned": 0}
+
+    class _Orchestrator:
+        def invoke_agent(self, **kwargs):  # noqa: ANN003
+            return 7654, "gemini"
+
+    monkeypatch.setattr(agent_launcher, "_get_launch_policy_plugin", lambda: None)
+    monkeypatch.setattr(agent_launcher, "_resolve_workflow_path", lambda _project: None)
+    monkeypatch.setattr(agent_launcher, "_resolve_issue_step_context", lambda _url: ("triage-routing", 1))
+    monkeypatch.setattr(agent_launcher, "_resolve_step_requires_worktree", lambda **_kwargs: True)
+    monkeypatch.setattr(agent_launcher, "_ensure_agent_definition", lambda *_a, **_k: True)
+    monkeypatch.setattr(agent_launcher, "get_orchestrator", lambda _cfg: _Orchestrator())
+    monkeypatch.setattr(agent_launcher, "auth_enabled", lambda: False)
+    monkeypatch.setattr(agent_launcher, "_resolve_worktree_base_repo", lambda *_a, **_k: str(tmp_path))
+    monkeypatch.setattr(agent_launcher, "_is_git_repo", lambda _path: True)
+    monkeypatch.setattr(agent_launcher, "_load_issue_body_from_project_repo", lambda *_a, **_k: ("", "", ""))
+    monkeypatch.setattr(agent_launcher, "_derive_issue_branch_name", lambda **_k: "feat/issue-1")
+    monkeypatch.setattr(agent_launcher, "_run_coro_sync", lambda coro_factory: coro_factory())
+    monkeypatch.setattr(agent_launcher, "get_repo_branch", lambda *_a, **_k: "main")
+    monkeypatch.setattr(
+        "nexus.core.workspace.WorkspaceManager.provision_worktree",
+        lambda *_a, **_k: calls.__setitem__("provisioned", calls["provisioned"] + 1) or str(tmp_path),
+    )
+    monkeypatch.setattr(
+        "nexus.core.workspace.WorkspaceManager.sanitize_worktree_helper_scripts",
+        lambda _path: [],
+    )
+
+    pid, tool = agent_launcher.invoke_ai_agent(
+        agents_dir=str(tmp_path / "agents"),
+        workspace_dir=str(tmp_path),
+        issue_url="https://gitlab.com/acme-org/sample-workflow/-/issues/1",
+        tier_name="full",
+        task_content="triage task",
+        continuation=False,
+        agent_type="triage",
+        project_name="sample",
+        log_subdir="sample",
+    )
+
+    assert pid == 7654
+    assert tool == "gemini"
+    assert calls["provisioned"] == 1
 
 
 def test_launch_next_agent_merges_persisted_and_runtime_exclusions(monkeypatch, tmp_path):
@@ -230,7 +393,7 @@ def test_launch_next_agent_merges_persisted_and_runtime_exclusions(monkeypatch, 
     monkeypatch.setattr(
         agent_launcher,
         "_load_issue_body_from_project_repo",
-        lambda *_a, **_k: (issue_body, "Ghabs95/nexus-arc", str(task_file)),
+        lambda *_a, **_k: (issue_body, "acme-org/sample-repo", str(task_file)),
     )
     monkeypatch.setattr(agent_launcher, "is_postgres_backend", lambda *_a, **_k: False)
     monkeypatch.setattr(
@@ -240,12 +403,12 @@ def test_launch_next_agent_merges_persisted_and_runtime_exclusions(monkeypatch, 
             "nexus": {
                 "workspace": str(tmp_path),
                 "agents_dir": "agents",
-                "repo": "Ghabs95/nexus-arc",
+                "repo": "acme-org/sample-repo",
             }
         },
     )
-    monkeypatch.setattr(agent_launcher, "_project_repos", lambda *_a, **_k: ["Ghabs95/nexus-arc"])
-    monkeypatch.setattr(agent_launcher, "get_repo", lambda _project: "Ghabs95/nexus-arc")
+    monkeypatch.setattr(agent_launcher, "_project_repos", lambda *_a, **_k: ["acme-org/sample-repo"])
+    monkeypatch.setattr(agent_launcher, "get_repo", lambda _project: "acme-org/sample-repo")
     monkeypatch.setattr(
         "nexus.core.state_manager.HostStateManager.get_last_tier_for_issue",
         lambda _issue: "full",
@@ -258,7 +421,7 @@ def test_launch_next_agent_merges_persisted_and_runtime_exclusions(monkeypatch, 
     monkeypatch.setattr(
         agent_launcher,
         "build_issue_url",
-        lambda _repo, _issue, _cfg: "https://github.com/Ghabs95/nexus-arc/issues/113",
+        lambda _repo, _issue, _cfg: "https://github.com/acme-org/sample-repo/issues/113",
     )
 
     def _fake_invoke_ai_agent(**kwargs):
@@ -272,9 +435,264 @@ def test_launch_next_agent_merges_persisted_and_runtime_exclusions(monkeypatch, 
         next_agent="developer",
         trigger_source="dead-agent-retry",
         exclude_tools=["gemini"],
-        repo_override="Ghabs95/nexus-arc",
+        repo_override="acme-org/sample-repo",
     )
 
     assert pid == 4242
     assert tool == "claude"
     assert captured.get("exclude_tools") == ["codex", "copilot", "gemini"]
+
+
+def test_extract_completion_payload_from_log_text_parses_curl_payload():
+    from nexus.core.runtime import agent_launcher
+
+    log_text = (
+        "analysis done\n"
+        "```bash\n"
+        "curl -s -X POST http://webhook:8081/api/v1/completion \\\n"
+        "  -H \"Content-Type: application/json\" \\\n"
+        "  -d '{\n"
+        "    \"issue_number\": \"1\",\n"
+        "    \"agent_type\": \"triage\",\n"
+        "    \"step_id\": \"dispatch\",\n"
+        "    \"step_num\": 2,\n"
+        "    \"status\": \"complete\",\n"
+        "    \"summary\": \"routed to ceo\",\n"
+        "    \"next_agent\": \"ceo\",\n"
+        "    \"comment_markdown\": \"## Dispatch complete\"\n"
+        "  }'\n"
+        "```\n"
+    )
+
+    payload = agent_launcher._extract_completion_payload_from_log_text(
+        log_text,
+        issue_num="1",
+        agent_type="triage",
+    )
+
+    assert isinstance(payload, dict)
+    assert payload["issue_number"] == "1"
+    assert payload["agent_type"] == "triage"
+    assert payload["step_id"] == "dispatch"
+    assert payload["step_num"] == 2
+    assert payload["next_agent"] == "ceo"
+
+
+def test_extract_completion_payload_from_log_text_handles_shell_escaped_apostrophe():
+    from nexus.core.runtime import agent_launcher
+
+    log_text = (
+        "```bash\n"
+        "curl -s -X POST http://webhook:8081/api/v1/completion \\\n"
+        "  -H \"Content-Type: application/json\" \\\n"
+        "  -d '{\n"
+        "    \"issue_number\": \"1\",\n"
+        "    \"agent_type\": \"triage\",\n"
+        "    \"step_id\": \"dispatch\",\n"
+        "    \"step_num\": 2,\n"
+        "    \"summary\": \"routed\",\n"
+        "    \"next_agent\": \"ceo\",\n"
+        "    \"comment_markdown\": \"Founder'\\''s check\"\n"
+        "  }'\n"
+        "```\n"
+    )
+
+    payload = agent_launcher._extract_completion_payload_from_log_text(
+        log_text,
+        issue_num="1",
+        agent_type="triage",
+    )
+
+    assert isinstance(payload, dict)
+    assert payload["step_id"] == "dispatch"
+    assert payload["step_num"] == 2
+    assert payload["next_agent"] == "ceo"
+
+
+def test_recover_completion_from_agent_log_persists_payload(monkeypatch, tmp_path):
+    import asyncio
+    import inspect
+
+    from nexus.core.runtime import agent_launcher
+
+    log_file = tmp_path / "gemini_1_20260310_115119.log"
+    log_file.write_text(
+        (
+            "```bash\n"
+            "curl -s -X POST http://webhook:8081/api/v1/completion \\\n"
+            "  -H \"Content-Type: application/json\" \\\n"
+            "  -d '{\n"
+            "    \"issue_number\": \"1\",\n"
+            "    \"agent_type\": \"triage\",\n"
+            "    \"step_id\": \"dispatch\",\n"
+            "    \"step_num\": 2,\n"
+            "    \"summary\": \"routed\",\n"
+            "    \"next_agent\": \"ceo\",\n"
+            "    \"comment_markdown\": \"## Dispatch complete\"\n"
+            "  }'\n"
+            "```\n"
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+    posted: dict[str, object] = {"comments": [], "added": []}
+
+    class _FakeStore:
+        def __init__(self, *, backend, storage, base_dir, nexus_dir):
+            captured["backend"] = backend
+            captured["storage"] = storage
+            captured["base_dir"] = base_dir
+            captured["nexus_dir"] = nexus_dir
+
+        def save(self, issue_number, agent_type, data):
+            captured["issue_number"] = issue_number
+            captured["agent_type"] = agent_type
+            captured["data"] = dict(data)
+            return "dedup-recovered-1"
+
+    monkeypatch.setattr(agent_launcher, "is_postgres_backend", lambda _backend: True)
+    monkeypatch.setattr("nexus.core.completion_store.CompletionStore", _FakeStore)
+    monkeypatch.setattr(
+        "nexus.core.integrations.workflow_state_factory.get_storage_backend",
+        lambda: "fake-storage",
+    )
+    monkeypatch.setattr(
+        "nexus.core.orchestration.nexus_core_helpers.get_workflow_status",
+        lambda _issue_num: {"workflow_id": "wallible-1-full"},
+    )
+
+    class _Platform:
+        async def get_comments(self, _issue_num):
+            posted["comments"].append(_issue_num)
+            return []
+
+        async def add_comment(self, issue_num, body):
+            posted["added"].append((issue_num, body))
+            return {"id": 123}
+
+    monkeypatch.setattr(agent_launcher, "_resolve_requester_token_for_issue", lambda *_a, **_k: None)
+    monkeypatch.setattr(agent_launcher, "_get_git_platform_client", lambda *_a, **_k: _Platform())
+    monkeypatch.setattr(
+        agent_launcher,
+        "_run_coro_sync",
+        lambda coro_factory: (
+            asyncio.run(value)
+            if inspect.isawaitable(value := coro_factory())
+            else value
+        ),
+    )
+    monkeypatch.setattr(agent_launcher, "get_nexus_dir_name", lambda: ".nexus")
+    monkeypatch.setattr(agent_launcher, "_extract_repo_from_issue_url", lambda _url: "wallible/wlbl-workflow-os")
+
+    dedup = agent_launcher._recover_completion_from_agent_log(
+        issue_num="1",
+        agent_type="triage",
+        workspace_dir=str(tmp_path),
+        project_key="wallible",
+        tool_name="gemini",
+        log_path=str(log_file),
+        issue_url="https://gitlab.com/wallible/wlbl-workflow-os/-/issues/1",
+    )
+
+    assert dedup == "dedup-recovered-1"
+    assert captured["backend"] == "postgres"
+    assert captured["issue_number"] == "1"
+    assert captured["agent_type"] == "triage"
+    data = captured["data"]
+    assert isinstance(data, dict)
+    assert data["workflow_id"] == "wallible-1-full"
+    assert data["step_id"] == "dispatch"
+    assert data["step_num"] == 2
+    assert posted["comments"] == ["1"]
+    assert len(posted["added"]) == 1
+
+
+def test_recover_completion_from_agent_log_skips_duplicate_comment(monkeypatch, tmp_path):
+    import asyncio
+    import inspect
+
+    from nexus.core.runtime import agent_launcher
+
+    log_file = tmp_path / "gemini_1_20260310_115119.log"
+    log_file.write_text(
+        (
+            "```bash\n"
+            "curl -s -X POST http://webhook:8081/api/v1/completion \\\n"
+            "  -H \"Content-Type: application/json\" \\\n"
+            "  -d '{\n"
+            "    \"issue_number\": \"1\",\n"
+            "    \"agent_type\": \"triage\",\n"
+            "    \"step_id\": \"dispatch\",\n"
+            "    \"step_num\": 2,\n"
+            "    \"summary\": \"routed\",\n"
+            "    \"next_agent\": \"ceo\",\n"
+            "    \"comment_markdown\": \"## Dispatch Complete — triage\\n\\n**Step ID:** `dispatch`\\n**Step Num:** 2\\n\\nReady for **@Ceo**\"\n"
+            "  }'\n"
+            "```\n"
+        ),
+        encoding="utf-8",
+    )
+
+    class _FakeStore:
+        def __init__(self, *, backend, storage, base_dir, nexus_dir):
+            pass
+
+        def save(self, issue_number, agent_type, data):
+            return "dedup-recovered-1"
+
+    posted: dict[str, object] = {"added": []}
+
+    class _Platform:
+        async def get_comments(self, _issue_num):
+            return [
+                {
+                    "body": (
+                        "## Dispatch Complete — triage\n\n"
+                        "**Step ID:** `dispatch`\n"
+                        "**Step Num:** 2\n\n"
+                        "Ready for **@Ceo**"
+                    )
+                }
+            ]
+
+        async def add_comment(self, issue_num, body):
+            posted["added"].append((issue_num, body))
+            return {"id": 999}
+
+    monkeypatch.setattr(agent_launcher, "is_postgres_backend", lambda _backend: True)
+    monkeypatch.setattr("nexus.core.completion_store.CompletionStore", _FakeStore)
+    monkeypatch.setattr(
+        "nexus.core.integrations.workflow_state_factory.get_storage_backend",
+        lambda: "fake-storage",
+    )
+    monkeypatch.setattr(
+        "nexus.core.orchestration.nexus_core_helpers.get_workflow_status",
+        lambda _issue_num: {"workflow_id": "wallible-1-full"},
+    )
+    monkeypatch.setattr(agent_launcher, "_resolve_requester_token_for_issue", lambda *_a, **_k: None)
+    monkeypatch.setattr(agent_launcher, "_get_git_platform_client", lambda *_a, **_k: _Platform())
+    monkeypatch.setattr(
+        agent_launcher,
+        "_run_coro_sync",
+        lambda coro_factory: (
+            asyncio.run(value)
+            if inspect.isawaitable(value := coro_factory())
+            else value
+        ),
+    )
+    monkeypatch.setattr(agent_launcher, "get_nexus_dir_name", lambda: ".nexus")
+    monkeypatch.setattr(agent_launcher, "_extract_repo_from_issue_url", lambda _url: "wallible/wlbl-workflow-os")
+
+    dedup = agent_launcher._recover_completion_from_agent_log(
+        issue_num="1",
+        agent_type="triage",
+        workspace_dir=str(tmp_path),
+        project_key="wallible",
+        tool_name="gemini",
+        log_path=str(log_file),
+        issue_url="https://gitlab.com/wallible/wlbl-workflow-os/-/issues/1",
+    )
+
+    assert dedup == "dedup-recovered-1"
+    assert posted["added"] == []

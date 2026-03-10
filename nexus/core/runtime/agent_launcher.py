@@ -9,12 +9,14 @@ or webhooks (webhook server).
 import asyncio
 import glob
 import inspect
+import json
 import logging
 import os
 import re
 import subprocess
 import threading
 import time
+import yaml
 
 from nexus.adapters.git.utils import build_issue_url
 from nexus.core.audit_store import AuditStore
@@ -438,6 +440,375 @@ def _find_latest_agent_log(workspace_dir: str, project_key: str | None, issue_nu
     return max(candidates, key=os.path.getmtime)
 
 
+def _normalize_agent_reference(value: object) -> str:
+    return str(value or "").strip().lstrip("@").strip().lower()
+
+
+def _iter_json_objects(text: str):
+    decoder = json.JSONDecoder()
+    index = 0
+    content = str(text or "")
+    length = len(content)
+    while index < length:
+        start = content.find("{", index)
+        if start < 0:
+            break
+        try:
+            payload, consumed = decoder.raw_decode(content[start:])
+        except json.JSONDecodeError:
+            index = start + 1
+            continue
+        index = start + max(consumed, 1)
+        if isinstance(payload, dict):
+            yield payload
+
+
+def _iter_shell_data_json_objects(text: str):
+    """Extract JSON payloads from multiline `curl ... -d '{...}'` shell blocks."""
+    lines = str(text or "").splitlines()
+    index = 0
+    total = len(lines)
+
+    while index < total:
+        line = lines[index]
+        marker_pos = line.find("-d '{")
+        if marker_pos < 0:
+            index += 1
+            continue
+
+        brace_pos = line.find("{", marker_pos)
+        if brace_pos < 0:
+            index += 1
+            continue
+
+        payload_lines = [line[brace_pos:]]
+        cursor = index + 1
+        while cursor < total:
+            payload_lines.append(lines[cursor])
+            if lines[cursor].rstrip().endswith("}'"):
+                break
+            cursor += 1
+        index = cursor + 1
+
+        raw_payload = "\n".join(payload_lines)
+        normalized_payload = re.sub(r"}'\s*$", "}", raw_payload, count=1)
+        # Shell escaping for apostrophes inside single-quoted -d payload.
+        normalized_payload = normalized_payload.replace("'\\''", "'")
+        normalized_payload = normalized_payload.replace("'\"'\"'", "'")
+
+        try:
+            parsed = json.loads(normalized_payload)
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            yield parsed
+
+
+def _extract_completion_payload_from_log_text(
+    log_text: str,
+    *,
+    issue_num: str,
+    agent_type: str,
+) -> dict | None:
+    """Best-effort extraction of completion JSON printed by an agent CLI."""
+    expected_issue = str(issue_num or "").strip()
+    expected_agent = _normalize_agent_reference(agent_type)
+    latest_match: dict | None = None
+
+    for candidate in list(_iter_json_objects(log_text)) + list(_iter_shell_data_json_objects(log_text)):
+        step_id = str(candidate.get("step_id") or "").strip()
+        try:
+            step_num = int(candidate.get("step_num") or 0)
+        except (TypeError, ValueError):
+            step_num = 0
+        if not step_id or step_num <= 0:
+            continue
+
+        payload_issue = str(candidate.get("issue_number") or "").strip()
+        if payload_issue and expected_issue and payload_issue != expected_issue:
+            continue
+
+        payload_agent = _normalize_agent_reference(candidate.get("agent_type"))
+        if payload_agent and expected_agent and payload_agent != expected_agent:
+            continue
+
+        if "summary" not in candidate and "comment_markdown" not in candidate:
+            continue
+
+        payload = dict(candidate)
+        payload["issue_number"] = expected_issue
+        payload["agent_type"] = expected_agent or payload_agent or "unknown"
+        payload["step_id"] = step_id
+        payload["step_num"] = step_num
+        payload.setdefault("status", "complete")
+        latest_match = payload
+
+    return latest_match
+
+
+def _hydrate_workflow_context_for_completion(issue_num: str, payload: dict) -> dict:
+    hydrated = dict(payload or {})
+    if hydrated.get("workflow_id"):
+        return hydrated
+
+    try:
+        from nexus.core.orchestration.nexus_core_helpers import get_workflow_status
+
+        status = _run_coro_sync(lambda: get_workflow_status(str(issue_num)))
+    except Exception:
+        status = None
+
+    if isinstance(status, dict):
+        workflow_id = str(status.get("workflow_id") or "").strip()
+        if workflow_id:
+            hydrated["workflow_id"] = workflow_id
+    return hydrated
+
+
+def _recover_completion_from_agent_log(
+    *,
+    issue_num: str,
+    agent_type: str,
+    workspace_dir: str,
+    project_key: str | None,
+    tool_name: str,
+    log_path: str,
+    issue_url: str = "",
+) -> str | None:
+    """Recover completion payload from agent stdout log when POST was not executed."""
+    if not is_postgres_backend(NEXUS_STORAGE_BACKEND):
+        return None
+    if not log_path or not os.path.exists(log_path):
+        return None
+
+    tail = _read_tail(log_path, max_chars=600000)
+    payload = _extract_completion_payload_from_log_text(
+        tail,
+        issue_num=str(issue_num),
+        agent_type=str(agent_type),
+    )
+    if not payload:
+        return None
+
+    payload = _hydrate_workflow_context_for_completion(str(issue_num), payload)
+    if project_key:
+        payload.setdefault("_project", str(project_key))
+
+    def _resolve_recovery_repo() -> str:
+        from_issue = _extract_repo_from_issue_url(str(issue_url or ""))
+        if from_issue:
+            return str(from_issue)
+        if project_key:
+            try:
+                return str(get_repo(str(project_key)))
+            except Exception:
+                return ""
+        return ""
+
+    def _resolve_comment_body(completion_payload: dict) -> str:
+        from nexus.core.completion import CompletionSummary, build_completion_comment
+
+        markdown = str(completion_payload.get("comment_markdown") or "").strip()
+        if markdown:
+            return markdown
+        summary = CompletionSummary.from_dict(completion_payload)
+        return build_completion_comment(summary)
+
+    def _normalize_comment_text(value: object) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip()).lower()
+
+    def _completion_comment_exists(
+        platform,
+        *,
+        target_step_id: str,
+        target_step_num: int,
+        expected_comment_body: str = "",
+    ) -> bool:
+        comments = _run_coro_sync(lambda: platform.get_comments(str(issue_num)))
+        if not isinstance(comments, list):
+            return False
+        step_id_norm = str(target_step_id or "").strip()
+        step_num_int = int(target_step_num)
+        body_norm_expected = _normalize_comment_text(expected_comment_body)
+        exact_body_required = len(body_norm_expected) >= 64
+
+        step_id_re = re.compile(
+            rf"step\s*id\s*:\s*`?\s*{re.escape(step_id_norm)}\s*`?",
+            re.IGNORECASE,
+        )
+        step_num_re = re.compile(
+            rf"step\s*num(?:ber)?\s*:\s*{step_num_int}\b",
+            re.IGNORECASE,
+        )
+
+        for comment in reversed(comments):
+            if isinstance(comment, dict):
+                body = str(comment.get("body") or "")
+            else:
+                body = str(getattr(comment, "body", "") or "")
+            body_norm = _normalize_comment_text(body)
+
+            if exact_body_required and body_norm == body_norm_expected:
+                return True
+            if exact_body_required and body_norm_expected in body_norm:
+                return True
+
+            if step_id_re.search(body) and step_num_re.search(body):
+                return True
+        return False
+
+    def _post_recovered_completion_comment(completion_payload: dict) -> bool:
+        repo = _resolve_recovery_repo()
+        if not repo:
+            return False
+        step_id = str(completion_payload.get("step_id") or "").strip()
+        try:
+            step_num = int(completion_payload.get("step_num") or 0)
+        except (TypeError, ValueError):
+            step_num = 0
+        if not step_id or step_num <= 0:
+            return False
+
+        token_override = _resolve_requester_token_for_issue(
+            str(issue_num),
+            str(repo),
+            str(project_key or ""),
+        )
+        platform = _get_git_platform_client(
+            str(repo),
+            project_name=str(project_key or ""),
+            token_override=token_override,
+        )
+        if not platform:
+            return False
+        comment_body = _resolve_comment_body(completion_payload)
+        if not comment_body:
+            return False
+        if _completion_comment_exists(
+            platform,
+            target_step_id=step_id,
+            target_step_num=step_num,
+            expected_comment_body=comment_body,
+        ):
+            return True
+
+        posted = _run_coro_sync(lambda: platform.add_comment(str(issue_num), comment_body))
+        return posted is not None
+
+    try:
+        from nexus.core.completion_store import CompletionStore
+        from nexus.core.integrations.workflow_state_factory import get_storage_backend
+
+        store = CompletionStore(
+            backend="postgres",
+            storage=get_storage_backend(),
+            base_dir=BASE_DIR,
+            nexus_dir=get_nexus_dir_name(),
+        )
+        dedup_key = store.save(str(issue_num), str(agent_type), payload)
+        logger.warning(
+            "Recovered completion payload from %s log for issue #%s (%s) dedup=%s",
+            tool_name,
+            issue_num,
+            agent_type,
+            dedup_key,
+        )
+        comment_ok = _post_recovered_completion_comment(payload)
+        if not comment_ok:
+            logger.warning(
+                "Recovered completion for issue #%s but could not confirm comment delivery",
+                issue_num,
+            )
+        return str(dedup_key)
+    except Exception as exc:
+        logger.warning(
+            "Failed recovering completion payload from log for issue #%s (%s): %s",
+            issue_num,
+            agent_type,
+            exc,
+        )
+        return None
+
+
+def _start_completion_recovery_watchdog(
+    *,
+    issue_num: str,
+    pid: int,
+    agent_type: str,
+    workspace_dir: str,
+    project_key: str | None,
+    tool_name: str,
+    issue_url: str,
+) -> None:
+    """After launch, watch for process exit and salvage completion payload from logs."""
+
+    def _pid_alive(candidate: int) -> bool:
+        try:
+            os.kill(int(candidate), 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except Exception:
+            return False
+
+    def _worker() -> None:
+        deadline = time.time() + 1200
+        while time.time() < deadline:
+            launched = HostStateManager.load_launched_agents(recent_only=False)
+            current = launched.get(str(issue_num), {})
+            current_pid = int((current or {}).get("pid", 0) or 0) if isinstance(current, dict) else 0
+            if current_pid != int(pid):
+                return
+
+            if _pid_alive(pid):
+                time.sleep(0.8)
+                continue
+
+            # Give the log tee thread a short flush window.
+            time.sleep(1.0)
+            log_path = _find_latest_agent_log(
+                workspace_dir,
+                project_key,
+                str(issue_num),
+                tool_name=str(tool_name or "*"),
+            )
+            if not log_path:
+                log_path = _find_latest_agent_log(
+                    workspace_dir,
+                    project_key,
+                    str(issue_num),
+                    tool_name="*",
+                )
+
+            dedup_key = _recover_completion_from_agent_log(
+                issue_num=str(issue_num),
+                agent_type=str(agent_type),
+                workspace_dir=str(workspace_dir),
+                project_key=project_key,
+                tool_name=str(tool_name or "agent"),
+                log_path=str(log_path or ""),
+                issue_url=str(issue_url or ""),
+            )
+            if dedup_key:
+                try:
+                    AuditStore.audit_log(
+                        int(issue_num),
+                        "COMPLETION_RECOVERED_FROM_LOG",
+                        f"Recovered completion from {tool_name} log (dedup={dedup_key})",
+                    )
+                except Exception:
+                    pass
+            return
+
+    threading.Thread(
+        target=_worker,
+        name=f"completion-recovery-{issue_num}",
+        daemon=True,
+    ).start()
+
+
 def _start_agent_quota_watchdog(
     *,
     issue_num: str,
@@ -668,6 +1039,7 @@ def _attach_post_launch_watchdog(
     tier_name: str,
     mode: str,
     workflow_name: str,
+    issue_url: str,
 ) -> None:
     normalized_tool = str(tool_name or "").strip().lower()
     _start_agent_quota_watchdog(
@@ -686,6 +1058,15 @@ def _attach_post_launch_watchdog(
         tier_name=tier_name,
         mode=mode,
         workflow_name=workflow_name,
+    )
+    _start_completion_recovery_watchdog(
+        issue_num=issue_num,
+        pid=pid,
+        agent_type=agent_type,
+        workspace_dir=workspace_dir,
+        project_key=log_subdir,
+        tool_name=normalized_tool or "*",
+        issue_url=issue_url,
     )
 
 
@@ -817,14 +1198,130 @@ def _resolve_worktree_base_repo(workspace_dir: str, issue_url: str) -> str:
     if _is_git_repo(base):
         return base
 
-    match = re.search(r"https?://[^/]+/[^/]+/([^/]+)/issues/\d+", str(issue_url or ""))
-    repo_name = match.group(1).strip() if match else ""
-    if repo_name:
-        nested = os.path.join(base, repo_name)
+    repo_slug = _extract_repo_from_issue_url(str(issue_url or ""))
+    repo_candidates: list[str] = []
+    if repo_slug:
+        repo_candidates.append(repo_slug)
+        tail = repo_slug.split("/")[-1].strip()
+        if tail and tail not in repo_candidates:
+            repo_candidates.append(tail)
+
+    for candidate in repo_candidates:
+        nested = os.path.join(base, candidate)
         if _is_git_repo(nested):
             return nested
 
     return base
+
+
+def _coerce_optional_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
+def _normalize_step_ref(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9_-]+", "-", str(value or "").strip().lower())
+    return normalized.strip("-")
+
+
+def _resolve_step_requires_worktree(
+    *,
+    workflow_path: str,
+    tier_name: str,
+    workflow_name: str,
+    step_id: str,
+    step_num: int,
+) -> bool | None:
+    path = str(workflow_path or "").strip()
+    if not path or not os.path.isfile(path):
+        return None
+
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = yaml.safe_load(handle)
+    except Exception as exc:
+        logger.debug("Could not parse workflow definition (%s): %s", path, exc)
+        return None
+
+    if not isinstance(data, dict):
+        return None
+    data["__yaml_path"] = path
+
+    try:
+        from nexus.core.workflow_engine.workflow_definition_loader import resolve_workflow_steps_list
+    except Exception:
+        return None
+
+    workflow_type_candidates: list[str] = []
+    for candidate in (
+        tier_name,
+        f"workflow:{tier_name}" if tier_name else "",
+        workflow_name,
+        f"workflow:{workflow_name}" if workflow_name else "",
+        "",
+    ):
+        candidate_str = str(candidate or "").strip()
+        if candidate_str in workflow_type_candidates:
+            continue
+        workflow_type_candidates.append(candidate_str)
+
+    steps: list[dict] = []
+    for workflow_type in workflow_type_candidates:
+        try:
+            resolved = resolve_workflow_steps_list(data, workflow_type)
+        except Exception:
+            continue
+        if isinstance(resolved, list) and resolved:
+            steps = resolved
+            break
+
+    if not steps:
+        return None
+
+    normalized_target = _normalize_step_ref(step_id)
+    if normalized_target:
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            refs = {
+                str(step.get("id") or "").strip(),
+                str(step.get("name") or "").strip(),
+            }
+            normalized_refs = {_normalize_step_ref(ref) for ref in refs if ref}
+            if normalized_target in normalized_refs or step_id in refs:
+                return _coerce_optional_bool(step.get("requires_worktree"))
+
+    if step_num > 0 and step_num <= len(steps):
+        selected_step = steps[step_num - 1]
+        if isinstance(selected_step, dict):
+            return _coerce_optional_bool(selected_step.get("requires_worktree"))
+
+    return None
+
+
+def _should_provision_worktree(
+    *,
+    issue_num: str,
+    agent_type: str,
+    step_requires_worktree: bool | None = None,
+) -> bool:
+    """Return whether the current agent launch should provision an isolated worktree."""
+    if str(issue_num or "").strip() in {"", "unknown"}:
+        return False
+    if isinstance(step_requires_worktree, bool):
+        return step_requires_worktree
+    agent_norm = str(agent_type or "").strip().lower()
+    # Triage routes work and often runs before impacted repository selection is known.
+    if agent_norm == "triage":
+        return False
+    return True
 
 
 def _slugify_branch_component(text: str, max_len: int = 48) -> str:
@@ -1091,6 +1588,13 @@ def invoke_ai_agent(
     workflow_name = get_workflow_name(tier_name)
     workflow_path = _resolve_workflow_path(project_name)
     step_id, step_num = _resolve_issue_step_context(issue_url)
+    step_requires_worktree = _resolve_step_requires_worktree(
+        workflow_path=workflow_path,
+        tier_name=tier_name,
+        workflow_name=workflow_name,
+        step_id=step_id,
+        step_num=step_num,
+    )
     if not step_id or step_num <= 0:
         logger.warning(
             "Active workflow step context unresolved for issue=%s agent=%s "
@@ -1229,36 +1733,41 @@ def invoke_ai_agent(
         worktree_base_repo = _resolve_worktree_base_repo(workspace_dir, issue_url)
         isolated_workspace = worktree_base_repo
 
-        # Extract branch name from issue body if available
-        target_branch = None
-        if issue_url and issue_num != "unknown":
-            try:
-                preferred_repo = _extract_repo_from_issue_url(str(issue_url or "")) or None
-                body, _, _ = _load_issue_body_from_project_repo(
-                    issue_num,
-                    preferred_repo=preferred_repo,
-                )
-                if body:
-                    branch_match = re.search(r"Target Branch:\s*`([^`]+)`", body)
-                    if branch_match:
-                        target_branch = branch_match.group(1)
-                        logger.info(f"Using target branch from issue: {target_branch}")
-            except Exception as e:
-                logger.warning(f"Could not extract target branch: {e}")
-
-        branch_for_worktree = str(target_branch or "").strip() or _derive_issue_branch_name(
-            issue_number=issue_num,
-            task_content=task_content,
-            tier_name=tier_name,
+        should_provision_worktree = _should_provision_worktree(
+            issue_num=issue_num,
+            agent_type=agent_type,
+            step_requires_worktree=step_requires_worktree,
         )
-        if issue_num != "unknown":
+
+        if should_provision_worktree and _is_git_repo(worktree_base_repo):
+            # Extract branch name from issue body if available
+            target_branch = None
+            if issue_url:
+                try:
+                    preferred_repo = _extract_repo_from_issue_url(str(issue_url or "")) or None
+                    body, _, _ = _load_issue_body_from_project_repo(
+                        issue_num,
+                        preferred_repo=preferred_repo,
+                    )
+                    if body:
+                        branch_match = re.search(r"Target Branch:\s*`([^`]+)`", body)
+                        if branch_match:
+                            target_branch = branch_match.group(1)
+                            logger.info(f"Using target branch from issue: {target_branch}")
+                except Exception as e:
+                    logger.warning(f"Could not extract target branch: {e}")
+
+            branch_for_worktree = str(target_branch or "").strip() or _derive_issue_branch_name(
+                issue_number=issue_num,
+                task_content=task_content,
+                tier_name=tier_name,
+            )
             logger.info(
                 "Using worktree branch for issue #%s: %s",
                 issue_num,
                 branch_for_worktree,
             )
 
-        if issue_num != "unknown" and _is_git_repo(worktree_base_repo):
             start_ref = None
             if project_name and issue_repo_slug:
                 try:
@@ -1333,11 +1842,17 @@ def invoke_ai_agent(
                 except Exception:
                     pass
                 return None, None
-        elif issue_num != "unknown":
+        elif should_provision_worktree:
             logger.warning(
                 "Skipping worktree provisioning for issue %s: not a git repo (%s)",
                 issue_num,
                 worktree_base_repo,
+            )
+        elif issue_num != "unknown":
+            logger.info(
+                "Skipping worktree provisioning for issue %s agent=%s (not required for this step)",
+                issue_num,
+                agent_type,
             )
 
         pid, tool_used = orchestrator.invoke_agent(
@@ -1420,6 +1935,7 @@ def invoke_ai_agent(
                     tier_name=str(tier_name),
                     mode=str(mode),
                     workflow_name=str(workflow_name),
+                    issue_url=str(issue_url or ""),
                 )
             except Exception as bookkeeping_exc:
                 logger.warning(

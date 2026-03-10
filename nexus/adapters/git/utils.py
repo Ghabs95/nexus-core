@@ -21,7 +21,9 @@ def build_issue_url(repo: str, issue_num: str, config: dict[str, Any] | None) ->
     if not isinstance(config, dict):
         return f"https://github.com/{repo}/issues/{issue_num}"
 
-    platform = str(config.get("git_platform", "github")).lower().strip()
+    platform = str(config.get("git_platform") or "").lower().strip()
+    if not platform:
+        platform = "gitlab" if str(config.get("gitlab_base_url") or "").strip() else "github"
     if platform == "gitlab":
         base_url = str(config.get("gitlab_base_url", "https://gitlab.com")).rstrip("/")
         return f"{base_url}/{repo}/-/issues/{issue_num}"

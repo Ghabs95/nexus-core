@@ -349,6 +349,33 @@ class WorkflowStateEnginePlugin:
             return f"https://github.com/{github_repo}/issues/{issue_number}"
         return None
 
+    async def _workflow_exists(self, workflow_id: str) -> bool:
+        try:
+            engine = self._get_engine()
+            existing = await engine.get_workflow(str(workflow_id))
+            return existing is not None
+        except Exception:
+            return False
+
+    async def _resolve_workflow_id_for_creation(
+        self,
+        *,
+        project_name: str,
+        issue_number: str,
+        tier_name: str,
+        force_new_instance: bool,
+    ) -> str:
+        base_id = f"{project_name}-{issue_number}-{tier_name}"
+        if not force_new_instance:
+            return base_id
+
+        suffix_index = 1
+        while True:
+            candidate = f"{base_id}-r{suffix_index}"
+            if not await self._workflow_exists(candidate):
+                return candidate
+            suffix_index += 1
+
     async def create_workflow_for_issue(
         self,
         issue_number: str,
@@ -357,6 +384,7 @@ class WorkflowStateEnginePlugin:
         tier_name: str,
         task_type: str,
         description: str = "",
+        force_new_instance: bool = False,
     ) -> str | None:
         """Create workflow from configured workflow definition path for an issue."""
         workflow_definition_path = self._resolve_workflow_definition_path(project_name)
@@ -368,7 +396,12 @@ class WorkflowStateEnginePlugin:
             return None
 
         workflow_type = WorkflowDefinition.normalize_workflow_type(tier_name)
-        workflow_id = f"{project_name}-{issue_number}-{tier_name}"
+        workflow_id = await self._resolve_workflow_id_for_creation(
+            project_name=project_name,
+            issue_number=issue_number,
+            tier_name=tier_name,
+            force_new_instance=force_new_instance,
+        )
         workflow_name = f"{project_name}/{issue_title}"
         workflow_description = description or f"Workflow for issue #{issue_number}"
 

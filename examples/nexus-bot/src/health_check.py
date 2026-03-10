@@ -6,10 +6,13 @@ Designed to run alongside nexus-telegram, nexus-discord, and nexus-processor ser
 
 import logging
 import os
+import socket
 import subprocess
 from datetime import datetime
+from time import perf_counter
+from wsgiref.simple_server import make_server
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 from nexus.core.config.bootstrap import initialize_runtime
 
@@ -27,6 +30,39 @@ logger = logging.getLogger(__name__)
 
 # Create Flask app
 app = Flask(__name__)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "true" if default else "false")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+_ACCESS_LOG_ENABLED = _env_flag("NEXUS_HEALTH_ACCESS_LOG", default=False)
+
+
+@app.before_request
+def _before_request_log_timer() -> None:
+    if _ACCESS_LOG_ENABLED:
+        request.environ["_nexus_health_started"] = perf_counter()
+
+
+@app.after_request
+def _after_request_access_log(response):
+    if not _ACCESS_LOG_ENABLED:
+        return response
+    started = request.environ.get("_nexus_health_started")
+    duration_ms = 0.0
+    if isinstance(started, float):
+        duration_ms = (perf_counter() - started) * 1000.0
+    logger.info(
+        "HTTP %s %s -> %s (%.1fms) remote=%s",
+        request.method,
+        request.path,
+        response.status_code,
+        duration_ms,
+        request.remote_addr or "<unknown>",
+    )
+    return response
 
 
 def check_service_status(service_name: str) -> dict:
@@ -275,8 +311,18 @@ def main():
     port = int(os.getenv("HEALTH_CHECK_PORT", 8080))
     host = os.getenv("HEALTH_CHECK_HOST", "127.0.0.1")
 
-    logger.info(f"Starting health check server on {host}:{port}")
-    app.run(host=host, port=port, debug=False)
+    logger.info(
+        "Starting nexus-health server on %s:%s (pid=%s host=%s impl=wsgiref access_log=%s module=%s)",
+        host,
+        port,
+        os.getpid(),
+        socket.gethostname(),
+        _ACCESS_LOG_ENABLED,
+        __file__,
+    )
+    with make_server(host, port, app) as server:
+        logger.info("nexus-health listening at http://%s:%s via wsgiref.simple_server", host, port)
+        server.serve_forever()
 
 
 if __name__ == "__main__":

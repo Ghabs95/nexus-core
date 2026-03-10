@@ -36,6 +36,28 @@ def test_get_session_and_setup_status_accepts_session_ref(monkeypatch):
     assert payload["session_ref"] == auth_svc.format_login_session_ref(session.session_id)
 
 
+def test_build_setup_completed_chat_message_uses_discord_command(monkeypatch):
+    session = SimpleNamespace(chat_platform="discord")
+    monkeypatch.setattr(auth_svc, "get_auth_session", lambda _sid: session)
+
+    text = auth_svc.build_setup_completed_chat_message(session_id="session-1", ready=True)
+
+    assert text.startswith("✅ Setup completed.")
+    assert "Run /setup-status" in text
+    assert "/setup_status" not in text
+
+
+def test_build_setup_completed_chat_message_uses_telegram_command(monkeypatch):
+    session = SimpleNamespace(chat_platform="telegram")
+    monkeypatch.setattr(auth_svc, "get_auth_session", lambda _sid: session)
+
+    text = auth_svc.build_setup_completed_chat_message(session_id="session-2", ready=True)
+
+    assert text.startswith("✅ Setup completed.")
+    assert "Run /setup_status" in text
+    assert "/setup-status" not in text
+
+
 def test_store_ai_provider_keys_accepts_claude_only(monkeypatch):
     session = SimpleNamespace(
         session_id="session-1",

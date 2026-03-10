@@ -84,6 +84,12 @@ class AuthManager:
     def get_latest_login_session_status(self, nexus_id: str) -> dict[str, Any]:
         return _auth_sessions.get_latest_login_session_status(nexus_id=nexus_id)
 
+    def build_setup_completed_chat_message(self, *, session_id: str, ready: bool) -> str:
+        return _auth_sessions.build_setup_completed_chat_message(
+            session_id=session_id,
+            ready=ready,
+        )
+
     def format_login_session_ref(self, session_id: str) -> str:
         return _auth_sessions.format_login_session_ref(session_id=session_id)
 
@@ -181,6 +187,13 @@ def get_session_and_setup_status(session_id: str) -> dict[str, Any]:
 
 def get_latest_login_session_status(nexus_id: str) -> dict[str, Any]:
     return auth_manager.get_latest_login_session_status(nexus_id=nexus_id)
+
+
+def build_setup_completed_chat_message(*, session_id: str, ready: bool) -> str:
+    return auth_manager.build_setup_completed_chat_message(
+        session_id=session_id,
+        ready=ready,
+    )
 
 
 def format_login_session_ref(session_id: str) -> str:

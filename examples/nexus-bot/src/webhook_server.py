@@ -91,6 +91,9 @@ from nexus.core.webhook.pr_review_service import (
 )
 from nexus.core.webhook.http_service import process_webhook_request as _process_webhook_request
 from nexus.core.auth import (
+    build_setup_completed_chat_message as _svc_build_setup_completed_chat_message,
+)
+from nexus.core.auth import (
     complete_github_oauth as _svc_complete_github_oauth,
 )
 from nexus.core.auth import (
@@ -122,6 +125,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler()],
+    force=True,
 )
 logger = logging.getLogger(__name__)
 
@@ -144,10 +148,15 @@ if not os.path.isfile(os.path.join(_VISUALIZER_STATIC_FOLDER, "visualizer.html")
     )
 
 app = Flask(__name__, static_folder=_VISUALIZER_STATIC_FOLDER)
-_socketio_async_mode = str(os.getenv("NEXUS_SOCKETIO_ASYNC_MODE", "threading")).strip().lower()
+_socketio_async_mode = str(os.getenv("NEXUS_SOCKETIO_ASYNC_MODE", "eventlet")).strip().lower()
 if _socketio_async_mode not in {"threading", "eventlet", "gevent", "gevent_uwsgi"}:
     _socketio_async_mode = "threading"
 socketio = SocketIO(app, async_mode=_socketio_async_mode, cors_allowed_origins="*")
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "true" if default else "false")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 # Track processed events to avoid duplicates
 processed_events = set()
@@ -1220,10 +1229,7 @@ def auth_ai_keys():
     )
     _notify_onboarding_message(
         session_id=session_id,
-        text=(
-            f"{'✅' if ready else '⚠️'} Setup {'completed' if ready else 'updated'}.\n"
-            "Run /setup-status (Discord) or /setup_status (Telegram)."
-        ),
+        text=_svc_build_setup_completed_chat_message(session_id=session_id, ready=ready),
     )
     response = make_response(_render_auth_message("Setup Complete", body, status_code=200))
     _set_web_session_cookie(response, session_id)
@@ -1262,6 +1268,7 @@ def api_v1_completion():
     try:
         data = request.get_json(force=True, silent=True) or {}
     except Exception:
+        logger.warning("API v1 completion rejected: invalid JSON payload")
         return jsonify({"status": "error", "message": "Invalid JSON"}), 400
 
     issue_number = str(data.get("issue_number", "")).strip()
@@ -1272,7 +1279,24 @@ def api_v1_completion():
     except (TypeError, ValueError):
         step_num = 0
 
+    logger.info(
+        "📥 API v1 completion attempt: issue=%s agent=%s step_id=%s step_num=%s remote=%s",
+        issue_number or "<missing>",
+        agent_type or "<missing>",
+        step_id or "<missing>",
+        step_num,
+        request.remote_addr or "<unknown>",
+    )
+
     if not issue_number or not agent_type or not step_id or step_num <= 0:
+        logger.warning(
+            "API v1 completion rejected: missing required fields "
+            "(issue=%s agent=%s step_id=%s step_num=%s)",
+            issue_number or "<missing>",
+            agent_type or "<missing>",
+            step_id or "<missing>",
+            step_num,
+        )
         return (
             jsonify(
                 {
@@ -1304,6 +1328,10 @@ def api_v1_completion():
         )
 
     if not isinstance(status, dict):
+        logger.warning(
+            "API v1 completion rejected: no active workflow status for issue #%s",
+            issue_number,
+        )
         return (
             jsonify(
                 {
@@ -1331,6 +1359,16 @@ def api_v1_completion():
         or _normalize_ref(step_id) != expected_step_id
         or int(step_num) != expected_step_num
     ):
+        logger.warning(
+            "API v1 completion rejected as stale for issue #%s: expected %s/%s/%s, got %s/%s/%s",
+            issue_number,
+            expected_agent or "<none>",
+            expected_step_id or "<none>",
+            expected_step_num,
+            _normalize_ref(agent_type) or "<none>",
+            _normalize_ref(step_id) or "<none>",
+            int(step_num),
+        )
         return (
             jsonify(
                 {
@@ -1639,13 +1677,24 @@ def main():
     if not WEBHOOK_SECRET:
         logger.warning("⚠️ WEBHOOK_SECRET not configured - signature verification disabled!")
 
-    # Run with eventlet for WebSocket support
+    # Flask-SocketIO uses Werkzeug in threading mode. Auto-enable the safety
+    # escape hatch there to prevent hard startup failures on runtime fallback.
+    allow_unsafe_werkzeug = _env_flag("NEXUS_ALLOW_UNSAFE_WERKZEUG", default=False)
+    async_mode = str(getattr(socketio, "async_mode", _socketio_async_mode)).strip().lower()
+    if async_mode == "threading" and not allow_unsafe_werkzeug:
+        logger.warning(
+            "Socket.IO async mode 'threading' detected; enabling "
+            "allow_unsafe_werkzeug to avoid startup failure."
+        )
+        allow_unsafe_werkzeug = True
+    logger.info("Socket.IO async mode: %s", async_mode)
+
     socketio.run(
         app,
         host="0.0.0.0",
         port=port,
         debug=False,
-        allow_unsafe_werkzeug=True,
+        allow_unsafe_werkzeug=allow_unsafe_werkzeug,
     )
 
 

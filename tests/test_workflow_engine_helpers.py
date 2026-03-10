@@ -437,3 +437,72 @@ def test_resolve_workflow_steps_list_follows_router_target_file(tmp_path):
         "steps": [{"id": "triage", "routes": [{"then": "enterprise_full_workflow"}]}],
     }
     assert resolve_workflow_steps_list(data, "full") == [{"id": "design", "agent_type": "designer"}]
+
+
+def test_resolve_workflow_steps_list_expands_orchestrator_external_routes(tmp_path):
+    master = tmp_path / "master.yaml"
+    feature = tmp_path / "new_feature_workflow.yaml"
+    bug = tmp_path / "bug_fix_workflow.yaml"
+
+    master.write_text(
+        "steps:\n"
+        "  - id: triage\n"
+        "    agent_type: triage\n"
+        "    on_success: dispatch\n"
+        "  - id: dispatch\n"
+        "    agent_type: router\n"
+        "    routes:\n"
+        "      - when: \"selected_workflow == 'new_feature'\"\n"
+        "        then: new_feature_workflow\n"
+        "      - default: bug_fix_workflow\n",
+        encoding="utf-8",
+    )
+    feature.write_text(
+        "steps:\n"
+        "  - id: design\n"
+        "    agent_type: designer\n"
+        "    on_success: implement\n"
+        "  - id: implement\n"
+        "    agent_type: developer\n"
+        "    final_step: true\n",
+        encoding="utf-8",
+    )
+    bug.write_text(
+        "steps:\n"
+        "  - id: diagnose\n"
+        "    agent_type: reviewer\n"
+        "    final_step: true\n",
+        encoding="utf-8",
+    )
+
+    resolved = resolve_workflow_steps_list(
+        {
+            "__yaml_path": str(master),
+            "steps": [
+                {"id": "triage", "agent_type": "triage", "on_success": "dispatch"},
+                {
+                    "id": "dispatch",
+                    "agent_type": "router",
+                    "routes": [
+                        {
+                            "when": "selected_workflow == 'new_feature'",
+                            "then": "new_feature_workflow",
+                        },
+                        {"default": "bug_fix_workflow"},
+                    ],
+                },
+            ],
+        },
+        "full",
+    )
+
+    ids = [str(step.get("id")) for step in resolved if isinstance(step, dict)]
+    assert "triage" in ids
+    assert "dispatch" in ids
+    assert "new_feature_workflow__design" in ids
+    assert "new_feature_workflow__implement" in ids
+    assert "bug_fix_workflow__diagnose" in ids
+
+    dispatch = next(step for step in resolved if isinstance(step, dict) and step.get("id") == "dispatch")
+    assert dispatch["routes"][0]["then"] == "new_feature_workflow__design"
+    assert dispatch["routes"][1]["default"] == "bug_fix_workflow__diagnose"

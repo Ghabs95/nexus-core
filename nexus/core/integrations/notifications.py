@@ -216,6 +216,50 @@ def _issue_callback(action: str, issue_number: str, project: str | None = None) 
     return f"{action}_{issue}|{project_key}"
 
 
+def _canonical_project_key(project: str) -> str:
+    value = str(project or "").strip()
+    if not value:
+        return value
+
+    try:
+        from nexus.core.config import normalize_project_key
+    except Exception:
+        normalize_project_key = None
+
+    if callable(normalize_project_key):
+        normalized = normalize_project_key(value)
+        if normalized:
+            return str(normalized)
+
+    lowered = value.lower()
+    if isinstance(PROJECT_CONFIG.get(lowered), dict):
+        return lowered
+    return value
+
+
+def _project_issue_url(project: str, issue_number: str) -> str:
+    project_key = _canonical_project_key(project)
+    project_cfg = PROJECT_CONFIG.get(project_key)
+    normalized_cfg = project_cfg if isinstance(project_cfg, dict) else None
+
+    try:
+        repo = get_repo(project_key)
+        return build_issue_url(repo, issue_number, normalized_cfg)
+    except Exception:
+        if "/" in project_key:
+            return build_issue_url(project_key, issue_number, normalized_cfg)
+
+        try:
+            from nexus.core.config import get_default_project
+
+            default_project = str(get_default_project() or "").strip()
+            default_cfg = PROJECT_CONFIG.get(default_project)
+            normalized_default_cfg = default_cfg if isinstance(default_cfg, dict) else None
+            return build_issue_url(get_repo(default_project), issue_number, normalized_default_cfg)
+        except Exception:
+            return build_issue_url(project_key, issue_number, normalized_cfg)
+
+
 def _normalize_telegram_markdown(message: str, parse_mode: str) -> str:
     """Normalize markdown for Telegram legacy Markdown mode.
 
@@ -611,6 +655,7 @@ def notify_workflow_completed(
         True if sent successfully
     """
     normalized_pr_urls = [str(url) for url in (pr_urls or []) if str(url).strip()]
+    issue_url = _project_issue_url(project, issue_number)
     if normalized_pr_urls:
         first_pr_url = normalized_pr_urls[0]
         pr_lines = "\n".join(f"🔗 PR: {url}" for url in normalized_pr_urls)
@@ -620,7 +665,7 @@ def notify_workflow_completed(
             f"Project: {project}\n"
             f"PRs: {len(normalized_pr_urls)}\n\n"
             f"All workflow steps completed. **Ready for review!**\n\n"
-            f"🔗 Issue: {build_issue_url(get_repo(project), issue_number, PROJECT_CONFIG.get(project) if isinstance(PROJECT_CONFIG.get(project), dict) else None)}\n"
+            f"🔗 Issue: {issue_url}\n"
             f"{pr_lines}"
         )
 
@@ -629,15 +674,7 @@ def notify_workflow_completed(
             .add_button("🔗 View PR", url=first_pr_url)
             .add_button(
                 "🔗 View Issue",
-                url=build_issue_url(
-                    get_repo(project),
-                    issue_number,
-                    (
-                        PROJECT_CONFIG.get(project)
-                        if isinstance(PROJECT_CONFIG.get(project), dict)
-                        else None
-                    ),
-                ),
+                url=issue_url,
             )
             .new_row()
             .add_button(
@@ -675,18 +712,7 @@ def notify_workflow_completed(
                 "📝 Draft Plan",
                 callback_data=_issue_callback("plan", issue_number, project),
             )
-            .add_button(
-                "🔗 Issue",
-                url=build_issue_url(
-                    get_repo(project),
-                    issue_number,
-                    (
-                        PROJECT_CONFIG.get(project)
-                        if isinstance(PROJECT_CONFIG.get(project), dict)
-                        else None
-                    ),
-                ),
-            )
+            .add_button("🔗 Issue", url=issue_url)
             .new_row()
             .add_button(
                 "📊 View Audit Trail", callback_data=_issue_callback("audit", issue_number, project)

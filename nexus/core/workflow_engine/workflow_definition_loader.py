@@ -1,4 +1,5 @@
 import os
+from copy import deepcopy
 from typing import Any, Callable
 
 import yaml
@@ -30,6 +31,197 @@ def parse_require_approval_for(data: dict[str, Any]) -> list[str]:
     if isinstance(require_approval_for, list):
         return [str(step_id) for step_id in require_approval_for]
     return []
+
+
+def _step_reference(step: dict[str, Any], index: int) -> str:
+    """Return stable step reference used by on_success/routes wiring."""
+    return str(step.get("id") or step.get("name") or f"step_{index}").strip()
+
+
+def _target_candidates(target_name: str) -> list[str]:
+    target = str(target_name or "").strip()
+    if not target:
+        return []
+    if target.endswith((".yaml", ".yml")):
+        return [target]
+    return [f"{target}.yaml", f"{target}.yml"]
+
+
+def _namespaced_step_id(namespace: str, step_ref: str) -> str:
+    clean_step = str(step_ref or "").strip()
+    if not clean_step:
+        return namespace
+    return f"{namespace}__{clean_step}"
+
+
+def _namespace_steps(
+    steps: list[dict[str, Any]],
+    *,
+    namespace: str,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Prefix a workflow branch step graph with a namespace to avoid ID collisions."""
+    id_map: dict[str, str] = {}
+    ordered_refs: list[str] = []
+
+    for idx, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            continue
+        step_ref = _step_reference(step, idx)
+        if not step_ref or step_ref in id_map:
+            continue
+        ordered_refs.append(step_ref)
+        id_map[step_ref] = _namespaced_step_id(namespace, step_ref)
+
+    if not ordered_refs:
+        return [], None
+
+    namespaced_steps: list[dict[str, Any]] = []
+    for idx, original in enumerate(steps, start=1):
+        if not isinstance(original, dict):
+            continue
+        copied: dict[str, Any] = deepcopy(original)
+        original_ref = _step_reference(original, idx)
+        copied["id"] = id_map.get(original_ref, _namespaced_step_id(namespace, original_ref))
+
+        on_success = copied.get("on_success")
+        if isinstance(on_success, str) and on_success in id_map:
+            copied["on_success"] = id_map[on_success]
+
+        parallel = copied.get("parallel")
+        if isinstance(parallel, list):
+            copied["parallel"] = [
+                id_map.get(str(step_id), str(step_id))
+                for step_id in parallel
+            ]
+
+        routes = copied.get("routes")
+        if isinstance(routes, list):
+            for route in routes:
+                if not isinstance(route, dict):
+                    continue
+                for field in ("then", "goto", "default"):
+                    target = route.get(field)
+                    if isinstance(target, str) and target in id_map:
+                        route[field] = id_map[target]
+
+        namespaced_steps.append(copied)
+
+    return namespaced_steps, id_map.get(ordered_refs[0])
+
+
+def _load_target_workflow(
+    *,
+    base_dir: str,
+    source_path: str,
+    target: str,
+) -> tuple[dict[str, Any], str] | None:
+    for candidate in _target_candidates(target):
+        candidate_path = os.path.join(base_dir, candidate)
+        if os.path.abspath(candidate_path) == os.path.abspath(source_path):
+            continue
+        if not os.path.exists(candidate_path):
+            continue
+        try:
+            with open(candidate_path, encoding="utf-8") as handle:
+                routed_data = yaml.safe_load(handle)
+        except Exception:
+            continue
+        if not isinstance(routed_data, dict):
+            continue
+        routed_data["__yaml_path"] = candidate_path
+        return routed_data, candidate_path
+    return None
+
+
+def _expand_external_router_targets(
+    *,
+    data: dict[str, Any],
+    workflow_type: str,
+) -> list[dict[str, Any]]:
+    """Inline external router-targeted workflows into a single executable step list."""
+    source_path = data.get("__yaml_path")
+    flat_steps = data.get("steps", [])
+    if not isinstance(source_path, str) or not source_path:
+        return []
+    if not isinstance(flat_steps, list) or not flat_steps:
+        return []
+
+    base_dir = os.path.dirname(source_path)
+    rewritten_steps: list[dict[str, Any]] = []
+    branch_steps: list[dict[str, Any]] = []
+    branch_entry_by_target: dict[str, str] = {}
+    used_namespaces: set[str] = set()
+
+    for step in flat_steps:
+        if not isinstance(step, dict):
+            continue
+        copied_step: dict[str, Any] = deepcopy(step)
+        routes = copied_step.get("routes")
+
+        targets_in_step: list[str] = []
+        if isinstance(routes, list):
+            for route in routes:
+                if not isinstance(route, dict):
+                    continue
+                for field in ("then", "goto", "default"):
+                    raw_target = route.get(field)
+                    if not isinstance(raw_target, str):
+                        continue
+                    target = raw_target.strip()
+                    if not target:
+                        continue
+                    if target not in targets_in_step:
+                        targets_in_step.append(target)
+
+        for target in targets_in_step:
+            if target in branch_entry_by_target:
+                continue
+            loaded = _load_target_workflow(
+                base_dir=base_dir,
+                source_path=source_path,
+                target=target,
+            )
+            if not loaded:
+                continue
+            routed_data, _ = loaded
+            routed_steps = resolve_workflow_steps_list(routed_data, workflow_type)
+            if not routed_steps:
+                continue
+
+            namespace_base = str(target).replace("-", "_").replace(".", "_").strip("_")
+            namespace = namespace_base or "branch"
+            if namespace in used_namespaces:
+                suffix = 2
+                while f"{namespace}_{suffix}" in used_namespaces:
+                    suffix += 1
+                namespace = f"{namespace}_{suffix}"
+            used_namespaces.add(namespace)
+
+            namespaced_steps, entry = _namespace_steps(routed_steps, namespace=namespace)
+            if not namespaced_steps or not entry:
+                continue
+
+            branch_entry_by_target[target] = entry
+            branch_steps.extend(namespaced_steps)
+
+        if isinstance(routes, list):
+            for route in routes:
+                if not isinstance(route, dict):
+                    continue
+                for field in ("then", "goto", "default"):
+                    raw_target = route.get(field)
+                    if not isinstance(raw_target, str):
+                        continue
+                    rewritten = branch_entry_by_target.get(raw_target.strip())
+                    if rewritten:
+                        route[field] = rewritten
+
+        rewritten_steps.append(copied_step)
+
+    if not branch_steps:
+        return []
+
+    return rewritten_steps + branch_steps
 
 
 def resolve_workflow_steps_list(
@@ -105,6 +297,13 @@ def resolve_workflow_steps_list(
                     routed_steps = resolve_workflow_steps_list(routed_data, workflow_type)
                     if routed_steps:
                         return routed_steps
+
+            expanded = _expand_external_router_targets(
+                data=data,
+                workflow_type=workflow_type,
+            )
+            if expanded:
+                return expanded
 
         # If no tier mapping is present, permit flat layout as fallback.
         flat = data.get("steps", [])
