@@ -94,19 +94,27 @@ class AuditStore:
         return cls._core_store
 
     @staticmethod
-    def audit_log(issue_num: int, event: str, details: str | None = None) -> None:
+    def audit_log(
+        issue_num: int,
+        event: str,
+        details: str | None = None,
+        *,
+        user_id: str | None = None,
+    ) -> None:
         """Log an audit event in nexus-arc JSONL format."""
         from nexus.core.integrations.workflow_state_factory import get_workflow_state
 
         workflow_id = get_workflow_state().get_workflow_id(str(issue_num)) or "_nexus_system"
 
         store = AuditStore._get_core_store()
+        normalized_user_id = str(user_id or "").strip() or None
         try:
             _run_coro_sync(
                 lambda: store.log(
                     workflow_id=workflow_id,
                     event_type=event,
                     data={"issue_number": issue_num, "details": details},
+                    user_id=normalized_user_id,
                 )
             )
             logger.debug(f"Audit: #{issue_num} {event}")

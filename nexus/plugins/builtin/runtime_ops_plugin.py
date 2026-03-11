@@ -25,10 +25,8 @@ class RuntimeOpsPlugin:
 
     def build_issue_pattern(self, issue_number: str) -> str:
         """Return pgrep regex pattern for issue-linked process detection."""
-        return (
-            f"{self.process_name}.*issues/{issue_number}[^0-9]|"
-            f"{self.process_name}.*issues/{issue_number}$"
-        )
+        process_pattern = f"(?:{self.process_name})"
+        return f"{process_pattern}.*issues/{issue_number}(?:[^0-9]|$)"
 
     def find_issue_processes(self, issue_number: str) -> list[dict[str, Any]]:
         """Return process matches for an issue number."""

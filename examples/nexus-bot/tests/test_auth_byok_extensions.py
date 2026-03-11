@@ -132,6 +132,74 @@ def test_store_ai_provider_keys_rejects_copilot_without_linked_github(monkeypatc
         assert "Copilot requires a linked GitHub account" in str(exc)
 
 
+def test_store_ai_provider_keys_accepts_cli_account_toggles(monkeypatch):
+    session = SimpleNamespace(
+        session_id="session-account",
+        nexus_id="nexus-account",
+        expires_at=datetime.now(tz=UTC) + timedelta(minutes=5),
+        status="oauth_done",
+    )
+
+    captured: dict[str, object] = {}
+    monkeypatch.setenv("NEXUS_CLI_AUTH_MODE", "account")
+    monkeypatch.setattr(auth_svc, "get_auth_session", lambda _sid: session)
+    monkeypatch.setattr(
+        auth_svc,
+        "get_user_credentials",
+        lambda _nid: SimpleNamespace(
+            codex_api_key_enc=None,
+            gemini_api_key_enc=None,
+            claude_api_key_enc=None,
+            copilot_github_token_enc=None,
+            github_token_enc="enc-gh",
+            github_login="gh-user",
+            codex_account_enabled=False,
+            gemini_account_enabled=False,
+            claude_account_enabled=False,
+            copilot_account_enabled=False,
+        ),
+    )
+    monkeypatch.setattr(auth_svc, "upsert_ai_provider_keys", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(auth_svc, "update_auth_session", lambda **_kwargs: None)
+    monkeypatch.setattr(auth_svc, "get_setup_status", lambda _nid: {"ready": True, "project_access_count": 1})
+
+    result = auth_svc.store_ai_provider_keys(
+        session_id="session-account",
+        use_codex_account=True,
+        use_gemini_account=True,
+        use_claude_account=True,
+        use_copilot_account=True,
+    )
+
+    assert result["ready"] is True
+    assert captured["codex_account_enabled"] is True
+    assert captured["gemini_account_enabled"] is True
+    assert captured["claude_account_enabled"] is True
+    assert captured["copilot_account_enabled"] is True
+
+
+def test_store_ai_provider_keys_rejects_account_toggles_when_mode_is_api_key(monkeypatch):
+    session = SimpleNamespace(
+        session_id="session-account-2",
+        nexus_id="nexus-account-2",
+        expires_at=datetime.now(tz=UTC) + timedelta(minutes=5),
+        status="oauth_done",
+    )
+
+    monkeypatch.setenv("NEXUS_CLI_AUTH_MODE", "api-key")
+    monkeypatch.setattr(auth_svc, "get_auth_session", lambda _sid: session)
+    monkeypatch.setattr(auth_svc, "get_user_credentials", lambda _nid: None)
+
+    try:
+        auth_svc.store_ai_provider_keys(
+            session_id="session-account-2",
+            use_codex_account=True,
+        )
+        assert False, "Expected ValueError"
+    except ValueError as exc:
+        assert "NEXUS_CLI_AUTH_MODE" in str(exc)
+
+
 def test_schema_migrations_include_claude_and_gitlab_oauth():
     if not getattr(store_svc, "_SA_AVAILABLE", False):
         return
@@ -156,6 +224,10 @@ def test_schema_migrations_include_claude_and_gitlab_oauth():
     store_svc._run_schema_migrations(_Engine())
 
     assert any("claude_api_key_enc" in stmt for stmt in executed)
+    assert any("codex_account_enabled" in stmt for stmt in executed)
+    assert any("gemini_account_enabled" in stmt for stmt in executed)
+    assert any("claude_account_enabled" in stmt for stmt in executed)
+    assert any("copilot_account_enabled" in stmt for stmt in executed)
     assert any("gitlab_refresh_token_enc" in stmt for stmt in executed)
     assert any("oauth_provider" in stmt for stmt in executed)
     assert any("chat_platform" in stmt for stmt in executed)
@@ -183,6 +255,10 @@ def test_get_setup_status_counts_claude_key_for_readiness(monkeypatch):
         gemini_api_key_enc=None,
         claude_api_key_enc="enc-claude",
         copilot_github_token_enc=None,
+        codex_account_enabled=False,
+        gemini_account_enabled=False,
+        claude_account_enabled=False,
+        copilot_account_enabled=False,
         org_verified=True,
         org_verified_at=datetime.now(tz=UTC),
         last_access_sync_at=datetime.now(tz=UTC),
@@ -199,6 +275,52 @@ def test_get_setup_status_counts_claude_key_for_readiness(monkeypatch):
 
     assert status["claude_key_set"] is True
     assert status["ai_provider_key_set"] is True
+    assert status["ready"] is True
+
+
+def test_get_setup_status_counts_cli_account_for_readiness(monkeypatch):
+    monkeypatch.setenv("NEXUS_AUTH_ENABLED", "true")
+    monkeypatch.setenv("NEXUS_CLI_AUTH_MODE", "account")
+    monkeypatch.setattr(access_svc, "maybe_sync_user_project_access", lambda _nid: True)
+
+    record = store_svc.CredentialRecord(
+        nexus_id="nexus-account-status",
+        auth_provider="gitlab",
+        github_user_id=None,
+        github_login=None,
+        github_token_enc=None,
+        github_refresh_token_enc=None,
+        github_token_expires_at=None,
+        gitlab_user_id=99,
+        gitlab_username="gl-user",
+        gitlab_token_enc="enc-gl",
+        gitlab_refresh_token_enc=None,
+        gitlab_token_expires_at=None,
+        codex_api_key_enc=None,
+        gemini_api_key_enc=None,
+        claude_api_key_enc=None,
+        copilot_github_token_enc=None,
+        codex_account_enabled=True,
+        gemini_account_enabled=False,
+        claude_account_enabled=False,
+        copilot_account_enabled=False,
+        org_verified=True,
+        org_verified_at=datetime.now(tz=UTC),
+        last_access_sync_at=datetime.now(tz=UTC),
+        key_version=1,
+    )
+    monkeypatch.setattr(access_svc, "get_user_credentials", lambda _nid: record)
+    monkeypatch.setattr(
+        access_svc,
+        "get_user_project_access",
+        lambda _nid: [SimpleNamespace(project_key="nexus")],
+    )
+
+    status = access_svc.get_setup_status("nexus-account-status")
+
+    assert status["codex_account_enabled"] is True
+    assert status["account_provider_ready"] is True
+    assert status["ai_provider_ready"] is True
     assert status["ready"] is True
 
 
@@ -224,6 +346,10 @@ def test_build_execution_env_refreshes_expired_gitlab_token_and_injects_claude(m
         gemini_api_key_enc=None,
         claude_api_key_enc="enc-claude",
         copilot_github_token_enc=None,
+        codex_account_enabled=False,
+        gemini_account_enabled=False,
+        claude_account_enabled=False,
+        copilot_account_enabled=False,
         org_verified=True,
         org_verified_at=datetime.now(tz=UTC),
         last_access_sync_at=datetime.now(tz=UTC),
@@ -276,6 +402,91 @@ def test_build_execution_env_refreshes_expired_gitlab_token_and_injects_claude(m
     assert env["CLAUDE_API_KEY"] == "sk-ant-claude-key"
     assert updates["nexus_id"] == "nexus-4"
     assert str(updates["gitlab_token_enc"]).endswith("new-access-token")
+
+
+def test_build_execution_env_allows_cli_account_without_api_keys(monkeypatch):
+    monkeypatch.setenv("NEXUS_AUTH_ENABLED", "true")
+    monkeypatch.setenv("NEXUS_CLI_AUTH_MODE", "account")
+
+    record = store_svc.CredentialRecord(
+        nexus_id="nexus-acc-env",
+        auth_provider="gitlab",
+        github_user_id=None,
+        github_login=None,
+        github_token_enc=None,
+        github_refresh_token_enc=None,
+        github_token_expires_at=None,
+        gitlab_user_id=7,
+        gitlab_username="gl-user",
+        gitlab_token_enc="enc-gl-token",
+        gitlab_refresh_token_enc=None,
+        gitlab_token_expires_at=None,
+        codex_api_key_enc=None,
+        gemini_api_key_enc=None,
+        claude_api_key_enc=None,
+        copilot_github_token_enc=None,
+        codex_account_enabled=True,
+        gemini_account_enabled=False,
+        claude_account_enabled=False,
+        copilot_account_enabled=False,
+        org_verified=True,
+        org_verified_at=datetime.now(tz=UTC),
+        last_access_sync_at=datetime.now(tz=UTC),
+        key_version=1,
+    )
+    monkeypatch.setattr(access_svc, "get_user_credentials", lambda _nid: record)
+    monkeypatch.setattr(access_svc, "decrypt_secret", lambda _value: "gitlab-access-token")
+
+    env, err = access_svc.build_execution_env("nexus-acc-env")
+
+    assert err is None
+    assert env["GITLAB_TOKEN"] == "gitlab-access-token"
+    assert env["GITHUB_TOKEN"] == "gitlab-access-token"
+    assert env["NEXUS_ACCOUNT_AUTH_PROVIDERS"] == "codex"
+
+
+def test_build_execution_env_rejects_insecure_codex_home_owner(monkeypatch):
+    monkeypatch.setenv("NEXUS_AUTH_ENABLED", "true")
+    monkeypatch.setenv("NEXUS_CLI_AUTH_MODE", "account")
+
+    record = store_svc.CredentialRecord(
+        nexus_id="nexus-acc-owner",
+        auth_provider="gitlab",
+        github_user_id=None,
+        github_login=None,
+        github_token_enc=None,
+        github_refresh_token_enc=None,
+        github_token_expires_at=None,
+        gitlab_user_id=7,
+        gitlab_username="gl-user",
+        gitlab_token_enc="enc-gl-token",
+        gitlab_refresh_token_enc=None,
+        gitlab_token_expires_at=None,
+        codex_api_key_enc=None,
+        gemini_api_key_enc=None,
+        claude_api_key_enc=None,
+        copilot_github_token_enc=None,
+        codex_account_enabled=True,
+        gemini_account_enabled=False,
+        claude_account_enabled=False,
+        copilot_account_enabled=False,
+        org_verified=True,
+        org_verified_at=datetime.now(tz=UTC),
+        last_access_sync_at=datetime.now(tz=UTC),
+        key_version=1,
+    )
+    monkeypatch.setattr(access_svc, "get_user_credentials", lambda _nid: record)
+    monkeypatch.setattr(access_svc, "decrypt_secret", lambda _value: "gitlab-access-token")
+    monkeypatch.setattr(
+        access_svc,
+        "_ensure_private_runtime_dir",
+        lambda _path: "insecure auth runtime directory",
+    )
+
+    env, err = access_svc.build_execution_env("nexus-acc-owner")
+
+    assert env == {}
+    assert "insecure auth runtime directory" in str(err)
 
 
 def test_complete_github_oauth_reuses_existing_nexus_identity(monkeypatch):

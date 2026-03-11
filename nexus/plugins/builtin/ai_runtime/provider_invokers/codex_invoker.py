@@ -4,7 +4,11 @@ import time
 from typing import Any, Callable
 
 from .agent_invokers import _monitor_process_lifecycle, _redact_command_for_logs
-from .agent_invokers import _start_output_tee, apply_git_transport_env_policy
+from .agent_invokers import (
+    _start_output_tee,
+    apply_git_transport_env_policy,
+    prepare_provider_cli_env,
+)
 
 
 def _looks_like_codex_auth_failure(excerpt: str) -> bool:
@@ -59,69 +63,6 @@ def _cleanup_empty_rollout_files(*, logger: Any, codex_home: str | None = None) 
     return removed
 
 
-def _codex_supports_with_api_key_login(
-    *,
-    codex_cli_path: str,
-    workspace_dir: str,
-    env: dict[str, str],
-    logger: Any,
-) -> bool:
-    try:
-        result = subprocess.run(
-            [codex_cli_path, "login", "--help"],
-            cwd=workspace_dir,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=8,
-            check=False,
-        )
-        output = f"{result.stdout}\n{result.stderr}".lower()
-        return "--with-api-key" in output
-    except Exception as exc:
-        logger.warning("Could not detect Codex login capabilities: %s", exc)
-        return False
-
-
-def _auto_login_codex_with_api_key(
-    *,
-    codex_cli_path: str,
-    workspace_dir: str,
-    env: dict[str, str],
-    openai_api_key: str,
-    logger: Any,
-    tool_unavailable_error: type[Exception],
-) -> None:
-    if not _codex_supports_with_api_key_login(
-        codex_cli_path=codex_cli_path,
-        workspace_dir=workspace_dir,
-        env=env,
-        logger=logger,
-    ):
-        raise tool_unavailable_error(
-            "Codex CLI does not support '--with-api-key' non-interactive login; "
-            "upgrade Codex CLI (recommended >=0.114.0-alpha.3)."
-        )
-
-    result = subprocess.run(
-        [codex_cli_path, "login", "--with-api-key"],
-        cwd=workspace_dir,
-        env=env,
-        input=f"{openai_api_key}\n",
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
-    )
-    if result.returncode != 0:
-        stderr_tail = (result.stderr or result.stdout or "").strip().splitlines()
-        reason = stderr_tail[-1] if stderr_tail else "unknown error"
-        raise tool_unavailable_error(
-            f"Codex auto-login failed (exit={result.returncode}): {reason}"
-        )
-    logger.info("🔐 Codex auto-login completed for current launch context")
-
-
 def invoke_codex_cli(
     *,
     check_tool_available: Callable[[Any], bool],
@@ -140,26 +81,26 @@ def invoke_codex_cli(
     if not check_tool_available(codex_provider):
         raise tool_unavailable_error("Codex CLI not available")
 
-    effective_openai_key = str(
-        (env or {}).get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
-    ).strip()
+    provider_env, auth_mode = prepare_provider_cli_env(
+        provider="codex",
+        env=env,
+        logger=logger,
+    )
+    effective_openai_key = str(provider_env.get("OPENAI_API_KEY") or "").strip()
 
     requester_hint = str(
-        (env or {}).get("NEXUS_REQUESTER_ID") or os.getenv("NEXUS_REQUESTER_ID") or ""
+        provider_env.get("NEXUS_REQUESTER_ID") or os.getenv("NEXUS_REQUESTER_ID") or ""
     ).strip()
     masked_requester = f"{requester_hint[:8]}..." if len(requester_hint) > 8 else (requester_hint or "none")
     logger.info(
-        "🔐 Codex auth diagnostic: issue=%s requester=%s has_openai_key=%s openai_key_len=%s env_has_openai=%s",
+        "🔐 Codex auth diagnostic: issue=%s requester=%s mode=%s has_openai_key=%s openai_key_len=%s env_has_openai=%s",
         issue_num or "unknown",
         masked_requester,
+        auth_mode,
         bool(effective_openai_key),
         len(effective_openai_key),
-        bool(str((env or {}).get("OPENAI_API_KEY") or "").strip()),
+        bool(str(provider_env.get("OPENAI_API_KEY") or "").strip()),
     )
-    if not effective_openai_key:
-        raise tool_unavailable_error(
-            "Codex requires OPENAI_API_KEY for this launch context"
-        )
 
     _cleanup_empty_rollout_files(logger=logger)
 
@@ -192,8 +133,8 @@ def invoke_codex_cli(
 
     try:
         merged_env = {**os.environ}
-        if env:
-            merged_env.update(env)
+        if provider_env:
+            merged_env.update(provider_env)
         merged_env = apply_git_transport_env_policy(merged_env)
         # Ensure inherited host sandbox flags don't force-disable network for
         # Codex child commands (e.g., gh issue comment/view).
@@ -208,26 +149,11 @@ def invoke_codex_cli(
             except Exception:
                 return ""
 
-        max_start_attempts = 2
+        max_start_attempts = 1
         for attempt in range(1, max_start_attempts + 1):
             retry_index = attempt - 1
             attempt_log_path = (
                 log_path if retry_index == 0 else f"{log_path}.retry{retry_index}"
-            )
-            if retry_index > 0:
-                logger.warning(
-                    "Codex startup auth failed; re-running login and retrying once (attempt %s/%s)",
-                    attempt,
-                    max_start_attempts,
-                )
-
-            _auto_login_codex_with_api_key(
-                codex_cli_path=codex_cli_path,
-                workspace_dir=workspace_dir,
-                env=merged_env,
-                openai_api_key=effective_openai_key,
-                logger=logger,
-                tool_unavailable_error=tool_unavailable_error,
             )
             process = subprocess.Popen(
                 cmd,
@@ -275,11 +201,9 @@ def invoke_codex_cli(
 
             excerpt = _read_log_excerpt(attempt_log_path)
             if _looks_like_codex_auth_failure(excerpt):
-                if attempt < max_start_attempts:
-                    continue
                 raise tool_unavailable_error(
-                    f"Codex authentication failed after re-login retry (exit={exit_code}). "
-                    "Re-authenticate your Codex/OpenAI key."
+                    f"Codex account login required or expired (exit={exit_code}). "
+                    "Run `codex login` in the runtime environment."
                 )
             raise tool_unavailable_error(f"Codex exited immediately (exit={exit_code})")
 

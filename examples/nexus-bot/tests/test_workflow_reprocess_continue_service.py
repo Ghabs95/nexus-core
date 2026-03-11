@@ -133,6 +133,32 @@ async def test_launch_continue_agent_falls_back_to_reply_when_edit_fails():
 
 
 @pytest.mark.asyncio
+async def test_launch_continue_agent_forwards_requester_nexus_id():
+    captured: dict[str, object] = {}
+    ctx = _Ctx()
+    deps = SimpleNamespace(
+        logger=logging.getLogger("test"),
+        invoke_ai_agent=lambda **kwargs: captured.update(kwargs) or (123, "copilot"),
+    )
+    continue_ctx = {
+        "resumed_from": "designer",
+        "agent_type": "triage",
+        "agents_abs": "/tmp/agents",
+        "workspace_abs": "/tmp/workspace",
+        "issue_url": "https://github.com/acme/repo/issues/86",
+        "tier_name": "full",
+        "content": "task",
+        "continuation_prompt": "continue",
+        "log_subdir": "nexus",
+        "requester_nexus_id": "nexus-user-86",
+    }
+
+    await _launch_continue_agent(ctx, deps, issue_num="86", continue_ctx=continue_ctx)
+
+    assert captured.get("requester_nexus_id") == "nexus-user-86"
+
+
+@pytest.mark.asyncio
 async def test_maybe_reset_continue_workflow_position_resets_for_recovered_next_agent():
     called = {}
 
@@ -241,7 +267,7 @@ async def test_continue_service_reconciles_before_launch_when_ready(monkeypatch)
     async def _ensure(_ctx, _deps, _command):
         return "nexus", "106", []
 
-    def _prepare(_issue_num, _project_key, _rest, _deps):
+    def _prepare(_issue_num, _project_key, _rest, _deps, requester_nexus_id=None):
         calls["prepare"] += 1
         if calls["prepare"] == 1:
             return {

@@ -316,6 +316,7 @@ async def _launch_reprocess(
     content: str,
     project_name: str,
     project_key: str,
+    requester_nexus_id: str | None = None,
 ) -> None:
     msg_id = await ctx.reply_text(f"🔁 Reprocessing issue #{issue_num}...")
     pid, tool_used = deps.invoke_ai_agent(
@@ -326,6 +327,7 @@ async def _launch_reprocess(
         task_content=content,
         log_subdir=project_name or project_key,
         project_name=project_name or project_key,
+        requester_nexus_id=requester_nexus_id,
     )
     if pid:
         await ctx.edit_message_text(
@@ -406,6 +408,7 @@ async def handle_reprocess(
         content=content,
         project_name=project_name,
         project_key=project_key,
+        requester_nexus_id=requester_nexus_id,
     )
 
 
@@ -595,6 +598,7 @@ async def _launch_continue_agent(
             log_subdir=continue_ctx["log_subdir"],
             agent_type=continue_ctx["agent_type"],
             project_name=continue_ctx["log_subdir"],
+            requester_nexus_id=str(continue_ctx.get("requester_nexus_id") or "").strip() or None,
         )
     except Exception as exc:
         deps.logger.error(
@@ -719,4 +723,5 @@ async def handle_continue(ctx: Any, deps: Any, *, finalize_workflow: Callable[..
         ctx, deps, issue_num=issue_num, continue_ctx=continue_ctx
     ):
         return
+    continue_ctx["requester_nexus_id"] = requester_nexus_id
     await _launch_continue_agent(ctx, deps, issue_num=issue_num, continue_ctx=continue_ctx)

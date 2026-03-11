@@ -5,6 +5,7 @@ from typing import Any, Callable
 from nexus.plugins.builtin.ai_runtime.provider_invokers.agent_invokers import (
     _prepare_log_path,
     _launch_process_with_log,
+    prepare_provider_cli_env,
 )
 from nexus.plugins.builtin.ai_runtime.provider_invokers.subprocess_utils import (
     run_cli_prompt,
@@ -32,6 +33,12 @@ def invoke_claude_cli(
     if not check_tool_available(claude_provider):
         raise tool_unavailable_error("Claude CLI not available")
 
+    provider_env, auth_mode = prepare_provider_cli_env(
+        provider="claude",
+        env=env,
+        logger=logger,
+    )
+
     cmd = [claude_cli_path, "-p", agent_prompt]
     # Note: Anthropic CLI might have specific flags for models if needed.
     # Currently omitting --model as Claude Code doesn't typically require it in simple prompt mode.
@@ -45,6 +52,7 @@ def invoke_claude_cli(
     )
 
     logger.info("🤖 Launching Claude CLI agent")
+    logger.info("   Auth mode: %s", auth_mode)
     logger.info("   Workspace: %s", workspace_dir)
     logger.info("   Log: %s", log_path)
 
@@ -52,7 +60,7 @@ def invoke_claude_cli(
         process = _launch_process_with_log(
             cmd=cmd,
             workspace_dir=workspace_dir,
-            env=env,
+            env=provider_env,
             log_path=log_path,
             logger=logger,
             launched_message="🚀 Claude launched (PID: %s)",

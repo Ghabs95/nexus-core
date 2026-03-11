@@ -145,3 +145,101 @@ def test_issue_author_ready_for_comment_without_command_does_not_chain():
     assert result["status"] == "ignored"
     assert "manual override command not detected" in result["reason"]
     assert "comment_6" not in processed
+
+
+def test_structured_completion_from_role_author_chains_next_agent():
+    processed = set()
+    result = handle_issue_comment_event(
+        event={
+            "action": "created",
+            "comment_id": 7,
+            "comment_body": (
+                "## 🔍 Vision & Scope Complete — ceo\n\n"
+                "**Step ID:** `new_feature_workflow__vision`\n"
+                "**Step Num:** 3\n\n"
+                "### SOP Checklist\n\n"
+                "- [x] 3. **Vision & Scope** — `ceo` : Feature brief: WHAT and WHY\n"
+                "- [ ] 4. **Technical Feasibility** — `cto` : Feasibility assessment, HOW and WHEN\n\n"
+                "Ready for **@Cto**"
+            ),
+            "issue_number": "102",
+            "comment_author": "ceo",
+            "issue": {"user": {"login": "Ghabs95"}},
+        },
+        logger=MagicMock(),
+        policy=_Policy(),
+        processed_events=processed,
+        launch_next_agent=lambda **kwargs: (4444, "codex"),
+        check_and_notify_pr=lambda issue, project: None,
+    )
+
+    assert result["status"] == "agent_launched"
+    assert result["next_agent"] == "cto"
+    assert "comment_7" in processed
+
+
+def test_structured_completion_author_mismatch_is_ignored():
+    processed = set()
+    result = handle_issue_comment_event(
+        event={
+            "action": "created",
+            "comment_id": 8,
+            "comment_body": (
+                "## 🔍 Vision & Scope Complete — ceo\n\n"
+                "**Step ID:** `new_feature_workflow__vision`\n"
+                "**Step Num:** 3\n\n"
+                "Ready for **@Cto**"
+            ),
+            "issue_number": "103",
+            "comment_author": "random-user",
+            "issue": {"user": {"login": "someone-else"}},
+        },
+        logger=MagicMock(),
+        policy=_Policy(),
+        processed_events=processed,
+        launch_next_agent=lambda **kwargs: (5555, "codex"),
+        check_and_notify_pr=lambda issue, project: None,
+    )
+
+    assert result["status"] == "ignored"
+    assert "not from supported AI agent" in result["reason"]
+
+
+def test_structured_cto_completion_with_long_checklist_chains_architect():
+    processed = set()
+    result = handle_issue_comment_event(
+        event={
+            "action": "created",
+            "comment_id": 9,
+            "comment_body": (
+                "## 🔍 Technical Feasibility Complete — cto\n\n"
+                "**Severity:** High\n"
+                "**Target Sub-Repo:** `wlbl-ecos`, `wlbl-app`\n"
+                "**Workflow:** new_feature\n\n"
+                "**Step ID:** `new_feature_workflow__technical_feasibility`\n"
+                "**Step Num:** 4\n\n"
+                "### SOP Checklist\n\n"
+                "- [x] 1. **Triage & Routing** — `triage` : Analyze the incoming request\n"
+                "- [x] 3. **Vision & Scope** — `ceo` : Feature brief: WHAT and WHY\n"
+                "- [x] 4. **Technical Feasibility** — `cto` : Feasibility assessment\n"
+                "- [ ] 5. **Architecture Design** — `architect` : ADR and data flow\n"
+                "- [ ] 6. **UX Design** — `designer` : Wireframes\n"
+                "- [ ] 7. **Implementation** — `developer` : Code, unit tests\n"
+                "- [ ] 8. **Quality Gate** — `reviewer` : Regression check\n"
+                "- [ ] 9. **Compliance Gate** — `compliance` : Privacy impact\n\n"
+                "Ready for **@Architect**"
+            ),
+            "issue_number": "104",
+            "comment_author": "cto",
+            "issue": {"user": {"login": "Ghabs95"}},
+        },
+        logger=MagicMock(),
+        policy=_Policy(),
+        processed_events=processed,
+        launch_next_agent=lambda **kwargs: (7777, "codex"),
+        check_and_notify_pr=lambda issue, project: None,
+    )
+
+    assert result["status"] == "agent_launched"
+    assert result["next_agent"] == "architect"
+    assert "comment_9" in processed

@@ -497,22 +497,8 @@ def test_codex_invoker_unavailable_and_success(monkeypatch, tmp_path):
     except RuntimeError as exc:
         assert "Codex CLI not available" in str(exc)
 
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    try:
-        invoke_codex_cli(
-            check_tool_available=lambda provider: True,
-            codex_provider=AIProvider.CODEX,
-            codex_cli_path="codex",
-            codex_model="",
-            get_tasks_logs_dir=lambda workspace, subdir: str(tmp_path),
-            tool_unavailable_error=RuntimeError,
-            logger=logger,
-            agent_prompt="do work",
-            workspace_dir="/tmp/work",
-        )
-        assert False, "expected missing key error"
-    except RuntimeError as exc:
-        assert "OPENAI_API_KEY" in str(exc)
+    monkeypatch.setenv("NEXUS_CLI_AUTH_MODE", "account")
+    monkeypatch.setenv("OPENAI_API_KEY", "host-openai-key")
 
     monkeypatch.setattr(codex_mod.time, "strftime", lambda fmt: "20260101_120000")
     captured: dict[str, Any] = {}
@@ -543,24 +529,6 @@ def test_codex_invoker_unavailable_and_success(monkeypatch, tmp_path):
 
     monkeypatch.setattr(codex_mod.subprocess, "Popen", _fake_popen)
     monkeypatch.setattr(codex_mod, "_start_output_tee", lambda **kwargs: None)
-    run_calls: list[tuple[list[str], str]] = []
-
-    class _RunResult:
-        def __init__(self, returncode=0, stdout="", stderr=""):
-            self.returncode = returncode
-            self.stdout = stdout
-            self.stderr = stderr
-
-    def _fake_run(cmd, **kwargs):
-        run_calls.append((list(cmd), str(kwargs.get("input") or "")))
-        if cmd == ["codex", "login", "--help"]:
-            return _RunResult(returncode=0, stdout="--with-api-key", stderr="")
-        if cmd == ["codex", "login", "--with-api-key"]:
-            assert kwargs.get("input") == "test-key\n"
-            return _RunResult(returncode=0, stdout="ok", stderr="")
-        return _RunResult(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(codex_mod.subprocess, "run", _fake_run)
     tick = {"value": 946685000.0}
 
     def _fake_time():
@@ -581,7 +549,11 @@ def test_codex_invoker_unavailable_and_success(monkeypatch, tmp_path):
         workspace_dir=str(tmp_path / "repo"),
         issue_num="83",
         log_subdir="nexus",
-        env={"FOO": "BAR", "OPENAI_API_KEY": "test-key", "NEXUS_REQUESTER_ID": "31efac50-8610-4b4b-9129-6a48e96a110c"},
+        env={
+            "FOO": "BAR",
+            "OPENAI_API_KEY": "request-openai-key",
+            "NEXUS_REQUESTER_ID": "31efac50-8610-4b4b-9129-6a48e96a110c",
+        },
     )
     assert pid == 4321
     assert captured["cmd"] == [
@@ -601,29 +573,23 @@ def test_codex_invoker_unavailable_and_success(monkeypatch, tmp_path):
     assert captured["text"] is True
     assert captured["bufsize"] == 1
     assert isinstance(captured["env"], dict) and captured["env"]["FOO"] == "BAR"
-    assert captured["env"]["OPENAI_API_KEY"] == "test-key"
+    assert captured["env"]["OPENAI_API_KEY"] == ""
     assert captured["env"]["NEXUS_GIT_PLATFORM_TRANSPORT"] == "api"
     assert captured["env"]["NEXUS_GIT_CLI_DISABLED"] == "1"
     shim_dir = captured["env"]["PATH"].split(":", 1)[0]
     assert os.path.exists(os.path.join(shim_dir, "gh"))
     assert os.path.exists(os.path.join(shim_dir, "glab"))
     assert any(
-        "Codex auth diagnostic: issue=83 requester=31efac50... has_openai_key=True openai_key_len=8 env_has_openai=True" in message
+        "Codex auth diagnostic: issue=83 requester=31efac50... mode=account has_openai_key=False openai_key_len=0 env_has_openai=False"
+        in message
         for level, message in logger.messages
         if level == "info"
     )
-    assert any(
-        "Codex auto-login completed for current launch context" in message
-        for level, message in logger.messages
-        if level == "info"
-    )
-    assert run_calls[0][0] == ["codex", "login", "--help"]
-    assert run_calls[1][0] == ["codex", "login", "--with-api-key"]
     assert os.path.exists(non_empty_rollout)
     assert not os.path.exists(empty_rollout)
 
 
-def test_codex_invoker_requires_cli_with_api_key_login_support(monkeypatch, tmp_path):
+def test_codex_invoker_rejects_legacy_cli_auth_mode(monkeypatch, tmp_path):
     import nexus.plugins.builtin.ai_runtime.provider_invokers.codex_invoker as codex_mod
 
     class _Logger:
@@ -636,51 +602,30 @@ def test_codex_invoker_requires_cli_with_api_key_login_support(monkeypatch, tmp_
         def error(self, *args, **kwargs):
             pass
 
-    class _RunResult:
-        def __init__(self, returncode=0, stdout="", stderr=""):
-            self.returncode = returncode
-            self.stdout = stdout
-            self.stderr = stderr
-
     monkeypatch.setattr(codex_mod.time, "strftime", lambda fmt: "20260101_120000")
-
-    class _Proc:
-        pid = 42
-        stdout = None
-
-        def poll(self):
-            return None
-
-    monkeypatch.setattr(codex_mod.subprocess, "Popen", lambda *args, **kwargs: _Proc())
-    monkeypatch.setattr(
-        codex_mod.subprocess,
-        "run",
-        lambda cmd, **kwargs: _RunResult(returncode=0, stdout="no with-api-key support", stderr="")
-        if cmd == ["codex", "login", "--help"]
-        else _RunResult(returncode=0, stdout="", stderr=""),
-    )
-    monkeypatch.setattr(codex_mod, "_start_output_tee", lambda **kwargs: None)
-
-    try:
-        invoke_codex_cli(
-            check_tool_available=lambda provider: True,
-            codex_provider=AIProvider.CODEX,
-            codex_cli_path="codex",
-            codex_model="",
-            get_tasks_logs_dir=lambda workspace, subdir: str(tmp_path / "logs"),
-            tool_unavailable_error=RuntimeError,
-            logger=_Logger(),
-            agent_prompt="do work",
-            workspace_dir=str(tmp_path / "repo"),
-            issue_num="99",
-            env={"OPENAI_API_KEY": "test-key"},
-        )
-        assert False, "expected unsupported login capability error"
-    except RuntimeError as exc:
-        assert "--with-api-key" in str(exc)
+    for configured_mode in ("api-key", "auto"):
+        monkeypatch.setenv("NEXUS_CLI_AUTH_MODE", configured_mode)
+        try:
+            invoke_codex_cli(
+                check_tool_available=lambda provider: True,
+                codex_provider=AIProvider.CODEX,
+                codex_cli_path="codex",
+                codex_model="",
+                get_tasks_logs_dir=lambda workspace, subdir: str(tmp_path / "logs"),
+                tool_unavailable_error=RuntimeError,
+                logger=_Logger(),
+                agent_prompt="do work",
+                workspace_dir=str(tmp_path / "repo"),
+                issue_num="99",
+                env={},
+            )
+            assert False, "expected invalid auth mode error"
+        except ValueError as exc:
+            assert "NEXUS_CLI_AUTH_MODE" in str(exc)
+            assert "account" in str(exc)
 
 
-def test_codex_invoker_retries_once_after_startup_401(monkeypatch, tmp_path):
+def test_codex_invoker_fails_fast_on_startup_401_in_account_mode(monkeypatch, tmp_path):
     import nexus.plugins.builtin.ai_runtime.provider_invokers.codex_invoker as codex_mod
 
     class _Logger:
@@ -696,23 +641,9 @@ def test_codex_invoker_retries_once_after_startup_401(monkeypatch, tmp_path):
         def error(self, msg, *args):
             self.messages.append(("error", msg % args if args else msg))
 
-    class _RunResult:
-        def __init__(self, returncode=0, stdout="", stderr=""):
-            self.returncode = returncode
-            self.stdout = stdout
-            self.stderr = stderr
-
     monkeypatch.setattr(codex_mod.time, "strftime", lambda fmt: "20260101_120000")
-    run_calls: list[list[str]] = []
+    monkeypatch.setenv("NEXUS_CLI_AUTH_MODE", "account")
     popen_calls: list[list[str]] = []
-
-    def _fake_run(cmd, **kwargs):
-        run_calls.append(list(cmd))
-        if cmd == ["codex", "login", "--help"]:
-            return _RunResult(returncode=0, stdout="--with-api-key", stderr="")
-        if cmd == ["codex", "login", "--with-api-key"]:
-            return _RunResult(returncode=0, stdout="ok", stderr="")
-        return _RunResult(returncode=0, stdout="", stderr="")
 
     class _ProcFail:
         pid = 111
@@ -721,14 +652,7 @@ def test_codex_invoker_retries_once_after_startup_401(monkeypatch, tmp_path):
         def poll(self):
             return 1
 
-    class _ProcOk:
-        pid = 222
-        stdout = None
-
-        def poll(self):
-            return None
-
-    procs = [_ProcFail(), _ProcOk()]
+    procs = [_ProcFail()]
 
     def _fake_popen(cmd, cwd, stdin, stdout, stderr, env, text, bufsize):
         popen_calls.append(list(cmd))
@@ -737,10 +661,7 @@ def test_codex_invoker_retries_once_after_startup_401(monkeypatch, tmp_path):
     def _fake_start_output_tee(*, process, log_path, logger, output_label):
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         with open(log_path, "w", encoding="utf-8") as handle:
-            if process.pid == 111:
-                handle.write("401 Unauthorized: Missing bearer or basic authentication in header")
-            else:
-                handle.write("running")
+            handle.write("401 Unauthorized: Missing bearer or basic authentication in header")
 
     tick = {"value": 946685000.0}
 
@@ -748,10 +669,73 @@ def test_codex_invoker_retries_once_after_startup_401(monkeypatch, tmp_path):
         tick["value"] += 1.0
         return tick["value"]
 
-    monkeypatch.setattr(codex_mod.subprocess, "run", _fake_run)
     monkeypatch.setattr(codex_mod.subprocess, "Popen", _fake_popen)
     monkeypatch.setattr(codex_mod, "_start_output_tee", _fake_start_output_tee)
     monkeypatch.setattr(codex_mod.time, "time", _fake_time)
+    monkeypatch.setattr(codex_mod.time, "sleep", lambda _seconds: None)
+
+    logger = _Logger()
+    try:
+        invoke_codex_cli(
+            check_tool_available=lambda provider: True,
+            codex_provider=AIProvider.CODEX,
+            codex_cli_path="codex",
+            codex_model="",
+            get_tasks_logs_dir=lambda workspace, subdir: str(tmp_path / "logs"),
+            tool_unavailable_error=RuntimeError,
+            logger=logger,
+            agent_prompt="do work",
+            workspace_dir=str(tmp_path / "repo"),
+            issue_num="100",
+            env={"OPENAI_API_KEY": "test-key"},
+        )
+        assert False, "expected account login required error"
+    except RuntimeError as exc:
+        assert "Codex account login required or expired" in str(exc)
+    assert len(popen_calls) == 1
+
+
+def test_codex_invoker_account_mode_strips_openai_key_and_skips_auto_login(monkeypatch, tmp_path):
+    import nexus.plugins.builtin.ai_runtime.provider_invokers.codex_invoker as codex_mod
+
+    class _Logger:
+        def __init__(self):
+            self.messages = []
+
+        def info(self, msg, *args):
+            self.messages.append(("info", msg % args if args else msg))
+
+        def warning(self, msg, *args):
+            self.messages.append(("warning", msg % args if args else msg))
+
+        def error(self, msg, *args):
+            self.messages.append(("error", msg % args if args else msg))
+
+    monkeypatch.setenv("NEXUS_CLI_AUTH_MODE", "account")
+    monkeypatch.setenv("OPENAI_API_KEY", "host-key")
+    monkeypatch.setattr(codex_mod.time, "strftime", lambda fmt: "20260101_120000")
+
+    class _Proc:
+        pid = 5555
+        stdout = None
+
+        def poll(self):
+            return None
+
+    captured: dict[str, Any] = {}
+
+    def _fake_popen(cmd, cwd, stdin, stdout, stderr, env, text, bufsize):
+        captured["env"] = env
+        return _Proc()
+
+    monkeypatch.setattr(codex_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(codex_mod, "_start_output_tee", lambda **kwargs: None)
+    run_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        codex_mod.subprocess,
+        "run",
+        lambda cmd, **kwargs: run_calls.append(list(cmd)) or None,
+    )
     monkeypatch.setattr(codex_mod.time, "sleep", lambda _seconds: None)
 
     logger = _Logger()
@@ -765,97 +749,18 @@ def test_codex_invoker_retries_once_after_startup_401(monkeypatch, tmp_path):
         logger=logger,
         agent_prompt="do work",
         workspace_dir=str(tmp_path / "repo"),
-        issue_num="100",
-        env={"OPENAI_API_KEY": "test-key"},
+        issue_num="102",
+        env={"OPENAI_API_KEY": "request-key"},
     )
 
-    assert pid == 222
-    assert len(popen_calls) == 2
-    assert run_calls == [
-        ["codex", "login", "--help"],
-        ["codex", "login", "--with-api-key"],
-        ["codex", "login", "--help"],
-        ["codex", "login", "--with-api-key"],
-    ]
+    assert pid == 5555
+    assert captured["env"]["OPENAI_API_KEY"] == ""
+    assert run_calls == []
     assert any(
-        "retrying once" in message
+        "mode=account has_openai_key=False" in message
         for level, message in logger.messages
-        if level == "warning"
+        if level == "info"
     )
-
-
-def test_codex_invoker_raises_reauth_after_retry_401(monkeypatch, tmp_path):
-    import nexus.plugins.builtin.ai_runtime.provider_invokers.codex_invoker as codex_mod
-
-    class _Logger:
-        def info(self, *args, **kwargs):
-            pass
-
-        def warning(self, *args, **kwargs):
-            pass
-
-        def error(self, *args, **kwargs):
-            pass
-
-    class _RunResult:
-        def __init__(self, returncode=0, stdout="", stderr=""):
-            self.returncode = returncode
-            self.stdout = stdout
-            self.stderr = stderr
-
-    monkeypatch.setattr(codex_mod.time, "strftime", lambda fmt: "20260101_120000")
-    monkeypatch.setattr(
-        codex_mod.subprocess,
-        "run",
-        lambda cmd, **kwargs: _RunResult(returncode=0, stdout="--with-api-key", stderr="")
-        if cmd == ["codex", "login", "--help"]
-        else _RunResult(returncode=0, stdout="ok", stderr=""),
-    )
-
-    class _ProcFail:
-        def __init__(self, pid):
-            self.pid = pid
-            self.stdout = None
-
-        def poll(self):
-            return 1
-
-    procs = [_ProcFail(311), _ProcFail(322)]
-
-    monkeypatch.setattr(codex_mod.subprocess, "Popen", lambda *args, **kwargs: procs.pop(0))
-
-    def _fake_start_output_tee(*, process, log_path, logger, output_label):
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        with open(log_path, "w", encoding="utf-8") as handle:
-            handle.write("401 Unauthorized")
-
-    tick = {"value": 946685000.0}
-
-    def _fake_time():
-        tick["value"] += 1.0
-        return tick["value"]
-
-    monkeypatch.setattr(codex_mod, "_start_output_tee", _fake_start_output_tee)
-    monkeypatch.setattr(codex_mod.time, "time", _fake_time)
-    monkeypatch.setattr(codex_mod.time, "sleep", lambda _seconds: None)
-
-    try:
-        invoke_codex_cli(
-            check_tool_available=lambda provider: True,
-            codex_provider=AIProvider.CODEX,
-            codex_cli_path="codex",
-            codex_model="",
-            get_tasks_logs_dir=lambda workspace, subdir: str(tmp_path / "logs"),
-            tool_unavailable_error=RuntimeError,
-            logger=_Logger(),
-            agent_prompt="do work",
-            workspace_dir=str(tmp_path / "repo"),
-            issue_num="101",
-            env={"OPENAI_API_KEY": "test-key"},
-        )
-        assert False, "expected re-auth error after retry"
-    except RuntimeError as exc:
-        assert "Re-authenticate your Codex/OpenAI key." in str(exc)
 
 
 def test_copilot_agent_invoker_success(monkeypatch, tmp_path):

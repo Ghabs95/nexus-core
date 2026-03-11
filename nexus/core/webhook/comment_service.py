@@ -8,6 +8,15 @@ _MANUAL_OVERRIDE_RE = re.compile(
     r"(?:with\s+|to\s+)?@([A-Za-z][A-Za-z0-9_-]{0,63})\b",
     re.IGNORECASE,
 )
+_STEP_COMPLETE_HEADER_RE = re.compile(
+    r"^\s*##\s+.+?\bcomplet(?:e|ed)\b\s*[-–—:]\s*`?@?([a-zA-Z0-9_-]+)`?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_STEP_ID_RE = re.compile(r"^\s*\*\*Step ID:\*\*\s*`?([a-zA-Z0-9_-]+)`?\s*$", re.MULTILINE)
+_STEP_NUM_RE = re.compile(
+    r"^\s*\*\*Step (?:Num|Number):\*\*\s*([0-9]+)\s*$",
+    re.MULTILINE,
+)
 
 
 def _resolve_supported_agent_author(author: str) -> str | None:
@@ -22,6 +31,44 @@ def _resolve_supported_agent_author(author: str) -> str | None:
         if kw in normalized:
             return kw
     return None
+
+
+def _normalize_author_token(author: str) -> str:
+    token = re.sub(r"[^a-z0-9]+", "-", str(author or "").strip().lower())
+    token = re.sub(r"-+", "-", token)
+    return token.strip("-")
+
+
+def _extract_structured_completed_agent(comment_body: str) -> str | None:
+    match = _STEP_COMPLETE_HEADER_RE.search(str(comment_body or ""))
+    if not match:
+        return None
+    return str(match.group(1) or "").strip().lower() or None
+
+
+def _is_structured_completion_comment(comment_body: str) -> bool:
+    body = str(comment_body or "")
+    if not _STEP_COMPLETE_HEADER_RE.search(body):
+        return False
+    if not _STEP_ID_RE.search(body):
+        return False
+    if not _STEP_NUM_RE.search(body):
+        return False
+    return True
+
+
+def _author_matches_agent(author: str, agent: str) -> bool:
+    normalized_author = _normalize_author_token(author)
+    normalized_agent = _normalize_author_token(agent)
+    if not normalized_author or not normalized_agent:
+        return False
+    if normalized_author == normalized_agent:
+        return True
+    if normalized_author.startswith(f"{normalized_agent}-"):
+        return True
+    if normalized_author.endswith(f"-{normalized_agent}"):
+        return True
+    return f"-{normalized_agent}-" in normalized_author
 
 
 def _extract_next_agent(comment_body: str) -> str | None:
@@ -88,6 +135,14 @@ def handle_issue_comment_event(
     next_agent = _extract_next_agent(comment_body)
     manual_override_agent = _extract_manual_override_agent(comment_body)
     completed_agent = _resolve_supported_agent_author(comment_author)
+    structured_completed_agent = _extract_structured_completed_agent(comment_body)
+    if (
+        completed_agent is None
+        and structured_completed_agent
+        and _is_structured_completion_comment(comment_body)
+        and _author_matches_agent(comment_author, structured_completed_agent)
+    ):
+        completed_agent = structured_completed_agent
     manual_issue_author = str((issue.get("user") or {}).get("login") or "").strip()
 
     if completed_agent is None:

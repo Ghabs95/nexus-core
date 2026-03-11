@@ -954,6 +954,38 @@ class TestDetectDeadAgents:
 
 
 class TestCheckStuckAgents:
+    def test_no_running_step_mapping_skips_timeout_scan(self, tmp_path):
+        """Timeout scan should skip issues without a mapped RUNNING workflow step."""
+        log_dir = tmp_path / ".nexus" / "tasks" / "job1" / "logs"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "copilot_67_20260101_120000.log"
+        log_file.write_text("stale output")
+
+        runtime = StubRuntime()
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        with patch.object(runtime, "check_log_timeout") as mock_check_timeout:
+            orc.check_stuck_agents(str(tmp_path))
+
+        mock_check_timeout.assert_not_called()
+
+    def test_inactive_workflow_skips_timeout_scan(self, tmp_path):
+        """STOPPED workflows should be skipped before log-timeout probing."""
+        log_dir = tmp_path / ".nexus" / "tasks" / "job1" / "logs"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "copilot_66_20260101_120000.log"
+        log_file.write_text("stale output")
+
+        runtime = StubRuntime()
+        runtime._workflow_states["66"] = "STOPPED"
+        runtime._running_agents["66"] = "developer"
+        orc = _orchestrator(runtime, stuck_threshold=60)
+
+        with patch.object(runtime, "check_log_timeout") as mock_check_timeout:
+            orc.check_stuck_agents(str(tmp_path))
+
+        mock_check_timeout.assert_not_called()
+
     def test_timed_out_alive_pid_is_killed(self, tmp_path):
         """A log file older than the threshold with an alive PID should be killed."""
         # Create a fake log file with old mtime
@@ -974,6 +1006,7 @@ class TestCheckStuckAgents:
                 "tool": "copilot",
             }
         }
+        runtime._running_agents["99"] = "developer"
 
         killed_pids: list[int] = []
 
@@ -1001,6 +1034,7 @@ class TestCheckStuckAgents:
         # Recent mtime — not timed out
 
         runtime = StubRuntime()
+        runtime._running_agents["88"] = "developer"
 
         orc = _orchestrator(runtime, stuck_threshold=3600)
 
@@ -1102,6 +1136,7 @@ class TestCheckStuckAgents:
                 "exclude_tools": ["codex", "copilot"],
             }
         }
+        runtime._running_agents["47"] = "developer"
         orc = _orchestrator(runtime, stuck_threshold=60)
 
         with (

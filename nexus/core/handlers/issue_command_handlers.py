@@ -702,6 +702,7 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
 
     try:
         details = None
+        requester_nexus_id = _resolve_requester_nexus_id(ctx, deps)
         repo = deps.project_repo(project_key)
         task_file = (
             None
@@ -713,7 +714,7 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
                 deps,
                 issue_num,
                 repo=repo,
-                requester_nexus_id=_resolve_requester_nexus_id(ctx, deps),
+                requester_nexus_id=requester_nexus_id,
             )
             if details and not is_postgres_backend(NEXUS_STORAGE_BACKEND):
                 body = details.get("body", "")
@@ -751,7 +752,7 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
         plugin = _resolve_direct_issue_plugin(
             deps,
             repo,
-            _resolve_requester_nexus_id(ctx, deps),
+            requester_nexus_id,
         )
         if not plugin or not plugin.add_comment(issue_num, response_text):
             await ctx.edit_message_text(
@@ -770,7 +771,7 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
                 deps,
                 issue_num,
                 repo=repo,
-                requester_nexus_id=_resolve_requester_nexus_id(ctx, deps),
+                requester_nexus_id=requester_nexus_id,
             )
             if not details:
                 await ctx.reply_text(
@@ -829,6 +830,7 @@ async def respond_handler(ctx: InteractiveContext, deps: IssueHandlerDeps) -> No
             continuation_prompt=continuation_prompt,
             log_subdir=log_subdir,
             project_name=log_subdir,
+            requester_nexus_id=requester_nexus_id,
         )
 
         if pid:

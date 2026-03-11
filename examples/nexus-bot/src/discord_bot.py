@@ -2246,12 +2246,16 @@ async def help_command(interaction: discord.Interaction):
     await _send_long_interaction_text(interaction, help_text, ephemeral=True)
 
 
-@bot.tree.command(name="login", description="Link GitHub/GitLab and configure AI provider keys")
-@app_commands.describe(provider="OAuth provider (github or gitlab)")
+@bot.tree.command(name="login", description="Link GitHub/GitLab and configure provider auth (keys or account)")
+@app_commands.describe(provider="Provider (github, gitlab, codex, gemini, claude, copilot)")
 @app_commands.choices(
     provider=[
         app_commands.Choice(name="GitLab", value="gitlab"),
         app_commands.Choice(name="GitHub", value="github"),
+        app_commands.Choice(name="Codex Account", value="codex"),
+        app_commands.Choice(name="Gemini Account", value="gemini"),
+        app_commands.Choice(name="Claude Account", value="claude"),
+        app_commands.Choice(name="Copilot Account", value="copilot"),
     ]
 )
 async def login_command(
@@ -2278,6 +2282,11 @@ async def login_command(
         return
 
     selected_provider = str(provider.value if provider else "").strip().lower()
+    account_provider_target = (
+        selected_provider
+        if selected_provider in {"codex", "gemini", "claude", "copilot"}
+        else ""
+    )
     available_providers: list[str] = []
     if NEXUS_GITHUB_CLIENT_ID:
         available_providers.append("github")
@@ -2289,6 +2298,15 @@ async def login_command(
             ephemeral=True,
         )
         return
+    if account_provider_target == "copilot" and "github" not in available_providers:
+        await interaction.response.send_message(
+            "⚠️ Copilot account mode requires GitHub OAuth, but GitHub OAuth is not configured.",
+            ephemeral=True,
+        )
+        return
+    oauth_provider = selected_provider
+    if account_provider_target:
+        oauth_provider = "github" if "github" in available_providers else available_providers[0]
 
     user = _get_or_create_discord_user(interaction.user)
     session_id = _svc_create_login_session_for_user(
@@ -2341,13 +2359,13 @@ async def login_command(
             logger.warning("Failed to register Discord onboarding message for session %s: %s", session_id, exc)
         return
 
-    if selected_provider not in {"github", "gitlab"}:
+    if selected_provider and not account_provider_target and selected_provider not in {"github", "gitlab"}:
         await interaction.response.send_message(
-            "⚠️ Invalid provider. Use `/login provider:github`, `/login provider:gitlab`, or run `/login`.",
+            "⚠️ Invalid provider. Use github, gitlab, codex, gemini, claude, or copilot.",
             ephemeral=True,
         )
         return
-    if selected_provider not in available_providers:
+    if not account_provider_target and selected_provider not in available_providers:
         await interaction.response.send_message(
             f"⚠️ {selected_provider.title()} OAuth is not configured in this environment.",
             ephemeral=True,
@@ -2355,16 +2373,25 @@ async def login_command(
         return
 
     login_url = (
-        f"{NEXUS_PUBLIC_BASE_URL}/auth/start?session={session_ref}&provider={selected_provider}"
+        f"{NEXUS_PUBLIC_BASE_URL}/auth/start?session={session_ref}&provider={oauth_provider}"
     )
+    setup_step = (
+        f"3. In setup, enable **{account_provider_target.title()} account login** (and Save Setup)\n"
+        if account_provider_target
+        else "3. Save provider setup: API keys and/or account login toggles for Codex, Gemini, Claude, Copilot\n"
+    )
+    if account_provider_target == "copilot":
+        setup_step = (
+            "3. In setup, enable **Use Copilot** and **Use Copilot account mode** (then Save Setup)\n"
+        )
     try:
         dm_channel = await interaction.user.create_dm()
         sent = await dm_channel.send(
             "🔐 Setup required before task execution.\n\n"
             f"Session reference: `{session_ref}`\n"
             f"1. Open: <{login_url}>\n"
-            f"2. Sign in with {selected_provider.title()}\n"
-            "3. Add Codex/OpenAI, Gemini, and/or Claude key, or use Copilot with linked GitHub OAuth\n"
+            f"2. Sign in with {oauth_provider.title()}\n"
+            f"{setup_step}"
             "4. Use `/menu` to continue."
         )
         await interaction.response.send_message(
@@ -2412,6 +2439,7 @@ async def setup_status_command(interaction: discord.Interaction):
     lines = [
         "🧾 **Setup Status**",
         f"- Nexus ID: `{user.nexus_id}`",
+        f"- CLI auth mode: `{status.get('cli_auth_mode') or 'account'}`",
         f"- GitHub linked: {'✅' if status.get('github_linked') else '❌'}",
         f"- GitLab linked: {'✅' if status.get('gitlab_linked') else '❌'}",
         f"- GitHub login: `{status.get('github_login') or 'n/a'}`",
@@ -2419,6 +2447,10 @@ async def setup_status_command(interaction: discord.Interaction):
         f"- Codex key set: {'✅' if status.get('codex_key_set') else '❌'}",
         f"- Gemini key set: {'✅' if status.get('gemini_key_set') else '❌'}",
         f"- Claude key set: {'✅' if status.get('claude_key_set') else '❌'}",
+        f"- Codex account login enabled: {'✅' if status.get('codex_account_enabled') else '❌'}",
+        f"- Gemini account login enabled: {'✅' if status.get('gemini_account_enabled') else '❌'}",
+        f"- Claude account login enabled: {'✅' if status.get('claude_account_enabled') else '❌'}",
+        f"- Copilot account mode enabled: {'✅' if status.get('copilot_account_enabled') else '❌'}",
         f"- Copilot ready (GitHub OAuth or Copilot Token): {'✅' if status.get('copilot_ready') else '❌'}",
         f"- Org verified: {'✅' if status.get('org_verified') else '❌'}",
         f"- Project access: `{int(status.get('project_access_count') or 0)}`",

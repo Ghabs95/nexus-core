@@ -108,6 +108,9 @@ from nexus.core.auth import (
     format_login_session_ref as _svc_format_login_session_ref,
 )
 from nexus.core.auth import (
+    get_provider_account_login_status as _svc_get_provider_account_login_status,
+)
+from nexus.core.auth import (
     get_session_and_setup_status as _svc_get_session_and_setup_status,
 )
 from nexus.core.auth import (
@@ -115,6 +118,9 @@ from nexus.core.auth import (
 )
 from nexus.core.auth import (
     resolve_login_session_id as _svc_resolve_login_session_id,
+)
+from nexus.core.auth import (
+    start_provider_account_login as _svc_start_provider_account_login,
 )
 from nexus.core.auth import (
     start_oauth_flow as _svc_start_oauth_flow,
@@ -754,9 +760,17 @@ def _render_ai_key_form(
     codex_key_set: bool,
     gemini_key_set: bool,
     claude_key_set: bool,
+    codex_account_enabled: bool,
+    gemini_account_enabled: bool,
+    claude_account_enabled: bool,
+    copilot_account_enabled: bool,
     existing_keys_note: str,
 ) -> str:
     checked_attr = " checked" if copilot_checked else ""
+    codex_account_attr = " checked" if codex_account_enabled else ""
+    gemini_account_attr = " checked" if gemini_account_enabled else ""
+    claude_account_attr = " checked" if claude_account_enabled else ""
+    copilot_account_attr = " checked" if copilot_account_enabled else ""
     codex_field = """
   <label for="codex_api_key"><strong>Codex/OpenAI API Key (optional)</strong></label>
   <div class="field-row">
@@ -837,11 +851,35 @@ def _render_ai_key_form(
     <small>Leave empty and save to clear this token.</small>
   </div>
 """
+    account_mode_html = f"""
+  <hr />
+  <p><strong>Provider Account Login (No API Key)</strong><br /><small>Enable these toggles if you connected provider account login for this workspace.</small></p>
+  <div style="margin:0.4rem 0 0.8rem;">
+    <button type="button" onclick="startProviderConnect('codex')">Connect Codex Account</button>
+    <small id="provider_connect_status" style="display:block; margin-top:0.4rem;">This opens a browser-based device flow and saves the result to your session.</small>
+  </div>
+  <label style="display:block; margin-top:0.4rem;">
+    <input type="checkbox" name="use_codex_account" value="1"{codex_account_attr} />
+    Use Codex account login
+  </label>
+  <label style="display:block; margin-top:0.4rem;">
+    <input type="checkbox" name="use_gemini_account" value="1"{gemini_account_attr} />
+    Use Gemini account login
+  </label>
+  <label style="display:block; margin-top:0.4rem;">
+    <input type="checkbox" name="use_claude_account" value="1"{claude_account_attr} />
+    Use Claude account login
+  </label>
+"""
     copilot_html = (
         f"""
   <label style="display:block; margin-top:0.8rem;">
     <input type="checkbox" name="use_copilot" value="1"{checked_attr} />
     Use Copilot with a linked GitHub account (no separate Copilot API key)
+  </label>
+  <label style="display:block; margin-top:0.4rem;">
+    <input type="checkbox" name="use_copilot_account" value="1"{copilot_account_attr} />
+    Use Copilot account mode (requires linked GitHub OAuth)
   </label>
 """
         if show_copilot_option
@@ -854,8 +892,9 @@ def _render_ai_key_form(
   {gemini_field}
   {claude_field}
   {copilot_token_field}
+  {account_mode_html}
   {copilot_html}
-  <button type="submit" class="form-submit">Save Keys</button>
+  <button type="submit" class="form-submit">Save Setup</button>
   <p><small>{existing_keys_note}</small></p>
 </form>
 <script>
@@ -867,6 +906,69 @@ function enableProviderField(fieldName) {{
     editor.style.display = "block";
     var input = editor.querySelector('input[name="' + fieldName + '"]');
     if (input) input.disabled = false;
+  }}
+}}
+var providerConnectPoll = null;
+function setProviderConnectStatus(text) {{
+  var el = document.getElementById("provider_connect_status");
+  if (el) el.textContent = text;
+}}
+async function pollProviderConnect(provider, sessionId) {{
+  try {{
+    var response = await fetch("/auth/provider-connect/status?provider=" + encodeURIComponent(provider) + "&session_id=" + encodeURIComponent(sessionId));
+    var payload = await response.json();
+    var state = String(payload.state || "");
+    if (payload.user_code && payload.verify_url) {{
+      setProviderConnectStatus("Open " + payload.verify_url + " and enter code " + payload.user_code + ". Waiting for confirmation...");
+    }} else if (payload.message) {{
+      setProviderConnectStatus(String(payload.message));
+    }}
+    if (state === "connected") {{
+      setProviderConnectStatus("Codex account connected. Save Setup to keep the toggle.");
+      if (providerConnectPoll) {{
+        clearTimeout(providerConnectPoll);
+        providerConnectPoll = null;
+      }}
+      return;
+    }}
+    if (state === "failed" || state === "connected_but_not_saved") {{
+      if (providerConnectPoll) {{
+        clearTimeout(providerConnectPoll);
+        providerConnectPoll = null;
+      }}
+      return;
+    }}
+    providerConnectPoll = setTimeout(function() {{ pollProviderConnect(provider, sessionId); }}, 2000);
+  }} catch (err) {{
+    setProviderConnectStatus("Could not poll provider-connect status. Retry.");
+  }}
+}}
+async function startProviderConnect(provider) {{
+  var sessionInput = document.querySelector('input[name="session_id"]');
+  var sessionId = sessionInput ? String(sessionInput.value || "").trim() : "";
+  if (!sessionId) {{
+    setProviderConnectStatus("Missing session id.");
+    return;
+  }}
+  setProviderConnectStatus("Starting provider account connection...");
+  try {{
+    var response = await fetch("/auth/provider-connect/start", {{
+      method: "POST",
+      headers: {{ "Content-Type": "application/json" }},
+      body: JSON.stringify({{ provider: provider, session_id: sessionId }})
+    }});
+    var payload = await response.json();
+    if (!response.ok) {{
+      setProviderConnectStatus(String(payload.message || "Could not start provider connect."));
+      return;
+    }}
+    if (payload.message) {{
+      setProviderConnectStatus(String(payload.message));
+    }}
+    if (providerConnectPoll) clearTimeout(providerConnectPoll);
+    providerConnectPoll = setTimeout(function() {{ pollProviderConnect(provider, sessionId); }}, 1000);
+  }} catch (err) {{
+    setProviderConnectStatus("Could not start provider connect.");
   }}
 }}
 </script>
@@ -1029,7 +1131,15 @@ def auth_github_callback():
     setup = setup_payload.get("setup") if isinstance(setup_payload, dict) else {}
     has_existing_keys = bool(
         isinstance(setup, dict)
-        and (setup.get("codex_key_set") or setup.get("gemini_key_set") or setup.get("claude_key_set"))
+        and (
+            setup.get("codex_key_set")
+            or setup.get("gemini_key_set")
+            or setup.get("claude_key_set")
+            or setup.get("codex_account_enabled")
+            or setup.get("gemini_account_enabled")
+            or setup.get("claude_account_enabled")
+            or setup.get("copilot_account_enabled")
+        )
     )
     form_body = f"""
 <p>GitHub login linked successfully as <strong>{github_login or "unknown"}</strong>.</p>
@@ -1043,10 +1153,14 @@ def auth_github_callback():
         codex_key_set=bool(isinstance(setup, dict) and setup.get("codex_key_set")),
         gemini_key_set=bool(isinstance(setup, dict) and setup.get("gemini_key_set")),
         claude_key_set=bool(isinstance(setup, dict) and setup.get("claude_key_set")),
+        codex_account_enabled=bool(isinstance(setup, dict) and setup.get("codex_account_enabled")),
+        gemini_account_enabled=bool(isinstance(setup, dict) and setup.get("gemini_account_enabled")),
+        claude_account_enabled=bool(isinstance(setup, dict) and setup.get("claude_account_enabled")),
+        copilot_account_enabled=bool(isinstance(setup, dict) and setup.get("copilot_account_enabled")),
         existing_keys_note=(
             "All fields are optional. Leave fields blank to keep previously saved values unchanged. "
             + (
-                "Existing provider keys are already saved for this account. "
+                "Existing provider configuration is already saved for this account. "
                 if has_existing_keys
                 else ""
             )
@@ -1058,7 +1172,7 @@ def auth_github_callback():
         session_id=session_id,
         text=(
             "✅ GitHub OAuth linked successfully.\n"
-            "Continue in the browser to save AI keys, then run /setup-status (Discord) or /setup_status (Telegram)."
+            "Continue in the browser to save provider setup (API keys or account login), then run /setup-status (Discord) or /setup_status (Telegram)."
         ),
     )
     response = make_response(_render_auth_message("Complete Setup", form_body, status_code=200))
@@ -1119,7 +1233,15 @@ def auth_gitlab_callback():
     setup = setup_payload.get("setup") if isinstance(setup_payload, dict) else {}
     has_existing_keys = bool(
         isinstance(setup, dict)
-        and (setup.get("codex_key_set") or setup.get("gemini_key_set") or setup.get("claude_key_set"))
+        and (
+            setup.get("codex_key_set")
+            or setup.get("gemini_key_set")
+            or setup.get("claude_key_set")
+            or setup.get("codex_account_enabled")
+            or setup.get("gemini_account_enabled")
+            or setup.get("claude_account_enabled")
+            or setup.get("copilot_account_enabled")
+        )
     )
     copilot_ready = bool(isinstance(setup, dict) and setup.get("copilot_ready"))
     form_body = f"""
@@ -1134,10 +1256,14 @@ def auth_gitlab_callback():
         codex_key_set=bool(isinstance(setup, dict) and setup.get("codex_key_set")),
         gemini_key_set=bool(isinstance(setup, dict) and setup.get("gemini_key_set")),
         claude_key_set=bool(isinstance(setup, dict) and setup.get("claude_key_set")),
+        codex_account_enabled=bool(isinstance(setup, dict) and setup.get("codex_account_enabled")),
+        gemini_account_enabled=bool(isinstance(setup, dict) and setup.get("gemini_account_enabled")),
+        claude_account_enabled=bool(isinstance(setup, dict) and setup.get("claude_account_enabled")),
+        copilot_account_enabled=bool(isinstance(setup, dict) and setup.get("copilot_account_enabled")),
         existing_keys_note=(
             "All fields are optional. Leave fields blank to keep previously saved values unchanged. "
             + (
-                "Existing provider keys are already saved for this account. "
+                "Existing provider configuration is already saved for this account. "
                 if has_existing_keys
                 else ""
             )
@@ -1149,7 +1275,7 @@ def auth_gitlab_callback():
         session_id=session_id,
         text=(
             "✅ GitLab OAuth linked successfully.\n"
-            "Continue in the browser to save AI keys, then run /setup-status (Discord) or /setup_status (Telegram)."
+            "Continue in the browser to save provider setup (API keys or account login), then run /setup-status (Discord) or /setup_status (Telegram)."
         ),
     )
     response = make_response(_render_auth_message("Complete Setup", form_body, status_code=200))
@@ -1186,6 +1312,38 @@ def auth_ai_keys():
         use_copilot = raw_use_copilot
     elif raw_use_copilot is not None:
         use_copilot = str(raw_use_copilot).strip().lower() in {"1", "true", "yes", "on"}
+    raw_use_codex_account = request.form.get("use_codex_account")
+    if raw_use_codex_account is None:
+        raw_use_codex_account = payload.get("use_codex_account")
+    use_codex_account = None
+    if isinstance(raw_use_codex_account, bool):
+        use_codex_account = raw_use_codex_account
+    elif raw_use_codex_account is not None:
+        use_codex_account = str(raw_use_codex_account).strip().lower() in {"1", "true", "yes", "on"}
+    raw_use_gemini_account = request.form.get("use_gemini_account")
+    if raw_use_gemini_account is None:
+        raw_use_gemini_account = payload.get("use_gemini_account")
+    use_gemini_account = None
+    if isinstance(raw_use_gemini_account, bool):
+        use_gemini_account = raw_use_gemini_account
+    elif raw_use_gemini_account is not None:
+        use_gemini_account = str(raw_use_gemini_account).strip().lower() in {"1", "true", "yes", "on"}
+    raw_use_claude_account = request.form.get("use_claude_account")
+    if raw_use_claude_account is None:
+        raw_use_claude_account = payload.get("use_claude_account")
+    use_claude_account = None
+    if isinstance(raw_use_claude_account, bool):
+        use_claude_account = raw_use_claude_account
+    elif raw_use_claude_account is not None:
+        use_claude_account = str(raw_use_claude_account).strip().lower() in {"1", "true", "yes", "on"}
+    raw_use_copilot_account = request.form.get("use_copilot_account")
+    if raw_use_copilot_account is None:
+        raw_use_copilot_account = payload.get("use_copilot_account")
+    use_copilot_account = None
+    if isinstance(raw_use_copilot_account, bool):
+        use_copilot_account = raw_use_copilot_account
+    elif raw_use_copilot_account is not None:
+        use_copilot_account = str(raw_use_copilot_account).strip().lower() in {"1", "true", "yes", "on"}
     codex_supplied = ("codex_api_key" in request.form) or (
         isinstance(payload, dict) and "codex_api_key" in payload
     )
@@ -1212,6 +1370,10 @@ def auth_ai_keys():
             claude_api_key=(claude_api_key if claude_supplied else None),
             copilot_github_token=(copilot_github_token if copilot_token_supplied else None),
             allow_copilot=use_copilot,
+            use_codex_account=use_codex_account,
+            use_gemini_account=use_gemini_account,
+            use_claude_account=use_claude_account,
+            use_copilot_account=use_copilot_account,
         )
     except Exception as exc:
         _notify_onboarding_message(
@@ -1239,6 +1401,35 @@ def auth_ai_keys():
     response = make_response(_render_auth_message("Setup Complete", body, status_code=200))
     _set_web_session_cookie(response, session_id)
     return response
+
+
+@app.route("/auth/provider-connect/start", methods=["POST"])
+def auth_provider_connect_start():
+    if not NEXUS_AUTH_ENABLED:
+        return jsonify({"status": "disabled", "message": "Auth onboarding is disabled."}), 404
+    payload = request.get_json(silent=True) if request.is_json else {}
+    payload = payload if isinstance(payload, dict) else {}
+    session_id = str(payload.get("session_id") or request.form.get("session_id") or "").strip()
+    provider = str(payload.get("provider") or request.form.get("provider") or "codex").strip().lower()
+    if not session_id:
+        return jsonify({"status": "error", "message": "session_id is required"}), 400
+    try:
+        result = _svc_start_provider_account_login(session_id=session_id, provider=provider)
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc), "provider": provider}), 400
+    return jsonify({"status": "ok", **result}), 200
+
+
+@app.route("/auth/provider-connect/status", methods=["GET"])
+def auth_provider_connect_status():
+    if not NEXUS_AUTH_ENABLED:
+        return jsonify({"status": "disabled", "message": "Auth onboarding is disabled."}), 404
+    session_id = str(request.args.get("session_id", "")).strip()
+    provider = str(request.args.get("provider", "codex")).strip().lower()
+    if not session_id:
+        return jsonify({"status": "error", "message": "session_id query param is required"}), 400
+    result = _svc_get_provider_account_login_status(session_id=session_id, provider=provider)
+    return jsonify({"status": "ok", **result}), 200
 
 
 @app.route("/auth/result", methods=["GET"])

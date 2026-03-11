@@ -193,6 +193,39 @@ def _resolve_requester_token_for_issue(
     return str(user_env.get("GITHUB_TOKEN") or user_env.get("GITLAB_TOKEN") or "").strip() or None
 
 
+def _resolve_issue_requester_nexus_id(
+    *,
+    issue_url: str,
+) -> str | None:
+    """Resolve requester Nexus ID for an issue URL when available."""
+    return _lookup_bound_issue_requester_nexus_id(issue_url)
+
+
+def _lookup_bound_issue_requester_nexus_id(issue_url: str) -> str | None:
+    """Resolve issue-bound requester Nexus ID from URL and repo/issue mapping."""
+    issue_url_str = str(issue_url or "").strip()
+    if not issue_url_str:
+        return None
+
+    try:
+        resolved = str(get_issue_requester_by_url(issue_url_str) or "").strip() or None
+    except Exception:
+        resolved = None
+
+    if resolved:
+        return resolved
+
+    issue_num_match = re.search(r"/issues/(\d+)(?:$|[/?#])", issue_url_str)
+    issue_repo = _extract_repo_from_issue_url(issue_url_str)
+    if not issue_num_match or not issue_repo:
+        return None
+
+    try:
+        return str(get_issue_requester(str(issue_repo), str(issue_num_match.group(1))) or "").strip() or None
+    except Exception:
+        return None
+
+
 def _get_git_platform_client(
     repo: str,
     project_name: str | None = None,
@@ -864,7 +897,7 @@ def _start_agent_quota_watchdog(
 
             merged_exclusions = _merge_excluded_tools(exclude_tools or [], [tool_name])
             _persist_issue_excluded_tools(issue_num, [tool_name])
-            
+
             logger.warning(
                 "Quota detected for %s on issue #%s (pid=%s). Auto-fallback with exclusions=%s",
                 tool_name,
@@ -872,7 +905,7 @@ def _start_agent_quota_watchdog(
                 pid,
                 merged_exclusions,
             )
-            
+
             emit_alert(
                 (
                     f"⚠️ {tool_name.capitalize()} quota detected for issue #{issue_num}. "
@@ -913,10 +946,12 @@ def _start_agent_quota_watchdog(
                     prev = launched_agents.get(str(issue_num), {})
                     if not isinstance(prev, dict):
                         prev = {}
+                    requester_nexus_id = str(prev.get("requester_nexus_id") or "").strip() or None
                     launched_agents[str(issue_num)] = {
                         **prev,
                         "timestamp": time.time(),
                         "pid": int(pid_new or 0),
+                        "requester_nexus_id": requester_nexus_id,
                         "tier": tier_name,
                         "mode": mode,
                         "tool": new_tool,
@@ -931,6 +966,7 @@ def _start_agent_quota_watchdog(
                         int(issue_num),
                         "AGENT_LAUNCHED",
                         f"Auto-fallback launched {new_tool} after {tool_name.capitalize()} quota (workflow: {workflow_name}/{tier_name}, mode: {mode}, PID: {pid_new})",
+                        user_id=requester_nexus_id,
                     )
                     logger.info(
                         "✅ Auto-fallback launch succeeded for issue #%s with %s (PID: %s)",
@@ -1837,19 +1873,31 @@ def invoke_ai_agent(
     # Use orchestrator to launch agent
     orchestrator = get_orchestrator(ORCHESTRATOR_CONFIG)
     auth_is_enabled = bool(auth_enabled())
+    provided_requester_nexus_id = str(requester_nexus_id or "").strip() or None
+    bound_requester_nexus_id = _lookup_bound_issue_requester_nexus_id(str(issue_url or ""))
+    if (
+        auth_is_enabled
+        and provided_requester_nexus_id
+        and bound_requester_nexus_id
+        and provided_requester_nexus_id != bound_requester_nexus_id
+    ):
+        logger.error(
+            "Requester identity mismatch for issue launch (issue=%s provided=%s bound=%s). Refusing launch.",
+            issue_url,
+            provided_requester_nexus_id,
+            bound_requester_nexus_id,
+        )
+        return None, None
 
-    effective_requester_nexus_id = str(requester_nexus_id or "").strip() or None
-    if auth_is_enabled and not effective_requester_nexus_id and issue_url:
-        issue_url_str = str(issue_url)
-        effective_requester_nexus_id = get_issue_requester_by_url(issue_url_str)
-        if not effective_requester_nexus_id:
-            issue_num_match = re.search(r"/issues/(\d+)(?:$|[/?#])", issue_url_str)
-            issue_repo = _extract_repo_from_issue_url(issue_url_str)
-            if issue_num_match and issue_repo:
-                effective_requester_nexus_id = get_issue_requester(
-                    str(issue_repo),
-                    str(issue_num_match.group(1)),
-                )
+    if auth_is_enabled and not bound_requester_nexus_id:
+        logger.error(
+            "Auth is enabled but issue requester binding is missing for launch (issue=%s provided=%s). Refusing launch.",
+            issue_url,
+            provided_requester_nexus_id or "<none>",
+        )
+        return None, None
+
+    effective_requester_nexus_id = _resolve_issue_requester_nexus_id(issue_url=str(issue_url or ""))
 
     # Resolve project-specific API token
     from nexus.core.orchestration.nexus_core_helpers import _get_project_config
@@ -2157,6 +2205,7 @@ def invoke_ai_agent(
                     "AGENT_LAUNCHED",
                     f"Launched {tool_name} agent in {os.path.basename(agents_dir)} "
                     f"(workflow: {workflow_name}/{tier_name}, mode: {mode}, PID: {pid})",
+                    user_id=effective_requester_nexus_id,
                 )
 
                 _attach_post_launch_watchdog(
@@ -2234,6 +2283,7 @@ def launch_next_agent(
     trigger_source="unknown",
     exclude_tools=None,
     repo_override: str | None = None,
+    requester_nexus_id: str | None = None,
 ):
     """
     Launch the next agent in the workflow chain.
@@ -2246,6 +2296,7 @@ def launch_next_agent(
         trigger_source: Where the trigger came from ("git_webhook", "log_file", "git_comment")
         exclude_tools: List of tool names to exclude from this launch attempt.
         repo_override: Preferred repository full_name for resolving issue metadata.
+        requester_nexus_id: Optional requester identity to enforce issue-owner matching.
 
     Returns:
         ``(pid, tool_name)`` on success.
@@ -2462,6 +2513,7 @@ def launch_next_agent(
         log_subdir=project_root,
         agent_type=next_agent,
         project_name=project_root,
+        requester_nexus_id=requester_nexus_id,
     )
 
     if pid:

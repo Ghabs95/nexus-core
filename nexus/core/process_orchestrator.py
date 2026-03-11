@@ -664,6 +664,23 @@ class ProcessOrchestrator:
                 continue
             issue_num = match.group(1)
 
+            state = self._runtime.get_workflow_state(str(issue_num))
+            if state in ("STOPPED", "PAUSED", "COMPLETED", "FAILED", "CANCELLED"):
+                logger.debug(
+                    "Skipping stale log timeout scan for issue #%s: workflow state is %s",
+                    issue_num,
+                    state,
+                )
+                continue
+
+            expected_agent = self._runtime.get_expected_running_agent(str(issue_num))
+            if not expected_agent:
+                logger.debug(
+                    "Skipping stale log timeout scan for issue #%s: no RUNNING workflow step",
+                    issue_num,
+                )
+                continue
+
             # Only inspect the newest log for each issue.
             issue_logs = sorted(
                 [

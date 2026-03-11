@@ -1,5 +1,6 @@
 """Tests for built-in runtime ops/process guard plugin."""
 
+import re
 import subprocess
 
 from nexus.plugins.builtin.runtime_ops_plugin import RuntimeOpsPlugin
@@ -125,3 +126,29 @@ def test_find_issue_processes_accepts_wrapped_cli_invocation(monkeypatch):
             "command": "bash -lc codex exec --issue https://github.com/acme/repo/issues/42",
         }
     ]
+
+
+def test_build_issue_pattern_groups_process_alternation():
+    plugin = RuntimeOpsPlugin({"process_name": "copilot|codex|gemini"})
+
+    pattern = plugin.build_issue_pattern("42")
+
+    assert pattern == "(?:copilot|codex|gemini).*issues/42(?:[^0-9]|$)"
+
+
+def test_find_issue_processes_does_not_match_unrelated_issue_with_alternation(monkeypatch):
+    plugin = RuntimeOpsPlugin({"process_name": "copilot|codex|gemini"})
+
+    def _fake_run(cmd, text, capture_output, timeout, check):
+        assert cmd[0].endswith("pgrep")
+        assert cmd[1] == "-af"
+        pattern = cmd[2]
+        command_line = "codex exec --issue https://github.com/acme/repo/issues/2"
+        stdout = f"4444 {command_line}\n" if re.search(pattern, command_line) else ""
+        return _Result(stdout)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    matches = plugin.find_issue_processes("42")
+
+    assert matches == []

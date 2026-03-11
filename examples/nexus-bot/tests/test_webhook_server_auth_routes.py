@@ -179,6 +179,61 @@ def test_visualizer_access_token_post_sets_cookie(monkeypatch):
     assert b"Nexus Workflow Visualizer" in visualizer_response.data
 
 
+def test_provider_connect_start_route_returns_service_payload(monkeypatch):
+    import webhook_server
+
+    monkeypatch.setattr(webhook_server, "NEXUS_AUTH_ENABLED", True)
+    monkeypatch.setattr(
+        webhook_server,
+        "_svc_start_provider_account_login",
+        lambda session_id, provider: {
+            "started": True,
+            "session_id": session_id,
+            "provider": provider,
+            "state": "starting",
+        },
+    )
+
+    client = webhook_server.app.test_client()
+    response = client.post(
+        "/auth/provider-connect/start",
+        json={"session_id": "sess-1", "provider": "codex"},
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["status"] == "ok"
+    assert payload["started"] is True
+    assert payload["provider"] == "codex"
+
+
+def test_provider_connect_status_route_returns_service_payload(monkeypatch):
+    import webhook_server
+
+    monkeypatch.setattr(webhook_server, "NEXUS_AUTH_ENABLED", True)
+    monkeypatch.setattr(
+        webhook_server,
+        "_svc_get_provider_account_login_status",
+        lambda session_id, provider: {
+            "exists": True,
+            "session_id": session_id,
+            "provider": provider,
+            "state": "pending",
+            "verify_url": "https://auth.openai.com/device",
+            "user_code": "ABCD-EFGH",
+        },
+    )
+
+    client = webhook_server.app.test_client()
+    response = client.get("/auth/provider-connect/status?session_id=sess-2&provider=codex")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["status"] == "ok"
+    assert payload["state"] == "pending"
+    assert payload["user_code"] == "ABCD-EFGH"
+
+
 def test_visualizer_disabled_flag_returns_404(monkeypatch):
     import webhook_server
 

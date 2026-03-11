@@ -468,6 +468,78 @@ def test_invoke_ai_agent_provisions_project_repos_with_repo_specific_base_branch
     assert captured.get("workspace_dir") == str(tmp_path / ".provisioned-example-project-issue-1")
 
 
+def test_invoke_ai_agent_rejects_explicit_requester_mismatch(monkeypatch, tmp_path):
+    from nexus.core.runtime import agent_launcher
+
+    class _Orchestrator:
+        def invoke_agent(self, **_kwargs):  # noqa: ANN003
+            raise AssertionError("invoke_agent should not be called when requester mismatches binding")
+
+    monkeypatch.setattr(agent_launcher, "_get_launch_policy_plugin", lambda: None)
+    monkeypatch.setattr(agent_launcher, "_resolve_workflow_path", lambda _project: None)
+    monkeypatch.setattr(agent_launcher, "_resolve_issue_step_context", lambda _url: ("", 0))
+    monkeypatch.setattr(agent_launcher, "_ensure_agent_definition", lambda *_a, **_k: True)
+    monkeypatch.setattr(agent_launcher, "get_orchestrator", lambda _cfg: _Orchestrator())
+    monkeypatch.setattr(agent_launcher, "auth_enabled", lambda: True)
+    monkeypatch.setattr(
+        agent_launcher,
+        "_lookup_bound_issue_requester_nexus_id",
+        lambda _url: "nexus-owner-1",
+    )
+
+    pid, tool = agent_launcher.invoke_ai_agent(
+        agents_dir=str(tmp_path / "agents"),
+        workspace_dir=str(tmp_path),
+        issue_url="https://github.com/acme-org/sample-repo/issues/42",
+        tier_name="full",
+        task_content="test",
+        continuation=False,
+        agent_type="developer",
+        project_name="nexus",
+        log_subdir="nexus",
+        requester_nexus_id="nexus-owner-2",
+    )
+
+    assert pid is None
+    assert tool is None
+
+
+def test_invoke_ai_agent_rejects_when_issue_not_bound_in_auth_mode(monkeypatch, tmp_path):
+    from nexus.core.runtime import agent_launcher
+
+    class _Orchestrator:
+        def invoke_agent(self, **_kwargs):  # noqa: ANN003
+            raise AssertionError("invoke_agent should not be called when issue binding is missing")
+
+    monkeypatch.setattr(agent_launcher, "_get_launch_policy_plugin", lambda: None)
+    monkeypatch.setattr(agent_launcher, "_resolve_workflow_path", lambda _project: None)
+    monkeypatch.setattr(agent_launcher, "_resolve_issue_step_context", lambda _url: ("", 0))
+    monkeypatch.setattr(agent_launcher, "_ensure_agent_definition", lambda *_a, **_k: True)
+    monkeypatch.setattr(agent_launcher, "get_orchestrator", lambda _cfg: _Orchestrator())
+    monkeypatch.setattr(agent_launcher, "auth_enabled", lambda: True)
+    monkeypatch.setattr(
+        agent_launcher,
+        "_lookup_bound_issue_requester_nexus_id",
+        lambda _url: None,
+    )
+
+    pid, tool = agent_launcher.invoke_ai_agent(
+        agents_dir=str(tmp_path / "agents"),
+        workspace_dir=str(tmp_path),
+        issue_url="https://github.com/acme-org/sample-repo/issues/99",
+        tier_name="full",
+        task_content="test",
+        continuation=False,
+        agent_type="developer",
+        project_name="nexus",
+        log_subdir="nexus",
+        requester_nexus_id="nexus-owner-99",
+    )
+
+    assert pid is None
+    assert tool is None
+
+
 def test_launch_next_agent_merges_persisted_and_runtime_exclusions(monkeypatch, tmp_path):
     from nexus.core.runtime import agent_launcher
 
@@ -523,11 +595,13 @@ def test_launch_next_agent_merges_persisted_and_runtime_exclusions(monkeypatch, 
         trigger_source="dead-agent-retry",
         exclude_tools=["gemini"],
         repo_override="acme-org/sample-repo",
+        requester_nexus_id="nexus-113",
     )
 
     assert pid == 4242
     assert tool == "claude"
     assert captured.get("exclude_tools") == ["codex", "copilot", "gemini"]
+    assert captured.get("requester_nexus_id") == "nexus-113"
 
 
 def test_extract_completion_payload_from_log_text_parses_curl_payload():

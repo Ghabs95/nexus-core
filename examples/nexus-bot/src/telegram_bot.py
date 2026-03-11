@@ -1581,6 +1581,18 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     requested_provider = str((context.args[0] if context.args else "") or "").strip().lower()
+    provider_aliases = {
+        "codex-account": "codex",
+        "gemini-account": "gemini",
+        "claude-account": "claude",
+        "copilot-account": "copilot",
+    }
+    requested_provider = provider_aliases.get(requested_provider, requested_provider)
+    account_provider_target = (
+        requested_provider
+        if requested_provider in {"codex", "gemini", "claude", "copilot"}
+        else ""
+    )
     if requested_provider == "github" and not NEXUS_GITHUB_CLIENT_ID:
         await update.effective_message.reply_text(
             "⚠️ GitHub OAuth is not configured. Use `/login gitlab`.",
@@ -1611,6 +1623,14 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⚠️ No OAuth providers are configured. Ask an admin to configure GitHub/GitLab OAuth.",
         )
         return
+    if account_provider_target == "copilot" and "github" not in available_providers:
+        await update.effective_message.reply_text(
+            "⚠️ Copilot account mode requires GitHub OAuth, but GitHub OAuth is not configured.",
+        )
+        return
+    oauth_provider = requested_provider
+    if account_provider_target:
+        oauth_provider = "github" if "github" in available_providers else available_providers[0]
 
     if not requested_provider:
         keyboard = [
@@ -1642,29 +1662,38 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning("Failed to register Telegram onboarding message for session %s: %s", session_id, exc)
         return
 
-    if requested_provider not in {"github", "gitlab"}:
+    if requested_provider and not account_provider_target and requested_provider not in {"github", "gitlab"}:
         await update.effective_message.reply_text(
-            "⚠️ Invalid provider. Use `/login github` or `/login gitlab`, or run `/login` to pick from menu.",
+            "⚠️ Invalid provider. Use `/login github`, `/login gitlab`, `/login codex`, `/login gemini`, `/login claude`, or `/login copilot`.",
             parse_mode="Markdown",
         )
         return
 
-    if requested_provider not in available_providers:
+    if not account_provider_target and requested_provider not in available_providers:
         await update.effective_message.reply_text(
             f"⚠️ {requested_provider.title()} OAuth is not configured in this environment.",
         )
         return
 
     login_url = (
-        f"{NEXUS_PUBLIC_BASE_URL}/auth/start?session={session_ref}&provider={requested_provider}"
+        f"{NEXUS_PUBLIC_BASE_URL}/auth/start?session={session_ref}&provider={oauth_provider}"
     )
+    setup_step = (
+        f"3. In setup, enable {account_provider_target.title()} account login, then Save Setup\n"
+        if account_provider_target
+        else "3. Save provider setup: API keys and/or account login toggles for Codex, Gemini, Claude, Copilot\n"
+    )
+    if account_provider_target == "copilot":
+        setup_step = (
+            "3. In setup, enable Use Copilot and Use Copilot account mode, then Save Setup\n"
+        )
     sent = await update.effective_message.reply_text(
         (
             "🔐 Setup required before task execution.\n\n"
             f"Session reference: {session_ref}\n"
             f"1. Open: {login_url}\n"
-            f"2. Sign in with {requested_provider.title()}\n"
-            "3. Add Codex/OpenAI, Gemini, and/or Claude key, or use Copilot with linked GitHub OAuth\n"
+            f"2. Sign in with {oauth_provider.title()}\n"
+            f"{setup_step}"
             "4. Run `/setup_status`"
         ),
         disable_web_page_preview=True,
@@ -1693,6 +1722,7 @@ async def setup_status_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     lines = [
         "🧾 Setup Status",
         f"- Nexus ID: `{user.nexus_id}`",
+        f"- CLI auth mode: `{status.get('cli_auth_mode') or 'account'}`",
         f"- GitHub linked: {'✅' if status.get('github_linked') else '❌'}",
         f"- GitLab linked: {'✅' if status.get('gitlab_linked') else '❌'}",
         f"- GitHub login: `{status.get('github_login') or 'n/a'}`",
@@ -1700,6 +1730,10 @@ async def setup_status_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         f"- Codex key set: {'✅' if status.get('codex_key_set') else '❌'}",
         f"- Gemini key set: {'✅' if status.get('gemini_key_set') else '❌'}",
         f"- Claude key set: {'✅' if status.get('claude_key_set') else '❌'}",
+        f"- Codex account login enabled: {'✅' if status.get('codex_account_enabled') else '❌'}",
+        f"- Gemini account login enabled: {'✅' if status.get('gemini_account_enabled') else '❌'}",
+        f"- Claude account login enabled: {'✅' if status.get('claude_account_enabled') else '❌'}",
+        f"- Copilot account mode enabled: {'✅' if status.get('copilot_account_enabled') else '❌'}",
         f"- Copilot ready (GitHub OAuth or Copilot Token): {'✅' if status.get('copilot_ready') else '❌'}",
         f"- Org/group verified: {'✅' if status.get('org_verified') else '❌'}",
         f"- Project access: `{int(status.get('project_access_count') or 0)}`",

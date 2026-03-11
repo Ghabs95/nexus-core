@@ -8,6 +8,55 @@ from collections.abc import Mapping
 from typing import Any, Callable, TextIO
 
 _BLOCKED_GIT_CLI_BIN_DIR: str | None = None
+_CLI_AUTH_MODES = {"account"}
+_PROVIDER_API_KEY_ENV: dict[str, tuple[str, ...]] = {
+    "codex": ("OPENAI_API_KEY",),
+    "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    "claude": ("ANTHROPIC_API_KEY",),
+}
+
+
+def resolve_cli_auth_mode(env: Mapping[str, Any] | None = None) -> str:
+    raw = str((env or {}).get("NEXUS_CLI_AUTH_MODE") or os.getenv("NEXUS_CLI_AUTH_MODE", "account"))
+    normalized = raw.strip().lower()
+    if normalized in _CLI_AUTH_MODES:
+        return normalized
+    if not normalized:
+        return "account"
+    raise ValueError(
+        "NEXUS_CLI_AUTH_MODE supports only 'account' in this build. "
+        f"Received: {normalized!r}"
+    )
+
+
+def prepare_provider_cli_env(
+    *,
+    provider: str,
+    env: dict[str, str] | None = None,
+    logger: Any | None = None,
+) -> tuple[dict[str, str], str]:
+    """Prepare provider CLI env and resolve effective auth mode."""
+    provider_name = str(provider or "").strip().lower()
+    prepared_env = dict(env or {})
+    key_env_vars = _PROVIDER_API_KEY_ENV.get(provider_name, ())
+    requested_mode = resolve_cli_auth_mode(prepared_env)
+
+    stripped: list[str] = []
+    for key_name in key_env_vars:
+        if str(prepared_env.get(key_name) or os.getenv(key_name) or "").strip():
+            stripped.append(key_name)
+        prepared_env[key_name] = ""
+
+    if stripped:
+        log_info = getattr(logger, "info", None) if logger is not None else None
+        if callable(log_info):
+            log_info(
+                "🔐 %s CLI auth mode=account (masked key vars stripped: %s)",
+                provider_name,
+                ", ".join(sorted(stripped)),
+            )
+
+    return prepared_env, "account"
 
 
 def _resolve_git_transport(env: dict[str, str] | None = None) -> str:
@@ -364,6 +413,12 @@ def invoke_gemini_agent_cli(
     if not check_tool_available(gemini_provider):
         raise tool_unavailable_error("Gemini CLI not available")
 
+    provider_env, auth_mode = prepare_provider_cli_env(
+        provider="gemini",
+        env=env,
+        logger=logger,
+    )
+
     cmd = [
         gemini_cli_path,
         "--prompt",
@@ -384,6 +439,7 @@ def invoke_gemini_agent_cli(
     )
 
     logger.info("🤖 Launching Gemini CLI agent")
+    logger.info("   Auth mode: %s", auth_mode)
     logger.info("   Workspace: %s", workspace_dir)
     logger.info("   Log: %s", log_path)
 
@@ -428,7 +484,7 @@ def invoke_gemini_agent_cli(
         process = _launch_process_with_log(
             cmd=cmd,
             workspace_dir=workspace_dir,
-            env=env,
+            env=provider_env,
             log_path=log_path,
             logger=logger,
             launched_message="🚀 Gemini launched (PID: %s)",

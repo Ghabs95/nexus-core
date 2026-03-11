@@ -68,6 +68,10 @@ class AuthManager:
         claude_api_key: str | None = None,
         copilot_github_token: str | None = None,
         allow_copilot: bool = False,
+        use_codex_account: bool | None = None,
+        use_gemini_account: bool | None = None,
+        use_claude_account: bool | None = None,
+        use_copilot_account: bool | None = None,
     ) -> dict[str, Any]:
         return _auth_sessions.store_ai_provider_keys(
             session_id=session_id,
@@ -76,10 +80,20 @@ class AuthManager:
             claude_api_key=claude_api_key,
             copilot_github_token=copilot_github_token,
             allow_copilot=allow_copilot,
+            use_codex_account=use_codex_account,
+            use_gemini_account=use_gemini_account,
+            use_claude_account=use_claude_account,
+            use_copilot_account=use_copilot_account,
         )
 
     def get_session_and_setup_status(self, session_id: str) -> dict[str, Any]:
         return _auth_sessions.get_session_and_setup_status(session_id=session_id)
+
+    def start_provider_account_login(self, *, session_id: str, provider: str) -> dict[str, Any]:
+        return _auth_sessions.start_provider_account_login(session_id=session_id, provider=provider)
+
+    def get_provider_account_login_status(self, *, session_id: str, provider: str) -> dict[str, Any]:
+        return _auth_sessions.get_provider_account_login_status(session_id=session_id, provider=provider)
 
     def get_latest_login_session_status(self, nexus_id: str) -> dict[str, Any]:
         return _auth_sessions.get_latest_login_session_status(nexus_id=nexus_id)
@@ -170,6 +184,10 @@ def store_ai_provider_keys(
     claude_api_key: str | None = None,
     copilot_github_token: str | None = None,
     allow_copilot: bool = False,
+    use_codex_account: bool | None = None,
+    use_gemini_account: bool | None = None,
+    use_claude_account: bool | None = None,
+    use_copilot_account: bool | None = None,
 ) -> dict[str, Any]:
     return auth_manager.store_ai_provider_keys(
         session_id=session_id,
@@ -178,11 +196,23 @@ def store_ai_provider_keys(
         claude_api_key=claude_api_key,
         copilot_github_token=copilot_github_token,
         allow_copilot=allow_copilot,
+        use_codex_account=use_codex_account,
+        use_gemini_account=use_gemini_account,
+        use_claude_account=use_claude_account,
+        use_copilot_account=use_copilot_account,
     )
 
 
 def get_session_and_setup_status(session_id: str) -> dict[str, Any]:
     return auth_manager.get_session_and_setup_status(session_id=session_id)
+
+
+def start_provider_account_login(*, session_id: str, provider: str) -> dict[str, Any]:
+    return auth_manager.start_provider_account_login(session_id=session_id, provider=provider)
+
+
+def get_provider_account_login_status(*, session_id: str, provider: str) -> dict[str, Any]:
+    return auth_manager.get_provider_account_login_status(session_id=session_id, provider=provider)
 
 
 def get_latest_login_session_status(nexus_id: str) -> dict[str, Any]:

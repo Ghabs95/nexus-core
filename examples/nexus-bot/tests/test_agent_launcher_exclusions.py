@@ -83,6 +83,54 @@ def test_tool_unavailable_persists_gemini_exclusion(monkeypatch):
     assert state["55"]["exclude_tools"] == ["gemini"]
 
 
+def test_invoke_logs_requester_user_id_on_agent_launch(monkeypatch):
+    from nexus.core.runtime import agent_launcher
+
+    class _FakeOrchestrator:
+        def __init__(self):
+            self._rate_limits = {}
+
+        def invoke_agent(self, **_kwargs):
+            return 7777, SimpleNamespace(value="gemini")
+
+    state = {}
+    audit_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    monkeypatch.setattr(agent_launcher, "_ensure_agent_definition", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(agent_launcher, "get_orchestrator", lambda _cfg: _FakeOrchestrator())
+    monkeypatch.setattr(agent_launcher, "record_agent_launch", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(agent_launcher, "_attach_post_launch_watchdog", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        agent_launcher.AuditStore,
+        "audit_log",
+        lambda *args, **kwargs: audit_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        agent_launcher.HostStateManager, "load_launched_agents", lambda **_kwargs: dict(state)
+    )
+    monkeypatch.setattr(
+        agent_launcher.HostStateManager, "save_launched_agents", lambda data: state.update(data)
+    )
+
+    pid, tool = agent_launcher.invoke_ai_agent(
+        agents_dir="/tmp/agents",
+        workspace_dir="/tmp/workspace",
+        issue_url="https://github.com/acme/repo/issues/55",
+        tier_name="full",
+        task_content="task",
+        continuation=True,
+        agent_type="writer",
+        project_name="nexus",
+        requester_nexus_id="nexus-user-55",
+    )
+
+    assert pid == 7777
+    assert tool == "gemini"
+
+    launch_call = next(call for call in audit_calls if call[0][1] == "AGENT_LAUNCHED")
+    assert launch_call[1]["user_id"] == "nexus-user-55"
+
+
 def test_log_indicates_any_quota_failure_detects_session_summary():
     from nexus.core.runtime import agent_launcher
 

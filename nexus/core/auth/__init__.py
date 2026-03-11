@@ -9,6 +9,7 @@ from nexus.core.auth.manager import (
     complete_gitlab_oauth,
     create_login_session_for_user,
     format_login_session_ref,
+    get_provider_account_login_status,
     get_latest_login_session_status,
     get_session_and_setup_status,
     get_setup_status,
@@ -16,6 +17,7 @@ from nexus.core.auth.manager import (
     register_onboarding_message,
     refresh_stale_access_grants,
     resolve_login_session_id,
+    start_provider_account_login,
     start_oauth_flow,
     store_ai_provider_keys,
 )
@@ -29,6 +31,7 @@ __all__ = [
     "complete_gitlab_oauth",
     "create_login_session_for_user",
     "format_login_session_ref",
+    "get_provider_account_login_status",
     "get_latest_login_session_status",
     "get_session_and_setup_status",
     "get_setup_status",
@@ -36,6 +39,7 @@ __all__ = [
     "register_onboarding_message",
     "refresh_stale_access_grants",
     "resolve_login_session_id",
+    "start_provider_account_login",
     "start_oauth_flow",
     "store_ai_provider_keys",
 ]
