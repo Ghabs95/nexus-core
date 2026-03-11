@@ -45,6 +45,26 @@ _TERMINAL_VALUES = frozenset(
 )
 
 
+def normalize_completion_comment_markdown(value: Any) -> str:
+    """Normalize escaped markdown line breaks emitted by some agent payloads."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "\n" in text or "\r" in text:
+        return text
+
+    escaped_breaks = re.findall(r"\\r\\n|\\n|\\r", text)
+    if not escaped_breaks:
+        return text
+
+    should_unescape = len(escaped_breaks) >= 2 or "\\n\\n" in text or "\\r\\n\\r\\n" in text
+    if not should_unescape:
+        return text
+
+    normalized = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
+    return normalized.replace("\\t", "\t")
+
+
 def _budget_text_field(value: Any, *, max_chars: int, summary_cap: int) -> str:
     text = str(value or "").strip()
     if not text:
@@ -166,7 +186,7 @@ def budget_completion_payload(data: dict[str, Any]) -> dict[str, Any]:
     )
     payload["effort_breakdown"] = _normalize_effort_breakdown(payload.get("effort_breakdown", {}))
     payload["comment_markdown"] = _budget_text_field(
-        payload.get("comment_markdown", ""),
+        normalize_completion_comment_markdown(payload.get("comment_markdown", "")),
         max_chars=_COMPLETION_COMMENT_MAX_CHARS,
         summary_cap=_COMPLETION_COMMENT_MAX_CHARS,
     )
@@ -414,7 +434,7 @@ def generate_completion_instructions(
             f'    "summary": "<one-line summary of what you did>",\n'
             f'    "key_findings": ["<finding 1>", "<finding 2>"],\n'
             f'    "next_agent": "<agent_type from workflow steps — NOT the step id or display name>",\n'
-            f'    "comment_markdown": "## 🔍 <Step Name> Complete — {agent_type}\\\\n\\\\n**Step ID:** `{step_id}`\\\\n**Step Num:** {step_num}\\\\n\\\\n- Finding 1\\\\n- Finding 2"\n'
+            f'    "comment_markdown": "## 🔍 <Step Name> Complete — {agent_type}\\n\\n**Step ID:** `{step_id}`\\n**Step Num:** {step_num}\\n\\n- Finding 1\\n- Finding 2"\n'
             f"  }}'\n"
             f"```\n\n"
             f"Replace the `<placeholder>` values with real data from your analysis.\n"
@@ -436,7 +456,7 @@ def generate_completion_instructions(
             f"(the top-level directory you were launched in). "
             f"Do NOT create a new `{nexus_dir}/` folder inside sub-repos or subdirectories.\n\n"
             + completions_script
-            + f'python3 -c \'import json,os; p=os.path.join(os.environ["COMPLETIONS_DIR"], "completion_summary_{issue_number}.json"); d={{"status":"complete","agent_type":"{agent_type}","step_id":"{step_id}","step_num":{step_num},"summary":"<one-line summary of what you did>","key_findings":["<finding 1>","<finding 2>"],"next_agent":"<agent_type from workflow steps — NOT the step id or display name>","comment_markdown":"## 🔍 <Step Name> Complete — {agent_type}\\\\n\\\\n**Step ID:** `{step_id}`\\\\n**Step Num:** {step_num}\\\\n\\\\n- Finding 1\\\\n- Finding 2"}}; open(p, "w", encoding="utf-8").write(json.dumps(d, indent=2))\'\n'
+            + f'python3 -c \'import json,os; p=os.path.join(os.environ["COMPLETIONS_DIR"], "completion_summary_{issue_number}.json"); d={{"status":"complete","agent_type":"{agent_type}","step_id":"{step_id}","step_num":{step_num},"summary":"<one-line summary of what you did>","key_findings":["<finding 1>","<finding 2>"],"next_agent":"<agent_type from workflow steps — NOT the step id or display name>","comment_markdown":"## 🔍 <Step Name> Complete — {agent_type}\\n\\n**Step ID:** `{step_id}`\\n**Step Num:** {step_num}\\n\\n- Finding 1\\n- Finding 2"}}; open(p, "w", encoding="utf-8").write(json.dumps(d, indent=2))\'\n'
             f"```\n\n"
             f"Replace the `<placeholder>` values with real data from your analysis.\n"
             f"**Do NOT post issue comments directly via gh/glab/curl scripts.** "

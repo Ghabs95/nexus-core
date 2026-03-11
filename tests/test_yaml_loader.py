@@ -173,6 +173,67 @@ class TestValidateDictErrors:
         errors = YamlWorkflowLoader.validate_dict(data)
         assert errors
 
+    # context_policy field validation
+    def test_valid_context_policy_minimal(self):
+        data = _minimal_dict()
+        data["steps"][0]["context_policy"] = "minimal"
+        assert YamlWorkflowLoader.validate_dict(data) == []
+
+    def test_valid_context_policy_standard(self):
+        data = _minimal_dict()
+        data["steps"][0]["context_policy"] = "standard"
+        assert YamlWorkflowLoader.validate_dict(data) == []
+
+    def test_valid_context_policy_deep(self):
+        data = _minimal_dict()
+        data["steps"][0]["context_policy"] = "deep"
+        assert YamlWorkflowLoader.validate_dict(data) == []
+
+    def test_invalid_context_policy_value(self):
+        data = _minimal_dict()
+        data["steps"][0]["context_policy"] = "turbo"
+        errors = YamlWorkflowLoader.validate_dict(data)
+        assert any("context_policy" in e for e in errors)
+
+    def test_valid_audit_limit(self):
+        data = _minimal_dict()
+        data["steps"][0]["audit_limit"] = 10
+        assert YamlWorkflowLoader.validate_dict(data) == []
+
+    def test_invalid_audit_limit_zero(self):
+        data = _minimal_dict()
+        data["steps"][0]["audit_limit"] = 0
+        errors = YamlWorkflowLoader.validate_dict(data)
+        assert any("audit_limit" in e for e in errors)
+
+    def test_invalid_audit_limit_string(self):
+        data = _minimal_dict()
+        data["steps"][0]["audit_limit"] = "all"
+        errors = YamlWorkflowLoader.validate_dict(data)
+        assert any("audit_limit" in e for e in errors)
+
+    def test_valid_require_api_discovery_bool(self):
+        data = _minimal_dict()
+        data["steps"][0]["require_api_discovery"] = False
+        assert YamlWorkflowLoader.validate_dict(data) == []
+
+    def test_invalid_require_api_discovery_string(self):
+        data = _minimal_dict()
+        data["steps"][0]["require_api_discovery"] = "yes"
+        errors = YamlWorkflowLoader.validate_dict(data)
+        assert any("require_api_discovery" in e for e in errors)
+
+    def test_valid_include_audit_history_bool(self):
+        data = _minimal_dict()
+        data["steps"][0]["include_audit_history"] = True
+        assert YamlWorkflowLoader.validate_dict(data) == []
+
+    def test_invalid_include_audit_history_string(self):
+        data = _minimal_dict()
+        data["steps"][0]["include_audit_history"] = "true"
+        errors = YamlWorkflowLoader.validate_dict(data)
+        assert any("include_audit_history" in e for e in errors)
+
 
 # ---------------------------------------------------------------------------
 # load_from_dict — integration with WorkflowDefinition

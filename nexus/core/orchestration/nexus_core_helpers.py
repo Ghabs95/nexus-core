@@ -18,12 +18,14 @@ from nexus.core.config import (
     _get_project_config,
     get_default_project,
     get_repo,
+    get_repos,
     get_gitlab_base_url,
     get_project_platform,
 )
 from nexus.core.events import EventBus, NexusEvent
 from nexus.core.mermaid_render_service import build_mermaid_diagram
 from nexus.core.orchestration.plugin_runtime import get_workflow_state_plugin
+from nexus.core.project.repo_utils import resolve_project_name_for_repo as _resolve_project_name_for_repo
 from nexus.core.workflow import WorkflowEngine
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,62 @@ _event_bus: EventBus | None = None
 def get_git_repo(project_name: str) -> str:
     """Compatibility wrapper for repository lookup."""
     return get_repo(project_name)
+
+
+def resolve_project_name_for_repo(repo: str) -> str | None:
+    """Resolve a configured project key from a repository slug."""
+    return _resolve_project_name_for_repo(
+        repo,
+        project_config=_get_project_config(),
+        get_default_project=get_default_project,
+        get_repo=get_repo,
+        get_project_repos=get_repos,
+    )
+
+
+def can_access_issue_context(
+    *,
+    nexus_id: str,
+    issue_number: str,
+    repo: str,
+    project_name: str | None,
+) -> tuple[bool, str]:
+    """Validate requester-scoped access for workflow context APIs."""
+    try:
+        from nexus.core.auth import has_project_access
+        from nexus.core.auth.access_domain import auth_enabled
+        from nexus.core.auth.credential_store import get_issue_requester
+    except Exception:
+        # Fail closed if auth components are unavailable in an auth-enabled host.
+        return False, "auth-components-unavailable"
+
+    if not bool(auth_enabled()):
+        return True, "auth-disabled"
+
+    requester_id = str(nexus_id or "").strip()
+    if not requester_id:
+        return False, "missing-requester"
+
+    normalized_project = str(project_name or "").strip()
+    if not normalized_project:
+        normalized_project = str(resolve_project_name_for_repo(repo) or "").strip()
+    if not normalized_project:
+        return False, "unknown-project"
+
+    if not bool(has_project_access(requester_id, normalized_project, auto_sync=True)):
+        return False, "project-access-denied"
+
+    normalized_repo = str(repo or "").strip()
+    normalized_issue = str(issue_number or "").strip()
+    if normalized_repo and normalized_issue:
+        try:
+            bound_requester = get_issue_requester(normalized_repo, normalized_issue)
+        except Exception:
+            bound_requester = None
+        if bound_requester and str(bound_requester).strip() != requester_id:
+            return False, "requester-mismatch"
+
+    return True, "ok"
 
 
 def get_event_bus() -> EventBus:
@@ -503,6 +561,34 @@ async def get_workflow_status(issue_number: str) -> dict | None:
         cache_key=_WORKFLOW_STATE_PLUGIN_CACHE_KEY,
     )
     return await workflow_plugin.get_workflow_status(issue_number)
+
+
+async def get_workflow_context(issue_number: str, audit_limit: int = 25) -> dict[str, Any] | None:
+    """Return canonical workflow context for an issue.
+
+    Includes current workflow status and recent audit events.
+    """
+    status = await get_workflow_status(issue_number)
+    if not isinstance(status, dict):
+        return None
+
+    try:
+        limit = int(audit_limit)
+    except (TypeError, ValueError):
+        limit = 25
+    limit = max(1, min(limit, 200))
+
+    try:
+        issue_int = int(str(issue_number).strip())
+    except (TypeError, ValueError):
+        issue_int = 0
+
+    audit_events = AuditStore.get_audit_history(issue_int, limit=limit) if issue_int > 0 else []
+    return {
+        "issue_number": str(issue_number),
+        "workflow": status,
+        "audit": audit_events,
+    }
 
 
 async def handle_approval_gate(

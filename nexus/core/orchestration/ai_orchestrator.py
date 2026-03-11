@@ -46,6 +46,8 @@ def get_orchestrator(config: Any | None = None) -> AIOrchestrator:
                 "profile_provider_priority_resolver",
                 "system_operations",
                 "system_operations_resolver",
+                "copilot_permissions",
+                "copilot_permissions_resolver",
                 "chat_agent_types_resolver",
                 "fallback_enabled",
                 "rate_limit_ttl",

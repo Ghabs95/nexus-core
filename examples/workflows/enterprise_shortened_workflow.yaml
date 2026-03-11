@@ -27,6 +27,7 @@ steps:
     name: "Intake & Triage"
     description: "Classify priority, scope, and affected components"
     agent_type: "triage"
+    context_policy: "minimal"          # triage only needs current state to route
     tools:
       - vcs:read_issue
       - vcs:add_label
@@ -42,6 +43,7 @@ steps:
     name: "Root Cause Analysis"
     description: "Investigate the issue and identify root cause"
     agent_type: "debug"
+    context_policy: "standard"          # debug reads recent context to identify root cause
     tools:
       - vcs:search_codebase
       - vcs:read_file
@@ -59,6 +61,9 @@ steps:
     name: "Implement Change"
     description: "Implement the change and open a PR"
     agent_type: "developer"
+    context_policy: "deep"             # developer needs full audit trail and debug findings
+    include_audit_history: true
+    audit_limit: 50
     tools:
       - vcs:create_branch
       - vcs:commit_changes
@@ -76,6 +81,7 @@ steps:
     name: "Verify Change"
     description: "Review the change for correctness and approve only after full regression (or equivalent full CI suite) passes"
     agent_type: "reviewer"
+    context_policy: "standard"          # reviewer reads implementation and issue context
     tools:
       - vcs:review_pr
       - vcs:approve_pr
@@ -89,6 +95,7 @@ steps:
   - id: "route_review"
     name: "Route After Verification"
     agent_type: "router"
+    context_policy: "minimal"          # router only inspects review_status
     routes:
       - when: "review_status == 'approved'"
         then: "deploy"
@@ -98,6 +105,7 @@ steps:
     name: "Deploy Change"
     description: "Merge the change and create a release"
     agent_type: "deployer"
+    context_policy: "standard"          # deployer needs recent approvals and PR context
     tools:
       - vcs:merge_pr
       - vcs:create_release
@@ -112,6 +120,8 @@ steps:
     name: "Document & Close"
     description: "Write summary and close the issue"
     agent_type: "writer"
+    context_policy: "standard"          # writer reads recent history for postmortem and docs
+    audit_limit: 10
     tools:
       - vcs:add_comment
       - vcs:close_issue

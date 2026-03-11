@@ -9,6 +9,7 @@ from nexus.core.completion import (
     budget_completion_payload,
     build_completion_comment,
     generate_completion_instructions,
+    normalize_completion_comment_markdown,
     scan_for_completions,
 )
 from nexus.core.completion_store import CompletionStore
@@ -102,6 +103,20 @@ class TestCompletionSummary:
             }
         )
         assert len(payload["huge_debug_blob"]) <= 1200
+
+    def test_budget_completion_payload_normalizes_escaped_comment_markdown(self):
+        payload = budget_completion_payload(
+            {
+                "status": "complete",
+                "agent_type": "triage",
+                "comment_markdown": "## Triage Complete\\n\\n- Finding 1\\n- Finding 2",
+            }
+        )
+        assert payload["comment_markdown"] == "## Triage Complete\n\n- Finding 1\n- Finding 2"
+
+    def test_normalize_completion_comment_markdown_keeps_single_escaped_sequence(self):
+        text = normalize_completion_comment_markdown(r"Windows path: C:\new")
+        assert text == r"Windows path: C:\new"
 
     def test_alignment_fields_round_trip(self):
         original = CompletionSummary(
@@ -227,6 +242,11 @@ class TestGenerateCompletionInstructions:
         assert "Use this command template" in text
         assert '"step_id": "triage"' in text
         assert '"step_num": 1' in text
+
+    def test_completion_markdown_template_uses_json_newline_escape(self):
+        text = generate_completion_instructions("1", "triage", "triage", 1)
+        assert "\\\\n" not in text
+        assert "\\n\\n**Step ID:**" in text
 
 
 # ---------------------------------------------------------------------------

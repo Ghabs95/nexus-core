@@ -49,6 +49,9 @@ from nexus.core.guards import LaunchGuard
 from nexus.core.inbox.inbox_repo_path_service import (
     extract_repo_from_issue_url as _extract_repo_from_issue_url,
 )
+from nexus.core.inbox.inbox_repo_path_service import (
+    resolve_git_dir_for_repo as _resolve_git_dir_for_repo,
+)
 from nexus.core.integrations.notifications import notify_agent_completed, emit_alert
 from nexus.core.orchestration.ai_orchestrator import get_orchestrator
 from nexus.core.orchestration.plugin_runtime import get_profiled_plugin
@@ -607,9 +610,15 @@ def _recover_completion_from_agent_log(
         return ""
 
     def _resolve_comment_body(completion_payload: dict) -> str:
-        from nexus.core.completion import CompletionSummary, build_completion_comment
+        from nexus.core.completion import (
+            CompletionSummary,
+            build_completion_comment,
+            normalize_completion_comment_markdown,
+        )
 
-        markdown = str(completion_payload.get("comment_markdown") or "").strip()
+        markdown = normalize_completion_comment_markdown(
+            completion_payload.get("comment_markdown") or ""
+        )
         if markdown:
             return markdown
         summary = CompletionSummary.from_dict(completion_payload)
@@ -1215,6 +1224,75 @@ def _resolve_worktree_base_repo(workspace_dir: str, issue_url: str) -> str:
     return base
 
 
+def _resolve_worktree_targets(
+    *,
+    project_name: str | None,
+    issue_repo_slug: str,
+    fallback_repo_dir: str,
+) -> dict[str, str]:
+    """Resolve repositories that should receive issue worktrees for this launch."""
+    targets: dict[str, str] = {}
+    normalized_project = str(project_name or "").strip()
+    if normalized_project:
+        try:
+            configured_repos = get_repos(normalized_project)
+        except Exception:
+            configured_repos = []
+
+        for repo_slug in configured_repos:
+            repo_key = str(repo_slug or "").strip()
+            if not repo_key:
+                continue
+            try:
+                repo_dir = _resolve_git_dir_for_repo(
+                    project_name=normalized_project,
+                    repo_name=repo_key,
+                    project_config=PROJECT_CONFIG,
+                    base_dir=BASE_DIR,
+                )
+            except Exception:
+                repo_dir = None
+            if repo_dir and _is_git_repo(str(repo_dir)):
+                targets[repo_key] = str(repo_dir)
+
+    if targets:
+        return targets
+
+    fallback = str(fallback_repo_dir or "").strip()
+    if not fallback or not _is_git_repo(fallback):
+        return {}
+
+    repo_key = str(issue_repo_slug or "").strip()
+    if repo_key:
+        return {repo_key: fallback}
+
+    fallback_name = os.path.basename(fallback.rstrip(os.sep)) or "repo"
+    return {fallback_name: fallback}
+
+
+def _select_primary_worktree(
+    *,
+    issue_repo_slug: str,
+    fallback_repo_dir: str,
+    targets: dict[str, str],
+    provisioned: dict[str, str],
+) -> str:
+    """Select primary worktree path used as launched process working directory."""
+    issue_repo = str(issue_repo_slug or "").strip()
+    if issue_repo and issue_repo in provisioned:
+        return provisioned[issue_repo]
+
+    fallback_abs = os.path.abspath(str(fallback_repo_dir or "").strip())
+    for repo_key, repo_dir in targets.items():
+        if os.path.abspath(str(repo_dir)) == fallback_abs and repo_key in provisioned:
+            return provisioned[repo_key]
+
+    if len(provisioned) == 1:
+        return next(iter(provisioned.values()))
+
+    return str(fallback_repo_dir)
+
+
 def _coerce_optional_bool(value: object) -> bool | None:
     if isinstance(value, bool):
         return value
@@ -1305,6 +1383,124 @@ def _resolve_step_requires_worktree(
             return _coerce_optional_bool(selected_step.get("requires_worktree"))
 
     return None
+
+
+def _resolve_step_context_policy(
+    *,
+    workflow_path: str,
+    tier_name: str,
+    workflow_name: str,
+    next_agent_type: str,
+) -> dict:
+    """Return the context-fetch policy defined on the next workflow step.
+
+    Looks up the step whose ``agent_type`` matches *next_agent_type* in the
+    workflow definition at *workflow_path* and returns the resolved policy
+    fields as a dict.  Falls back to sensible defaults when the workflow file
+    is absent, unparseable, or the step has no explicit policy.
+
+    Returned keys (always present):
+        ``context_policy``       – ``"minimal"``, ``"standard"``, or ``"deep"``
+        ``require_api_discovery`` – ``bool``
+        ``include_audit_history`` – ``bool``
+        ``audit_limit``           – ``int``
+    """
+    _DEFAULTS = {
+        "context_policy": "standard",
+        "require_api_discovery": True,
+        "include_audit_history": True,
+        "audit_limit": 25,
+    }
+
+    path = str(workflow_path or "").strip()
+    if not path or not os.path.isfile(path):
+        return dict(_DEFAULTS)
+
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = yaml.safe_load(handle)
+    except Exception as exc:
+        logger.debug("Could not parse workflow definition (%s): %s", path, exc)
+        return dict(_DEFAULTS)
+
+    if not isinstance(data, dict):
+        return dict(_DEFAULTS)
+    data["__yaml_path"] = path
+
+    try:
+        from nexus.core.workflow_engine.workflow_definition_loader import resolve_workflow_steps_list
+    except Exception:
+        return dict(_DEFAULTS)
+
+    workflow_type_candidates: list[str] = []
+    for candidate in (
+        tier_name,
+        f"workflow:{tier_name}" if tier_name else "",
+        workflow_name,
+        f"workflow:{workflow_name}" if workflow_name else "",
+        "",
+    ):
+        candidate_str = str(candidate or "").strip()
+        if candidate_str in workflow_type_candidates:
+            continue
+        workflow_type_candidates.append(candidate_str)
+
+    steps: list[dict] = []
+    for workflow_type in workflow_type_candidates:
+        try:
+            resolved = resolve_workflow_steps_list(data, workflow_type)
+        except Exception:
+            continue
+        if isinstance(resolved, list) and resolved:
+            steps = resolved
+            break
+
+    if not steps:
+        return dict(_DEFAULTS)
+
+    target_agent = _normalize_step_ref(next_agent_type)
+    matched_step: dict | None = None
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        step_agent = _normalize_step_ref(str(step.get("agent_type") or ""))
+        if step_agent and step_agent == target_agent:
+            matched_step = step
+            break
+
+    if matched_step is None:
+        return dict(_DEFAULTS)
+
+    raw_policy = str(matched_step.get("context_policy") or "").strip().lower()
+    context_policy = raw_policy if raw_policy in {"minimal", "standard", "deep"} else "standard"
+
+    # Derive sensible defaults from the policy level when explicit flags absent.
+    policy_defaults = {
+        "minimal": {"require_api_discovery": False, "include_audit_history": False, "audit_limit": 0},
+        "standard": {"require_api_discovery": True, "include_audit_history": True, "audit_limit": 25},
+        "deep": {"require_api_discovery": True, "include_audit_history": True, "audit_limit": 50},
+    }[context_policy]
+
+    require_api_discovery = matched_step.get("require_api_discovery")
+    if not isinstance(require_api_discovery, bool):
+        require_api_discovery = policy_defaults["require_api_discovery"]
+
+    include_audit_history = matched_step.get("include_audit_history")
+    if not isinstance(include_audit_history, bool):
+        include_audit_history = policy_defaults["include_audit_history"]
+
+    raw_limit = matched_step.get("audit_limit")
+    if isinstance(raw_limit, int) and raw_limit > 0:
+        audit_limit = raw_limit
+    else:
+        audit_limit = policy_defaults["audit_limit"]
+
+    return {
+        "context_policy": context_policy,
+        "require_api_discovery": require_api_discovery,
+        "include_audit_history": include_audit_history,
+        "audit_limit": audit_limit,
+    }
 
 
 def _should_provision_worktree(
@@ -1740,7 +1936,7 @@ def invoke_ai_agent(
             step_requires_worktree=step_requires_worktree,
         )
 
-        if should_provision_worktree and _is_git_repo(worktree_base_repo):
+        if should_provision_worktree:
             # Extract branch name from issue body if available
             target_branch = None
             if issue_url:
@@ -1769,28 +1965,77 @@ def invoke_ai_agent(
                 branch_for_worktree,
             )
 
-            start_ref = None
-            if project_name and issue_repo_slug:
-                try:
-                    base_branch = get_repo_branch(project_name, issue_repo_slug)
-                except Exception:
-                    base_branch = "main"
-                normalized_base = str(base_branch or "").strip() or "main"
-                start_ref = f"origin/{normalized_base}"
-            try:
-                isolated_workspace = WorkspaceManager.provision_worktree(
-                    worktree_base_repo,
+            worktree_targets = _resolve_worktree_targets(
+                project_name=project_name,
+                issue_repo_slug=issue_repo_slug,
+                fallback_repo_dir=worktree_base_repo,
+            )
+            if not worktree_targets:
+                logger.warning(
+                    "Skipping worktree provisioning for issue %s: no git repositories resolved "
+                    "(base=%s)",
                     issue_num,
-                    branch_name=branch_for_worktree,
-                    start_ref=start_ref,
+                    worktree_base_repo,
                 )
-                removed_helpers = WorkspaceManager.sanitize_worktree_helper_scripts(
-                    isolated_workspace
-                )
-                if removed_helpers:
+            try:
+                provisioned_paths: dict[str, str] = {}
+                failures: dict[str, str] = {}
+                for target_repo, target_repo_dir in worktree_targets.items():
+                    start_ref = None
+                    if project_name:
+                        try:
+                            base_branch = get_repo_branch(project_name, target_repo)
+                        except Exception:
+                            base_branch = "main"
+                        normalized_base = str(base_branch or "").strip() or "main"
+                        start_ref = f"origin/{normalized_base}"
+
+                    try:
+                        created_worktree = WorkspaceManager.provision_worktree(
+                            target_repo_dir,
+                            issue_num,
+                            branch_name=branch_for_worktree,
+                            start_ref=start_ref,
+                        )
+                        provisioned_paths[target_repo] = created_worktree
+                        removed_helpers = WorkspaceManager.sanitize_worktree_helper_scripts(
+                            created_worktree
+                        )
+                        if removed_helpers:
+                            logger.warning(
+                                "Removed deprecated helper scripts before agent launch for issue #%s",
+                                issue_num,
+                            )
+                    except WorktreeProvisionError as target_exc:
+                        failures[target_repo] = str(target_exc)
+                        logger.warning(
+                            "Worktree provisioning failed for issue #%s repo=%s: %s",
+                            issue_num,
+                            target_repo,
+                            target_exc,
+                        )
+
+                issue_repo_key = str(issue_repo_slug or "").strip()
+                if issue_repo_key and issue_repo_key in worktree_targets and issue_repo_key not in provisioned_paths:
+                    raise WorktreeProvisionError(
+                        f"{issue_repo_key}: {failures.get(issue_repo_key, 'provisioning failed')}"
+                    )
+                if not provisioned_paths and worktree_targets:
+                    detail = "; ".join(f"{repo}: {reason}" for repo, reason in failures.items())
+                    raise WorktreeProvisionError(detail or "no worktree could be provisioned")
+
+                if provisioned_paths:
+                    isolated_workspace = _select_primary_worktree(
+                        issue_repo_slug=issue_repo_slug,
+                        fallback_repo_dir=worktree_base_repo,
+                        targets=worktree_targets,
+                        provisioned=provisioned_paths,
+                    )
+                if failures and provisioned_paths:
                     logger.warning(
-                        "Removed deprecated helper scripts before agent launch for issue #%s",
+                        "Provisioned issue worktrees for issue #%s with partial failures: %s",
                         issue_num,
+                        "; ".join(f"{repo}: {reason}" for repo, reason in failures.items()),
                     )
             except WorktreeProvisionError as exc:
                 failure_reason = str(exc)
@@ -1843,12 +2088,6 @@ def invoke_ai_agent(
                 except Exception:
                     pass
                 return None, None
-        elif should_provision_worktree:
-            logger.warning(
-                "Skipping worktree provisioning for issue %s: not a git repo (%s)",
-                issue_num,
-                worktree_base_repo,
-            )
         elif issue_num != "unknown":
             logger.info(
                 "Skipping worktree provisioning for issue %s agent=%s (not required for this step)",
@@ -2145,19 +2384,69 @@ def launch_next_agent(
     agents_abs = os.path.join(BASE_DIR, config["agents_dir"])
     workspace_abs = os.path.join(BASE_DIR, config["workspace"])
 
-    # Create continuation prompt
-    if os.getenv("NEXUS_FULL_WORKFLOW_CONTEXT", "false").lower() == "true":
+    # Resolve per-step context policy from the workflow YAML (or use env/defaults as fallback).
+    workflow_path = _resolve_workflow_path(project_root)
+    workflow_name = get_workflow_name(tier_name)
+    context_policy_cfg = _resolve_step_context_policy(
+        workflow_path=workflow_path,
+        tier_name=tier_name,
+        workflow_name=workflow_name,
+        next_agent_type=next_agent,
+    )
+    context_policy = context_policy_cfg["context_policy"]
+    require_api_discovery = context_policy_cfg["require_api_discovery"]
+    include_audit_history = context_policy_cfg["include_audit_history"]
+    audit_limit = context_policy_cfg["audit_limit"]
+    logger.debug(
+        "Context policy for @%s issue #%s: policy=%s discovery=%s audit=%s limit=%d",
+        next_agent, issue_number, context_policy, require_api_discovery, include_audit_history, audit_limit,
+    )
+
+    # Build discovery guard sentence (injected only when required by policy).
+    discovery_guard = (
+        "Before starting work, call GET /api/v1 to discover supported routes, then "
+        "GET /api/v1/workflow-context/<issue_number> for canonical context. "
+        "Do not invent or probe undocumented endpoints. "
+        if require_api_discovery
+        else ""
+    )
+
+    # Build audit-history instruction (injected only when policy requests it).
+    if include_audit_history and audit_limit > 0:
+        audit_instruction = (
+            f"The context endpoint returns audit history (up to {audit_limit} events). "
+            "Review it to understand prior decisions before acting. "
+        )
+    else:
+        audit_instruction = ""
+
+    if context_policy == "minimal":
+        continuation_prompt = (
+            f"You are {next_agent}. Previous step complete. "
+            "Retrieve current workflow state from GET /api/v1/workflow-context/<issue_number>, "
+            "perform your task, and post a concise status update ending with: 'Ready for `@NextAgent`'"
+        )
+    elif context_policy == "deep":
         continuation_prompt = (
             f"You are a {next_agent} agent. The previous workflow step is complete.\n\n"
             f"Your task: Begin your step in the workflow.\n"
-            f"Read recent Git comments to understand what's been completed.\n"
-            f"Then perform your assigned work and post a status update.\n"
-            f"End with a completion marker like: 'Ready for `@NextAgent`'"
+            f"{discovery_guard}"
+            "Read canonical workflow context via GET /api/v1/workflow-context/<issue_number> "
+            "(do not guess endpoints).\n"
+            f"{audit_instruction}"
+            "Use Git comments only as supplemental human context.\n"
+            "Then perform your assigned work and post a status update.\n"
+            "End with a completion marker like: 'Ready for `@NextAgent`'"
         )
-    else:
+    else:  # standard (default)
         continuation_prompt = (
-            f"You are {next_agent}. Previous step complete. Read recent issue comments for context, "
-            f"perform your task, and post a concise status update ending with: 'Ready for `@NextAgent`'"
+            f"You are {next_agent}. Previous step complete. "
+            f"{discovery_guard}"
+            "Read /api/v1/workflow-context/<issue_number> for canonical context "
+            "(do not guess endpoints), "
+            f"{audit_instruction}"
+            "use issue comments as supplemental context, "
+            "perform your task, and post a concise status update ending with: 'Ready for `@NextAgent`'"
         )
 
     # Launch

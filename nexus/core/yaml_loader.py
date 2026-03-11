@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 #: Valid backoff strategies accepted in a ``retry_policy`` block.
 RETRY_BACKOFF_STRATEGIES = ("exponential", "linear", "constant")
 
+#: Valid ``context_policy`` values for a workflow step.
+CONTEXT_POLICY_VALUES = ("minimal", "standard", "deep")
+
 
 # ---------------------------------------------------------------------------
 # YamlWorkflowLoader
@@ -347,5 +350,39 @@ class YamlWorkflowLoader:
                             warnings.append(
                                 f"Step '{label}': 'parallel' references unknown step id '{u}'"
                             )
+
+            # context_policy must be one of the recognised values
+            context_policy = step.get("context_policy")
+            if context_policy is not None and context_policy not in CONTEXT_POLICY_VALUES:
+                errors.append(
+                    f"Step '{label}': 'context_policy' must be one of "
+                    f"{CONTEXT_POLICY_VALUES}, got {context_policy!r}"
+                )
+
+            # audit_limit must be a positive integer when present
+            audit_limit = step.get("audit_limit")
+            if audit_limit is not None and (
+                not isinstance(audit_limit, int) or audit_limit <= 0
+            ):
+                errors.append(
+                    f"Step '{label}': 'audit_limit' must be a positive integer, "
+                    f"got {audit_limit!r}"
+                )
+
+            # require_api_discovery must be a boolean when present
+            req_discovery = step.get("require_api_discovery")
+            if req_discovery is not None and not isinstance(req_discovery, bool):
+                errors.append(
+                    f"Step '{label}': 'require_api_discovery' must be a boolean, "
+                    f"got {req_discovery!r}"
+                )
+
+            # include_audit_history must be a boolean when present
+            inc_audit = step.get("include_audit_history")
+            if inc_audit is not None and not isinstance(inc_audit, bool):
+                errors.append(
+                    f"Step '{label}': 'include_audit_history' must be a boolean, "
+                    f"got {inc_audit!r}"
+                )
 
         return errors, warnings

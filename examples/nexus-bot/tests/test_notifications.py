@@ -246,9 +246,9 @@ class TestNotificationFunctions:
     @patch(
         "nexus.core.integrations.notifications.PROJECT_CONFIG",
         {
-            "wallible": {
+            "example-org": {
                 "git_platform": "gitlab",
-                "git_repo": "wallible/wlbl-workflow-os",
+                "git_repo": "example-org/example-project",
                 "gitlab_base_url": "https://gitlab.com",
             }
         },
@@ -256,17 +256,17 @@ class TestNotificationFunctions:
     def test_notify_workflow_completed_uses_gitlab_issue_url(self, mock_get_repo, mock_send):
         """Workflow completion links should respect project platform."""
         mock_send.return_value = True
-        mock_get_repo.return_value = "wallible/wlbl-workflow-os"
+        mock_get_repo.return_value = "example-org/example-project"
 
         result = notify_workflow_completed(
             "333",
-            "wallible",
-            pr_urls=["https://gitlab.com/wallible/wlbl-workflow-os/-/merge_requests/12"],
+            "example-org",
+            pr_urls=["https://gitlab.com/example-org/example-project/-/merge_requests/12"],
         )
 
         assert result is True
         message = mock_send.call_args[0][0]
-        issue_url = "https://gitlab.com/wallible/wlbl-workflow-os/-/issues/333"
+        issue_url = "https://gitlab.com/example-org/example-project/-/issues/333"
         assert issue_url in message
 
         keyboard = mock_send.call_args.kwargs["keyboard"]

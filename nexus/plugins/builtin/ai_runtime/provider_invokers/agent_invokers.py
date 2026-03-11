@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Mapping
 from typing import Any, Callable, TextIO
 
 _BLOCKED_GIT_CLI_BIN_DIR: str | None = None
@@ -48,6 +49,26 @@ def apply_git_transport_env_policy(merged_env: dict[str, str]) -> dict[str, str]
     else:
         merged_env.pop("NEXUS_GIT_CLI_DISABLED", None)
     return merged_env
+
+
+def _resolve_copilot_permissions(copilot_permissions: Mapping[str, Any] | None) -> tuple[list[str], bool, bool]:
+    if not isinstance(copilot_permissions, Mapping):
+        return [], False, False
+
+    allow_urls_raw = copilot_permissions.get("allow_urls")
+    allow_urls: list[str] = []
+    if isinstance(allow_urls_raw, list):
+        seen: set[str] = set()
+        for value in allow_urls_raw:
+            url = str(value or "").strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            allow_urls.append(url)
+
+    allow_all_urls = bool(copilot_permissions.get("allow_all_urls") is True)
+    allow_all_paths = bool(copilot_permissions.get("allow_all_paths") is True)
+    return allow_urls, allow_all_urls, allow_all_paths
 
 
 def _prepare_log_path(
@@ -223,6 +244,7 @@ def invoke_copilot_agent_cli(
     copilot_cli_path: str,
     copilot_model: str,
     copilot_supports_model: bool,
+    copilot_permissions: dict[str, Any] | None,
     get_tasks_logs_dir: Callable[[str, str | None], str],
     tool_unavailable_error: type[Exception],
     rate_limited_error: type[Exception],
@@ -250,6 +272,14 @@ def invoke_copilot_agent_cli(
         agents_dir,
         "--allow-all-tools",
     ]
+    allow_urls, allow_all_urls, allow_all_paths = _resolve_copilot_permissions(copilot_permissions)
+    if allow_all_urls:
+        cmd.append("--allow-all-urls")
+    else:
+        for allowed_url in allow_urls:
+            cmd.extend(["--allow-url", allowed_url])
+    if allow_all_paths:
+        cmd.append("--allow-all-paths")
     if copilot_model and copilot_supports_model:
         cmd.extend(["--model", copilot_model])
     log_path = _prepare_log_path(

@@ -14,12 +14,12 @@ class _Logger:
 
 def test_refine_issue_content_fallback_cleans_inbox_markdown():
     source = """# Feature
-**Project:** Wallible
+**Project:** Example Org
 **Type:** feature
 **Task Name:** cross-asset-correlation-analyzer
 **Status:** Pending
 
-Wallible: New feature proposal for Wallible
+Example Org: New feature proposal for Example Org
 
 Title: Cross-Asset Correlation Analyzer
 Summary: An advanced analytics view for cross-asset movement.
@@ -39,7 +39,7 @@ raw source text
 
     result = refine_issue_content_with_ai(
         content=source,
-        project_name="wallible",
+        project_name="example-org",
         run_analysis=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
         logger=_Logger(),
         requester_context={"nexus_id": "nexus-42"},
@@ -55,7 +55,7 @@ raw source text
 def test_refine_issue_content_uses_ai_text_when_available():
     result = refine_issue_content_with_ai(
         content="raw content",
-        project_name="wallible",
+        project_name="example-org",
         run_analysis=lambda **_kwargs: {"text": "Cleaned task body"},
         logger=_Logger(),
     )
@@ -92,7 +92,7 @@ def test_render_checklist_from_workflow_expands_orchestrator_routes(tmp_path):
     )
 
     checklist = render_checklist_from_workflow(
-        project_name="wallible",
+        project_name="example-org",
         tier_name="full",
         get_workflow_definition_path=lambda _project: str(master),
     )

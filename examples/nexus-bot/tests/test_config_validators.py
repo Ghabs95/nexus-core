@@ -44,6 +44,35 @@ def test_validate_project_config_accepts_claude_provider_in_profiles_and_priorit
     validate_project_config(payload)
 
 
+def test_validate_project_config_accepts_copilot_permissions():
+    payload = {
+        "copilot_permissions": {
+            "allow_urls": ["http://webhook:8081", "https://gitlab.com"],
+            "allow_all_urls": False,
+            "allow_all_paths": False,
+        },
+        "ai_tool_preferences": {
+            "compliance": {
+                "provider": "copilot",
+                "profile": "fast",
+                "copilot_permissions": {"allow_all_paths": True},
+            }
+        },
+        "model_profiles": {"fast": {"copilot": "gpt-4o-mini"}},
+        "nexus": {"workspace": "x", "agents_dir": "a", "git_platform": "github"},
+    }
+    validate_project_config(payload)
+
+
+def test_validate_project_config_rejects_invalid_copilot_permissions_shape():
+    payload = {
+        "copilot_permissions": {"allow_urls": "http://webhook:8081"},
+        "nexus": {"workspace": "x", "agents_dir": "a", "git_platform": "github"},
+    }
+    with pytest.raises(ValueError):
+        validate_project_config(payload)
+
+
 def test_validate_project_config_accepts_access_control_users():
     payload = {
         "nexus": {

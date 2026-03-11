@@ -106,6 +106,27 @@ class WorkflowPolicyPlugin:
         )
         return "".join(parts)
 
+    def build_finalization_blocked_message(
+        self,
+        *,
+        issue_number: str,
+        repo: str,
+        reasons: list[str],
+        project_name: str | None = None,
+    ) -> str:
+        lines = [
+            "⛔ **Workflow Finalization Blocked**\n\n",
+            f"Issue: #{issue_number}\n",
+            "Reason: non-empty PR/MR diff required before completion.\n\n",
+        ]
+        if reasons:
+            lines.append("Details:\n")
+            lines.extend(f"- {item}\n" for item in reasons if str(item).strip())
+        lines.append(
+            f"\n🔗 {self._build_issue_link(repo=repo, issue_number=issue_number, project_name=project_name)}"
+        )
+        return "".join(lines)
+
     def _resolve_git_dir(self, project_name: str) -> str | None:
         resolver = self._callback("resolve_git_dir")
         if not resolver:
@@ -224,6 +245,37 @@ class WorkflowPolicyPlugin:
             )
         notifier(message)
 
+    def _notify_finalization_blocked(
+        self,
+        *,
+        repo: str,
+        issue_number: str,
+        project_name: str | None = None,
+        reasons: list[str] | None = None,
+    ) -> None:
+        notifier = self._callback("send_notification")
+        if not notifier:
+            return
+
+        builder = (
+            self._callback("build_finalization_blocked_message")
+            or self.build_finalization_blocked_message
+        )
+        try:
+            message = builder(
+                issue_number=str(issue_number),
+                repo=repo,
+                project_name=project_name,
+                reasons=[str(item) for item in (reasons or []) if str(item).strip()],
+            )
+        except TypeError:
+            message = builder(
+                issue_number=str(issue_number),
+                repo=repo,
+                reasons=[str(item) for item in (reasons or []) if str(item).strip()],
+            )
+        notifier(message)
+
     def _cleanup_worktree(self, *, repo_dir: str, issue_number: str) -> bool:
         cleaner = self._callback("cleanup_worktree")
         if not cleaner:
@@ -270,6 +322,44 @@ class WorkflowPolicyPlugin:
             )
             return False
 
+    def _validate_pr_non_empty_diff(
+        self,
+        *,
+        project_name: str,
+        repo: str,
+        issue_number: str,
+        pr_url: str,
+        repo_dir: str | None,
+        base_branch: str | None,
+        issue_repo: str | None = None,
+    ) -> tuple[bool, str]:
+        validator = self._callback("validate_pr_non_empty_diff")
+        if not validator:
+            return True, ""
+
+        try:
+            outcome = validator(
+                project_name=project_name,
+                repo=repo,
+                issue_number=str(issue_number),
+                pr_url=str(pr_url or ""),
+                repo_dir=repo_dir,
+                base_branch=base_branch,
+                issue_repo=issue_repo,
+            )
+        except Exception as exc:
+            logger.warning(
+                "PR/MR diff validation failed for issue #%s in repo %s: %s",
+                issue_number,
+                repo,
+                exc,
+            )
+            return False, f"{repo}: validation error ({exc})"
+
+        if isinstance(outcome, tuple) and len(outcome) >= 2:
+            return bool(outcome[0]), str(outcome[1] or "").strip()
+        return bool(outcome), ""
+
     def finalize_workflow(
         self,
         *,
@@ -283,6 +373,8 @@ class WorkflowPolicyPlugin:
             "pr_urls": [],
             "issue_closed": False,
             "notification_sent": False,
+            "finalization_blocked": False,
+            "blocking_reasons": [],
         }
         git_dirs_by_repo: dict[str, str] = {}
 
@@ -308,21 +400,37 @@ class WorkflowPolicyPlugin:
             target_repos = list(git_dirs_by_repo.keys()) or [repo]
 
             for target_repo in target_repos:
+                base_branch = self._resolve_repo_branch(
+                    project_name=project_name,
+                    repo=target_repo,
+                )
                 existing_pr_url = self._find_existing_pr(
                     repo=target_repo, issue_number=issue_number
                 )
                 if existing_pr_url:
-                    result["pr_urls"].append(existing_pr_url)
                     if git_dirs_by_repo.get(target_repo):
                         self._sync_existing_pr_changes(
                             repo=target_repo,
                             repo_dir=git_dirs_by_repo[target_repo],
                             issue_number=issue_number,
                             issue_repo=repo,
-                            base_branch=self._resolve_repo_branch(
-                                project_name=project_name,
-                                repo=target_repo,
-                            ),
+                            base_branch=base_branch,
+                        )
+                    is_valid_diff, validation_reason = self._validate_pr_non_empty_diff(
+                        project_name=project_name,
+                        repo=target_repo,
+                        issue_number=issue_number,
+                        pr_url=existing_pr_url,
+                        repo_dir=git_dirs_by_repo.get(target_repo),
+                        base_branch=base_branch,
+                        issue_repo=repo,
+                    )
+                    if is_valid_diff:
+                        result["pr_urls"].append(existing_pr_url)
+                    else:
+                        result["blocking_reasons"].append(
+                            validation_reason
+                            or f"{target_repo}: existing PR/MR has empty diff ({existing_pr_url})"
                         )
                     continue
 
@@ -331,10 +439,6 @@ class WorkflowPolicyPlugin:
                     continue
 
                 try:
-                    base_branch = self._resolve_repo_branch(
-                        project_name=project_name,
-                        repo=target_repo,
-                    )
                     created_pr_url = self._create_pr(
                         repo=target_repo,
                         repo_dir=git_dir,
@@ -344,7 +448,22 @@ class WorkflowPolicyPlugin:
                         base_branch=base_branch,
                     )
                     if created_pr_url:
-                        result["pr_urls"].append(created_pr_url)
+                        is_valid_diff, validation_reason = self._validate_pr_non_empty_diff(
+                            project_name=project_name,
+                            repo=target_repo,
+                            issue_number=issue_number,
+                            pr_url=created_pr_url,
+                            repo_dir=git_dir,
+                            base_branch=base_branch,
+                            issue_repo=repo,
+                        )
+                        if is_valid_diff:
+                            result["pr_urls"].append(created_pr_url)
+                        else:
+                            result["blocking_reasons"].append(
+                                validation_reason
+                                or f"{target_repo}: created PR/MR has empty diff ({created_pr_url})"
+                            )
                 except Exception as exc:
                     logger.warning(
                         "Error creating PR for issue #%s in repo %s: %s",
@@ -357,6 +476,29 @@ class WorkflowPolicyPlugin:
             if not git_dir:
                 continue
             self._cleanup_worktree(repo_dir=git_dir, issue_number=issue_number)
+
+        if not result["pr_urls"]:
+            result["blocking_reasons"].append(
+                "No non-empty PR/MR diff found in target repos for this workflow."
+            )
+
+        if result["blocking_reasons"]:
+            result["finalization_blocked"] = True
+            try:
+                self._notify_finalization_blocked(
+                    repo=repo,
+                    issue_number=issue_number,
+                    project_name=project_name,
+                    reasons=[str(item) for item in result.get("blocking_reasons", [])],
+                )
+                result["notification_sent"] = self._callback("send_notification") is not None
+            except Exception as exc:
+                logger.warning(
+                    "Error sending finalization-blocked notification for issue #%s: %s",
+                    issue_number,
+                    exc,
+                )
+            return result
 
         try:
             self._notify(

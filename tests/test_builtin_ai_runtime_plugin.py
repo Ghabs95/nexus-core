@@ -787,6 +787,85 @@ def test_copilot_model_override_is_capability_gated(monkeypatch, tmp_path):
     assert pid == 111
     assert captured["copilot_model"] == "global-model"
     assert captured["copilot_supports_model"] is False
+    assert captured["copilot_permissions"] == {}
+
+
+def test_copilot_permissions_resolver_applies_project_policy(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    def _fake_invoke(**kwargs):
+        captured.update(kwargs)
+        return 222
+
+    monkeypatch.setattr(
+        "nexus.plugins.builtin.ai_runtime_plugin.invoke_copilot_agent_cli_impl",
+        _fake_invoke,
+    )
+
+    orchestrator = AIOrchestrator(
+        {
+            "copilot_permissions_resolver": lambda project: (
+                {"allow_urls": ["http://webhook:8081"]} if project == "nexus" else {}
+            ),
+        }
+    )
+
+    pid = orchestrator._invoke_tool(
+        tool=AIProvider.COPILOT,
+        agent_prompt="go",
+        workspace_dir=str(tmp_path),
+        agents_dir=str(tmp_path),
+        base_dir=str(tmp_path),
+        agent_name="triage",
+        project_name="nexus",
+    )
+    assert pid == 222
+    assert captured["copilot_permissions"] == {"allow_urls": ["http://webhook:8081"]}
+
+
+def test_copilot_permissions_agent_override_merges_with_project_policy(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    def _fake_invoke(**kwargs):
+        captured.update(kwargs)
+        return 333
+
+    monkeypatch.setattr(
+        "nexus.plugins.builtin.ai_runtime_plugin.invoke_copilot_agent_cli_impl",
+        _fake_invoke,
+    )
+
+    orchestrator = AIOrchestrator(
+        {
+            "copilot_permissions": {
+                "allow_urls": ["http://webhook:8081"],
+                "allow_all_urls": False,
+            },
+            "tool_preferences": {
+                "compliance": {
+                    "provider": "copilot",
+                    "profile": "fast",
+                    "copilot_permissions": {"allow_all_paths": True},
+                }
+            },
+        }
+    )
+
+    pid = orchestrator._invoke_tool(
+        tool=AIProvider.COPILOT,
+        agent_prompt="go",
+        workspace_dir=str(tmp_path),
+        agents_dir=str(tmp_path),
+        base_dir=str(tmp_path),
+        agent_name="compliance",
+        project_name="nexus",
+    )
+    assert pid == 333
+    assert captured["copilot_permissions"] == {
+        "allow_urls": ["http://webhook:8081"],
+        "allow_all_urls": False,
+        "allow_all_paths": True,
+    }
 
 
 def test_auto_provider_fast_profile_prefers_available_provider(monkeypatch):

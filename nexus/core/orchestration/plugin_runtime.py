@@ -316,6 +316,7 @@ def get_workflow_policy_plugin(
     resolve_repo_branch: Callable[..., str | None] | None = None,
     find_existing_pr: Callable[..., str | None] | None = None,
     sync_existing_pr_changes: Callable[..., bool] | None = None,
+    validate_pr_non_empty_diff: Callable[..., bool | tuple[bool, str]] | None = None,
     cleanup_worktree: Callable[..., bool] | None = None,
     close_issue: Callable[..., bool] | None = None,
     send_notification: Callable[[str], None] | None = None,
@@ -337,6 +338,8 @@ def get_workflow_policy_plugin(
         overrides["find_existing_pr"] = find_existing_pr
     if sync_existing_pr_changes is not None:
         overrides["sync_existing_pr_changes"] = sync_existing_pr_changes
+    if validate_pr_non_empty_diff is not None:
+        overrides["validate_pr_non_empty_diff"] = validate_pr_non_empty_diff
     if cleanup_worktree is not None:
         overrides["cleanup_worktree"] = cleanup_worktree
     if close_issue is not None:

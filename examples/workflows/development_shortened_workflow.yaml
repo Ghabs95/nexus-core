@@ -25,6 +25,7 @@ steps:
     name: "Intake & Triage"
     description: "Classify issue and priority"
     agent_type: "triage"
+    context_policy: "minimal"          # triage only needs current state to route
     tools:
       - vcs:read_issue
       - vcs:add_comment
@@ -39,6 +40,7 @@ steps:
   - id: "route"
     name: "Route"
     agent_type: "router"
+    context_policy: "minimal"          # router only inspects classification
     routes:
       - when: "classification == 'bug'"
         then: "debug"
@@ -50,6 +52,7 @@ steps:
     name: "Root Cause Analysis"
     description: "Identify likely root cause"
     agent_type: "debug"
+    context_policy: "standard"          # debug reads recent context to identify root cause
     tools:
       - vcs:search_codebase
       - vcs:add_comment
@@ -63,6 +66,9 @@ steps:
     name: "Implement Change"
     description: "Implement and prepare PR"
     agent_type: "developer"
+    context_policy: "deep"             # developer needs full audit trail and prior decisions
+    include_audit_history: true
+    audit_limit: 50
     tools:
       - vcs:create_branch
       - vcs:edit_file
@@ -79,6 +85,7 @@ steps:
     name: "Review"
     description: "Quick review with full CI/regression requirement"
     agent_type: "reviewer"
+    context_policy: "standard"          # reviewer reads implementation and issue context
     tools:
       - vcs:review_pr
       - vcs:approve_pr
@@ -92,6 +99,7 @@ steps:
   - id: "route_review"
     name: "Route After Review"
     agent_type: "router"
+    context_policy: "minimal"          # router only inspects approval_status
     routes:
       - when: "approval_status == 'approved'"
         then: "close_loop"
@@ -101,6 +109,7 @@ steps:
     name: "Update Documentation"
     description: "Documentation-only workflow branch"
     agent_type: "docs"
+    context_policy: "standard"          # docs reads issue and recent changes
     tools:
       - vcs:read_file
       - vcs:edit_file
@@ -115,6 +124,8 @@ steps:
     name: "Summarize & Close"
     description: "Post summary and close"
     agent_type: "summarizer"
+    context_policy: "standard"          # summarizer reads recent history for the close comment
+    audit_limit: 10
     tools:
       - vcs:add_comment
     inputs:

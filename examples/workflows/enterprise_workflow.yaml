@@ -16,6 +16,7 @@ steps:
     name: "Enterprise Tier Selection"
     description: "Classify the request and choose full, shortened, or fast-track flow"
     agent_type: "triage"
+    context_policy: "minimal"          # tier-selection triage only needs current state
     tools:
       - vcs:read_issue
     inputs:
@@ -30,6 +31,7 @@ steps:
     name: "Dispatch"
     description: "Trigger the selected enterprise sub-workflow"
     agent_type: "triage"
+    context_policy: "minimal"          # dispatch only reads selected_workflow to route
     inputs:
       - selected_workflow: "string"
     routes:

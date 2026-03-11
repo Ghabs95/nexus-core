@@ -79,6 +79,11 @@ from nexus.core.orchestration.plugin_runtime import (
     get_workflow_state_plugin,
 )
 from nexus.core.orchestration.nexus_core_helpers import get_git_platform, get_workflow_definition_path
+from nexus.core.orchestration.nexus_core_helpers import (
+    can_access_issue_context,
+    get_workflow_context,
+    resolve_project_name_for_repo,
+)
 from nexus.core.runtime.agent_launcher import launch_next_agent
 from nexus.core.user_manager import get_user_manager
 from nexus.core.webhook.issue_service import handle_issue_opened_event as _handle_issue_opened_event
@@ -1254,6 +1259,36 @@ def health_check():
     return jsonify({"status": "healthy", "service": "nexus-webhook", "version": "1.0.0"}), 200
 
 
+@app.route("/api/v1", methods=["GET"])
+def api_v1_index():
+    """Minimal API discovery endpoint for runtime-safe client usage."""
+    return (
+        jsonify(
+            {
+                "status": "ok",
+                "version": "v1",
+                "service": "nexus-webhook",
+                "endpoints": [
+                    {
+                        "method": "POST",
+                        "path": "/api/v1/completion",
+                        "description": "Submit step completion payload for orchestration processing.",
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/api/v1/workflow-context/{issue_number}",
+                        "description": (
+                            "Read canonical workflow status and recent audit history "
+                            "for an issue (requester-scoped authorization when auth is enabled)."
+                        ),
+                    },
+                ],
+            }
+        ),
+        200,
+    )
+
+
 @app.route("/api/v1/completion", methods=["POST"])
 def api_v1_completion():
     """Persist-and-acknowledge completion endpoint (postgres backend).
@@ -1420,6 +1455,114 @@ def api_v1_completion():
     except Exception as exc:
         logger.error("Failed to persist completion: %s", exc, exc_info=True)
         return jsonify({"status": "error", "message": str(exc)}), 500
+
+
+@app.route("/api/v1/workflow-context/<issue_number>", methods=["GET"])
+def api_v1_workflow_context(issue_number: str):
+    """Return canonical workflow context with requester-scoped authorization."""
+    normalized_issue = str(issue_number or "").strip()
+    if not normalized_issue.isdigit():
+        return jsonify({"status": "error", "message": "issue_number must be numeric"}), 400
+
+    try:
+        audit_limit = int(str(request.args.get("audit_limit", "25")).strip())
+    except (TypeError, ValueError):
+        audit_limit = 25
+    audit_limit = max(1, min(audit_limit, 200))
+
+    try:
+        context_payload = asyncio.run(get_workflow_context(normalized_issue, audit_limit=audit_limit))
+    except Exception as exc:
+        logger.error(
+            "Failed to resolve workflow context for issue #%s: %s",
+            normalized_issue,
+            exc,
+            exc_info=True,
+        )
+        return jsonify({"status": "error", "message": "Failed to resolve workflow context"}), 500
+
+    if not isinstance(context_payload, dict):
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": f"No active workflow status found for issue #{normalized_issue}",
+                }
+            ),
+            404,
+        )
+
+    workflow_status = context_payload.get("workflow")
+    if not isinstance(workflow_status, dict):
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": f"No active workflow status found for issue #{normalized_issue}",
+                }
+            ),
+            404,
+        )
+
+    metadata = workflow_status.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    project_name = str(request.args.get("project", "")).strip() or str(
+        metadata.get("project_name") or metadata.get("project") or metadata.get("project_key") or ""
+    ).strip()
+
+    repo = str(request.args.get("repo", "")).strip() or str(
+        metadata.get("repo")
+        or metadata.get("repo_key")
+        or metadata.get("git_repo")
+        or metadata.get("repository")
+        or ""
+    ).strip()
+
+    if not project_name and repo:
+        project_name = str(resolve_project_name_for_repo(repo) or "").strip()
+    if project_name and not repo:
+        try:
+            repo = str(get_repo(project_name) or "").strip()
+        except Exception:
+            repo = ""
+
+    if NEXUS_AUTH_ENABLED:
+        session_id, session_payload = _resolve_ready_web_session()
+        if not session_id or not isinstance(session_payload, dict):
+            return jsonify({"status": "error", "message": "Authentication required"}), 401
+
+        requester_nexus_id = str(session_payload.get("nexus_id") or "").strip()
+        allowed, reason = can_access_issue_context(
+            nexus_id=requester_nexus_id,
+            issue_number=normalized_issue,
+            repo=repo,
+            project_name=project_name or None,
+        )
+        if not allowed:
+            logger.warning(
+                "Workflow context denied: issue=%s requester=%s project=%s repo=%s reason=%s",
+                normalized_issue,
+                requester_nexus_id or "<missing>",
+                project_name or "<unknown>",
+                repo or "<unknown>",
+                reason,
+            )
+            return jsonify({"status": "error", "message": "Forbidden"}), 403
+
+    return (
+        jsonify(
+            {
+                "status": "ok",
+                "issue_number": normalized_issue,
+                "project": project_name,
+                "repo": repo,
+                "context": context_payload,
+            }
+        ),
+        200,
+    )
 
 
 def _get_completion_store():

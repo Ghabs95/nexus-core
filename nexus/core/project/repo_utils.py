@@ -52,3 +52,59 @@ def iter_project_configs(
             continue
         if project_repos_from_config(project_key, project_cfg, get_project_repos):
             yield project_key, project_cfg
+
+
+def resolve_project_name_for_repo(
+    repo: str,
+    *,
+    project_config: dict[str, Any] | None = None,
+    get_default_project: Callable[[], str] | None = None,
+    get_repo: Callable[[str], str] | None = None,
+    get_project_repos: Callable[[str], list[str]] | None = None,
+) -> str | None:
+    """Resolve configured project key for a repository slug.
+
+    This helper centralizes repo->project mapping used by runtime, orchestration,
+    and git integration surfaces.
+    """
+    target_repo = str(repo or "").strip()
+    if not target_repo:
+        return None
+
+    if (
+        project_config is None
+        or get_default_project is None
+        or get_repo is None
+        or get_project_repos is None
+    ):
+        try:
+            from nexus.core.config import (
+                _get_project_config,
+                get_default_project as _get_default_project,
+                get_repo as _get_repo,
+                get_repos as _get_repos,
+            )
+        except Exception:
+            return None
+
+        project_config = _get_project_config()
+        get_default_project = _get_default_project
+        get_repo = _get_repo
+        get_project_repos = _get_repos
+
+    if not isinstance(project_config, dict):
+        return None
+
+    for project_key, project_cfg in iter_project_configs(project_config, get_project_repos):
+        repos = project_repos_from_config(project_key, project_cfg, get_project_repos)
+        if target_repo in repos:
+            return str(project_key)
+
+    try:
+        default_project = str(get_default_project() or "").strip()
+        if default_project and str(get_repo(default_project) or "").strip() == target_repo:
+            return default_project
+    except Exception:
+        return None
+
+    return None

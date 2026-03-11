@@ -184,3 +184,67 @@ def test_workflow_policy_finalize_cleans_worktree():
     )
 
     assert captured["cleanup_called"] is True
+
+
+def test_workflow_policy_finalize_blocks_empty_existing_pr_diff():
+    captured: dict[str, Any] = {"message": None}
+
+    def _resolve_git_dir(_project_name):
+        return "/tmp/repo"
+
+    def _find_existing_pr(**_kwargs):
+        return "https://gitlab.com/acme/repo/-/merge_requests/1"
+
+    def _validate_pr_non_empty_diff(**_kwargs):
+        return False, "acme/repo: existing MR has empty diff"
+
+    def _send_notification(message):
+        captured["message"] = message
+
+    plugin = WorkflowPolicyPlugin(
+        {
+            "resolve_git_dir": _resolve_git_dir,
+            "find_existing_pr": _find_existing_pr,
+            "validate_pr_non_empty_diff": _validate_pr_non_empty_diff,
+            "send_notification": _send_notification,
+        }
+    )
+
+    result = plugin.finalize_workflow(
+        issue_number="51",
+        repo="acme/repo",
+        last_agent="deployer",
+        project_name="acme",
+    )
+
+    assert result["pr_urls"] == []
+    assert result["finalization_blocked"] is True
+    assert "empty diff" in " ".join(result["blocking_reasons"])
+    assert result["notification_sent"] is True
+    assert "Finalization Blocked" in str(captured["message"])
+
+
+def test_workflow_policy_finalize_blocks_when_no_pr_urls_created():
+    def _resolve_git_dir(_project_name):
+        return "/tmp/repo"
+
+    def _create_pr_from_changes(**_kwargs):
+        return None
+
+    plugin = WorkflowPolicyPlugin(
+        {
+            "resolve_git_dir": _resolve_git_dir,
+            "create_pr_from_changes": _create_pr_from_changes,
+        }
+    )
+
+    result = plugin.finalize_workflow(
+        issue_number="52",
+        repo="acme/repo",
+        last_agent="deployer",
+        project_name="acme",
+    )
+
+    assert result["pr_urls"] == []
+    assert result["finalization_blocked"] is True
+    assert any("No non-empty PR/MR diff found" in item for item in result["blocking_reasons"])

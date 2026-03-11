@@ -2,23 +2,19 @@ from nexus.adapters.git.factory import get_git_platform_transport
 
 
 def _resolve_project_key_from_repo(repo: str) -> str | None:
-    target_repo = str(repo or "").strip()
-    if not target_repo:
-        return None
-
     try:
-        from nexus.core.config import PROJECT_CONFIG, get_repos
-        from nexus.core.project.repo_utils import iter_project_configs, project_repos_from_config
+        from nexus.core.config import PROJECT_CONFIG, get_default_project, get_repo, get_repos
+        from nexus.core.project.repo_utils import resolve_project_name_for_repo as _resolve_shared
     except Exception:
         return None
 
-    if not isinstance(PROJECT_CONFIG, dict):
-        return None
-
-    for project_key, project_cfg in iter_project_configs(PROJECT_CONFIG, get_repos):
-        if target_repo in project_repos_from_config(project_key, project_cfg, get_repos):
-            return str(project_key)
-    return None
+    return _resolve_shared(
+        repo,
+        project_config=PROJECT_CONFIG,
+        get_default_project=get_default_project,
+        get_repo=get_repo,
+        get_project_repos=get_repos,
+    )
 
 
 def _canonical_project_key(project_name: str | None) -> str | None:

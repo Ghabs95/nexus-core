@@ -319,12 +319,16 @@ ai_tool_preferences:
 
         # NPM-based installs
         npm_packages = []
+        codex_npm_package = (
+            str(os.getenv("NEXUS_CODEX_NPM_PACKAGE", "@openai/codex@0.113.0")).strip()
+            or "@openai/codex@0.113.0"
+        )
         if install_copilot:
             npm_packages.append("@github/copilot")
         if install_gemini:
             npm_packages.append("@google/gemini-cli")
         if install_codex:
-            npm_packages.append("@openai/codex")
+            npm_packages.append(codex_npm_package)
         if install_claude:
             npm_packages.append("@anthropic-ai/claude-code")
 

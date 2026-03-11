@@ -1,11 +1,15 @@
 """Workflow finalization helpers extracted from inbox_processor."""
 
 import asyncio
+import json
 import logging
 import os
+import re
 import subprocess
 
 logger = logging.getLogger(__name__)
+_GITHUB_PR_URL_RE = re.compile(r"github\.com/[^/]+/[^/]+/pull/([0-9]+)", re.IGNORECASE)
+_GITLAB_MR_URL_RE = re.compile(r"/-/merge_requests/([0-9]+)", re.IGNORECASE)
 
 
 def emit_alert(*args, **kwargs):
@@ -33,6 +37,161 @@ def get_git_platform(
         project_name=project_name,
         token_override=token_override,
     )
+
+
+def _is_git_repo(path: str) -> bool:
+    try:
+        probe = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=path,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        return probe.returncode == 0 and str(probe.stdout or "").strip() == "true"
+    except Exception:
+        return False
+
+
+def _issue_worktree_path(repo_dir: str, issue_number: str) -> str:
+    return os.path.join(
+        str(repo_dir),
+        ".nexus",
+        "worktrees",
+        f"issue-{str(issue_number).strip()}",
+    )
+
+
+def _resolve_issue_worktree_dir(
+    *,
+    repo_dir: str,
+    issue_number: str,
+    base_branch: str | None = None,
+    create_if_missing: bool = False,
+) -> str | None:
+    worktree_dir = _issue_worktree_path(repo_dir, issue_number)
+    if os.path.isdir(worktree_dir):
+        return worktree_dir
+    if not create_if_missing:
+        return None
+    if not _is_git_repo(str(repo_dir)):
+        return str(repo_dir)
+
+    from nexus.core.workspace import WorktreeProvisionError, WorkspaceManager
+
+    branch_name = f"nexus/issue-{str(issue_number).strip()}"
+    normalized_base = str(base_branch or "").strip()
+    start_ref = f"origin/{normalized_base}" if normalized_base else None
+    try:
+        created = WorkspaceManager.provision_worktree(
+            str(repo_dir),
+            str(issue_number),
+            branch_name=branch_name,
+            start_ref=start_ref,
+        )
+        WorkspaceManager.sanitize_worktree_helper_scripts(created)
+        logger.info(
+            "Provisioned missing issue worktree for issue #%s in %s",
+            issue_number,
+            repo_dir,
+        )
+        return created
+    except WorktreeProvisionError as exc:
+        logger.warning(
+            "Could not provision issue worktree for issue #%s in %s: %s",
+            issue_number,
+            repo_dir,
+            exc,
+        )
+        return None
+
+
+def _git(args: list[str], *, cwd: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git"] + args,
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def _repo_has_non_empty_diff(repo_dir: str, *, base_branch: str | None = None) -> tuple[bool, str]:
+    status = _git(["status", "--porcelain"], cwd=repo_dir)
+    if status.returncode == 0 and str(status.stdout or "").strip():
+        return True, "has uncommitted changes"
+
+    base = str(base_branch or "").strip()
+    candidates: list[str] = []
+    for ref in (f"origin/{base}" if base else "", base, "origin/main", "main", "origin/master", "master"):
+        candidate = str(ref or "").strip()
+        if not candidate or candidate in candidates:
+            continue
+        candidates.append(candidate)
+
+    for ref in candidates:
+        verify = _git(["rev-parse", "--verify", ref], cwd=repo_dir)
+        if verify.returncode != 0:
+            continue
+        diff = _git(["diff", "--name-only", f"{ref}...HEAD"], cwd=repo_dir)
+        if diff.returncode != 0:
+            continue
+        if str(diff.stdout or "").strip():
+            return True, f"non-empty diff vs {ref}"
+        return False, f"empty diff vs {ref}"
+
+    return False, "could not resolve base ref for diff comparison"
+
+
+def _gitlab_mr_has_non_empty_diff(platform, mr_iid: str) -> bool | None:
+    fetch = getattr(platform, "_get", None)
+    encoded_repo = getattr(platform, "_encoded_repo", "")
+    if not callable(fetch) or not str(encoded_repo or "").strip():
+        return None
+    try:
+        payload = asyncio.run(fetch(f"projects/{encoded_repo}/merge_requests/{mr_iid}/changes"))
+    except Exception:
+        return None
+
+    changes_count_raw = str((payload or {}).get("changes_count") or "").strip()
+    if changes_count_raw:
+        numeric = "".join(ch for ch in changes_count_raw if ch.isdigit())
+        if numeric:
+            return int(numeric) > 0
+        if changes_count_raw == "0":
+            return False
+
+    changes = (payload or {}).get("changes")
+    if isinstance(changes, list):
+        return len(changes) > 0
+    return None
+
+
+def _github_pr_has_non_empty_diff(platform, pr_number: str) -> bool | None:
+    runner = getattr(platform, "_run_gh_command", None)
+    if not callable(runner):
+        return None
+    args = ["pr", "view", str(pr_number)]
+    repo_name = str(getattr(platform, "repo", "") or "").strip()
+    if repo_name:
+        args.extend(["--repo", repo_name])
+    args.extend(["--json", "changedFiles,additions,deletions"])
+    try:
+        output = runner(args, timeout=30)
+        payload = json.loads(output)
+    except Exception:
+        return None
+
+    try:
+        changed_files = int(payload.get("changedFiles", 0) or 0)
+        additions = int(payload.get("additions", 0) or 0)
+        deletions = int(payload.get("deletions", 0) or 0)
+    except Exception:
+        return None
+
+    return (changed_files > 0) or ((additions + deletions) > 0)
 
 
 def verify_workflow_terminal_before_finalize(
@@ -83,19 +242,21 @@ def create_pr_from_changes(
     token_override: str | None = None,
     base_branch: str | None = None,
 ) -> str | None:
-    issue_worktree_dir = os.path.join(
-        str(repo_dir),
-        ".nexus",
-        "worktrees",
-        f"issue-{str(issue_number).strip()}",
+    target_repo_dir = _resolve_issue_worktree_dir(
+        repo_dir=str(repo_dir),
+        issue_number=str(issue_number),
+        base_branch=base_branch,
+        create_if_missing=True,
     )
-    target_repo_dir = issue_worktree_dir if os.path.isdir(issue_worktree_dir) else repo_dir
-    if target_repo_dir != repo_dir:
-        logger.info(
-            "Using issue worktree for PR creation on issue #%s: %s",
+    if not target_repo_dir:
+        logger.warning(
+            "Cannot create PR/MR for issue #%s in %s: issue worktree unavailable",
             issue_number,
-            target_repo_dir,
+            repo,
         )
+        return None
+    if str(target_repo_dir) != str(repo_dir):
+        logger.info("Using issue worktree for PR creation on issue #%s: %s", issue_number, target_repo_dir)
 
     platform = get_git_platform(
         repo,
@@ -151,6 +312,76 @@ def find_existing_pr(
     return selected.url
 
 
+def validate_pr_non_empty_diff(
+    *,
+    project_name: str,
+    repo: str,
+    issue_number: str,
+    pr_url: str,
+    repo_dir: str | None,
+    base_branch: str | None = None,
+    issue_repo: str | None = None,
+    token_override: str | None = None,
+) -> tuple[bool, str]:
+    normalized_repo_dir = str(repo_dir or "").strip()
+    if not normalized_repo_dir:
+        return False, f"{repo}: missing local repo_dir for PR/MR diff validation"
+
+    target_repo_dir = _resolve_issue_worktree_dir(
+        repo_dir=normalized_repo_dir,
+        issue_number=str(issue_number),
+        base_branch=base_branch,
+        create_if_missing=False,
+    )
+    if not target_repo_dir:
+        return (
+            False,
+            f"{repo}: missing issue worktree .nexus/worktrees/issue-{issue_number} (finalization blocked)",
+        )
+
+    normalized_url = str(pr_url or "").strip()
+    platform = None
+    if normalized_url:
+        try:
+            platform = get_git_platform(
+                repo,
+                project_name=project_name,
+                token_override=token_override,
+            )
+        except Exception:
+            platform = None
+
+        github_match = _GITHUB_PR_URL_RE.search(normalized_url)
+        if github_match and platform is not None:
+            remote_ok = _github_pr_has_non_empty_diff(platform, github_match.group(1))
+            if remote_ok is True:
+                return True, ""
+            if remote_ok is False:
+                return False, f"{repo}: GitHub PR has empty diff ({normalized_url})"
+
+        gitlab_match = _GITLAB_MR_URL_RE.search(normalized_url)
+        if gitlab_match and platform is not None:
+            remote_ok = _gitlab_mr_has_non_empty_diff(platform, gitlab_match.group(1))
+            if remote_ok is True:
+                return True, ""
+            if remote_ok is False:
+                return False, f"{repo}: GitLab MR has empty diff ({normalized_url})"
+
+    local_ok, local_reason = _repo_has_non_empty_diff(
+        target_repo_dir,
+        base_branch=base_branch,
+    )
+    if local_ok:
+        return True, ""
+
+    issue_repo_ref = str(issue_repo or "").strip()
+    context = f" issue_repo={issue_repo_ref}" if issue_repo_ref else ""
+    return (
+        False,
+        f"{repo}: non-empty diff not found ({local_reason}) in {target_repo_dir}.{context}",
+    )
+
+
 def cleanup_worktree(
     *,
     repo_dir: str,
@@ -178,26 +409,22 @@ def sync_existing_pr_changes(
     repo: str | None = None,
     base_branch: str | None = None,
 ) -> bool:
-    del issue_repo, repo, base_branch  # callback signature compatibility
-    issue_worktree_dir = os.path.join(
-        str(repo_dir),
-        ".nexus",
-        "worktrees",
-        f"issue-{str(issue_number).strip()}",
+    del issue_repo, repo  # callback signature compatibility
+    target_repo_dir = _resolve_issue_worktree_dir(
+        repo_dir=str(repo_dir),
+        issue_number=str(issue_number),
+        base_branch=base_branch,
+        create_if_missing=True,
     )
-    target_repo_dir = issue_worktree_dir if os.path.isdir(issue_worktree_dir) else repo_dir
-
-    def _git(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["git"] + args,
-            cwd=target_repo_dir,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
+    if not target_repo_dir:
+        logger.warning(
+            "Cannot sync PR branch for issue #%s in %s: issue worktree unavailable",
+            issue_number,
+            repo_dir,
         )
+        return False
 
-    status = _git(["status", "--porcelain"])
+    status = _git(["status", "--porcelain"], cwd=target_repo_dir)
     if status.returncode != 0:
         logger.warning(
             "Cannot inspect git status for issue #%s in %s: %s",
@@ -209,7 +436,7 @@ def sync_existing_pr_changes(
     if not (status.stdout or "").strip():
         return True
 
-    add = _git(["add", "-A"])
+    add = _git(["add", "-A"], cwd=target_repo_dir)
     if add.returncode != 0:
         logger.warning(
             "Cannot stage changes for issue #%s in %s: %s",
@@ -224,10 +451,10 @@ def sync_existing_pr_changes(
         if str(commit_message or "").strip()
         else f"chore: sync final workflow changes for issue #{issue_number}"
     )
-    commit = _git(["commit", "-m", message])
+    commit = _git(["commit", "-m", message], cwd=target_repo_dir)
     if commit.returncode != 0:
         # Nothing-to-commit can happen when only ignored files changed.
-        status_after_add = _git(["status", "--porcelain"])
+        status_after_add = _git(["status", "--porcelain"], cwd=target_repo_dir)
         if status_after_add.returncode == 0 and not (status_after_add.stdout or "").strip():
             return True
         logger.warning(
@@ -238,7 +465,7 @@ def sync_existing_pr_changes(
         )
         return False
 
-    push = _git(["push", "-u", "origin", "HEAD"], timeout=60)
+    push = _git(["push", "-u", "origin", "HEAD"], cwd=target_repo_dir, timeout=60)
     if push.returncode != 0:
         logger.warning(
             "Cannot push final changes for issue #%s in %s: %s",
@@ -275,6 +502,7 @@ def finalize_workflow(
     base_dir: str,
     get_tasks_active_dir,
     get_tasks_closed_dir,
+    resolve_token_override_fn=None,
     sync_existing_pr_changes_fn=None,
 ) -> None:
     try:
@@ -306,6 +534,26 @@ def finalize_workflow(
         sync_existing_pr_changes=(
             sync_existing_pr_changes_fn if callable(sync_existing_pr_changes_fn) else None
         ),
+        validate_pr_non_empty_diff=(
+            lambda **kwargs: validate_pr_non_empty_diff(
+                project_name=project_name,
+                repo=str(kwargs.get("repo", "") or repo),
+                issue_number=str(kwargs.get("issue_number", "") or issue_num),
+                pr_url=str(kwargs.get("pr_url", "") or ""),
+                repo_dir=kwargs.get("repo_dir"),
+                base_branch=kwargs.get("base_branch"),
+                issue_repo=kwargs.get("issue_repo"),
+                token_override=(
+                    resolve_token_override_fn(
+                        project_name,
+                        str(kwargs.get("repo", "") or repo),
+                        str(kwargs.get("issue_number", "") or issue_num),
+                    )
+                    if callable(resolve_token_override_fn)
+                    else None
+                ),
+            )
+        ),
         close_issue=close_issue_fn,
         send_notification=send_notification,
         resolve_project_config=(
@@ -324,6 +572,17 @@ def finalize_workflow(
         last_agent=last_agent,
         project_name=project_name,
     )
+    if result.get("finalization_blocked"):
+        reasons = [str(item) for item in (result.get("blocking_reasons") or []) if str(item).strip()]
+        if reasons:
+            logger.warning(
+                "Finalization blocked for issue #%s: %s",
+                issue_num,
+                " | ".join(reasons),
+            )
+        else:
+            logger.warning("Finalization blocked for issue #%s", issue_num)
+        return
 
     pr_urls = result.get("pr_urls") if isinstance(result, dict) else None
     if isinstance(pr_urls, list) and pr_urls:

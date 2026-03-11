@@ -288,10 +288,10 @@ async def test_dispatch_message_bridge_command_runs_reprocess_from_typed_slash(m
     monkeypatch.setattr(svc, "bot", types.SimpleNamespace(user=types.SimpleNamespace(name="NexusBot")))
 
     message = _Message(user_id=42)
-    handled = await svc._dispatch_message_bridge_command(message, "/reprocess wallible 1")
+    handled = await svc._dispatch_message_bridge_command(message, "/reprocess example-org 1")
 
     assert handled is True
-    assert captured["args"] == ["wallible", "1"]
+    assert captured["args"] == ["example-org", "1"]
     assert message.replies and message.replies[-1] == "ok"
 
 

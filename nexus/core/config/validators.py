@@ -20,6 +20,33 @@ def _known_provider_names() -> set[str]:
     return {provider.value for provider in _AIProviderEnum}
 
 
+def _validate_copilot_permissions_block(payload: Any, *, label: str) -> None:
+    if payload is None:
+        return
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must be a mapping")
+
+    supported_keys = {"allow_urls", "allow_all_urls", "allow_all_paths"}
+    unknown_keys = [key for key in payload if key not in supported_keys]
+    if unknown_keys:
+        raise ValueError(f"{label} contains unsupported keys: {', '.join(sorted(unknown_keys))}")
+
+    allow_urls = payload.get("allow_urls")
+    if allow_urls is not None:
+        if not isinstance(allow_urls, list):
+            raise ValueError(f"{label}.allow_urls must be a list")
+        for idx, value in enumerate(allow_urls):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{label}.allow_urls[{idx}] must be a non-empty string")
+
+    for bool_key in ("allow_all_urls", "allow_all_paths"):
+        raw = payload.get(bool_key)
+        if raw is None:
+            continue
+        if not isinstance(raw, bool):
+            raise ValueError(f"{label}.{bool_key} must be a boolean")
+
+
 def _validate_tool_preferences_block(
     payload: Any,
     *,
@@ -42,6 +69,12 @@ def _validate_tool_preferences_block(
         profile_name = str(getattr(spec, "profile", "") or "").strip()
         if known_profiles is not None and profile_name not in known_profiles:
             raise ValueError(f"{label}.{agent_name} references unknown profile '{profile_name}'")
+
+        if isinstance(value, dict) and "copilot_permissions" in value:
+            _validate_copilot_permissions_block(
+                value.get("copilot_permissions"),
+                label=f"{label}.{agent_name}.copilot_permissions",
+            )
 
 
 def _validate_model_profiles_block(payload: Any, *, label: str) -> set[str]:
@@ -138,6 +171,10 @@ def validate_project_config(config: dict[str, Any]) -> None:
         label="PROJECT_CONFIG['profile_provider_priority']",
         known_profiles=global_profiles,
     )
+    _validate_copilot_permissions_block(
+        config.get("copilot_permissions"),
+        label="PROJECT_CONFIG['copilot_permissions']",
+    )
 
     global_keys = {
         "nexus_dir",
@@ -147,6 +184,7 @@ def validate_project_config(config: dict[str, Any]) -> None:
         "model_profiles",
         "profile_provider_priority",
         "ai_tool_preferences",
+        "copilot_permissions",
         "system_operations",
         "merge_queue",
         "workflow_chains",
@@ -320,6 +358,10 @@ def validate_project_config(config: dict[str, Any]) -> None:
             proj_config.get("profile_provider_priority"),
             label=f"PROJECT_CONFIG['{project}']['profile_provider_priority']",
             known_profiles=project_profiles,
+        )
+        _validate_copilot_permissions_block(
+            proj_config.get("copilot_permissions"),
+            label=f"PROJECT_CONFIG['{project}']['copilot_permissions']",
         )
         _validate_tool_preferences_block(
             proj_config.get("ai_tool_preferences"),

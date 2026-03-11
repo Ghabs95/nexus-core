@@ -41,7 +41,7 @@ def test_get_direct_issue_plugin_uses_gitlab_profile_for_gitlab_project(monkeypa
     factory = _PluginFactory()
     monkeypatch.setattr(
         "nexus.core.git.direct_issue_plugin_service._canonical_project_key",
-        lambda _project_name: "wallible",
+        lambda _project_name: "example-org",
     )
     monkeypatch.setattr(
         "nexus.core.git.direct_issue_plugin_service._resolve_project_key_from_repo",
@@ -53,9 +53,9 @@ def test_get_direct_issue_plugin_uses_gitlab_profile_for_gitlab_project(monkeypa
     )
 
     plugin = get_direct_issue_plugin(
-        repo="wallible/wlbl-workflow-os",
+        repo="example-org/example-project",
         get_profiled_plugin=factory,
-        project_name="wallible",
+        project_name="example-org",
     )
 
     assert plugin["profile"] == "gitlab_agent_launcher"
@@ -64,5 +64,5 @@ def test_get_direct_issue_plugin_uses_gitlab_profile_for_gitlab_project(monkeypa
     assert factory.calls[0][1]["gitlab_base_url"] == "https://gitlab.com"
     assert (
         factory.calls[0][2]
-        == "git:direct:gitlab_agent_launcher:api:wallible/wlbl-workflow-os"
+        == "git:direct:gitlab_agent_launcher:api:example-org/example-project"
     )

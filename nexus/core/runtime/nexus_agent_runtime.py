@@ -22,6 +22,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from nexus.adapters.git.utils import build_issue_url
+from nexus.core.completion import normalize_completion_comment_markdown
 from nexus.core.process_orchestrator import AgentRuntime
 
 logger = logging.getLogger(__name__)
@@ -32,10 +33,14 @@ RETRY_FUSE_HARD_TRIP_COUNT = 2
 RETRY_FUSE_HARD_WINDOW_SECONDS = 3600
 DEFAULT_RECENT_AGENT_COMMENT_WINDOW_SECONDS = 900
 _STEP_COMPLETE_HEADER_RE = re.compile(
-    r"^\s*##\s+.+?\bcomplete\b\s+—\s+.+$",
+    r"^\s*##\s+.+?\bcomplet(?:e|ed)\b\s*[-–—:]\s*`?@?([a-zA-Z0-9_-]+)`?\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
-_READY_FOR_RE = re.compile(r"\bready\s+for\b", re.IGNORECASE)
+_STEP_ID_COMMENT_RE = re.compile(r"^\s*\*\*Step ID:\*\*\s*`?([a-zA-Z0-9_-]+)`?\s*$", re.MULTILINE)
+_STEP_NUM_COMMENT_RE = re.compile(
+    r"^\s*\*\*Step (?:Num|Number):\*\*\s*([0-9]+)\s*$",
+    re.MULTILINE,
+)
 _ISSUE_OPEN_ERROR_LOG_COOLDOWN_SECONDS = 300
 _last_issue_open_error_log_at: dict[tuple[str, str], float] = {}
 
@@ -49,33 +54,19 @@ def _runtime_token_override() -> str | None:
 
 
 def _resolve_project_name_for_repo(repo: str) -> str | None:
-    target_repo = str(repo or "").strip()
-    if not target_repo:
-        return None
-
     try:
         from nexus.core.config import PROJECT_CONFIG, get_default_project, get_repo, get_repos
+        from nexus.core.project.repo_utils import resolve_project_name_for_repo as _resolve_shared
     except Exception:
         return None
 
-    for project_key, project_cfg in (PROJECT_CONFIG or {}).items():
-        if not isinstance(project_cfg, dict):
-            continue
-        try:
-            repos = [str(item or "").strip() for item in get_repos(str(project_key))]
-        except Exception:
-            continue
-        if target_repo in repos:
-            return str(project_key)
-
-    try:
-        default_project = str(get_default_project() or "").strip()
-        if default_project and str(get_repo(default_project) or "").strip() == target_repo:
-            return default_project
-    except Exception:
-        return None
-
-    return None
+    return _resolve_shared(
+        repo,
+        project_config=PROJECT_CONFIG,
+        get_default_project=get_default_project,
+        get_repo=get_repo,
+        get_project_repos=get_repos,
+    )
 
 
 def _resolve_requester_token_override(
@@ -659,11 +650,34 @@ class NexusAgentRuntime(AgentRuntime):
             severity = "info"
         return bool(emit_alert(text, severity=severity, source="agent_runtime"))
 
-    def _has_recent_agent_completion_comment(
+    def _extract_completion_comment_signature(self, body: str) -> tuple[str, str, int] | None:
+        normalized_body = normalize_completion_comment_markdown(body)
+        complete_match = _STEP_COMPLETE_HEADER_RE.search(normalized_body)
+        step_id_match = _STEP_ID_COMMENT_RE.search(normalized_body)
+        step_num_match = _STEP_NUM_COMMENT_RE.search(normalized_body)
+        if not complete_match or not step_id_match or not step_num_match:
+            return None
+
+        completed_agent = str(complete_match.group(1) or "").strip().lstrip("@").strip("`").lower()
+        step_id = str(step_id_match.group(1) or "").strip().lower()
+        try:
+            step_num = int(step_num_match.group(1))
+        except (TypeError, ValueError):
+            return None
+        if not completed_agent or not step_id or step_num <= 0:
+            return None
+        return completed_agent, step_id, step_num
+
+    def _has_recent_duplicate_completion_comment(
         self,
         platform,
         issue_number: str,
+        body: str,
     ) -> bool:
+        expected_signature = self._extract_completion_comment_signature(body)
+        if expected_signature is None:
+            return False
+
         try:
             import asyncio
 
@@ -679,12 +693,11 @@ class NexusAgentRuntime(AgentRuntime):
         now = datetime.now(UTC)
         window_seconds = get_recent_agent_comment_window_seconds()
         for comment in reversed(comments or []):
-            body = str(getattr(comment, "body", "") or "")
-            if "_Automated comment from Nexus._" in body:
+            comment_body = str(getattr(comment, "body", "") or "")
+            if "_Automated comment from Nexus._" in comment_body:
                 continue
-            if not _STEP_COMPLETE_HEADER_RE.search(body):
-                continue
-            if not _READY_FOR_RE.search(body):
+            current_signature = self._extract_completion_comment_signature(comment_body)
+            if current_signature is None or current_signature != expected_signature:
                 continue
 
             created_at = getattr(comment, "created_at", None)
@@ -704,6 +717,7 @@ class NexusAgentRuntime(AgentRuntime):
         from nexus.core.orchestration.nexus_core_helpers import get_git_platform
 
         try:
+            normalized_body = normalize_completion_comment_markdown(body)
             project_name = _resolve_project_name_for_repo(str(repo))
             platform = get_git_platform(
                 repo,
@@ -716,15 +730,19 @@ class NexusAgentRuntime(AgentRuntime):
             )
             import asyncio
 
-            if self._has_recent_agent_completion_comment(platform, issue_number):
+            if self._has_recent_duplicate_completion_comment(
+                platform,
+                issue_number,
+                normalized_body,
+            ):
                 logger.info(
                     "Skipping automated completion comment for issue #%s: "
-                    "recent agent-authored completion comment already exists",
+                    "duplicate completion comment for the same step already exists",
                     issue_number,
                 )
                 return True
 
-            asyncio.run(platform.add_comment(str(issue_number), body))
+            asyncio.run(platform.add_comment(str(issue_number), normalized_body))
             return True
         except Exception as exc:
             logger.error(

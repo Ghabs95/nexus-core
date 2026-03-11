@@ -381,6 +381,93 @@ def test_invoke_ai_agent_honors_step_worktree_override_for_triage(monkeypatch, t
     assert calls["provisioned"] == 1
 
 
+def test_invoke_ai_agent_provisions_project_repos_with_repo_specific_base_branches(
+    monkeypatch, tmp_path
+):
+    from nexus.core.runtime import agent_launcher
+
+    captured: dict[str, str] = {}
+    provision_calls: list[tuple[str, str, str | None]] = []
+    cosmos_dir = tmp_path / "wlbl-cosmos"
+    workflow_dir = tmp_path / "wlbl-workflow-os"
+    cosmos_dir.mkdir()
+    workflow_dir.mkdir()
+
+    class _Orchestrator:
+        def invoke_agent(self, **kwargs):  # noqa: ANN003
+            captured["workspace_dir"] = str(kwargs.get("workspace_dir"))
+            return 9911, "gemini"
+
+    monkeypatch.setattr(agent_launcher, "_get_launch_policy_plugin", lambda: None)
+    monkeypatch.setattr(agent_launcher, "_resolve_workflow_path", lambda _project: None)
+    monkeypatch.setattr(
+        agent_launcher, "_resolve_issue_step_context", lambda _url: ("new_feature_workflow__implementation", 7)
+    )
+    monkeypatch.setattr(agent_launcher, "_resolve_step_requires_worktree", lambda **_kwargs: True)
+    monkeypatch.setattr(agent_launcher, "_ensure_agent_definition", lambda *_a, **_k: True)
+    monkeypatch.setattr(agent_launcher, "get_orchestrator", lambda _cfg: _Orchestrator())
+    monkeypatch.setattr(agent_launcher, "auth_enabled", lambda: False)
+    monkeypatch.setattr(
+        agent_launcher,
+        "_resolve_worktree_base_repo",
+        lambda *_a, **_k: str(workflow_dir),
+    )
+    monkeypatch.setattr(agent_launcher, "_is_git_repo", lambda _path: True)
+    monkeypatch.setattr(agent_launcher, "_load_issue_body_from_project_repo", lambda *_a, **_k: ("", "", ""))
+    monkeypatch.setattr(agent_launcher, "_derive_issue_branch_name", lambda **_k: "feat/issue-1")
+    monkeypatch.setattr(agent_launcher, "_run_coro_sync", lambda coro_factory: coro_factory())
+    monkeypatch.setattr(
+        agent_launcher,
+        "get_repos",
+        lambda _project: ["example-org/example-shared", "example-org/example-project"],
+    )
+    monkeypatch.setattr(
+        agent_launcher,
+        "_resolve_git_dir_for_repo",
+        lambda *, project_name, repo_name, project_config, base_dir: (
+            str(cosmos_dir) if repo_name == "example-org/example-shared" else str(workflow_dir)
+        ),
+    )
+    monkeypatch.setattr(
+        agent_launcher,
+        "get_repo_branch",
+        lambda _project, repo_slug: "develop" if repo_slug == "example-org/example-shared" else "main",
+    )
+
+    def _provision(repo_dir, issue_num, branch_name, start_ref=None):  # noqa: ANN001
+        provision_calls.append((str(repo_dir), str(branch_name), str(start_ref) if start_ref else None))
+        repo_name = str(repo_dir).rstrip("/").split("/")[-1]
+        return str(tmp_path / f".provisioned-{repo_name}-issue-{issue_num}")
+
+    monkeypatch.setattr(
+        "nexus.core.workspace.WorkspaceManager.provision_worktree",
+        _provision,
+    )
+    monkeypatch.setattr(
+        "nexus.core.workspace.WorkspaceManager.sanitize_worktree_helper_scripts",
+        lambda _path: [],
+    )
+
+    pid, tool = agent_launcher.invoke_ai_agent(
+        agents_dir=str(tmp_path / "agents"),
+        workspace_dir=str(tmp_path),
+        issue_url="https://gitlab.com/example-org/example-project/-/issues/1",
+        tier_name="full",
+        task_content="implementation task",
+        continuation=False,
+        agent_type="developer",
+        project_name="example-org",
+        log_subdir="example-org",
+    )
+
+    assert pid == 9911
+    assert tool == "gemini"
+    assert len(provision_calls) == 2
+    assert any(call[0] == str(cosmos_dir) and call[2] == "origin/develop" for call in provision_calls)
+    assert any(call[0] == str(workflow_dir) and call[2] == "origin/main" for call in provision_calls)
+    assert captured.get("workspace_dir") == str(tmp_path / ".provisioned-example-project-issue-1")
+
+
 def test_launch_next_agent_merges_persisted_and_runtime_exclusions(monkeypatch, tmp_path):
     from nexus.core.runtime import agent_launcher
 
@@ -559,7 +646,7 @@ def test_recover_completion_from_agent_log_persists_payload(monkeypatch, tmp_pat
     )
     monkeypatch.setattr(
         "nexus.core.orchestration.nexus_core_helpers.get_workflow_status",
-        lambda _issue_num: {"workflow_id": "wallible-1-full"},
+        lambda _issue_num: {"workflow_id": "example-org-1-full"},
     )
 
     class _Platform:
@@ -583,16 +670,16 @@ def test_recover_completion_from_agent_log_persists_payload(monkeypatch, tmp_pat
         ),
     )
     monkeypatch.setattr(agent_launcher, "get_nexus_dir_name", lambda: ".nexus")
-    monkeypatch.setattr(agent_launcher, "_extract_repo_from_issue_url", lambda _url: "wallible/wlbl-workflow-os")
+    monkeypatch.setattr(agent_launcher, "_extract_repo_from_issue_url", lambda _url: "example-org/example-project")
 
     dedup = agent_launcher._recover_completion_from_agent_log(
         issue_num="1",
         agent_type="triage",
         workspace_dir=str(tmp_path),
-        project_key="wallible",
+        project_key="example-org",
         tool_name="gemini",
         log_path=str(log_file),
-        issue_url="https://gitlab.com/wallible/wlbl-workflow-os/-/issues/1",
+        issue_url="https://gitlab.com/example-org/example-project/-/issues/1",
     )
 
     assert dedup == "dedup-recovered-1"
@@ -601,11 +688,101 @@ def test_recover_completion_from_agent_log_persists_payload(monkeypatch, tmp_pat
     assert captured["agent_type"] == "triage"
     data = captured["data"]
     assert isinstance(data, dict)
-    assert data["workflow_id"] == "wallible-1-full"
+    assert data["workflow_id"] == "example-org-1-full"
     assert data["step_id"] == "dispatch"
     assert data["step_num"] == 2
     assert posted["comments"] == ["1"]
     assert len(posted["added"]) == 1
+
+
+def test_recover_completion_from_agent_log_normalizes_double_escaped_comment_markdown(
+    monkeypatch, tmp_path
+):
+    import asyncio
+    import inspect
+
+    from nexus.core.runtime import agent_launcher
+
+    log_file = tmp_path / "gemini_1_20260310_115119.log"
+    log_file.write_text(
+        (
+            "```bash\n"
+            "curl -s -X POST http://webhook:8081/api/v1/completion \\\n"
+            "  -H \"Content-Type: application/json\" \\\n"
+            "  -d '{\n"
+            "    \"issue_number\": \"1\",\n"
+            "    \"agent_type\": \"triage\",\n"
+            "    \"step_id\": \"dispatch\",\n"
+            "    \"step_num\": 2,\n"
+            "    \"summary\": \"routed\",\n"
+            "    \"next_agent\": \"ceo\",\n"
+            "    \"comment_markdown\": \"## Dispatch Complete — triage\\\\n\\\\n**Step ID:** `dispatch`\\\\n**Step Num:** 2\\\\n\\\\nReady for **@Ceo**\"\n"
+            "  }'\n"
+            "```\n"
+        ),
+        encoding="utf-8",
+    )
+
+    class _FakeStore:
+        def __init__(self, *, backend, storage, base_dir, nexus_dir):
+            pass
+
+        def save(self, issue_number, agent_type, data):
+            return "dedup-recovered-1"
+
+    posted: dict[str, object] = {"comments": [], "added": []}
+
+    class _Platform:
+        async def get_comments(self, _issue_num):
+            posted["comments"].append(_issue_num)
+            return []
+
+        async def add_comment(self, issue_num, body):
+            posted["added"].append((issue_num, body))
+            return {"id": 123}
+
+    monkeypatch.setattr(agent_launcher, "is_postgres_backend", lambda _backend: True)
+    monkeypatch.setattr("nexus.core.completion_store.CompletionStore", _FakeStore)
+    monkeypatch.setattr(
+        "nexus.core.integrations.workflow_state_factory.get_storage_backend",
+        lambda: "fake-storage",
+    )
+    monkeypatch.setattr(
+        "nexus.core.orchestration.nexus_core_helpers.get_workflow_status",
+        lambda _issue_num: {"workflow_id": "example-org-1-full"},
+    )
+    monkeypatch.setattr(agent_launcher, "_resolve_requester_token_for_issue", lambda *_a, **_k: None)
+    monkeypatch.setattr(agent_launcher, "_get_git_platform_client", lambda *_a, **_k: _Platform())
+    monkeypatch.setattr(
+        agent_launcher,
+        "_run_coro_sync",
+        lambda coro_factory: (
+            asyncio.run(value)
+            if inspect.isawaitable(value := coro_factory())
+            else value
+        ),
+    )
+    monkeypatch.setattr(agent_launcher, "get_nexus_dir_name", lambda: ".nexus")
+    monkeypatch.setattr(agent_launcher, "_extract_repo_from_issue_url", lambda _url: "example-org/example-project")
+
+    dedup = agent_launcher._recover_completion_from_agent_log(
+        issue_num="1",
+        agent_type="triage",
+        workspace_dir=str(tmp_path),
+        project_key="example-org",
+        tool_name="gemini",
+        log_path=str(log_file),
+        issue_url="https://gitlab.com/example-org/example-project/-/issues/1",
+    )
+
+    assert dedup == "dedup-recovered-1"
+    assert posted["comments"] == ["1"]
+    assert posted["added"] == [
+        (
+            "1",
+            "## Dispatch Complete — triage\n\n**Step ID:** `dispatch`\n**Step Num:** 2\n\nReady for **@Ceo**",
+        )
+    ]
 
 
 def test_recover_completion_from_agent_log_skips_duplicate_comment(monkeypatch, tmp_path):
@@ -668,7 +845,7 @@ def test_recover_completion_from_agent_log_skips_duplicate_comment(monkeypatch, 
     )
     monkeypatch.setattr(
         "nexus.core.orchestration.nexus_core_helpers.get_workflow_status",
-        lambda _issue_num: {"workflow_id": "wallible-1-full"},
+        lambda _issue_num: {"workflow_id": "example-org-1-full"},
     )
     monkeypatch.setattr(agent_launcher, "_resolve_requester_token_for_issue", lambda *_a, **_k: None)
     monkeypatch.setattr(agent_launcher, "_get_git_platform_client", lambda *_a, **_k: _Platform())
@@ -682,17 +859,135 @@ def test_recover_completion_from_agent_log_skips_duplicate_comment(monkeypatch, 
         ),
     )
     monkeypatch.setattr(agent_launcher, "get_nexus_dir_name", lambda: ".nexus")
-    monkeypatch.setattr(agent_launcher, "_extract_repo_from_issue_url", lambda _url: "wallible/wlbl-workflow-os")
+    monkeypatch.setattr(agent_launcher, "_extract_repo_from_issue_url", lambda _url: "example-org/example-project")
 
     dedup = agent_launcher._recover_completion_from_agent_log(
         issue_num="1",
         agent_type="triage",
         workspace_dir=str(tmp_path),
-        project_key="wallible",
+        project_key="example-org",
         tool_name="gemini",
         log_path=str(log_file),
-        issue_url="https://gitlab.com/wallible/wlbl-workflow-os/-/issues/1",
+        issue_url="https://gitlab.com/example-org/example-project/-/issues/1",
     )
 
     assert dedup == "dedup-recovered-1"
     assert posted["added"] == []
+
+
+# ---------------------------------------------------------------------------
+# _resolve_step_context_policy
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_step_context_policy_returns_defaults_when_no_workflow(tmp_path):
+    """When no workflow file exists the function returns standard defaults."""
+    from nexus.core.runtime import agent_launcher
+
+    result = agent_launcher._resolve_step_context_policy(
+        workflow_path=str(tmp_path / "missing.yaml"),
+        tier_name="full",
+        workflow_name="new_feature",
+        next_agent_type="developer",
+    )
+    assert result["context_policy"] == "standard"
+    assert result["require_api_discovery"] is True
+    assert result["include_audit_history"] is True
+    assert result["audit_limit"] == 25
+
+
+def test_resolve_step_context_policy_minimal(tmp_path):
+    """Step with context_policy: minimal disables discovery and history."""
+    from nexus.core.runtime import agent_launcher
+
+    wf = tmp_path / "workflow.yaml"
+    wf.write_text(
+        "steps:\n"
+        "  - id: triage\n"
+        "    agent_type: triage\n"
+        "    context_policy: minimal\n",
+        encoding="utf-8",
+    )
+    result = agent_launcher._resolve_step_context_policy(
+        workflow_path=str(wf),
+        tier_name="full",
+        workflow_name="new_feature",
+        next_agent_type="triage",
+    )
+    assert result["context_policy"] == "minimal"
+    assert result["require_api_discovery"] is False
+    assert result["include_audit_history"] is False
+    assert result["audit_limit"] == 0
+
+
+def test_resolve_step_context_policy_deep(tmp_path):
+    """Step with context_policy: deep enables discovery and history with higher limit."""
+    from nexus.core.runtime import agent_launcher
+
+    wf = tmp_path / "workflow.yaml"
+    wf.write_text(
+        "steps:\n"
+        "  - id: develop\n"
+        "    agent_type: developer\n"
+        "    context_policy: deep\n"
+        "    audit_limit: 50\n",
+        encoding="utf-8",
+    )
+    result = agent_launcher._resolve_step_context_policy(
+        workflow_path=str(wf),
+        tier_name="full",
+        workflow_name="new_feature",
+        next_agent_type="developer",
+    )
+    assert result["context_policy"] == "deep"
+    assert result["require_api_discovery"] is True
+    assert result["include_audit_history"] is True
+    assert result["audit_limit"] == 50
+
+
+def test_resolve_step_context_policy_explicit_overrides_policy_defaults(tmp_path):
+    """Explicit boolean flags on a step override the policy-level defaults."""
+    from nexus.core.runtime import agent_launcher
+
+    wf = tmp_path / "workflow.yaml"
+    wf.write_text(
+        "steps:\n"
+        "  - id: review\n"
+        "    agent_type: reviewer\n"
+        "    context_policy: standard\n"
+        "    require_api_discovery: false\n"
+        "    include_audit_history: false\n"
+        "    audit_limit: 5\n",
+        encoding="utf-8",
+    )
+    result = agent_launcher._resolve_step_context_policy(
+        workflow_path=str(wf),
+        tier_name="full",
+        workflow_name="new_feature",
+        next_agent_type="reviewer",
+    )
+    assert result["context_policy"] == "standard"
+    assert result["require_api_discovery"] is False
+    assert result["include_audit_history"] is False
+    assert result["audit_limit"] == 5
+
+
+def test_resolve_step_context_policy_no_match_returns_defaults(tmp_path):
+    """When agent_type does not match any step, defaults are returned."""
+    from nexus.core.runtime import agent_launcher
+
+    wf = tmp_path / "workflow.yaml"
+    wf.write_text(
+        "steps:\n"
+        "  - id: triage\n"
+        "    agent_type: triage\n"
+        "    context_policy: minimal\n",
+        encoding="utf-8",
+    )
+    result = agent_launcher._resolve_step_context_policy(
+        workflow_path=str(wf),
+        tier_name="full",
+        workflow_name="new_feature",
+        next_agent_type="developer",  # not in the YAML
+    )
+    assert result["context_policy"] == "standard"

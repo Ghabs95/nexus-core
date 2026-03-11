@@ -40,13 +40,13 @@ def test_list_project_issues_passes_project_name_when_supported():
         return _Plugin()
 
     rows = list_project_issues(
-        project_key="wallible",
-        project_config={"wallible": {"git_repo": "wallible/wlbl-workflow-os"}},
+        project_key="example-org",
+        project_config={"example-org": {"git_repo": "example-org/example-project"}},
         get_repos=lambda _project_key: [],
         get_direct_issue_plugin=_get_direct_issue_plugin,
         logger=logging.getLogger("test"),
         requester_nexus_id="nx-42",
     )
 
-    assert seen == [("wallible/wlbl-workflow-os", "nx-42", "wallible")]
+    assert seen == [("example-org/example-project", "nx-42", "example-org")]
     assert rows[0]["number"] == 12

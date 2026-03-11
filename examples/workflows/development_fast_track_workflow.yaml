@@ -23,6 +23,7 @@ steps:
     name: "Emergency Triage"
     description: "Rapid assessment of urgency and blast radius"
     agent_type: "triage"
+    context_policy: "minimal"          # fast-track triage only needs current state
     tools:
       - vcs:read_issue
       - vcs:add_label
@@ -38,6 +39,9 @@ steps:
     name: "Fast-Track Implementation"
     description: "Implement minimal safe fix"
     agent_type: "developer"
+    context_policy: "deep"             # developer needs full audit trail even on fast-track
+    include_audit_history: true
+    audit_limit: 50
     tools:
       - vcs:create_branch
       - vcs:edit_file
@@ -54,6 +58,7 @@ steps:
     name: "Quick Verification"
     description: "Fast review with full CI/regression requirement"
     agent_type: "reviewer"
+    context_policy: "standard"          # reviewer reads implementation and issue context
     tools:
       - vcs:review_pr
       - vcs:approve_pr
@@ -67,6 +72,7 @@ steps:
   - id: "route_review"
     name: "Route After Verification"
     agent_type: "router"
+    context_policy: "minimal"          # router only inspects approval_status
     routes:
       - when: "approval_status == 'approved'"
         then: "close_loop"
@@ -76,6 +82,8 @@ steps:
     name: "Summarize & Close"
     description: "Post fast-track summary"
     agent_type: "summarizer"
+    context_policy: "standard"          # summarizer reads recent history for the close comment
+    audit_limit: 10
     tools:
       - vcs:add_comment
     inputs:

@@ -139,6 +139,10 @@ class AIOrchestrator:
                 "system_operations_resolver",
             )
         )
+        self.copilot_permissions = self.config.get("copilot_permissions", {})
+        self.copilot_permissions_resolver: Callable[[str], dict[str, Any] | None] | None = (
+            self.config.get("copilot_permissions_resolver")
+        )
         self.chat_agent_types_resolver: Callable[[str], list[str] | None] | None = self.config.get(
             "chat_agent_types_resolver",
         )
@@ -275,6 +279,37 @@ class AIOrchestrator:
                     exc,
                 )
         return self.system_operations if isinstance(self.system_operations, dict) else {}
+
+    def _resolved_copilot_permissions(self, project_name: str | None = None) -> dict[str, Any]:
+        if project_name and callable(self.copilot_permissions_resolver):
+            try:
+                resolved = self.copilot_permissions_resolver(str(project_name))
+                if isinstance(resolved, dict):
+                    return resolved
+            except Exception as exc:
+                logger.warning(
+                    "Could not resolve Copilot permissions for project %s: %s",
+                    project_name,
+                    exc,
+                )
+        return self.copilot_permissions if isinstance(self.copilot_permissions, dict) else {}
+
+    def _resolve_copilot_permissions_for_agent(
+        self,
+        *,
+        agent_name: str | None,
+        project_name: str | None = None,
+    ) -> dict[str, Any]:
+        resolved = self._resolved_copilot_permissions(project_name)
+        merged = dict(resolved) if isinstance(resolved, Mapping) else {}
+        if not agent_name:
+            return merged
+        agent_spec = self._resolved_tool_preferences(project_name).get(agent_name)
+        if isinstance(agent_spec, Mapping):
+            agent_override = agent_spec.get("copilot_permissions")
+            if isinstance(agent_override, Mapping):
+                merged.update(agent_override)
+        return merged
 
     def _resolved_model_profiles(self, project_name: str | None = None) -> dict[str, Any]:
         if project_name and callable(self.model_profiles_resolver):
@@ -761,6 +796,8 @@ class AIOrchestrator:
                 workspace_dir,
                 agents_dir,
                 base_dir,
+                agent_name=agent_name,
+                project_name=project_name,
                 model_override=model_override,
                 issue_num=issue_num,
                 log_subdir=log_subdir,
@@ -929,6 +966,8 @@ class AIOrchestrator:
         workspace_dir: str,
         agents_dir: str,
         base_dir: str,
+        agent_name: str | None = None,
+        project_name: str | None = None,
         model_override: str = "",
         issue_num: str | None = None,
         log_subdir: str | None = None,
@@ -940,6 +979,10 @@ class AIOrchestrator:
             copilot_cli_path=self.copilot_cli_path,
             copilot_model=model_override or self.copilot_model,
             copilot_supports_model=self.copilot_supports_model,
+            copilot_permissions=self._resolve_copilot_permissions_for_agent(
+                agent_name=agent_name,
+                project_name=project_name,
+            ),
             get_tasks_logs_dir=self.get_tasks_logs_dir,
             tool_unavailable_error=ToolUnavailableError,
             rate_limited_error=RateLimitedError,

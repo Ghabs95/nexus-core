@@ -2,27 +2,27 @@ from nexus.core.discord.discord_text_command_service import parse_discord_text_c
 
 
 def test_parse_discord_text_command_basic():
-    parsed = parse_discord_text_command("/reprocess wallible 1")
+    parsed = parse_discord_text_command("/reprocess example-org 1")
 
     assert parsed is not None
     assert parsed.name == "reprocess"
-    assert parsed.args == ["wallible", "1"]
+    assert parsed.args == ["example-org", "1"]
 
 
 def test_parse_discord_text_command_allows_bot_mention():
     parsed = parse_discord_text_command(
-        "/reprocess@NexusBot wallible 1",
+        "/reprocess@NexusBot example-org 1",
         bot_username="NexusBot",
     )
 
     assert parsed is not None
     assert parsed.name == "reprocess"
-    assert parsed.args == ["wallible", "1"]
+    assert parsed.args == ["example-org", "1"]
 
 
 def test_parse_discord_text_command_skips_other_bot_mentions():
     parsed = parse_discord_text_command(
-        "/reprocess@OtherBot wallible 1",
+        "/reprocess@OtherBot example-org 1",
         bot_username="NexusBot",
     )
 
@@ -30,8 +30,8 @@ def test_parse_discord_text_command_skips_other_bot_mentions():
 
 
 def test_parse_discord_text_command_handles_quoted_args():
-    parsed = parse_discord_text_command('/respond wallible 1 "ship this now"')
+    parsed = parse_discord_text_command('/respond example-org 1 "ship this now"')
 
     assert parsed is not None
     assert parsed.name == "respond"
-    assert parsed.args == ["wallible", "1", "ship this now"]
+    assert parsed.args == ["example-org", "1", "ship this now"]

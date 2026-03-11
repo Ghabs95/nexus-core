@@ -744,6 +744,11 @@ def _finalize_workflow(issue_num: str, repo: str, last_agent: str, project_name:
         base_dir=BASE_DIR,
         get_tasks_active_dir=get_tasks_active_dir,
         get_tasks_closed_dir=get_tasks_closed_dir,
+        resolve_token_override_fn=lambda project_name_arg, repo_arg, issue_number_arg: _resolve_issue_requester_token(
+            project_name_arg,
+            repo_arg,
+            str(issue_number_arg),
+        ),
     )
 
 

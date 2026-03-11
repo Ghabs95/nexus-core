@@ -40,6 +40,7 @@ from nexus.core.completion import (
     CompletionSummary,
     DetectedCompletion,
     build_completion_comment,
+    normalize_completion_comment_markdown,
     scan_for_completions,
 )
 from nexus.core.workflow_runtime.completion_errors import (
@@ -534,6 +535,8 @@ class ProcessOrchestrator:
                     ).strip()
                     if not comment_body:
                         comment_body = build_completion_comment(comment_summary)
+                    else:
+                        comment_body = normalize_completion_comment_markdown(comment_body)
 
                     issue_open = self._runtime.is_issue_open(issue_num, repo)
                     if issue_open is False:

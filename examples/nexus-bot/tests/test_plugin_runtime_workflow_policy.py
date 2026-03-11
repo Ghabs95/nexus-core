@@ -29,6 +29,9 @@ def test_get_workflow_policy_plugin_forwards_find_existing_pr(monkeypatch):
     def _cleanup_worktree(**_kwargs):
         return True
 
+    def _validate_pr_non_empty_diff(**_kwargs):
+        return True
+
     def _close_issue(**_kwargs):
         return True
 
@@ -40,6 +43,7 @@ def test_get_workflow_policy_plugin_forwards_find_existing_pr(monkeypatch):
         create_pr_from_changes=_create_pr_from_changes,
         resolve_repo_branch=_resolve_repo_branch,
         find_existing_pr=_find_existing_pr,
+        validate_pr_non_empty_diff=_validate_pr_non_empty_diff,
         cleanup_worktree=_cleanup_worktree,
         close_issue=_close_issue,
         send_notification=_send_notification,
@@ -52,6 +56,7 @@ def test_get_workflow_policy_plugin_forwards_find_existing_pr(monkeypatch):
     assert captured["overrides"]["create_pr_from_changes"] is _create_pr_from_changes
     assert captured["overrides"]["resolve_repo_branch"] is _resolve_repo_branch
     assert captured["overrides"]["find_existing_pr"] is _find_existing_pr
+    assert captured["overrides"]["validate_pr_non_empty_diff"] is _validate_pr_non_empty_diff
     assert captured["overrides"]["cleanup_worktree"] is _cleanup_worktree
     assert captured["overrides"]["close_issue"] is _close_issue
     assert captured["overrides"]["send_notification"] is _send_notification

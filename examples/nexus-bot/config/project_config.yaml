@@ -77,6 +77,16 @@ ai_tool_preferences:
   writer: { profile: fast, provider: gemini }
   finalizer: { profile: fast, provider: gemini }
 
+# Copilot CLI permission flags for non-interactive background agent runs.
+copilot_permissions:
+  allow_urls:
+    - http://webhook:8081
+    - https://gitlab.com
+    - https://api.github.com
+    - https://github.com
+  allow_all_urls: false
+  allow_all_paths: false
+
 # Global operation task -> agent type mapping.
 # Provider is selected through ai_tool_preferences for that agent type.
 system_operations:

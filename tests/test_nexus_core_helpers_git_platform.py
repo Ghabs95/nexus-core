@@ -41,17 +41,17 @@ def test_get_git_platform_gitlab_without_fallback_requires_token(monkeypatch):
     monkeypatch.setattr(
         helpers,
         "_get_project_config",
-        lambda: {"wlbl": {"git_token_var_name": "GITLAB_TOKEN"}},
+        lambda: {"example-org": {"git_token_var_name": "GITLAB_TOKEN"}},
     )
-    monkeypatch.setattr(helpers, "get_default_project", lambda: "wlbl")
-    monkeypatch.setattr(helpers, "get_git_repo", lambda _p: "wallible/wlbl-workflow-os")
+    monkeypatch.setattr(helpers, "get_default_project", lambda: "example-org")
+    monkeypatch.setattr(helpers, "get_git_repo", lambda _p: "example-org/example-project")
     monkeypatch.setattr(helpers, "get_project_platform", lambda _p: "gitlab")
     monkeypatch.setattr(helpers, "get_gitlab_base_url", lambda _p: "https://gitlab.com")
     monkeypatch.setattr(helpers, "resolve_git_platform_class", lambda _p: _GitLabDummy)
     with pytest.raises(ValueError, match="GitLab token required"):
         helpers.get_git_platform(
-            repo="wallible/wlbl-workflow-os",
-            project_name="wlbl",
+            repo="example-org/example-project",
+            project_name="example-org",
             token_override=None,
             allow_env_token_fallback=False,
         )

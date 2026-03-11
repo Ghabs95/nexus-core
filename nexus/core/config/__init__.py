@@ -277,6 +277,27 @@ def get_system_operations(project: str = "nexus") -> dict:
     return _svc_get_system_operations(_get_project_config, project)
 
 
+def get_copilot_permissions(project: str = "nexus") -> dict:
+    """Get Copilot CLI permission policy for a project.
+
+    Priority:
+    1. Project-specific ``copilot_permissions`` in PROJECT_CONFIG
+    2. Global ``copilot_permissions`` in PROJECT_CONFIG
+    3. Empty dict (no explicit permission flags)
+    """
+    config = _get_project_config()
+
+    if project in config:
+        proj_config = config[project]
+        if isinstance(proj_config, dict) and "copilot_permissions" in proj_config:
+            return proj_config["copilot_permissions"]
+
+    if "copilot_permissions" in config:
+        return config["copilot_permissions"]
+
+    return {}
+
+
 def get_chat_agent_types(project: str = "nexus") -> list[str]:
     """Get ordered chat agent types for a project.
 
@@ -395,6 +416,7 @@ _ai_tool_preferences_cache = {}
 _model_profiles_cache = {}
 _profile_provider_priority_cache = {}
 _system_operations_cache = {}
+_copilot_permissions_cache = {}
 
 
 class _LazyConfigWrapper:
@@ -451,6 +473,11 @@ PROFILE_PROVIDER_PRIORITY = _LazyConfigWrapper(
     "nexus",
 )
 SYSTEM_OPERATIONS = _LazyConfigWrapper(get_system_operations, _system_operations_cache, "nexus")
+COPILOT_PERMISSIONS = _LazyConfigWrapper(
+    get_copilot_permissions,
+    _copilot_permissions_cache,
+    "nexus",
+)
 
 # Orchestrator configuration (lazy-loaded)
 _orchestrator_config_cache = {}
@@ -482,6 +509,8 @@ def _get_orchestrator_config():
             "profile_provider_priority_resolver": get_profile_provider_priority,
             "system_operations": SYSTEM_OPERATIONS._ensure_loaded(),
             "system_operations_resolver": get_system_operations,
+            "copilot_permissions": COPILOT_PERMISSIONS._ensure_loaded(),
+            "copilot_permissions_resolver": get_copilot_permissions,
             "chat_agent_types_resolver": get_chat_agent_types,
             "fallback_enabled": os.getenv("AI_FALLBACK_ENABLED", "true").lower() == "true",
             "rate_limit_ttl": int(os.getenv("AI_RATE_LIMIT_TTL", "3600")),
@@ -837,6 +866,7 @@ def validate_configuration():
                 "projects",
                 "task_types",
                 "ai_tool_preferences",
+                "copilot_permissions",
                 "system_operations",
                 "merge_queue",
                 "workflow_chains",

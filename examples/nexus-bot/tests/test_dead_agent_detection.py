@@ -439,6 +439,27 @@ class TestNexusAgentRuntimePostCompletionComment:
 
         assert result is True
 
+    def test_normalizes_double_escaped_markdown_before_posting(self):
+        from nexus.core.runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        mock_platform = MagicMock()
+        mock_platform.add_comment = AsyncMock(return_value=True)
+        mock_platform.get_comments = AsyncMock(return_value=[])
+
+        with patch("nexus.core.orchestration.nexus_core_helpers.get_git_platform", return_value=mock_platform):
+            result = runtime.post_completion_comment(
+                "44",
+                "owner/repo",
+                "## Dispatch Complete\\n\\n**Step ID:** `dispatch`\\n**Step Num:** 2",
+            )
+
+        assert result is True
+        mock_platform.add_comment.assert_awaited_once_with(
+            "44",
+            "## Dispatch Complete\n\n**Step ID:** `dispatch`\n**Step Num:** 2",
+        )
+
     def test_skips_automated_comment_when_recent_agent_comment_exists(self):
         from nexus.adapters.git.base import Comment
 
@@ -449,7 +470,12 @@ class TestNexusAgentRuntimePostCompletionComment:
             id="1",
             issue_id="44",
             author="bot-user",
-            body="## 🔨 Implement Change Complete — developer\n\nReady for **@Reviewer**",
+            body=(
+                "## 🔨 Implement Change Complete — developer\n\n"
+                "**Step ID:** `new_feature_workflow__implementation`\n"
+                "**Step Num:** 7\n\n"
+                "Ready for **@Reviewer**"
+            ),
             created_at=datetime.now(UTC) - timedelta(minutes=2),
             url="https://example.com/comment/1",
         )
@@ -458,7 +484,16 @@ class TestNexusAgentRuntimePostCompletionComment:
         mock_platform.add_comment = AsyncMock(return_value=True)
 
         with patch("nexus.core.orchestration.nexus_core_helpers.get_git_platform", return_value=mock_platform):
-            result = runtime.post_completion_comment("44", "owner/repo", "body")
+            result = runtime.post_completion_comment(
+                "44",
+                "owner/repo",
+                (
+                    "## 🔨 Implement Change Complete — developer\n\n"
+                    "**Step ID:** `new_feature_workflow__implementation`\n"
+                    "**Step Num:** 7\n\n"
+                    "Ready for **@Reviewer**"
+                ),
+            )
 
         assert result is True
         mock_platform.add_comment.assert_not_called()
@@ -499,7 +534,12 @@ class TestNexusAgentRuntimePostCompletionComment:
             id="3",
             issue_id="44",
             author="bot-user",
-            body="## 🔨 Implement Change Complete — developer\n\nReady for **@Reviewer**",
+            body=(
+                "## 🔨 Implement Change Complete — developer\n\n"
+                "**Step ID:** `new_feature_workflow__implementation`\n"
+                "**Step Num:** 7\n\n"
+                "Ready for **@Reviewer**"
+            ),
             created_at=datetime.now(UTC) - timedelta(minutes=20),
             url="https://example.com/comment/3",
         )
@@ -508,7 +548,16 @@ class TestNexusAgentRuntimePostCompletionComment:
         mock_platform.add_comment = AsyncMock(return_value=True)
 
         with patch("nexus.core.orchestration.nexus_core_helpers.get_git_platform", return_value=mock_platform):
-            result = runtime.post_completion_comment("44", "owner/repo", "body")
+            result = runtime.post_completion_comment(
+                "44",
+                "owner/repo",
+                (
+                    "## 🔨 Implement Change Complete — developer\n\n"
+                    "**Step ID:** `new_feature_workflow__implementation`\n"
+                    "**Step Num:** 7\n\n"
+                    "Ready for **@Reviewer**"
+                ),
+            )
 
         assert result is True
         mock_platform.add_comment.assert_not_called()
@@ -525,7 +574,12 @@ class TestNexusAgentRuntimePostCompletionComment:
             id="4",
             issue_id="44",
             author="bot-user",
-            body="## 🔨 Implement Change Complete — developer\n\nReady for **@Reviewer**",
+            body=(
+                "## 🔨 Implement Change Complete — developer\n\n"
+                "**Step ID:** `new_feature_workflow__implementation`\n"
+                "**Step Num:** 7\n\n"
+                "Ready for **@Reviewer**"
+            ),
             created_at=datetime.now(UTC) - timedelta(minutes=20),
             url="https://example.com/comment/4",
         )
@@ -534,7 +588,54 @@ class TestNexusAgentRuntimePostCompletionComment:
         mock_platform.add_comment = AsyncMock(return_value=True)
 
         with patch("nexus.core.orchestration.nexus_core_helpers.get_git_platform", return_value=mock_platform):
-            result = runtime.post_completion_comment("44", "owner/repo", "body")
+            result = runtime.post_completion_comment(
+                "44",
+                "owner/repo",
+                (
+                    "## 🔨 Implement Change Complete — developer\n\n"
+                    "**Step ID:** `new_feature_workflow__implementation`\n"
+                    "**Step Num:** 7\n\n"
+                    "Ready for **@Reviewer**"
+                ),
+            )
+
+        assert result is True
+        mock_platform.add_comment.assert_called_once()
+
+    def test_does_not_skip_when_recent_comment_is_for_different_step(self):
+        from nexus.adapters.git.base import Comment
+
+        from nexus.core.runtime.nexus_agent_runtime import NexusAgentRuntime
+
+        runtime = NexusAgentRuntime(finalize_fn=lambda *a, **kw: None)
+        recent_comment = Comment(
+            id="5",
+            issue_id="44",
+            author="bot-user",
+            body=(
+                "## 🔨 UX Design Complete — designer\n\n"
+                "**Step ID:** `new_feature_workflow__ux_design`\n"
+                "**Step Num:** 6\n\n"
+                "Ready for **@Developer**"
+            ),
+            created_at=datetime.now(UTC) - timedelta(minutes=2),
+            url="https://example.com/comment/5",
+        )
+        mock_platform = MagicMock()
+        mock_platform.get_comments = AsyncMock(return_value=[recent_comment])
+        mock_platform.add_comment = AsyncMock(return_value=True)
+
+        with patch("nexus.core.orchestration.nexus_core_helpers.get_git_platform", return_value=mock_platform):
+            result = runtime.post_completion_comment(
+                "44",
+                "owner/repo",
+                (
+                    "## 🔨 Implement Change Complete — developer\n\n"
+                    "**Step ID:** `new_feature_workflow__implementation`\n"
+                    "**Step Num:** 7\n\n"
+                    "Ready for **@Reviewer**"
+                ),
+            )
 
         assert result is True
         mock_platform.add_comment.assert_called_once()

@@ -372,10 +372,11 @@ if [ -n "$selected_clis" ]; then
         if ! command -v npm &> /dev/null; then
             echo "⚠️ 'npm' is not installed. Skipping Copilot/Gemini/Codex/Claude installation."
         else
+            CODEX_NPM_PACKAGE="${NEXUS_CODEX_NPM_PACKAGE:-@openai/codex@0.113.0}"
             npm_packages=""
             [ "$install_copilot" -eq 1 ] && npm_packages="$npm_packages @github/copilot"
             [ "$install_gemini" -eq 1 ] && npm_packages="$npm_packages @google/gemini-cli"
-            [ "$install_codex" -eq 1 ] && npm_packages="$npm_packages @openai/codex"
+            [ "$install_codex" -eq 1 ] && npm_packages="$npm_packages $CODEX_NPM_PACKAGE"
             [ "$install_claude" -eq 1 ] && npm_packages="$npm_packages @anthropic-ai/claude-code"
             npm install -g $npm_packages
             echo "✅ NPM packages installed."

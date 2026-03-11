@@ -109,3 +109,46 @@ def test_create_pr_from_changes_prefers_issue_worktree(tmp_path):
     assert pr_url.endswith("/pull/1")
     create_call = next(c for c in platform.calls if c[0] == "create_pr_from_changes")
     assert create_call[1]["repo_dir"] == str(worktree)
+
+
+def test_validate_pr_non_empty_diff_blocks_when_worktree_missing(tmp_path):
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    ok, reason = svc.validate_pr_non_empty_diff(
+        project_name="proj-a",
+        repo="acme/repo",
+        issue_number="42",
+        pr_url="https://gitlab.com/acme/repo/-/merge_requests/1",
+        repo_dir=str(repo_dir),
+        base_branch="develop",
+    )
+
+    assert ok is False
+    assert "missing issue worktree" in reason
+
+
+def test_validate_pr_non_empty_diff_uses_remote_gitlab_stats(tmp_path):
+    repo_dir = tmp_path / "repo"
+    worktree = repo_dir / ".nexus" / "worktrees" / "issue-42"
+    worktree.mkdir(parents=True)
+
+    class _GitLabPlatform:
+        pass
+
+    platform = _GitLabPlatform()
+    with (
+        patch.object(svc, "get_git_platform", return_value=platform),
+        patch.object(svc, "_gitlab_mr_has_non_empty_diff", return_value=True),
+    ):
+        ok, reason = svc.validate_pr_non_empty_diff(
+            project_name="proj-a",
+            repo="acme/repo",
+            issue_number="42",
+            pr_url="https://gitlab.com/acme/repo/-/merge_requests/1",
+            repo_dir=str(repo_dir),
+            base_branch="develop",
+        )
+
+    assert ok is True
+    assert reason == ""

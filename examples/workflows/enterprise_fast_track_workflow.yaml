@@ -25,6 +25,7 @@ steps:
     name: "Emergency Triage"
     description: "Rapid assessment of the critical issue"
     agent_type: "triage"
+    context_policy: "minimal"          # fast-track triage only needs current state
     tools:
       - vcs:read_issue
       - vcs:add_label
@@ -40,6 +41,9 @@ steps:
     name: "Fast-Track Implementation"
     description: "Rapidly implement minimal change"
     agent_type: "developer"
+    context_policy: "deep"             # developer needs full audit trail even on fast-track
+    include_audit_history: true
+    audit_limit: 50
     tools:
       - vcs:create_branch
       - vcs:commit_changes
@@ -57,6 +61,7 @@ steps:
     name: "Quick Verification"
     description: "Rapid review of the hotfix with full regression (or equivalent full CI suite) required before approval"
     agent_type: "reviewer"
+    context_policy: "standard"          # reviewer reads implementation and urgency context
     tools:
       - vcs:review_pr
       - vcs:approve_pr
@@ -69,6 +74,7 @@ steps:
   - id: "route_review"
     name: "Route After Verification"
     agent_type: "router"
+    context_policy: "minimal"          # router only inspects review_status
     routes:
       - when: "review_status == 'approved'"
         then: "deploy"
@@ -78,6 +84,7 @@ steps:
     name: "Emergency Deploy"
     description: "Merge fast-track changes and deploy immediately"
     agent_type: "deployer"
+    context_policy: "standard"          # deployer needs recent approvals and PR context
     tools:
       - vcs:merge_pr
       - vcs:create_release

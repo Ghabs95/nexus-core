@@ -328,6 +328,26 @@ class TestScanAndProcessCompletions:
         assert len(runtime.posted_comments) == 1
         assert runtime.posted_comments[0]["body"] == "## Custom Completion Comment"
 
+    def test_comment_markdown_escaped_newlines_are_normalized_before_post(self):
+        runtime = StubRuntime()
+
+        async def complete(issue, agent, outputs, event_id=""):
+            return None
+
+        orc = _orchestrator(runtime, complete)
+        det = self._fake_detection(next_agent="architect")
+        det.summary.raw = {"comment_markdown": "## Custom Complete\\n\\n- Finding 1\\n- Finding 2"}
+        det.summary.comment_markdown = "## Custom Complete\\n\\n- Finding 1\\n- Finding 2"
+        det.summary.to_dict.return_value["comment_markdown"] = (
+            "## Custom Complete\\n\\n- Finding 1\\n- Finding 2"
+        )
+
+        with patch("nexus.core.process_orchestrator.scan_for_completions", return_value=[det]):
+            orc.scan_and_process_completions("/base", set())
+
+        assert len(runtime.posted_comments) == 1
+        assert runtime.posted_comments[0]["body"] == "## Custom Complete\n\n- Finding 1\n- Finding 2"
+
     def test_comment_post_failure_blocks_autochain(self):
         """Completion processing must halt when completion comment cannot be posted."""
         runtime = StubRuntime()

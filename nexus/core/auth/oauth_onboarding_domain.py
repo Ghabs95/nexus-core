@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import os
 import secrets
+import subprocess
+import tempfile
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
@@ -551,6 +553,52 @@ def _validate_codex_api_key_with_provider(api_key: str) -> tuple[bool, str]:
     return False, f"Codex/OpenAI key validation failed ({response.status_code})"
 
 
+def _validate_codex_api_key_with_codex_cli_login(api_key: str) -> tuple[bool, str]:
+    codex_cli_path = str(os.getenv("CODEX_CLI_PATH", "codex")).strip() or "codex"
+    try:
+        help_result = subprocess.run(
+            [codex_cli_path, "login", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False, "Codex CLI is not installed or not in PATH for auth validation."
+    except Exception as exc:
+        return False, f"Codex CLI login capability check failed: {exc}"
+
+    output = f"{help_result.stdout}\n{help_result.stderr}".lower()
+    if "--with-api-key" not in output:
+        return (
+            False,
+            "Codex CLI does not support '--with-api-key'. Upgrade Codex CLI to continue.",
+        )
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="nexus-codex-auth-") as tmp_codex_home:
+            login_env = {**os.environ, "CODEX_HOME": tmp_codex_home}
+            login_result = subprocess.run(
+                [codex_cli_path, "login", "--with-api-key"],
+                env=login_env,
+                input=f"{api_key}\n",
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+    except subprocess.TimeoutExpired:
+        return False, "Codex CLI login validation timed out."
+    except Exception as exc:
+        return False, f"Codex CLI login validation failed: {exc}"
+
+    if login_result.returncode == 0:
+        return True, ""
+    stderr_tail = (login_result.stderr or login_result.stdout or "").strip().splitlines()
+    reason = stderr_tail[-1] if stderr_tail else "unknown error"
+    return False, f"Codex CLI login validation failed: {reason}"
+
+
 def _validate_gemini_api_key_with_provider(api_key: str) -> tuple[bool, str]:
     should_validate = str(os.getenv("NEXUS_AUTH_VALIDATE_GEMINI_KEY", "false")).strip().lower()
     if should_validate not in {"1", "true", "yes", "on"}:
@@ -640,6 +688,9 @@ def store_ai_provider_keys(
     elif codex_candidate:
         if len(codex_candidate) < 16:
             raise ValueError("Codex API key is too short")
+        valid, error_message = _validate_codex_api_key_with_codex_cli_login(codex_candidate)
+        if not valid:
+            raise ValueError(error_message or "Invalid Codex API key")
         valid, error_message = _validate_codex_api_key_with_provider(codex_candidate)
         if not valid:
             raise ValueError(error_message or "Invalid Codex API key")
