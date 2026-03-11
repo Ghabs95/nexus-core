@@ -39,7 +39,7 @@ def prepare_provider_cli_env(
     provider_name = str(provider or "").strip().lower()
     prepared_env = dict(env or {})
     key_env_vars = _PROVIDER_API_KEY_ENV.get(provider_name, ())
-    requested_mode = resolve_cli_auth_mode(prepared_env)
+    resolve_cli_auth_mode(prepared_env)
 
     stripped: list[str] = []
     for key_name in key_env_vars:
