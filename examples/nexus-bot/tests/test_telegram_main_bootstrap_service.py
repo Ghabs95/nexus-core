@@ -149,9 +149,9 @@ def test_register_application_handlers_hides_filesystem_commands_in_db_mode(monk
 
     commands = [h.command for h in app.handlers if isinstance(h, _CaptureCommandHandler)]
     assert "active" not in commands
-    assert "logs" not in commands
-    assert "logsfull" not in commands
-    assert "tail" not in commands
-    assert "tailstop" not in commands
+    assert "logs" in commands
+    assert "logsfull" in commands
+    assert "tail" in commands
+    assert "tailstop" in commands
     assert "status" in commands
     assert "wfstate" in commands

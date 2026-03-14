@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from nexus.adapters.git.base import Comment, GitPlatform, Issue, PullRequest
+from nexus.adapters.git.local_checkout_guard import ensure_safe_local_checkout
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +226,9 @@ class GitLabPlatform(GitPlatform):
     ) -> PullRequest | None:
         """Push local changes and open a GitLab merge request."""
         import subprocess
+
+        if not ensure_safe_local_checkout(repo_dir, issue_number=str(issue_number)):
+            return None
 
         issue_repo_ref = (issue_repo or self._repo or "").strip()
         same_repo_issue = not issue_repo_ref or issue_repo_ref == self._repo

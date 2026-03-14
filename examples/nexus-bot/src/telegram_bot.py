@@ -943,6 +943,7 @@ def _feature_registry_command_deps() -> FeatureRegistryCommandDeps:
         normalize_project_key=_normalize_project_key,
         get_project_label=_get_project_label,
         feature_registry=feature_registry_service,
+        ensure_project=_ctx_ensure_project,
     )
 
 

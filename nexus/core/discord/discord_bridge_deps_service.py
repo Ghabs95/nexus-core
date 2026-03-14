@@ -575,7 +575,7 @@ def workflow_bridge_deps(*, allowed_user_ids, prompt_project_selection, ensure_p
     )
 
 
-def feature_registry_bridge_deps(*, allowed_user_ids):
+def feature_registry_bridge_deps(*, allowed_user_ids, ensure_project=None):
     return FeatureRegistryCommandDeps(
         logger=logger,
         allowed_user_ids=allowed_user_ids,
@@ -583,6 +583,7 @@ def feature_registry_bridge_deps(*, allowed_user_ids):
         normalize_project_key=_normalize_project_key,
         get_project_label=_get_project_label,
         feature_registry=_get_feature_registry_service(),
+        ensure_project=ensure_project,
     )
 
 

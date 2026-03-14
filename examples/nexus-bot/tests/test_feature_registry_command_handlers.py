@@ -52,7 +52,7 @@ class _RegistryStub:
         return None
 
 
-def _deps(registry):
+def _deps(registry, *, ensure_project=None):
     return FeatureRegistryCommandDeps(
         logger=logging.getLogger("test"),
         allowed_user_ids=[],
@@ -60,6 +60,7 @@ def _deps(registry):
         normalize_project_key=lambda value: str(value or "").strip().lower() or None,
         get_project_label=lambda key: "Nexus" if key == "nexus" else key,
         feature_registry=registry,
+        ensure_project=ensure_project,
     )
 
 
@@ -152,3 +153,78 @@ async def test_usage_messages_when_project_or_args_invalid():
     assert done_ctx.replies[-1] == "Usage: `/feature_done <project> <title>`"
     assert list_ctx.replies[-1] == "Usage: `/feature_list <project>`"
     assert forget_ctx.replies[-1] == "Usage: `/feature_forget <project> <feature_id|title>`"
+
+
+@pytest.mark.asyncio
+async def test_feature_list_uses_ensure_project_when_args_missing():
+    registry = _RegistryStub()
+    registry.rows = [
+        {"feature_id": "feat_3", "canonical_title": "Project tags", "source_issue": "77"}
+    ]
+    calls = []
+
+    async def _ensure_project(ctx, command):
+        calls.append((ctx.user_id, command))
+        return "nexus"
+
+    deps = _deps(registry, ensure_project=_ensure_project)
+    ctx = _Ctx(args=[])
+
+    await feature_list_handler(cast(InteractiveContext, cast(object, ctx)), deps)
+
+    assert calls == [(1, "feature_list")]
+    assert "Implemented features for *Nexus*" in ctx.replies[-1]
+
+
+@pytest.mark.asyncio
+async def test_feature_list_returns_after_project_prompt_when_no_selection():
+    registry = _RegistryStub()
+    calls = []
+
+    async def _ensure_project(_ctx, command):
+        calls.append(command)
+        return None
+
+    deps = _deps(registry, ensure_project=_ensure_project)
+    ctx = _Ctx(args=[])
+
+    await feature_list_handler(cast(InteractiveContext, cast(object, ctx)), deps)
+
+    assert calls == ["feature_list"]
+    assert ctx.replies == []
+
+
+@pytest.mark.asyncio
+async def test_feature_done_returns_after_project_prompt_when_no_selection():
+    registry = _RegistryStub()
+    calls = []
+
+    async def _ensure_project(_ctx, command):
+        calls.append(command)
+        return None
+
+    deps = _deps(registry, ensure_project=_ensure_project)
+    ctx = _Ctx(args=[])
+
+    await feature_done_handler(cast(InteractiveContext, cast(object, ctx)), deps)
+
+    assert calls == ["feature_done"]
+    assert ctx.replies == []
+
+
+@pytest.mark.asyncio
+async def test_feature_forget_returns_after_project_prompt_when_no_selection():
+    registry = _RegistryStub()
+    calls = []
+
+    async def _ensure_project(_ctx, command):
+        calls.append(command)
+        return None
+
+    deps = _deps(registry, ensure_project=_ensure_project)
+    ctx = _Ctx(args=[])
+
+    await feature_forget_handler(cast(InteractiveContext, cast(object, ctx)), deps)
+
+    assert calls == ["feature_forget"]
+    assert ctx.replies == []

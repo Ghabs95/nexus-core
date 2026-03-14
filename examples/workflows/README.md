@@ -42,6 +42,18 @@ Additional patterns demonstrated:
 - **Human approval gates** for deployments
 - **Error handling** and per-step timeout configuration
 
+## social_media_marketing_workflow.yaml
+
+Marketing-oriented workflow for automated content planning, review, compliance,
+and publishing.
+
+This demonstrates:
+
+- Reusing the enterprise agent roster for a non-software workflow
+- Dry-run-first rollout for external platform publishing
+- Shared campaign context passed across design, implementation, review, and deploy
+- Requester-scoped credential expectations for OAuth-backed platform adapters
+
 ### Loading a specific tier
 
 ```python

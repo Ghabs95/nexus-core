@@ -26,6 +26,10 @@ def menu_section_text(menu_key: str) -> str:
         "📊 **Monitoring**",
         "- /status — View pending tasks in inbox",
         "- /inboxq [limit] — Inspect inbox queue status",
+        "- /logs <project> <issue#> — View task logs",
+        "- /logsfull <project> <issue#> — Full log lines (no truncation)",
+        "- /tail <project> <issue#> [lines] [seconds] — Follow live logs",
+        "- /tailstop — Stop current live tail session",
         "- /myissues — View your tracked issues",
         "- /fuse <project> <issue#> — View retry fuse state",
         "- /audit <project> <issue#> — View workflow audit trail",
@@ -35,13 +39,7 @@ def menu_section_text(menu_key: str) -> str:
         "- /untrack <project> <issue#> — Stop tracking",
     ]
     if caps.local_task_files:
-        monitor_lines[2:2] = [
-            "- /active — View tasks currently being worked on",
-            "- /logs <project> <issue#> — View task logs",
-            "- /logsfull <project> <issue#> — Full log lines (no truncation)",
-            "- /tail <project> <issue#> [lines] [seconds] — Follow live logs",
-            "- /tailstop — Stop current live tail session",
-        ]
+        monitor_lines[2:2] = ["- /active — View tasks currently being worked on"]
     menu_texts = {
         "chat": (
             "🗣️ **Chat**\n"

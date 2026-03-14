@@ -610,7 +610,10 @@ def _workflow_bridge_deps():
 
 
 def _feature_registry_bridge_deps():
-    return _svc_feature_registry_bridge_deps(allowed_user_ids=DISCORD_ALLOWED_USER_IDS)
+    return _svc_feature_registry_bridge_deps(
+        allowed_user_ids=DISCORD_ALLOWED_USER_IDS,
+        ensure_project=_ctx_ensure_project_discord,
+    )
 
 
 async def _run_bridge_handler(

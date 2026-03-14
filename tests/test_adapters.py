@@ -382,6 +382,98 @@ class TestGitHubPlatform:
 
 
 # ---------------------------------------------------------------------------
+# GitHub CLI Platform
+# ---------------------------------------------------------------------------
+
+
+class TestGitHubCLIPlatform:
+    def _make_platform(self):
+        from nexus.adapters.git.github_cli import GitHubPlatform as GitHubCLIPlatform
+
+        with patch.object(GitHubCLIPlatform, "_check_gh_cli", return_value=None):
+            return GitHubCLIPlatform(repo="owner/repo", token="ghp-test")
+
+    def test_create_pr_from_changes_rejects_primary_checkout(self, tmp_path):
+        platform = self._make_platform()
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+
+        def fake_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            if cmd[:4] == ["git", "rev-parse", "--is-inside-work-tree"]:
+                result.stdout = "true\n"
+            elif cmd[:4] == ["git", "rev-parse", "--absolute-git-dir"]:
+                result.stdout = f"{repo_dir}/.git\n"
+            elif cmd[:4] == ["git", "rev-parse", "--git-common-dir"]:
+                result.stdout = f"{repo_dir}/.git\n"
+            return result
+
+        with (
+            patch("subprocess.run", side_effect=fake_run),
+            patch.object(platform, "_run_gh_command") as mock_gh,
+        ):
+            pr = asyncio.run(
+                platform.create_pr_from_changes(
+                    repo_dir=str(repo_dir),
+                    issue_number="42",
+                    title="Fix regression",
+                    body="Automated change",
+                )
+            )
+
+        assert pr is None
+        mock_gh.assert_not_called()
+
+    def test_create_pr_from_changes_accepts_linked_worktree(self, tmp_path):
+        platform = self._make_platform()
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        seen_commands: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            seen_commands.append(list(cmd))
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            if cmd[:4] == ["git", "rev-parse", "--is-inside-work-tree"]:
+                result.stdout = "true\n"
+            elif cmd[:4] == ["git", "rev-parse", "--absolute-git-dir"]:
+                result.stdout = f"{repo_dir}/.git/worktrees/issue-42\n"
+            elif cmd[:4] == ["git", "rev-parse", "--git-common-dir"]:
+                result.stdout = f"{repo_dir}/.git\n"
+            elif cmd[:4] == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+                result.stdout = "feat/issue-42\n"
+            elif cmd[:2] == ["git", "diff"]:
+                result.stdout = " file.py | 2 +-\n"
+            elif cmd[:3] == ["git", "ls-files", "--others"]:
+                result.stdout = ""
+            elif cmd[:3] == ["gh", "pr", "create"]:
+                result.stdout = "https://github.com/owner/repo/pull/42\n"
+            return result
+
+        with (
+            patch("subprocess.run", side_effect=fake_run),
+        ):
+            pr = asyncio.run(
+                platform.create_pr_from_changes(
+                    repo_dir=str(repo_dir),
+                    issue_number="42",
+                    title="Fix regression",
+                    body="Automated change",
+                )
+            )
+
+        assert pr is not None
+        assert pr.number == 0
+        assert pr.url == "https://github.com/owner/repo/pull/42"
+        assert ["git", "checkout", "-b", "nexus/issue-42"] not in seen_commands
+
+
+# ---------------------------------------------------------------------------
 # GitLabPlatform
 # ---------------------------------------------------------------------------
 
@@ -601,6 +693,10 @@ class TestGitLabPlatform:
             result.returncode = 0
             result.stdout = ""
             result.stderr = ""
+            if cmd[:4] == ["git", "rev-parse", "--absolute-git-dir"]:
+                result.stdout = f"{repo_dir}/.git/worktrees/issue-42\n"
+            elif cmd[:4] == ["git", "rev-parse", "--git-common-dir"]:
+                result.stdout = f"{repo_dir}/.git\n"
             if cmd[:3] == ["git", "status", "--porcelain"]:
                 result.stdout = " M file.py\n"
             return result
@@ -651,6 +747,10 @@ class TestGitLabPlatform:
             result.returncode = 0
             result.stdout = ""
             result.stderr = ""
+            if cmd[:4] == ["git", "rev-parse", "--absolute-git-dir"]:
+                result.stdout = f"{repo_dir}/.git/worktrees/issue-86\n"
+            elif cmd[:4] == ["git", "rev-parse", "--git-common-dir"]:
+                result.stdout = f"{repo_dir}/.git\n"
             if cmd[:3] == ["git", "status", "--porcelain"]:
                 result.stdout = " M file.py\n"
             if cmd[:4] == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
@@ -688,6 +788,133 @@ class TestGitLabPlatform:
         payload = mock_post.await_args.args[1]
         assert payload["source_branch"] == "feat/universal-nexus-identity-issue-86"
         assert ["git", "checkout", "-B", "nexus/issue-86"] not in seen_commands
+
+    def test_create_pr_from_changes_rejects_primary_checkout(self, tmp_path):
+        platform = self._make_platform()
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+
+        def fake_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            if cmd[:4] == ["git", "rev-parse", "--absolute-git-dir"]:
+                result.stdout = f"{repo_dir}/.git\n"
+            elif cmd[:4] == ["git", "rev-parse", "--git-common-dir"]:
+                result.stdout = f"{repo_dir}/.git\n"
+            return result
+
+        with (
+            patch("subprocess.run", side_effect=fake_run),
+            patch.object(platform, "_post") as mock_post,
+        ):
+            pr = asyncio.run(
+                platform.create_pr_from_changes(
+                    repo_dir=str(repo_dir),
+                    issue_number="42",
+                    title="Fix regression",
+                    body="Automated change",
+                )
+            )
+
+        assert pr is None
+        mock_post.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# GitLab CLI Platform
+# ---------------------------------------------------------------------------
+
+
+class TestGitLabCLIPlatform:
+    def _make_platform(self):
+        from nexus.adapters.git.gitlab_cli import GitLabCLIPlatform
+
+        with patch.object(GitLabCLIPlatform, "_check_glab_cli", return_value=None):
+            return GitLabCLIPlatform(token="glpat-test", repo="mygroup/myproject")
+
+    def test_create_pr_from_changes_rejects_primary_checkout(self, tmp_path):
+        platform = self._make_platform()
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+
+        def fake_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            if cmd[:4] == ["git", "rev-parse", "--absolute-git-dir"]:
+                result.stdout = f"{repo_dir}/.git\n"
+            elif cmd[:4] == ["git", "rev-parse", "--git-common-dir"]:
+                result.stdout = f"{repo_dir}/.git\n"
+            return result
+
+        with (
+            patch("subprocess.run", side_effect=fake_run),
+            patch.object(platform, "_api") as mock_api,
+        ):
+            pr = asyncio.run(
+                platform.create_pr_from_changes(
+                    repo_dir=str(repo_dir),
+                    issue_number="42",
+                    title="Fix regression",
+                    body="Automated change",
+                )
+            )
+
+        assert pr is None
+        mock_api.assert_not_called()
+
+    def test_create_pr_from_changes_accepts_linked_worktree(self, tmp_path):
+        platform = self._make_platform()
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        seen_commands: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            seen_commands.append(list(cmd))
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            if cmd[:4] == ["git", "rev-parse", "--absolute-git-dir"]:
+                result.stdout = f"{repo_dir}/.git/worktrees/issue-42\n"
+            elif cmd[:4] == ["git", "rev-parse", "--git-common-dir"]:
+                result.stdout = f"{repo_dir}/.git\n"
+            elif cmd[:4] == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+                result.stdout = "feat/issue-42\n"
+            elif cmd[:3] == ["git", "status", "--porcelain"]:
+                result.stdout = " M file.py\n"
+            return result
+
+        mr_response = {
+            "id": 200,
+            "iid": 12,
+            "title": "Fix regression",
+            "state": "opened",
+            "source_branch": "feat/issue-42",
+            "target_branch": "main",
+            "web_url": "https://gitlab.com/mygroup/myproject/-/merge_requests/12",
+        }
+
+        with (
+            patch("subprocess.run", side_effect=fake_run),
+            patch.object(platform, "_api", return_value=mr_response) as mock_api,
+        ):
+            pr = asyncio.run(
+                platform.create_pr_from_changes(
+                    repo_dir=str(repo_dir),
+                    issue_number="42",
+                    title="Fix regression",
+                    body="Automated change",
+                )
+            )
+
+        assert pr is not None
+        assert pr.number == 12
+        assert ["git", "checkout", "-B", "nexus/issue-42"] not in seen_commands
+        mock_api.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

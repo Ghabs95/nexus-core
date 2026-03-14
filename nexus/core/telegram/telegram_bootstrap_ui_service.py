@@ -23,15 +23,15 @@ def build_help_text() -> str:
     monitoring_lines = [
         "/status [project|all] - View pending tasks in inbox",
         "/inboxq [limit] - Inspect inbox queue status (postgres mode)",
+        "/logs <project> <issue#> - View task logs",
+        "/logsfull <project> <issue#> - Full log lines (no truncation)",
+        "/tail <project> <issue#> [lines] [seconds] - Follow live log tail",
+        "/tailstop - Stop current live tail session",
     ]
     if caps.local_task_files:
         monitoring_lines.extend(
             [
                 "/active [project|all] [cleanup] - View tasks currently being worked on",
-                "/logs <project> <issue#> - View task logs",
-                "/logsfull <project> <issue#> - Full log lines (no truncation)",
-                "/tail <project> <issue#> [lines] [seconds] - Follow live log tail",
-                "/tailstop - Stop current live tail session",
             ]
         )
     monitoring_lines.extend(
