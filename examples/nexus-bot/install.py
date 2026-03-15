@@ -201,6 +201,9 @@ BASE_DIR={base_dir}
 PROJECT_CONFIG_PATH=config/project_config.yaml
 NEXUS_RUNTIME_DIR=/var/lib/nexus
 LOGS_DIR=/var/lib/nexus/logs
+NEXUS_UID=1000
+NEXUS_GID=1000
+NEXUS_HOME_DIR=/var/lib/nexus/home
 
 # ================================
 # GIT PLATFORMS
