@@ -604,6 +604,27 @@ def test_launch_next_agent_merges_persisted_and_runtime_exclusions(monkeypatch, 
     assert captured.get("requester_nexus_id") == "nexus-113"
 
 
+def test_clear_issue_excluded_tools_clears_persisted_state(monkeypatch):
+    from nexus.core.runtime import agent_launcher
+
+    state = {"113": {"exclude_tools": ["codex", "copilot"], "pid": 1234}}
+
+    monkeypatch.setattr(
+        agent_launcher.HostStateManager,
+        "load_launched_agents",
+        lambda **_kwargs: {
+            key: dict(value) if isinstance(value, dict) else value for key, value in state.items()
+        },
+    )
+    monkeypatch.setattr(agent_launcher.HostStateManager, "save_launched_agents", lambda data: state.update(data))
+
+    changed = agent_launcher.clear_issue_excluded_tools("113")
+
+    assert changed is True
+    assert "exclude_tools" not in state["113"]
+    assert state["113"]["pid"] == 1234
+
+
 def test_extract_completion_payload_from_log_text_parses_curl_payload():
     from nexus.core.runtime import agent_launcher
 
@@ -947,6 +968,156 @@ def test_recover_completion_from_agent_log_skips_duplicate_comment(monkeypatch, 
 
     assert dedup == "dedup-recovered-1"
     assert posted["added"] == []
+
+
+def test_recover_completion_from_agent_log_persists_payload_in_filesystem_mode(
+    monkeypatch, tmp_path
+):
+    import asyncio
+    import inspect
+
+    from nexus.core.runtime import agent_launcher
+
+    log_file = tmp_path / "codex_1_20260315_211345.log"
+    log_file.write_text(
+        (
+            "```bash\n"
+            "curl -s -X POST http://localhost:8081/api/v1/completion \\\n"
+            "  -H \"Content-Type: application/json\" \\\n"
+            "  -d '{\n"
+            "    \"issue_number\": \"1\",\n"
+            "    \"agent_type\": \"developer\",\n"
+            "    \"step_id\": \"develop\",\n"
+            "    \"step_num\": 4,\n"
+            "    \"summary\": \"implemented\",\n"
+            "    \"next_agent\": \"reviewer\",\n"
+            "    \"comment_markdown\": \"## Implementation Complete\"\n"
+            "  }'\n"
+            "```\n"
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    class _FakeStore:
+        def __init__(self, *, backend, storage, base_dir, nexus_dir):
+            captured["backend"] = backend
+            captured["storage"] = storage
+            captured["base_dir"] = base_dir
+            captured["nexus_dir"] = nexus_dir
+
+        def save(self, issue_number, agent_type, data):
+            captured["issue_number"] = issue_number
+            captured["agent_type"] = agent_type
+            captured["data"] = dict(data)
+            return "dedup-recovered-filesystem"
+
+    class _Platform:
+        async def get_comments(self, _issue_num):
+            return []
+
+        async def add_comment(self, _issue_num, _body):
+            return {"id": 456}
+
+    monkeypatch.setattr(agent_launcher, "is_postgres_backend", lambda _backend: False)
+    monkeypatch.setattr("nexus.core.completion_store.CompletionStore", _FakeStore)
+    monkeypatch.setattr(
+        "nexus.core.orchestration.nexus_core_helpers.get_workflow_status",
+        lambda _issue_num: {"workflow_id": "example-org-1-full"},
+    )
+    monkeypatch.setattr(agent_launcher, "_resolve_requester_token_for_issue", lambda *_a, **_k: None)
+    monkeypatch.setattr(agent_launcher, "_get_git_platform_client", lambda *_a, **_k: _Platform())
+    monkeypatch.setattr(
+        agent_launcher,
+        "_run_coro_sync",
+        lambda coro_factory: (
+            asyncio.run(value)
+            if inspect.isawaitable(value := coro_factory())
+            else value
+        ),
+    )
+    monkeypatch.setattr(agent_launcher, "get_nexus_dir_name", lambda: ".nexus")
+    monkeypatch.setattr(agent_launcher, "_extract_repo_from_issue_url", lambda _url: "example-org/example-project")
+
+    dedup = agent_launcher._recover_completion_from_agent_log(
+        issue_num="1",
+        agent_type="developer",
+        workspace_dir=str(tmp_path),
+        project_key="example-org",
+        tool_name="codex",
+        log_path=str(log_file),
+        issue_url="https://gitlab.com/example-org/example-project/-/issues/1",
+    )
+
+    assert dedup == "dedup-recovered-filesystem"
+    assert captured["backend"] == "filesystem"
+    assert captured["storage"] is None
+    assert captured["issue_number"] == "1"
+    assert captured["agent_type"] == "developer"
+
+
+def test_start_completion_recovery_watchdog_recovers_after_pid_rollover(
+    monkeypatch, tmp_path
+):
+    from nexus.core.runtime import agent_launcher
+
+    seen: dict[str, object] = {"recover": None}
+    roots: list[tuple[str, str]] = []
+    recovered_log = tmp_path / "codex_119_20260315_211345.log"
+    recovered_log.write_text("ok", encoding="utf-8")
+
+    class _ImmediateThread:
+        def __init__(self, *, target, name=None, daemon=None):  # noqa: ANN001,ARG002
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    monkeypatch.setattr(agent_launcher.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(agent_launcher.HostStateManager, "load_launched_agents", lambda **_k: {"119": {"pid": 9999}})
+    monkeypatch.setattr(
+        agent_launcher.os,
+        "kill",
+        lambda _pid, _sig: (_ for _ in ()).throw(ProcessLookupError()),
+    )
+    monkeypatch.setattr(agent_launcher.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(agent_launcher, "BASE_DIR", "/base-root")
+    monkeypatch.setattr(agent_launcher.os, "getcwd", lambda: "/cwd-root")
+    monkeypatch.setattr(agent_launcher.AuditStore, "audit_log", lambda *_a, **_k: None)
+
+    def _fake_find_latest(workspace, _project, _issue_num, *, tool_name="*"):
+        roots.append((str(workspace), str(tool_name)))
+        if str(workspace) == "/base-root" and str(tool_name) == "codex":
+            return str(recovered_log)
+        return ""
+
+    monkeypatch.setattr(agent_launcher, "_find_latest_agent_log", _fake_find_latest)
+
+    def _fake_recover(**kwargs):  # noqa: ANN003
+        seen["recover"] = dict(kwargs)
+        return "dedup-119"
+
+    monkeypatch.setattr(agent_launcher, "_recover_completion_from_agent_log", _fake_recover)
+
+    agent_launcher._start_completion_recovery_watchdog(
+        issue_num="119",
+        pid=155,
+        agent_type="developer",
+        workspace_dir="/tmp/worktree-maybe-gone",
+        project_key="nexus",
+        tool_name="codex",
+        issue_url="https://github.com/example-org/example-project/issues/119",
+    )
+
+    recover_call = seen["recover"]
+    assert isinstance(recover_call, dict)
+    assert recover_call["issue_num"] == "119"
+    assert recover_call["agent_type"] == "developer"
+    assert recover_call["tool_name"] == "codex"
+    assert recover_call["log_path"] == str(recovered_log)
+    assert any(root == "/tmp/worktree-maybe-gone" for root, _tool in roots)
+    assert any(root == "/base-root" for root, _tool in roots)
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ def resolve_issue_choices(
     *,
     list_project_issues: Callable[..., list[dict]],
     project_key: str,
+    command: str | None = None,
     issue_state: str = "open",
     include_fallback: bool = False,
     limit: int = 25,
@@ -28,11 +29,22 @@ def resolve_issue_choices(
     else:
         states = ["open", "closed"]
 
+    def _load_rows(state: str) -> list[dict]:
+        if command:
+            try:
+                return list_project_issues(project_key, state=state, limit=limit, command=command)
+            except TypeError:
+                pass
+        try:
+            return list_project_issues(project_key, state=state, limit=limit)
+        except TypeError:
+            return list_project_issues(project_key, state=state)
+        except Exception:
+            return []
+
     for state in states:
         try:
-            rows = list_project_issues(project_key, state=state, limit=limit)
-        except TypeError:
-            rows = list_project_issues(project_key, state=state)
+            rows = _load_rows(state)
         except Exception:
             rows = []
         for row in rows:
@@ -65,6 +77,7 @@ async def prompt_issue_selection(
     issues = resolve_issue_choices(
         list_project_issues=list_project_issues,
         project_key=project_key,
+        command=command,
         issue_state=issue_state,
         include_fallback=False,
     )
@@ -73,6 +86,7 @@ async def prompt_issue_selection(
         alt_issues = resolve_issue_choices(
             list_project_issues=list_project_issues,
             project_key=project_key,
+            command=command,
             issue_state=alt_state,
             include_fallback=False,
         )

@@ -1,3 +1,11 @@
+from nexus.core.workflow_runtime.workflow_issue_resolution_service import (
+    candidate_repos_for_issue_lookup,
+)
+
+
+_CROSS_PROJECT_ISSUE_PICKER_COMMANDS = frozenset({"continue"})
+
+
 def list_project_issues(
     *,
     project_key: str,
@@ -7,6 +15,7 @@ def list_project_issues(
     logger,
     state: str = "open",
     limit: int = 10,
+    command: str | None = None,
     requester_nexus_id: str | None = None,
 ) -> list[dict]:
     config = project_config.get(project_key, {})
@@ -27,44 +36,67 @@ def list_project_issues(
             _add_repo(repo_name)
     for repo_name in get_repos(project_key):
         _add_repo(repo_name)
-
     if not repo_candidates:
         return []
 
-    merged: list[dict] = []
-    multi_repo = len(repo_candidates) > 1
-    for repo in repo_candidates:
-        try:
+    def _collect_rows(repos: list[str], *, multi_repo: bool) -> list[dict]:
+        collected: list[dict] = []
+        for repo in repos:
             try:
-                plugin = get_direct_issue_plugin(
-                    repo,
-                    requester_nexus_id=requester_nexus_id,
-                    project_name=project_key,
-                )
-            except TypeError:
                 try:
-                    plugin = get_direct_issue_plugin(repo, requester_nexus_id=requester_nexus_id)
+                    plugin = get_direct_issue_plugin(
+                        repo,
+                        requester_nexus_id=requester_nexus_id,
+                        project_name=project_key,
+                    )
                 except TypeError:
-                    plugin = get_direct_issue_plugin(repo)
-            if not plugin:
-                continue
-            rows = plugin.list_issues(state=state, limit=limit, fields=["number", "title", "state"])
-            for row in rows or []:
-                if not isinstance(row, dict):
+                    try:
+                        plugin = get_direct_issue_plugin(repo, requester_nexus_id=requester_nexus_id)
+                    except TypeError:
+                        plugin = get_direct_issue_plugin(repo)
+                if not plugin:
                     continue
-                item = {
-                    "number": row.get("number"),
-                    "title": row.get("title"),
-                    "state": row.get("state"),
-                }
-                if multi_repo:
-                    repo_suffix = repo.split("/")[-1] if "/" in repo else repo
-                    title = str(item.get("title") or "").strip()
-                    item["title"] = f"[{repo_suffix}] {title}" if title else f"[{repo_suffix}]"
-                merged.append(item)
-        except Exception as exc:
-            logger.error(
-                "Failed to list %s issues for %s via %s: %s", state, project_key, repo, exc
+                rows = plugin.list_issues(state=state, limit=limit, fields=["number", "title", "state"])
+                for row in rows or []:
+                    if not isinstance(row, dict):
+                        continue
+                    item = {
+                        "number": row.get("number"),
+                        "title": row.get("title"),
+                        "state": row.get("state"),
+                    }
+                    if multi_repo:
+                        repo_suffix = repo.split("/")[-1] if "/" in repo else repo
+                        title = str(item.get("title") or "").strip()
+                        item["title"] = f"[{repo_suffix}] {title}" if title else f"[{repo_suffix}]"
+                    collected.append(item)
+            except Exception as exc:
+                logger.error(
+                    "Failed to list %s issues for %s via %s: %s", state, project_key, repo, exc
+                )
+        return collected
+
+    merged = _collect_rows(repo_candidates, multi_repo=len(repo_candidates) > 1)
+    normalized_command = str(command or "").strip().lower()
+    should_try_cross_project_fallback = (
+        normalized_command in _CROSS_PROJECT_ISSUE_PICKER_COMMANDS and not merged
+    )
+    if should_try_cross_project_fallback:
+        fallback_repo_candidates: list[str] = []
+        default_repo = repo_candidates[0] if repo_candidates else str(config.get("git_repo") or "")
+        for repo_name in candidate_repos_for_issue_lookup(
+            project_key=project_key,
+            project_config=project_config,
+            default_repo=default_repo,
+        ):
+            if repo_name and repo_name not in repo_candidates and repo_name not in fallback_repo_candidates:
+                fallback_repo_candidates.append(repo_name)
+        if fallback_repo_candidates:
+            merged.extend(
+                _collect_rows(
+                    fallback_repo_candidates,
+                    multi_repo=(len(repo_candidates) + len(fallback_repo_candidates)) > 1,
+                )
             )
 
     deduped: list[dict] = []

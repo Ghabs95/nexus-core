@@ -53,7 +53,11 @@ from nexus.core.orchestration.plugin_runtime import (
 )
 from nexus.core.project.key_utils import normalize_project_key_optional as _normalize_project_key
 from nexus.core.rate_limiter import get_rate_limiter
-from nexus.core.runtime.bridge import get_sop_tier_from_issue, invoke_ai_agent
+from nexus.core.runtime.bridge import (
+    clear_issue_excluded_tools,
+    get_sop_tier_from_issue,
+    invoke_ai_agent,
+)
 from nexus.core.runtime.workflow_commands import (
     pause_handler as workflow_pause_handler,
 )
@@ -158,6 +162,7 @@ def _workflow_handler_deps() -> WorkflowHandlerDeps:
         workflow_pause_handler=workflow_pause_handler,
         workflow_resume_handler=workflow_resume_handler,
         workflow_stop_handler=workflow_stop_handler,
+        clear_issue_excluded_tools=clear_issue_excluded_tools,
         requester_context_builder=lambda user_id: {
             "platform": "telegram",
             "platform_user_id": str(user_id),

@@ -415,6 +415,15 @@ def generate_completion_instructions(
     """
     resolved_project_name = str(project_name or "").strip() or "nexus"
     endpoint_base = str(webhook_url or "").strip().rstrip("/") or "<WEBHOOK_BASE_URL>"
+    completions_script = (
+        f"WORKSPACE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n"
+        f"COMPLETIONS_DIR=$(find \"$WORKSPACE_ROOT\" -maxdepth 4 -path '*/{nexus_dir}/tasks/{resolved_project_name}/completions' -type d 2>/dev/null | head -1)\n"
+        f'if [ -z "$COMPLETIONS_DIR" ]; then COMPLETIONS_DIR="$WORKSPACE_ROOT/{nexus_dir}/tasks/{resolved_project_name}/completions"; mkdir -p "$COMPLETIONS_DIR"; fi\n'
+    )
+    filesystem_write_command = (
+        completions_script
+        + f'python3 -c \'import json,os; p=os.path.join(os.environ["COMPLETIONS_DIR"], "completion_summary_{issue_number}.json"); d={{"status":"complete","agent_type":"{agent_type}","step_id":"{step_id}","step_num":{step_num},"summary":"<one-line summary of what you did>","key_findings":["<finding 1>","<finding 2>"],"next_agent":"<agent_type from workflow steps — NOT the step id or display name>","comment_markdown":"## 🔍 <Step Name> Complete — {agent_type}\\n\\n**Step ID:** `{step_id}`\\n**Step Num:** {step_num}\\n\\n- Finding 1\\n- Finding 2"}}; open(p, "w", encoding="utf-8").write(json.dumps(d, indent=2))\'\n'
+    )
 
     # --- Build Deliverable 2 based on backend ---
     if completion_backend == "postgres":
@@ -438,26 +447,26 @@ def generate_completion_instructions(
             f"  }}'\n"
             f"```\n\n"
             f"Replace the `<placeholder>` values with real data from your analysis.\n"
-            f"**Do NOT write any local JSON files.**\n"
+            f"If POST fails (DNS/network/runtime), immediately write the same payload locally as fallback:\n\n"
+            f"```bash\n"
+            f"{filesystem_write_command}"
+            f"```\n\n"
+            f"Runtime note: fallback completion files are ingested automatically even when "
+            f"`completion_backend` is `postgres`.\n"
+            f"**Do NOT stop after a failed POST without writing fallback JSON.**\n"
             f"**Do NOT post issue comments directly via gh/glab/curl scripts.** "
             f"Nexus runtime posts the issue comment from `comment_markdown` after step validation."
         )
     else:
-        completions_script = (
-            f"```bash\n"
-            f"WORKSPACE_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n"
-            f"COMPLETIONS_DIR=$(find \"$WORKSPACE_ROOT\" -maxdepth 4 -path '*/{nexus_dir}/tasks/{resolved_project_name}/completions' -type d 2>/dev/null | head -1)\n"
-            f'if [ -z "$COMPLETIONS_DIR" ]; then COMPLETIONS_DIR="$WORKSPACE_ROOT/{nexus_dir}/tasks/{resolved_project_name}/completions"; mkdir -p "$COMPLETIONS_DIR"; fi\n'
-        )
         deliverable_2 = (
             f"## Deliverable 2: Write completion summary JSON\n\n"
             f"Write a JSON file with your structured results. Use this command template:\n\n"
             f"**IMPORTANT:** The `{nexus_dir}/` directory lives at the **workspace root** "
             f"(the top-level directory you were launched in). "
             f"Do NOT create a new `{nexus_dir}/` folder inside sub-repos or subdirectories.\n\n"
-            + completions_script
-            + f'python3 -c \'import json,os; p=os.path.join(os.environ["COMPLETIONS_DIR"], "completion_summary_{issue_number}.json"); d={{"status":"complete","agent_type":"{agent_type}","step_id":"{step_id}","step_num":{step_num},"summary":"<one-line summary of what you did>","key_findings":["<finding 1>","<finding 2>"],"next_agent":"<agent_type from workflow steps — NOT the step id or display name>","comment_markdown":"## 🔍 <Step Name> Complete — {agent_type}\\n\\n**Step ID:** `{step_id}`\\n**Step Num:** {step_num}\\n\\n- Finding 1\\n- Finding 2"}}; open(p, "w", encoding="utf-8").write(json.dumps(d, indent=2))\'\n'
-            f"```\n\n"
+            + "```bash\n"
+            + filesystem_write_command
+            + "```\n\n"
             f"Replace the `<placeholder>` values with real data from your analysis.\n"
             f"**Do NOT post issue comments directly via gh/glab/curl scripts.** "
             f"Nexus runtime posts the issue comment from `comment_markdown` after step validation."

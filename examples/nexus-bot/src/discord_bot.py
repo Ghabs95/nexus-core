@@ -211,6 +211,9 @@ from nexus.core.auth import (
 from nexus.core.auth import (
     get_setup_status as _svc_get_setup_status,
 )
+from nexus.core.auth import (
+    get_auth_onboarding_disabled_message as _svc_get_auth_onboarding_disabled_message,
+)
 from nexus.core.auth import register_onboarding_message as _svc_register_onboarding_message
 from nexus.core.auth import (
     has_project_access as _svc_has_project_access,
@@ -2273,9 +2276,10 @@ async def login_command(
             ephemeral=True,
         )
         return
-    if not NEXUS_AUTH_ENABLED:
+    disabled_auth_message = _svc_get_auth_onboarding_disabled_message()
+    if disabled_auth_message:
         await interaction.response.send_message(
-            "ℹ️ Auth onboarding is disabled in this environment.",
+            disabled_auth_message,
             ephemeral=True,
         )
         return
@@ -2496,8 +2500,9 @@ async def setup_status_command(interaction: discord.Interaction):
     status = _svc_get_setup_status(str(user.nexus_id))
     latest_login = _svc_get_latest_login_session_status(str(user.nexus_id))
     if not status.get("auth_enabled"):
+        disabled_auth_message = _svc_get_auth_onboarding_disabled_message()
         await interaction.response.send_message(
-            "ℹ️ Auth onboarding is disabled in this environment.",
+            disabled_auth_message or "ℹ️ Auth onboarding is disabled in this environment.",
             ephemeral=True,
         )
         return

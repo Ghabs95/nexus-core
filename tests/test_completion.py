@@ -243,6 +243,20 @@ class TestGenerateCompletionInstructions:
         assert '"step_id": "triage"' in text
         assert '"step_num": 1' in text
 
+    def test_postgres_includes_filesystem_fallback_instructions(self):
+        text = generate_completion_instructions(
+            "119",
+            "developer",
+            "develop",
+            4,
+            completion_backend="postgres",
+            webhook_url="http://webhook:8081",
+        )
+        assert "If POST fails" in text
+        assert "completion_summary_119.json" in text
+        assert "fallback completion files are ingested automatically" in text
+        assert "Do NOT stop after a failed POST without writing fallback JSON" in text
+
     def test_completion_markdown_template_uses_json_newline_escape(self):
         text = generate_completion_instructions("1", "triage", "triage", 1)
         assert "\\\\n" not in text
@@ -397,3 +411,71 @@ class TestCompletionStore:
 
         assert first_key == "113:unknown-workflow:unknown-step:developer"
         assert second_key == "113:unknown-workflow:unknown-step:developer"
+
+    def test_postgres_scan_includes_filesystem_fallback(self, tmp_path):
+        storage = _FakeCompletionStorage([])
+        completion_dir = tmp_path / ".nexus" / "tasks" / "nexus" / "completions"
+        completion_dir.mkdir(parents=True)
+        (completion_dir / "completion_summary_119.json").write_text(
+            json.dumps(
+                {
+                    "status": "complete",
+                    "agent_type": "developer",
+                    "step_id": "develop",
+                    "step_num": 4,
+                    "summary": "fallback",
+                    "next_agent": "reviewer",
+                }
+            )
+        )
+
+        store = CompletionStore(
+            backend="postgres",
+            storage=storage,
+            base_dir=str(tmp_path),
+            nexus_dir=".nexus",
+        )
+        detected = store.scan("119")
+        assert len(detected) == 1
+        assert detected[0].issue_number == "119"
+        assert detected[0].summary.agent_type == "developer"
+
+    def test_postgres_scan_dedups_db_and_filesystem_same_step(self, tmp_path):
+        row = {
+            "_db_id": 10,
+            "_issue_number": "119",
+            "_agent_type": "developer",
+            "issue_number": "119",
+            "agent_type": "developer",
+            "status": "complete",
+            "summary": "db",
+            "next_agent": "reviewer",
+            "step_id": "develop",
+            "step_num": 4,
+            "_updated_at": "2026-03-15T22:10:00.000000+00:00",
+        }
+        storage = _FakeCompletionStorage([row])
+        completion_dir = tmp_path / ".nexus" / "tasks" / "nexus" / "completions"
+        completion_dir.mkdir(parents=True)
+        (completion_dir / "completion_summary_119.json").write_text(
+            json.dumps(
+                {
+                    "status": "complete",
+                    "agent_type": "developer",
+                    "step_id": "develop",
+                    "step_num": 4,
+                    "summary": "filesystem",
+                    "next_agent": "reviewer",
+                }
+            )
+        )
+
+        store = CompletionStore(
+            backend="postgres",
+            storage=storage,
+            base_dir=str(tmp_path),
+            nexus_dir=".nexus",
+        )
+        detected = store.scan("119")
+        assert len(detected) == 1
+        assert detected[0].summary.summary == "db"

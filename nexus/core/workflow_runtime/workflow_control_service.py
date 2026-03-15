@@ -17,6 +17,10 @@ from nexus.core.config import NEXUS_STORAGE_BACKEND
 from nexus.core.integrations.workflow_state_factory import get_storage_backend
 from nexus.core.prompt_budget import apply_prompt_budget
 from nexus.core.runtime_mode import is_postgres_backend
+from nexus.core.workflow_runtime.workflow_issue_resolution_service import (
+    candidate_repos_for_issue_lookup,
+    resolve_project_config_for_repo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,31 +113,15 @@ def prepare_continue_context(
         return None
 
     def _repo_candidates(preferred_config: dict[str, Any] | None = None) -> list[str]:
-        candidates: list[str] = []
-
-        def _add_repo(value: str | None) -> None:
-            repo_value = str(value or "").strip()
-            if repo_value and repo_value not in candidates:
-                candidates.append(repo_value)
-
-        cfgs: list[dict[str, Any]] = []
-        if isinstance(preferred_config, dict):
-            cfgs.append(preferred_config)
-
-        project_cfg = project_config.get(project_key)
-        if isinstance(project_cfg, dict) and project_cfg not in cfgs:
-            cfgs.append(project_cfg)
-
-        for cfg in cfgs:
-            _add_repo(resolve_repo(cfg, default_repo))
-            repo_list = cfg.get("git_repos")
-            if isinstance(repo_list, list):
-                for repo_name in repo_list:
-                    _add_repo(str(repo_name or ""))
-
-        # Only fall back to global default when no project-specific repos were discovered.
-        if not candidates:
-            _add_repo(default_repo)
+        candidates = candidate_repos_for_issue_lookup(
+            project_key=project_key,
+            project_config=project_config,
+            default_repo=default_repo,
+            preferred_config=preferred_config,
+        )
+        resolved_default = str(resolve_repo(preferred_config, default_repo) or "").strip()
+        if resolved_default and resolved_default not in candidates:
+            candidates.insert(0, resolved_default)
         return candidates
 
     def _load_issue(
@@ -234,7 +222,11 @@ def prepare_continue_context(
         type_match = re.search(r"\*\*Type:\*\*\s*(.+)", content)
         task_type = type_match.group(1).strip().lower() if type_match else "feature"
     else:
-        fallback_config = project_config.get(project_key)
+        resolved_project_name, fallback_config = resolve_project_config_for_repo(
+            repo=repo,
+            requested_project_key=project_key,
+            project_config=project_config,
+        )
         if not isinstance(fallback_config, dict):
             return {
                 "status": "error",
@@ -247,7 +239,7 @@ def prepare_continue_context(
             }
 
         config = fallback_config
-        project_name = project_key
+        project_name = resolved_project_name or project_key
 
         if not details:
             details, repo = _load_issue(config)

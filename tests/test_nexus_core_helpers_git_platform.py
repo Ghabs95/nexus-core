@@ -16,7 +16,7 @@ class _GitLabDummy:
         self.base_url = base_url
 
 
-def test_get_git_platform_github_without_fallback_uses_empty_token(monkeypatch):
+def test_get_git_platform_github_without_fallback_requires_token(monkeypatch):
     monkeypatch.setattr(
         helpers,
         "_get_project_config",
@@ -26,15 +26,33 @@ def test_get_git_platform_github_without_fallback_uses_empty_token(monkeypatch):
     monkeypatch.setattr(helpers, "get_git_repo", lambda _p: "Ghabs95/nexus-arc")
     monkeypatch.setattr(helpers, "get_project_platform", lambda _p: "github")
     monkeypatch.setattr(helpers, "resolve_git_platform_class", lambda _p: _GitHubDummy)
-    platform = helpers.get_git_platform(
-        repo="Ghabs95/nexus-arc",
-        project_name="nexus",
-        token_override=None,
-        allow_env_token_fallback=False,
-    )
+    with pytest.raises(ValueError, match="GitHub token required"):
+        helpers.get_git_platform(
+            repo="Ghabs95/nexus-arc",
+            project_name="nexus",
+            token_override=None,
+            allow_env_token_fallback=False,
+        )
 
-    assert isinstance(platform, _GitHubDummy)
-    assert platform.token == ""
+
+def test_get_git_platform_github_requires_token_when_service_fallback_disabled(monkeypatch):
+    monkeypatch.setattr(
+        helpers,
+        "_get_project_config",
+        lambda: {"nexus": {"git_token_var_name": "GITHUB_TOKEN"}},
+    )
+    monkeypatch.setattr(helpers, "get_default_project", lambda: "nexus")
+    monkeypatch.setattr(helpers, "get_git_repo", lambda _p: "Ghabs95/nexus-arc")
+    monkeypatch.setattr(helpers, "get_project_platform", lambda _p: "github")
+    monkeypatch.setattr(helpers, "resolve_git_platform_class", lambda _p: _GitHubDummy)
+    monkeypatch.setenv("NEXUS_ALLOW_SERVICE_GIT_TOKEN_FALLBACK", "false")
+
+    with pytest.raises(ValueError, match="GitHub token required"):
+        helpers.get_git_platform(
+            repo="Ghabs95/nexus-arc",
+            project_name="nexus",
+            token_override=None,
+        )
 
 
 def test_get_git_platform_gitlab_without_fallback_requires_token(monkeypatch):
@@ -55,3 +73,26 @@ def test_get_git_platform_gitlab_without_fallback_requires_token(monkeypatch):
             token_override=None,
             allow_env_token_fallback=False,
         )
+
+
+def test_get_git_platform_github_uses_gh_token_alias(monkeypatch):
+    monkeypatch.setattr(
+        helpers,
+        "_get_project_config",
+        lambda: {"nexus": {"git_token_var_name": "GITHUB_TOKEN"}},
+    )
+    monkeypatch.setattr(helpers, "get_default_project", lambda: "nexus")
+    monkeypatch.setattr(helpers, "get_git_repo", lambda _p: "Ghabs95/nexus-arc")
+    monkeypatch.setattr(helpers, "get_project_platform", lambda _p: "github")
+    monkeypatch.setattr(helpers, "resolve_git_platform_class", lambda _p: _GitHubDummy)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setenv("GH_TOKEN", "gho_alias_token")
+
+    platform = helpers.get_git_platform(
+        repo="Ghabs95/nexus-arc",
+        project_name="nexus",
+        token_override=None,
+    )
+
+    assert isinstance(platform, _GitHubDummy)
+    assert platform.token == "gho_alias_token"

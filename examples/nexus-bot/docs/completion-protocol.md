@@ -10,7 +10,7 @@ The mode depends on `NEXUS_STORAGE_BACKEND`:
 | Backend      | How agent reports                                         | Where it's stored                     |
 |--------------|-----------------------------------------------------------|---------------------------------------|
 | `filesystem` | Writes `completion_summary_{issue}.json` to disk          | `.nexus/tasks/{project}/completions/` |
-| `postgres`   | POSTs JSON to `http://localhost:{PORT}/api/v1/completion` | `nexus_completions` table             |
+| `postgres`   | POSTs JSON to `/api/v1/completion` (fallback: local JSON) | `nexus_completions` table             |
 
 ## Completion Payload
 
@@ -92,6 +92,15 @@ EOF
 
 When using postgres, completions are deduplicated via a `dedup_key` of format `{issue}:{agent_type}:{status}`. If the
 same agent re-submits for the same issue, the existing row is updated (not duplicated).
+
+## Runtime Recovery
+
+If an agent prints a valid completion payload but cannot reach `/api/v1/completion` (for example, temporary DNS or
+network failures), Nexus runtime performs host-side recovery from the agent log and saves the completion through the
+configured backend (`postgres` or `filesystem`). It also attempts to post the workflow comment if one is missing.
+
+In postgres mode, local fallback files under `.nexus/tasks/{project}/completions/` are also scanned as a resilience
+path, so agents can write `completion_summary_{issue}.json` when webhook POST fails.
 
 ## Agent Checklists
 

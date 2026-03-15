@@ -145,6 +145,9 @@ class AuthManager:
     def get_setup_status(self, nexus_id: str) -> dict[str, Any]:
         return _project_access.get_setup_status(nexus_id=nexus_id)
 
+    def get_auth_onboarding_disabled_message(self) -> str:
+        return _project_access.get_auth_onboarding_disabled_message()
+
     def check_project_access(self, nexus_id: str, project_key: str) -> tuple[bool, str]:
         return _project_access.check_project_access(nexus_id=nexus_id, project_key=project_key)
 
@@ -301,6 +304,10 @@ def resolve_login_session_id(session_ref_or_id: str) -> str:
 
 def get_setup_status(nexus_id: str) -> dict[str, Any]:
     return auth_manager.get_setup_status(nexus_id=nexus_id)
+
+
+def get_auth_onboarding_disabled_message() -> str:
+    return auth_manager.get_auth_onboarding_disabled_message()
 
 
 def check_project_access(nexus_id: str, project_key: str) -> tuple[bool, str]:

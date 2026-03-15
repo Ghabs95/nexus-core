@@ -4,7 +4,7 @@ from typing import Any
 
 from nexus.adapters.notifications.base import Button
 from nexus.core.callbacks.callback_registry_service import dispatch_callback_action
-from nexus.core.storage.capabilities import get_storage_capabilities
+from nexus.core.command_visibility import is_command_visible
 
 
 def menu_root_buttons() -> list[list[Button]]:
@@ -21,11 +21,14 @@ def menu_root_buttons() -> list[list[Button]]:
 
 
 def menu_section_text(menu_key: str) -> str:
-    caps = get_storage_capabilities()
     monitor_lines = [
         "📊 **Monitoring**",
         "- /status — View pending tasks in inbox",
         "- /inboxq [limit] — Inspect inbox queue status",
+        "- /logs <project> <issue#> — View task logs",
+        "- /logsfull <project> <issue#> — Full log lines (no truncation)",
+        "- /tail <project> <issue#> [lines] [seconds] — Follow live logs",
+        "- /tailstop — Stop current live tail session",
         "- /myissues — View your tracked issues",
         "- /fuse <project> <issue#> — View retry fuse state",
         "- /audit <project> <issue#> — View workflow audit trail",
@@ -34,13 +37,9 @@ def menu_section_text(menu_key: str) -> str:
         "- /track <project> <issue#> — Subscribe to updates",
         "- /untrack <project> <issue#> — Stop tracking",
     ]
-    if caps.local_task_files:
+    if is_command_visible("active"):
         monitor_lines[2:2] = [
             "- /active — View tasks currently being worked on",
-            "- /logs <project> <issue#> — View task logs",
-            "- /logsfull <project> <issue#> — Full log lines (no truncation)",
-            "- /tail <project> <issue#> [lines] [seconds] — Follow live logs",
-            "- /tailstop — Stop current live tail session",
         ]
     menu_texts = {
         "chat": (

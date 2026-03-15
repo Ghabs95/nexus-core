@@ -68,6 +68,23 @@ def test_get_git_platform_uses_custom_token_var(monkeypatch):
     assert platform.token == "ghp_custom_token_123"
 
 
+def test_get_git_platform_uses_gh_token_alias(monkeypatch):
+    from nexus.adapters.git.github import GitHubPlatform
+
+    import nexus.core.orchestration.nexus_core_helpers as nexus_core_helpers
+
+    monkeypatch.setattr(nexus_core_helpers, "get_project_platform", lambda _project: "github")
+    monkeypatch.setattr(nexus_core_helpers, "get_git_repo", lambda _project: "org/repo")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setenv("GH_TOKEN", "gho-test")
+    monkeypatch.delenv("NEXUS_GIT_PLATFORM_TRANSPORT", raising=False)
+
+    platform = nexus_core_helpers.get_git_platform(project_name="nexus")
+
+    assert isinstance(platform, GitHubPlatform)
+    assert platform.token == "gho-test"
+
+
 def test_get_git_platform_returns_github_cli_when_transport_is_cli(monkeypatch):
     from nexus.adapters.git.github_cli import GitHubPlatform as GitHubCLIPlatform
 

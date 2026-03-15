@@ -58,6 +58,33 @@ async def test_prompt_issue_selection_empty_open_state_shows_toggle_and_manual()
 
 
 @pytest.mark.asyncio
+async def test_prompt_issue_selection_passes_command_to_supported_issue_loader():
+    msg = _Msg()
+    update = SimpleNamespace(effective_message=msg, callback_query=None)
+    seen: list[tuple[str, str, int, str | None]] = []
+
+    def _list_project_issues(project_key, state="open", limit=25, command=None):
+        seen.append((project_key, state, limit, command))
+        return [{"number": 12, "title": "Issue title", "state": "open"}]
+
+    await prompt_issue_selection(
+        update=update,
+        command="continue",
+        project_key="proj",
+        list_project_issues=_list_project_issues,
+        get_project_label=lambda k: f"Label-{k}",
+        inline_keyboard_button_cls=_Btn,
+        inline_keyboard_markup_cls=_Markup,
+        issue_state="open",
+    )
+
+    assert seen == [("proj", "open", 25, "continue")]
+    text, markup = msg.calls[-1]
+    assert text == "📋 Open issues for /continue (Label-proj):"
+    assert markup.keyboard[0][0].text == "#12 — Issue title"
+
+
+@pytest.mark.asyncio
 async def test_prompt_issue_selection_populated_closed_state_uses_edit_message():
     query = _Query()
     update = SimpleNamespace(effective_message=_Msg(), callback_query=query)

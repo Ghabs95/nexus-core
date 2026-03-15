@@ -139,7 +139,9 @@ def build_telegram_interactive_ctx(
 
     class _TelegramInteractiveCtx:
         def __init__(self):
+            self.platform = "telegram"
             self.user_id = str(getattr(getattr(update, "effective_user", None), "id", ""))
+            self.platform_user_id = self.user_id
             self.chat_id = int(getattr(getattr(update, "effective_chat", None), "id", 0) or 0)
             self.text = str(getattr(effective_message, "text", "") or "")
             self.args = list(getattr(context, "args", []) or [])

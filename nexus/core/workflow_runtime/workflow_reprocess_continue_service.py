@@ -9,6 +9,8 @@ from nexus.core.config import NEXUS_STORAGE_BACKEND
 from nexus.core.runtime_mode import is_postgres_backend
 from nexus.core.utils.log_utils import log_unauthorized_access
 
+_VALID_REPROCESS_TOOLS = {"copilot", "gemini", "codex", "claude", "openai", "ollama"}
+
 
 def _format_issue_content(title: str, body: str, issue_num: Any) -> str:
     if title and body:
@@ -29,6 +31,104 @@ async def _ensure_project_issue_for_command(
         await deps.prompt_project_selection(ctx, command)
         return None, None, None
     return await deps.ensure_project_issue(ctx, command)
+
+
+def _parse_reprocess_options(rest_tokens: Any) -> tuple[dict[str, Any], str | None]:
+    options: dict[str, Any] = {
+        "clear_exclusions": False,
+        "preferred_tool": None,
+    }
+    tokens = [str(token or "").strip() for token in list(rest_tokens or []) if str(token or "").strip()]
+    idx = 0
+    while idx < len(tokens):
+        raw = tokens[idx]
+        lowered = raw.lower()
+        if lowered in {"--clear-exclusions", "--reset-exclusions"}:
+            options["clear_exclusions"] = True
+            idx += 1
+            continue
+
+        value: str | None = None
+        if lowered.startswith("--tool="):
+            value = lowered.split("=", 1)[1].strip()
+            idx += 1
+        elif lowered.startswith("--provider="):
+            value = lowered.split("=", 1)[1].strip()
+            idx += 1
+        elif lowered in {"--tool", "--provider", "--force-tool"}:
+            if idx + 1 >= len(tokens):
+                return options, (
+                    f"❌ Missing value for `{raw}`. "
+                    "Usage: `/reprocess <project> <issue#> [--clear-exclusions] [--tool <codex|copilot|gemini|claude|openai|ollama>]`"
+                )
+            value = str(tokens[idx + 1] or "").strip().lower()
+            idx += 2
+        else:
+            return options, (
+                f"❌ Unknown reprocess option `{raw}`. "
+                "Supported: `--clear-exclusions`, `--tool <provider>`."
+            )
+
+        if value is None:
+            continue
+        if value not in _VALID_REPROCESS_TOOLS:
+            allowed = ", ".join(sorted(_VALID_REPROCESS_TOOLS))
+            return options, f"❌ Unsupported tool `{value}`. Allowed values: {allowed}."
+        options["preferred_tool"] = value
+    return options, None
+
+
+def _parse_continue_options(rest_tokens: Any) -> tuple[dict[str, Any], list[str], str | None]:
+    options: dict[str, Any] = {
+        "clear_exclusions": False,
+        "preferred_tool": None,
+    }
+    passthrough_tokens: list[str] = []
+    tokens = [str(token or "").strip() for token in list(rest_tokens or []) if str(token or "").strip()]
+    idx = 0
+    while idx < len(tokens):
+        raw = tokens[idx]
+        lowered = raw.lower()
+        if lowered in {"--clear-exclusions", "--reset-exclusions"}:
+            options["clear_exclusions"] = True
+            idx += 1
+            continue
+
+        value: str | None = None
+        if lowered.startswith("--tool="):
+            value = lowered.split("=", 1)[1].strip()
+            idx += 1
+        elif lowered.startswith("--provider="):
+            value = lowered.split("=", 1)[1].strip()
+            idx += 1
+        elif lowered in {"--tool", "--provider", "--force-tool"}:
+            if idx + 1 >= len(tokens):
+                return options, passthrough_tokens, (
+                    f"❌ Missing value for `{raw}`. "
+                    "Usage: `/continue <project> <issue#> [from:<agent>|<agent>] [prompt...] [--clear-exclusions] [--tool <codex|copilot|gemini|claude|openai|ollama>]`"
+                )
+            value = str(tokens[idx + 1] or "").strip().lower()
+            idx += 2
+        elif raw.startswith("--"):
+            return options, passthrough_tokens, (
+                f"❌ Unknown continue option `{raw}`. "
+                "Supported: `--clear-exclusions`, `--tool <provider>`."
+            )
+        else:
+            passthrough_tokens.append(raw)
+            idx += 1
+            continue
+
+        if value is None:
+            continue
+        if value not in _VALID_REPROCESS_TOOLS:
+            allowed = ", ".join(sorted(_VALID_REPROCESS_TOOLS))
+            return options, passthrough_tokens, (
+                f"❌ Unsupported tool `{value}`. Allowed values: {allowed}."
+            )
+        options["preferred_tool"] = value
+
+    return options, passthrough_tokens, None
 
 
 def _extract_task_file_from_issue_body(body: Any) -> str | None:
@@ -317,22 +417,51 @@ async def _launch_reprocess(
     project_name: str,
     project_key: str,
     requester_nexus_id: str | None = None,
+    clear_exclusions: bool = False,
+    preferred_tool: str | None = None,
 ) -> None:
-    msg_id = await ctx.reply_text(f"🔁 Reprocessing issue #{issue_num}...")
+    issue_key = str(issue_num)
+    cleared = False
+    if clear_exclusions and callable(getattr(deps, "clear_issue_excluded_tools", None)):
+        try:
+            cleared = bool(deps.clear_issue_excluded_tools(issue_key))
+        except Exception:
+            cleared = False
+
+    preflight_bits: list[str] = [f"🔁 Reprocessing issue #{issue_num}..."]
+    if clear_exclusions:
+        preflight_bits.append("🧹 Clearing persisted tool exclusions before launch.")
+    if preferred_tool:
+        preflight_bits.append(f"🎯 Preferred tool override: `{preferred_tool}`")
+    msg_id = await ctx.reply_text("\n".join(preflight_bits))
+
     pid, tool_used = deps.invoke_ai_agent(
         agents_dir=os.path.join(deps.base_dir, config["agents_dir"]),
         workspace_dir=os.path.join(deps.base_dir, config["workspace"]),
         issue_url=issue_url,
         tier_name=tier_name,
         task_content=content,
+        preferred_tool=preferred_tool,
         log_subdir=project_name or project_key,
         project_name=project_name or project_key,
         requester_nexus_id=requester_nexus_id,
     )
     if pid:
+        meta: list[str] = []
+        if clear_exclusions:
+            meta.append(
+                "Tool exclusions reset: yes" if cleared else "Tool exclusions reset: no changes found"
+            )
+        if preferred_tool:
+            meta.append(f"Requested tool: {preferred_tool}")
+        meta_lines = "\n".join(meta)
+        meta_text = f"\n{meta_lines}" if meta_lines else ""
         await ctx.edit_message_text(
             message_id=msg_id,
-            text=f"✅ Reprocess started for issue #{issue_num}. Agent PID: {pid} (Tool: {tool_used})\n\n🔗 {issue_url}",
+            text=(
+                f"✅ Reprocess started for issue #{issue_num}. Agent PID: {pid} (Tool: {tool_used})"
+                f"{meta_text}\n\n🔗 {issue_url}"
+            ),
         )
         return
     await ctx.edit_message_text(
@@ -355,8 +484,13 @@ async def handle_reprocess(
             requester_nexus_id = str(requester_context.get("nexus_id") or "").strip() or None
         except Exception:
             requester_nexus_id = None
-    project_key, issue_num, _ = await _ensure_project_issue_for_command(ctx, deps, "reprocess")
+    project_key, issue_num, rest = await _ensure_project_issue_for_command(ctx, deps, "reprocess")
     if not project_key:
+        return
+
+    reprocess_options, options_error = _parse_reprocess_options(rest)
+    if options_error:
+        await ctx.reply_text(options_error)
         return
 
     project_name, config, content, details = await _resolve_reprocess_source(
@@ -409,6 +543,8 @@ async def handle_reprocess(
         project_name=project_name,
         project_key=project_key,
         requester_nexus_id=requester_nexus_id,
+        clear_exclusions=bool(reprocess_options.get("clear_exclusions")),
+        preferred_tool=str(reprocess_options.get("preferred_tool") or "").strip() or None,
     )
 
 
@@ -547,7 +683,13 @@ async def _maybe_reset_continue_workflow_position(
 
 
 async def _launch_continue_agent(
-    ctx: Any, deps: Any, *, issue_num: Any, continue_ctx: dict[str, Any]
+    ctx: Any,
+    deps: Any,
+    *,
+    issue_num: Any,
+    continue_ctx: dict[str, Any],
+    clear_exclusions: bool = False,
+    preferred_tool: str | None = None,
 ) -> None:
     async def _finalize_progress_message(message_id: Any, text: str) -> None:
         try:
@@ -582,10 +724,23 @@ async def _launch_continue_agent(
 
         await ctx.reply_text(text, parse_mode=None)
 
+    issue_key = str(issue_num)
+    cleared = False
+    if clear_exclusions and callable(getattr(deps, "clear_issue_excluded_tools", None)):
+        try:
+            cleared = bool(deps.clear_issue_excluded_tools(issue_key))
+        except Exception:
+            cleared = False
+
     resume_info = f" (after {continue_ctx['resumed_from']})" if continue_ctx["resumed_from"] else ""
-    msg_id = await ctx.reply_text(
+    preflight_bits: list[str] = [
         f"⏩ Continuing issue #{issue_num} with `{continue_ctx['agent_type']}`{resume_info}..."
-    )
+    ]
+    if clear_exclusions:
+        preflight_bits.append("🧹 Clearing persisted tool exclusions before launch.")
+    if preferred_tool:
+        preflight_bits.append(f"🎯 Preferred tool override: `{preferred_tool}`")
+    msg_id = await ctx.reply_text("\n".join(preflight_bits))
     try:
         pid, tool_used = deps.invoke_ai_agent(
             agents_dir=continue_ctx["agents_abs"],
@@ -599,6 +754,7 @@ async def _launch_continue_agent(
             agent_type=continue_ctx["agent_type"],
             project_name=continue_ctx["log_subdir"],
             requester_nexus_id=str(continue_ctx.get("requester_nexus_id") or "").strip() or None,
+            preferred_tool=preferred_tool,
         )
     except Exception as exc:
         deps.logger.error(
@@ -614,10 +770,20 @@ async def _launch_continue_agent(
         )
         return
     if pid:
+        meta: list[str] = []
+        if clear_exclusions:
+            meta.append(
+                "Tool exclusions reset: yes" if cleared else "Tool exclusions reset: no changes found"
+            )
+        if preferred_tool:
+            meta.append(f"Requested tool: {preferred_tool}")
+        meta_lines = "\n".join(meta)
+        meta_text = f"{meta_lines}\n\n" if meta_lines else ""
         await _finalize_progress_message(
             msg_id,
             (
                 f"✅ Agent continued for issue #{issue_num}. PID: {pid} (Tool: {tool_used})\n\n"
+                f"{meta_text}"
                 f"Prompt: {continue_ctx['continuation_prompt']}\n\n"
                 "ℹ️ **Note:** The agent will first check if the workflow has already progressed.\n"
                 "If another agent is already handling the next step, this agent will exit gracefully.\n"
@@ -648,10 +814,15 @@ async def handle_continue(ctx: Any, deps: Any, *, finalize_workflow: Callable[..
     if not project_key:
         return
 
+    continue_options, continue_rest, options_error = _parse_continue_options(rest)
+    if options_error:
+        await ctx.reply_text(options_error)
+        return
+
     continue_ctx = _prepare_continue_context(
         issue_num,
         project_key,
-        rest,
+        continue_rest,
         deps,
         requester_nexus_id=requester_nexus_id,
     )
@@ -700,7 +871,7 @@ async def handle_continue(ctx: Any, deps: Any, *, finalize_workflow: Callable[..
                 continue_ctx = _prepare_continue_context(
                     issue_num,
                     project_key,
-                    rest,
+                    continue_rest,
                     deps,
                     requester_nexus_id=requester_nexus_id,
                 )
@@ -724,4 +895,11 @@ async def handle_continue(ctx: Any, deps: Any, *, finalize_workflow: Callable[..
     ):
         return
     continue_ctx["requester_nexus_id"] = requester_nexus_id
-    await _launch_continue_agent(ctx, deps, issue_num=issue_num, continue_ctx=continue_ctx)
+    await _launch_continue_agent(
+        ctx,
+        deps,
+        issue_num=issue_num,
+        continue_ctx=continue_ctx,
+        clear_exclusions=bool(continue_options.get("clear_exclusions")),
+        preferred_tool=str(continue_options.get("preferred_tool") or "").strip() or None,
+    )

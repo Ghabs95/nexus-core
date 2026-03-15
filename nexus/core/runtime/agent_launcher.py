@@ -422,6 +422,48 @@ def _persist_issue_excluded_tools(issue_num: str, tools: list[str]) -> None:
     HostStateManager.save_launched_agents(launched_agents)
 
 
+def clear_issue_excluded_tools(issue_num: str, tools: list[str] | None = None) -> bool:
+    """Clear persisted issue-level excluded tools.
+
+    Args:
+        issue_num: Issue identifier.
+        tools: Optional subset to clear. When omitted, clears all exclusions.
+
+    Returns:
+        True when persisted state changed, otherwise False.
+    """
+    issue_key = str(issue_num or "").strip()
+    if not issue_key or issue_key == "unknown":
+        return False
+
+    launched_agents = HostStateManager.load_launched_agents(recent_only=False)
+    entry = launched_agents.get(issue_key)
+    if not isinstance(entry, dict):
+        return False
+
+    existing = _merge_excluded_tools(entry.get("exclude_tools", []))
+    if not existing:
+        return False
+
+    if tools:
+        clear_set = set(_merge_excluded_tools(tools))
+        remaining = [tool for tool in existing if tool not in clear_set]
+    else:
+        remaining = []
+
+    if remaining == existing:
+        return False
+
+    updated = dict(entry)
+    if remaining:
+        updated["exclude_tools"] = remaining
+    else:
+        updated.pop("exclude_tools", None)
+    launched_agents[issue_key] = updated
+    HostStateManager.save_launched_agents(launched_agents)
+    return True
+
+
 def _read_tail(path: str, max_chars: int = 4000) -> str:
     try:
         with open(path, encoding="utf-8", errors="replace") as handle:
@@ -613,8 +655,6 @@ def _recover_completion_from_agent_log(
     issue_url: str = "",
 ) -> str | None:
     """Recover completion payload from agent stdout log when POST was not executed."""
-    if not is_postgres_backend(NEXUS_STORAGE_BACKEND):
-        return None
     if not log_path or not os.path.exists(log_path):
         return None
 
@@ -740,20 +780,27 @@ def _recover_completion_from_agent_log(
 
     try:
         from nexus.core.completion_store import CompletionStore
-        from nexus.core.integrations.workflow_state_factory import get_storage_backend
+
+        backend = "postgres" if is_postgres_backend(NEXUS_STORAGE_BACKEND) else "filesystem"
+        storage = None
+        if backend == "postgres":
+            from nexus.core.integrations.workflow_state_factory import get_storage_backend
+
+            storage = get_storage_backend()
 
         store = CompletionStore(
-            backend="postgres",
-            storage=get_storage_backend(),
+            backend=backend,
+            storage=storage,
             base_dir=BASE_DIR,
             nexus_dir=get_nexus_dir_name(),
         )
         dedup_key = store.save(str(issue_num), str(agent_type), payload)
         logger.warning(
-            "Recovered completion payload from %s log for issue #%s (%s) dedup=%s",
+            "Recovered completion payload from %s log for issue #%s (%s) backend=%s dedup=%s",
             tool_name,
             issue_num,
             agent_type,
+            backend,
             dedup_key,
         )
         comment_ok = _post_recovered_completion_comment(payload)
@@ -802,28 +849,42 @@ def _start_completion_recovery_watchdog(
             launched = HostStateManager.load_launched_agents(recent_only=False)
             current = launched.get(str(issue_num), {})
             current_pid = int((current or {}).get("pid", 0) or 0) if isinstance(current, dict) else 0
-            if current_pid != int(pid):
-                return
+            tracked_pid_matches = current_pid == int(pid)
 
             if _pid_alive(pid):
+                # Another PID replaced this issue while the original process is still live.
+                # In this case the old run is no longer authoritative.
+                if not tracked_pid_matches:
+                    return
                 time.sleep(0.8)
                 continue
 
             # Give the log tee thread a short flush window.
             time.sleep(1.0)
-            log_path = _find_latest_agent_log(
-                workspace_dir,
-                project_key,
-                str(issue_num),
-                tool_name=str(tool_name or "*"),
-            )
-            if not log_path:
+            workspaces: list[str] = []
+            for candidate in (workspace_dir, BASE_DIR, os.getcwd()):
+                normalized = str(candidate or "").strip()
+                if normalized and normalized not in workspaces:
+                    workspaces.append(normalized)
+
+            log_path = ""
+            for root in workspaces:
                 log_path = _find_latest_agent_log(
-                    workspace_dir,
+                    root,
+                    project_key,
+                    str(issue_num),
+                    tool_name=str(tool_name or "*"),
+                )
+                if log_path:
+                    break
+                log_path = _find_latest_agent_log(
+                    root,
                     project_key,
                     str(issue_num),
                     tool_name="*",
                 )
+                if log_path:
+                    break
 
             dedup_key = _recover_completion_from_agent_log(
                 issue_num=str(issue_num),

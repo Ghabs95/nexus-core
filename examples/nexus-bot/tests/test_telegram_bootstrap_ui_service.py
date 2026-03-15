@@ -2,15 +2,11 @@ from nexus.core.telegram import telegram_bootstrap_ui_service as svc
 
 
 def test_build_help_text_hides_filesystem_commands_in_db_mode(monkeypatch):
-    monkeypatch.setattr(
-        svc,
-        "get_storage_capabilities",
-        lambda: type("Caps", (), {"local_task_files": False})(),
-    )
+    monkeypatch.setattr(svc, "is_command_visible", lambda command: command != "active")
     text = svc.build_help_text()
     assert "/active" not in text
-    assert "/logs <project> <issue#>" not in text
-    assert "/tail <project> <issue#>" not in text
+    assert "/logs <project> <issue#>" in text
+    assert "/tail <project> <issue#>" in text
     assert "/status [project|all]" in text
     assert "/wfstate <project> <issue#>" in text
 
