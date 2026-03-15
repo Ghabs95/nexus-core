@@ -3,7 +3,7 @@
 **Issue:** #119
 **ADR:** [ADR-084](ADR-084-Social-Media-Marketing-Workflow.md)
 **Branch:** `feat/design-social-marketing-workflow`
-**Status:** Implemented
+**Status:** Proposed implementation design
 
 ---
 

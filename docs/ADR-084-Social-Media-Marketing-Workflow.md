@@ -19,6 +19,12 @@ We will implement an automated social media marketing workflow within the Nexus 
 
 Detailed implementation design: `docs/DESIGN-Social-Media-Marketing-Workflow.md`.
 
+The first implementation increment remains documentation-first and dry-run-first:
+- add an opt-in workflow definition at `examples/workflows/social_media_marketing_workflow.yaml`,
+- keep publish execution behind requester-scoped credential resolution and approval gates,
+- introduce shared campaign/publish contracts before any live adapter rollout, and
+- preserve backward compatibility by leaving existing workflow tiers and project mappings unchanged.
+
 ### Architecture
 1. **Content Generation Engine**: Leverage the existing AI Orchestrator to consume prompts or source materials (like release notes or blog posts) to generate platform-specific content (e.g., Twitter threads, LinkedIn posts).
 2. **Platform Integrations**:
@@ -47,3 +53,4 @@ Detailed implementation design: `docs/DESIGN-Social-Media-Marketing-Workflow.md`
 - **Positive**: Extends Nexus utility, providing significant value to product operators and founders for go-to-market automation.
 - **Negative**: Adds complexity to the agent ecosystem and requires maintaining compliance with third-party social media API rate limits and terms of service.
 - **Operational trade-off**: Initial rollout should remain dry-run/documentation-first until adapter contracts, approval gates, and credential flows are validated.
+- **Validation expectation**: New workflow definitions and adapter contracts should ship with workflow-loading, contract, and dry-run regression coverage before any live publishing mode is enabled.
