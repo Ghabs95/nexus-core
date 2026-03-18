@@ -17,6 +17,7 @@ class _GitLabDummy:
 
 
 def test_get_git_platform_github_without_fallback_uses_empty_token(monkeypatch):
+    monkeypatch.delenv("NEXUS_AUTH_ENABLED", raising=False)
     monkeypatch.setattr(
         helpers,
         "_get_project_config",

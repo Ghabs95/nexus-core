@@ -268,10 +268,11 @@ async def test_approve_and_deny_invoke_clear_and_audit_callbacks():
 # ---------------------------------------------------------------------------
 
 
-def test_build_storage_file_uses_storage_dir(tmp_path):
+def test_build_storage_file_uses_storage_dir(tmp_path, monkeypatch):
     """file storage is selected by default when storage_dir is provided."""
     from nexus.adapters.storage.file import FileStorage
 
+    monkeypatch.delenv("NEXUS_STORAGE_BACKEND", raising=False)
     plugin = WorkflowStateEnginePlugin({"storage_dir": str(tmp_path)})
     storage = plugin._build_storage()
     assert isinstance(storage, FileStorage)

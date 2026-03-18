@@ -657,7 +657,7 @@ async def test_reset_to_agent_for_issue_recovers_missing_workflow_from_mapping(t
 
 
 @pytest.mark.asyncio
-async def test_complete_step_for_issue_idempotency_duplicate_suppressed(tmp_path):
+async def test_complete_step_for_issue_idempotency_duplicate_suppressed(tmp_path, monkeypatch):
     """Calling complete_step_for_issue with a duplicate event_id must be a no-op.
 
     Simulates a re-delivered signal: after the first call advances the workflow,
@@ -670,6 +670,7 @@ async def test_complete_step_for_issue_idempotency_duplicate_suppressed(tmp_path
     plugin, _ = await _plugin_with_workflow(wf, "idem")
     ledger_path = str(tmp_path / "ledger.json")
     plugin.config["idempotency_ledger_path"] = ledger_path
+    monkeypatch.delenv("NEXUS_STORAGE_BACKEND", raising=False)
 
     # First call advances the workflow (step1 → COMPLETED, step2 → RUNNING).
     updated = await _complete(plugin, "idem", "triage", {}, event_id="ev-001")
@@ -688,7 +689,7 @@ async def test_complete_step_for_issue_idempotency_duplicate_suppressed(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_complete_step_for_issue_different_event_ids_advance_independently(tmp_path):
+async def test_complete_step_for_issue_different_event_ids_advance_independently(tmp_path, monkeypatch):
     """Two distinct event_ids for different steps should both advance normally."""
     step1 = _step(1, "triage", "triage")
     step2 = _step(2, "dev", "developer")
@@ -696,6 +697,7 @@ async def test_complete_step_for_issue_different_event_ids_advance_independently
     plugin, _ = await _plugin_with_workflow(wf, "idem2")
     ledger_path = str(tmp_path / "ledger2.json")
     plugin.config["idempotency_ledger_path"] = ledger_path
+    monkeypatch.delenv("NEXUS_STORAGE_BACKEND", raising=False)
 
     await _complete(plugin, "idem2", "triage", {}, event_id="ev-aaa")
     updated = await _complete(plugin, "idem2", "developer", {}, event_id="ev-bbb")
