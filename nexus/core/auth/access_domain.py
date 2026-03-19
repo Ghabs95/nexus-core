@@ -43,48 +43,6 @@ def auth_enabled() -> bool:
     return _env_bool("NEXUS_AUTH_ENABLED", False)
 
 
-def get_auth_onboarding_disabled_message() -> str:
-    """Return an actionable message when auth onboarding is disabled."""
-    if auth_enabled():
-        return ""
-
-    requirements: list[str] = ["Set `NEXUS_AUTH_ENABLED=true`."]
-
-    storage_backend = str(os.getenv("NEXUS_STORAGE_BACKEND", "filesystem")).strip().lower()
-    if storage_backend != "postgres":
-        requirements.append("Set `NEXUS_STORAGE_BACKEND=postgres`.")
-
-    if not str(os.getenv("NEXUS_STORAGE_DSN", "")).strip():
-        requirements.append("Set `NEXUS_STORAGE_DSN`.")
-
-    if not str(os.getenv("NEXUS_PUBLIC_BASE_URL", "")).strip():
-        requirements.append("Set `NEXUS_PUBLIC_BASE_URL`.")
-
-    github_oauth_ready = bool(
-        str(os.getenv("NEXUS_GITHUB_CLIENT_ID", "")).strip()
-        and str(os.getenv("NEXUS_GITHUB_CLIENT_SECRET", "")).strip()
-    )
-    gitlab_oauth_ready = bool(
-        str(os.getenv("NEXUS_GITLAB_CLIENT_ID", "")).strip()
-        and str(os.getenv("NEXUS_GITLAB_CLIENT_SECRET", "")).strip()
-    )
-    if not (github_oauth_ready or gitlab_oauth_ready):
-        requirements.append(
-            "Configure GitHub OAuth (`NEXUS_GITHUB_CLIENT_ID` + `NEXUS_GITHUB_CLIENT_SECRET`) "
-            "or GitLab OAuth (`NEXUS_GITLAB_CLIENT_ID` + `NEXUS_GITLAB_CLIENT_SECRET`)."
-        )
-
-    if not str(os.getenv("NEXUS_CREDENTIALS_MASTER_KEY", "")).strip():
-        requirements.append("Set `NEXUS_CREDENTIALS_MASTER_KEY`.")
-
-    formatted_requirements = "\n".join(f"- {item}" for item in requirements)
-    return (
-        "ℹ️ Auth onboarding is disabled in this environment.\n"
-        "To enable `/login`, configure:\n"
-        f"{formatted_requirements}"
-    )
-
-
 def _cli_auth_mode() -> str:
     mode = str(os.getenv("NEXUS_CLI_AUTH_MODE", "account")).strip().lower()
     return mode if mode in {"account", "api-key", "auto"} else "account"

@@ -211,9 +211,6 @@ from nexus.core.auth import (
 from nexus.core.auth import (
     get_setup_status as _svc_get_setup_status,
 )
-from nexus.core.auth import (
-    get_auth_onboarding_disabled_message as _svc_get_auth_onboarding_disabled_message,
-)
 from nexus.core.auth import register_onboarding_message as _svc_register_onboarding_message
 from nexus.core.auth import (
     has_project_access as _svc_has_project_access,
@@ -613,7 +610,10 @@ def _workflow_bridge_deps():
 
 
 def _feature_registry_bridge_deps():
-    return _svc_feature_registry_bridge_deps(allowed_user_ids=DISCORD_ALLOWED_USER_IDS)
+    return _svc_feature_registry_bridge_deps(
+        allowed_user_ids=DISCORD_ALLOWED_USER_IDS,
+        ensure_project=_ctx_ensure_project_discord,
+    )
 
 
 async def _run_bridge_handler(
@@ -2276,10 +2276,9 @@ async def login_command(
             ephemeral=True,
         )
         return
-    disabled_auth_message = _svc_get_auth_onboarding_disabled_message()
-    if disabled_auth_message:
+    if not NEXUS_AUTH_ENABLED:
         await interaction.response.send_message(
-            disabled_auth_message,
+            "ℹ️ Auth onboarding is disabled in this environment.",
             ephemeral=True,
         )
         return
@@ -2500,9 +2499,8 @@ async def setup_status_command(interaction: discord.Interaction):
     status = _svc_get_setup_status(str(user.nexus_id))
     latest_login = _svc_get_latest_login_session_status(str(user.nexus_id))
     if not status.get("auth_enabled"):
-        disabled_auth_message = _svc_get_auth_onboarding_disabled_message()
         await interaction.response.send_message(
-            disabled_auth_message or "ℹ️ Auth onboarding is disabled in this environment.",
+            "ℹ️ Auth onboarding is disabled in this environment.",
             ephemeral=True,
         )
         return

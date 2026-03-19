@@ -42,7 +42,19 @@ Additional patterns demonstrated:
 - **Human approval gates** for deployments
 - **Error handling** and per-step timeout configuration
 
-### Loading a specific tier
+## social_media_marketing_workflow.yaml
+
+Marketing-oriented workflow for automated content planning, review, compliance,
+and publishing.
+
+This demonstrates:
+
+- Reusing the enterprise agent roster for a non-software workflow
+- Dry-run-first rollout for external platform publishing
+- Shared campaign context passed across design, implementation, review, and deploy
+- Requester-scoped credential expectations for OAuth-backed platform adapters
+
+### Loading a specific workflow
 
 ```python
 from nexus.core.workflow import WorkflowDefinition
@@ -56,6 +68,9 @@ context = WorkflowDefinition.to_prompt_context(
     current_agent_type="developer",
     workflow_type="full",
 )
+
+# Load the social marketing workflow definition
+marketing = WorkflowDefinition.from_yaml("social_media_marketing_workflow.yaml")
 ```
 
 ## Creating Your Own Workflow

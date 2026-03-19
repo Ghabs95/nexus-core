@@ -243,20 +243,6 @@ class TestGenerateCompletionInstructions:
         assert '"step_id": "triage"' in text
         assert '"step_num": 1' in text
 
-    def test_postgres_includes_filesystem_fallback_instructions(self):
-        text = generate_completion_instructions(
-            "119",
-            "developer",
-            "develop",
-            4,
-            completion_backend="postgres",
-            webhook_url="http://webhook:8081",
-        )
-        assert "If POST fails" in text
-        assert "completion_summary_119.json" in text
-        assert "fallback completion files are ingested automatically" in text
-        assert "Do NOT stop after a failed POST without writing fallback JSON" in text
-
     def test_completion_markdown_template_uses_json_newline_escape(self):
         text = generate_completion_instructions("1", "triage", "triage", 1)
         assert "\\\\n" not in text
@@ -306,7 +292,7 @@ class TestScanForCompletions:
         (completion_dir / "completion_summary_10.json").write_text(json.dumps(data))
 
         results = scan_for_completions(str(tmp_path))
-        assert results[0].dedup_key == "10:unknown-workflow:unknown-step:0:debug"
+        assert results[0].dedup_key == "10:unknown-workflow:unknown-step:debug"
 
     def test_uses_newest_completion_per_issue_across_paths(self, tmp_path):
         older_dir = tmp_path / ".nexus" / "tasks" / "project_a" / "completions"
@@ -369,35 +355,7 @@ class TestDetectedCompletion:
             issue_number="5",
             summary=s,
         )
-        assert d.dedup_key == "5:wf-5:build:0:design"
-
-    def test_dedup_key_includes_step_num_for_repeated_step_ids(self):
-        first = CompletionSummary(
-            agent_type="developer",
-            workflow_id="wf-119",
-            step_id="develop",
-            step_num=4,
-        )
-        second = CompletionSummary(
-            agent_type="developer",
-            workflow_id="wf-119",
-            step_id="develop",
-            step_num=6,
-        )
-
-        first_detected = DetectedCompletion(
-            file_path="/tmp/completion_summary_119.json",
-            issue_number="119",
-            summary=first,
-        )
-        second_detected = DetectedCompletion(
-            file_path="/tmp/completion_summary_119.json",
-            issue_number="119",
-            summary=second,
-        )
-
-        assert first_detected.dedup_key == "119:wf-119:develop:4:developer"
-        assert second_detected.dedup_key == "119:wf-119:develop:6:developer"
+        assert d.dedup_key == "5:wf-5:build:design"
 
 
 class _FakeCompletionStorage:
@@ -437,73 +395,5 @@ class TestCompletionStore:
         assert len(second) == 1
         second_key = second[0].dedup_key
 
-        assert first_key == "113:unknown-workflow:unknown-step:0:developer"
-        assert second_key == "113:unknown-workflow:unknown-step:0:developer"
-
-    def test_postgres_scan_includes_filesystem_fallback(self, tmp_path):
-        storage = _FakeCompletionStorage([])
-        completion_dir = tmp_path / ".nexus" / "tasks" / "nexus" / "completions"
-        completion_dir.mkdir(parents=True)
-        (completion_dir / "completion_summary_119.json").write_text(
-            json.dumps(
-                {
-                    "status": "complete",
-                    "agent_type": "developer",
-                    "step_id": "develop",
-                    "step_num": 4,
-                    "summary": "fallback",
-                    "next_agent": "reviewer",
-                }
-            )
-        )
-
-        store = CompletionStore(
-            backend="postgres",
-            storage=storage,
-            base_dir=str(tmp_path),
-            nexus_dir=".nexus",
-        )
-        detected = store.scan("119")
-        assert len(detected) == 1
-        assert detected[0].issue_number == "119"
-        assert detected[0].summary.agent_type == "developer"
-
-    def test_postgres_scan_dedups_db_and_filesystem_same_step(self, tmp_path):
-        row = {
-            "_db_id": 10,
-            "_issue_number": "119",
-            "_agent_type": "developer",
-            "issue_number": "119",
-            "agent_type": "developer",
-            "status": "complete",
-            "summary": "db",
-            "next_agent": "reviewer",
-            "step_id": "develop",
-            "step_num": 4,
-            "_updated_at": "2026-03-15T22:10:00.000000+00:00",
-        }
-        storage = _FakeCompletionStorage([row])
-        completion_dir = tmp_path / ".nexus" / "tasks" / "nexus" / "completions"
-        completion_dir.mkdir(parents=True)
-        (completion_dir / "completion_summary_119.json").write_text(
-            json.dumps(
-                {
-                    "status": "complete",
-                    "agent_type": "developer",
-                    "step_id": "develop",
-                    "step_num": 4,
-                    "summary": "filesystem",
-                    "next_agent": "reviewer",
-                }
-            )
-        )
-
-        store = CompletionStore(
-            backend="postgres",
-            storage=storage,
-            base_dir=str(tmp_path),
-            nexus_dir=".nexus",
-        )
-        detected = store.scan("119")
-        assert len(detected) == 1
-        assert detected[0].summary.summary == "db"
+        assert first_key == "113:unknown-workflow:unknown-step:developer"
+        assert second_key == "113:unknown-workflow:unknown-step:developer"

@@ -68,21 +68,13 @@ def _agent(agent_type: str) -> Agent:
     )
 
 
-def _step(
-    num: int,
-    step_id: str,
-    agent_type: str,
-    routes=None,
-    *,
-    on_success: str | None = None,
-) -> WorkflowStep:
+def _step(num: int, step_id: str, agent_type: str, routes=None) -> WorkflowStep:
     return WorkflowStep(
         step_num=num,
         name=step_id,
         agent=_agent(agent_type),
         prompt_template="do work",
         routes=routes or [],
-        on_success=on_success,
     )
 
 
@@ -93,7 +85,7 @@ def _make_workflow(workflow_id: str, steps: list[WorkflowStep]) -> Workflow:
         version="1.0",
         steps=steps,
         state=WorkflowState.RUNNING,
-        current_step=(steps[0].step_num if steps else 0),
+        current_step=1,
     )
     steps[0].status = StepStatus.RUNNING
     steps[0].started_at = datetime.now(UTC)
@@ -137,17 +129,7 @@ async def _complete(
     payload = dict(outputs or {})
     if running_step is not None:
         payload.setdefault("step_id", running_step.name)
-        metadata = dict(getattr(workflow, "metadata", {}) or {})
-        try:
-            execution_step_num = int(metadata.get("_nexus_current_execution_step_num", 0) or 0)
-        except (TypeError, ValueError):
-            execution_step_num = 0
-        execution_step_id = str(metadata.get("_nexus_current_execution_step_id", "") or "").strip()
-        if execution_step_num <= 0:
-            execution_step_num = running_step.step_num
-        elif execution_step_id and execution_step_id.lower() != str(running_step.name).lower():
-            execution_step_num = running_step.step_num
-        payload.setdefault("step_num", execution_step_num)
+        payload.setdefault("step_num", running_step.step_num)
     return await plugin.complete_step_for_issue(
         issue_number=issue_number,
         completed_agent_type=completed_agent_type,
@@ -385,37 +367,6 @@ async def test_complete_step_for_issue_routes_loop_back_to_develop():
     assert updated is not None
     assert updated.active_agent_type == "developer"
     assert develop.iteration == 1
-
-
-@pytest.mark.asyncio
-async def test_complete_step_for_issue_exposes_monotonic_step_num_across_loop():
-    """Execution step numbering should keep increasing even when step_id repeats."""
-    develop = _step(4, "develop", "developer", on_success="review")
-    review = _step(5, "review", "reviewer", on_success="develop")
-    wf = _make_workflow("wf-step-num-loop", [develop, review])
-    plugin, _ = await _plugin_with_workflow(wf, "step-num-loop")
-
-    status = await plugin.get_workflow_status("step-num-loop")
-    assert status is not None
-    assert status["current_step_id"] == "develop"
-    assert status["current_step_num"] == 4
-    assert status["current_step_def_num"] == 4
-
-    await _complete(plugin, "step-num-loop", "developer", {"summary": "impl"})
-
-    status = await plugin.get_workflow_status("step-num-loop")
-    assert status is not None
-    assert status["current_step_id"] == "review"
-    assert status["current_step_num"] == 5
-    assert status["current_step_def_num"] == 5
-
-    await _complete(plugin, "step-num-loop", "reviewer", {"summary": "changes requested"})
-
-    status = await plugin.get_workflow_status("step-num-loop")
-    assert status is not None
-    assert status["current_step_id"] == "develop"
-    assert status["current_step_num"] == 6
-    assert status["current_step_def_num"] == 4
 
 
 @pytest.mark.asyncio
@@ -706,7 +657,7 @@ async def test_reset_to_agent_for_issue_recovers_missing_workflow_from_mapping(t
 
 
 @pytest.mark.asyncio
-async def test_complete_step_for_issue_idempotency_duplicate_suppressed(tmp_path):
+async def test_complete_step_for_issue_idempotency_duplicate_suppressed(tmp_path, monkeypatch):
     """Calling complete_step_for_issue with a duplicate event_id must be a no-op.
 
     Simulates a re-delivered signal: after the first call advances the workflow,
@@ -719,6 +670,7 @@ async def test_complete_step_for_issue_idempotency_duplicate_suppressed(tmp_path
     plugin, _ = await _plugin_with_workflow(wf, "idem")
     ledger_path = str(tmp_path / "ledger.json")
     plugin.config["idempotency_ledger_path"] = ledger_path
+    monkeypatch.delenv("NEXUS_STORAGE_BACKEND", raising=False)
 
     # First call advances the workflow (step1 → COMPLETED, step2 → RUNNING).
     updated = await _complete(plugin, "idem", "triage", {}, event_id="ev-001")
@@ -737,7 +689,7 @@ async def test_complete_step_for_issue_idempotency_duplicate_suppressed(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_complete_step_for_issue_different_event_ids_advance_independently(tmp_path):
+async def test_complete_step_for_issue_different_event_ids_advance_independently(tmp_path, monkeypatch):
     """Two distinct event_ids for different steps should both advance normally."""
     step1 = _step(1, "triage", "triage")
     step2 = _step(2, "dev", "developer")
@@ -745,6 +697,7 @@ async def test_complete_step_for_issue_different_event_ids_advance_independently
     plugin, _ = await _plugin_with_workflow(wf, "idem2")
     ledger_path = str(tmp_path / "ledger2.json")
     plugin.config["idempotency_ledger_path"] = ledger_path
+    monkeypatch.delenv("NEXUS_STORAGE_BACKEND", raising=False)
 
     await _complete(plugin, "idem2", "triage", {}, event_id="ev-aaa")
     updated = await _complete(plugin, "idem2", "developer", {}, event_id="ev-bbb")

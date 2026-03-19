@@ -70,11 +70,7 @@ from nexus.core.project.issue_command_deps import (
 from nexus.core.project.key_utils import normalize_project_key_optional as _normalize_project_key
 from nexus.core.runtime.bridge import find_task_file_by_issue
 from nexus.core.runtime.bridge import get_retry_fuse_status
-from nexus.core.runtime.bridge import (
-    clear_issue_excluded_tools,
-    get_sop_tier_from_issue,
-    invoke_ai_agent,
-)
+from nexus.core.runtime.bridge import get_sop_tier_from_issue, invoke_ai_agent
 from nexus.core.runtime.bridge import workflow_pause_handler
 from nexus.core.runtime.bridge import workflow_resume_handler
 from nexus.core.runtime.bridge import workflow_stop_handler
@@ -571,7 +567,6 @@ def workflow_bridge_deps(*, allowed_user_ids, prompt_project_selection, ensure_p
         workflow_pause_handler=workflow_pause_handler,
         workflow_resume_handler=workflow_resume_handler,
         workflow_stop_handler=workflow_stop_handler,
-        clear_issue_excluded_tools=clear_issue_excluded_tools,
         requester_context_builder=lambda user_id: {
             "platform": "discord",
             "platform_user_id": str(user_id),
@@ -580,7 +575,7 @@ def workflow_bridge_deps(*, allowed_user_ids, prompt_project_selection, ensure_p
     )
 
 
-def feature_registry_bridge_deps(*, allowed_user_ids):
+def feature_registry_bridge_deps(*, allowed_user_ids, ensure_project=None):
     return FeatureRegistryCommandDeps(
         logger=logger,
         allowed_user_ids=allowed_user_ids,
@@ -588,6 +583,7 @@ def feature_registry_bridge_deps(*, allowed_user_ids):
         normalize_project_key=_normalize_project_key,
         get_project_label=_get_project_label,
         feature_registry=_get_feature_registry_service(),
+        ensure_project=ensure_project,
     )
 
 

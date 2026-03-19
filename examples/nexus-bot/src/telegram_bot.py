@@ -79,9 +79,6 @@ from nexus.core.auth import (
 from nexus.core.auth import (
     get_setup_status as _svc_get_setup_status,
 )
-from nexus.core.auth import (
-    get_auth_onboarding_disabled_message as _svc_get_auth_onboarding_disabled_message,
-)
 from nexus.core.auth import register_onboarding_message as _svc_register_onboarding_message
 from nexus.core.auth import (
     start_provider_account_login_for_nexus as _svc_start_provider_account_login_for_nexus,
@@ -324,11 +321,7 @@ from nexus.core.project.issue_command_deps import (
 from nexus.core.project.key_utils import normalize_project_key_optional as _normalize_project_key
 from nexus.core.report_scheduler import ReportScheduler
 from nexus.core.runtime.bridge import find_task_file_by_issue
-from nexus.core.runtime.bridge import (
-    clear_issue_excluded_tools,
-    get_sop_tier_from_issue,
-    invoke_ai_agent,
-)
+from nexus.core.runtime.bridge import get_sop_tier_from_issue, invoke_ai_agent
 from nexus.core.runtime.workflow_commands import (
     pause_handler as workflow_pause_handler,
 )
@@ -739,7 +732,6 @@ def _workflow_handler_deps() -> WorkflowHandlerDeps:
         workflow_pause_handler=workflow_pause_handler,
         workflow_resume_handler=workflow_resume_handler,
         workflow_stop_handler=workflow_stop_handler,
-        clear_issue_excluded_tools=clear_issue_excluded_tools,
         requester_context_builder=_requester_context_for_telegram_user_id,
     )
 
@@ -951,6 +943,7 @@ def _feature_registry_command_deps() -> FeatureRegistryCommandDeps:
         normalize_project_key=_normalize_project_key,
         get_project_label=_get_project_label,
         feature_registry=feature_registry_service,
+        ensure_project=_ctx_ensure_project,
     )
 
 
@@ -1229,7 +1222,6 @@ def _list_project_issues(
     project_key: str,
     state: str = "open",
     limit: int = 10,
-    command: str | None = None,
     requester_nexus_id: str | None = None,
 ) -> list[dict]:
     return _svc_list_project_issues(
@@ -1240,7 +1232,6 @@ def _list_project_issues(
         logger=logger,
         state=state,
         limit=limit,
-        command=command,
         requester_nexus_id=requester_nexus_id,
     )
 
@@ -1263,11 +1254,10 @@ async def _prompt_issue_selection(
         update=update,
         command=command,
         project_key=project_key,
-        list_project_issues=lambda key, state, limit=25, command=None: _list_project_issues(
+        list_project_issues=lambda key, state, limit=25: _list_project_issues(
             key,
             state=state,
             limit=limit,
-            command=command,
             requester_nexus_id=requester_nexus_id,
         ),
         get_project_label=_get_project_label,
@@ -1587,9 +1577,8 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    disabled_auth_message = _svc_get_auth_onboarding_disabled_message()
-    if disabled_auth_message:
-        await update.effective_message.reply_text(disabled_auth_message)
+    if not NEXUS_AUTH_ENABLED:
+        await update.effective_message.reply_text("ℹ️ Auth onboarding is disabled in this environment.")
         return
     if not NEXUS_PUBLIC_BASE_URL:
         await update.effective_message.reply_text(
@@ -1799,10 +1788,7 @@ async def setup_status_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     status = _svc_get_setup_status(str(user.nexus_id))
     latest_login = _svc_get_latest_login_session_status(str(user.nexus_id))
     if not status.get("auth_enabled"):
-        disabled_auth_message = _svc_get_auth_onboarding_disabled_message()
-        await update.effective_message.reply_text(
-            disabled_auth_message or "ℹ️ Auth onboarding is disabled in this environment."
-        )
+        await update.effective_message.reply_text("ℹ️ Auth onboarding is disabled in this environment.")
         return
 
     projects = status.get("projects") or []

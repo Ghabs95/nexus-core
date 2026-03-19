@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-from nexus.core.runtime.agent_launcher import (
-    clear_issue_excluded_tools,
-    clear_launch_guard,
-    get_sop_tier_from_issue,
-    invoke_ai_agent,
-)
+from nexus.core.runtime.agent_launcher import clear_launch_guard, get_sop_tier_from_issue, invoke_ai_agent
 from nexus.core.runtime.nexus_agent_runtime import get_retry_fuse_status
 from nexus.core.runtime.task_utils import find_task_file_by_issue
 from nexus.core.runtime.workflow_commands import pause_handler as workflow_pause_handler
@@ -16,7 +11,6 @@ from nexus.core.runtime.workflow_commands import stop_handler as workflow_stop_h
 
 __all__ = [
     "clear_launch_guard",
-    "clear_issue_excluded_tools",
     "find_task_file_by_issue",
     "get_retry_fuse_status",
     "get_sop_tier_from_issue",

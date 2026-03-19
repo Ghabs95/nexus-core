@@ -5,6 +5,7 @@ Core module for managing isolated workspaces via Git worktrees.
 import logging
 import os
 import re
+import shutil
 import subprocess
 import time
 from collections.abc import Callable
@@ -46,6 +47,44 @@ class WorkspaceManager:
         except Exception as exc:
             logger.warning("Could not determine worktree cleanliness for %s: %s", worktree_dir, exc)
             return False
+
+    @staticmethod
+    def _branch_exists(base_repo_path: str, branch_name: str, *, env: dict[str, str] | None = None) -> bool:
+        normalized = str(branch_name or "").strip()
+        if not normalized:
+            return False
+        try:
+            result = subprocess.run(
+                ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{normalized}"],
+                cwd=base_repo_path,
+                env=env,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    @staticmethod
+    def _remove_partial_worktree_dir(worktree_dir: str) -> None:
+        if not os.path.exists(worktree_dir):
+            return
+        if os.path.exists(os.path.join(worktree_dir, ".git")):
+            return
+        shutil.rmtree(worktree_dir, ignore_errors=True)
+
+    @staticmethod
+    def _fallback_branch_candidates(issue_number: str, branch_name: str):
+        issue_number_str = str(issue_number).strip()
+        primary = f"nexus/issue-{issue_number_str}"
+        normalized_branch = str(branch_name or "").strip()
+
+        if primary != normalized_branch:
+            yield primary
+
+        suffix = f"{primary}-wt"
+        yield suffix
+
+        for index in range(2, 26):
+            yield f"{suffix}-{index}"
 
     @staticmethod
     def is_worktree_clean(base_repo_path: str, issue_number: str) -> bool:
@@ -126,8 +165,6 @@ class WorkspaceManager:
                 logger.warning(
                     f"Invalid worktree found at {worktree_dir} (missing .git). Cleaning up."
                 )
-                import shutil
-
                 shutil.rmtree(worktree_dir, ignore_errors=True)
 
         os.makedirs(os.path.dirname(worktree_dir), exist_ok=True)
@@ -135,16 +172,11 @@ class WorkspaceManager:
         env = os.environ.copy()
 
         # Check if the branch already exists locally or remotely
-        branch_exists_locally = False
-        try:
-            result = subprocess.run(
-                ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}"],
-                cwd=base_repo_path,
-                env=env,
-            )
-            branch_exists_locally = result.returncode == 0
-        except Exception:
-            pass
+        branch_exists_locally = WorkspaceManager._branch_exists(
+            base_repo_path,
+            branch_name,
+            env=env,
+        )
 
         try:
             if branch_exists_locally:
@@ -180,46 +212,56 @@ class WorkspaceManager:
 
             # If the target branch is currently checked out in another worktree,
             # create a dedicated issue branch from it so we can still isolate work.
+            fallback_failures: list[str] = []
             if branch_exists_locally:
-                fallback_branch = f"nexus/issue-{issue_number_str}"
-                if fallback_branch == branch_name:
-                    fallback_branch = f"nexus/issue-{issue_number_str}-wt"
-                fallback_cmd = [
-                    "git",
-                    "worktree",
-                    "add",
-                    "-b",
-                    fallback_branch,
-                    worktree_dir,
+                for fallback_branch in WorkspaceManager._fallback_branch_candidates(
+                    issue_number_str,
                     branch_name,
-                ]
-                try:
-                    subprocess.run(
-                        fallback_cmd,
-                        cwd=base_repo_path,
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                        env=env,
-                    )
-                    logger.info(
-                        "Created worktree using fallback branch %s from %s",
+                ):
+                    if WorkspaceManager._branch_exists(base_repo_path, fallback_branch, env=env):
+                        continue
+
+                    WorkspaceManager._remove_partial_worktree_dir(worktree_dir)
+                    fallback_cmd = [
+                        "git",
+                        "worktree",
+                        "add",
+                        "-b",
                         fallback_branch,
+                        worktree_dir,
                         branch_name,
-                    )
-                    return worktree_dir
-                except subprocess.CalledProcessError as fallback_error:
-                    logger.error(
-                        "Fallback worktree provision failed for %s from %s: %s",
-                        fallback_branch,
-                        branch_name,
-                        getattr(fallback_error, "stderr", fallback_error),
-                    )
+                    ]
+                    try:
+                        subprocess.run(
+                            fallback_cmd,
+                            cwd=base_repo_path,
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                            env=env,
+                        )
+                        logger.info(
+                            "Created worktree using fallback branch %s from %s",
+                            fallback_branch,
+                            branch_name,
+                        )
+                        return worktree_dir
+                    except subprocess.CalledProcessError as fallback_error:
+                        fallback_stderr = str(getattr(fallback_error, "stderr", "") or fallback_error)
+                        fallback_failures.append(f"{fallback_branch}: {fallback_stderr}")
+                        logger.error(
+                            "Fallback worktree provision failed for %s from %s: %s",
+                            fallback_branch,
+                            branch_name,
+                            fallback_stderr,
+                        )
 
             message = (
                 f"Failed to provision isolated worktree for issue #{issue_number_str} "
                 f"(branch: {branch_name}): {stderr or 'unknown git error'}"
             )
+            if fallback_failures:
+                message = f"{message}; fallback attempts: {'; '.join(fallback_failures)}"
             logger.error(message)
             raise WorktreeProvisionError(message) from e
 

@@ -133,9 +133,9 @@ def test_existing_branch_checked_out_uses_fallback_issue_branch(tmp_path):
     def _fake_run(cmd, **kwargs):  # noqa: ANN001
         if cmd[:3] == ["git", "show-ref", "--verify"]:
             result = mock.MagicMock()
-            result.returncode = 0  # branch exists locally
             result.stdout = ""
             result.stderr = ""
+            result.returncode = 0 if cmd[-1] == "refs/heads/feat/my-feature" else 1
             return result
         if cmd[:4] == ["git", "worktree", "add", expected_dir]:
             raise subprocess.CalledProcessError(
@@ -169,6 +169,97 @@ def test_existing_branch_checked_out_uses_fallback_issue_branch(tmp_path):
         expected_dir,
         "feat/my-feature",
     ]
+
+
+def test_existing_branch_checked_out_uses_next_available_fallback_issue_branch(tmp_path):
+    base = str(tmp_path)
+    expected_dir = os.path.join(base, ".nexus", "worktrees", "issue-42")
+
+    def _fake_run(cmd, **kwargs):  # noqa: ANN001
+        if cmd[:3] == ["git", "show-ref", "--verify"]:
+            branch_ref = cmd[-1]
+            result = mock.MagicMock()
+            result.stdout = ""
+            result.stderr = ""
+            if branch_ref == "refs/heads/feat/my-feature":
+                result.returncode = 0
+                return result
+            if branch_ref == "refs/heads/nexus/issue-42":
+                result.returncode = 0
+                return result
+            if branch_ref == "refs/heads/nexus/issue-42-wt":
+                result.returncode = 1
+                return result
+        if cmd[:4] == ["git", "worktree", "add", expected_dir]:
+            raise subprocess.CalledProcessError(
+                128,
+                cmd,
+                stderr="fatal: 'feat/my-feature' is already checked out at '/repo'",
+            )
+        if cmd[:4] == ["git", "worktree", "add", "-b"]:
+            result = mock.MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            return result
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    with (
+        mock.patch("os.path.isdir", return_value=False),
+        mock.patch("os.makedirs"),
+        mock.patch("nexus.core.workspace.subprocess.run", side_effect=_fake_run) as mock_run,
+    ):
+        result = WorkspaceManager.provision_worktree(base, "42", branch_name="feat/my-feature")
+
+    assert result == expected_dir
+    last_cmd = mock_run.call_args_list[-1][0][0]
+    assert last_cmd == [
+        "git",
+        "worktree",
+        "add",
+        "-b",
+        "nexus/issue-42-wt",
+        expected_dir,
+        "feat/my-feature",
+    ]
+
+
+def test_existing_branch_checked_out_cleans_partial_dir_before_fallback(tmp_path):
+    base = str(tmp_path)
+    expected_dir = os.path.join(base, ".nexus", "worktrees", "issue-42")
+
+    def _fake_run(cmd, **kwargs):  # noqa: ANN001
+        if cmd[:3] == ["git", "show-ref", "--verify"]:
+            branch_ref = cmd[-1]
+            result = mock.MagicMock()
+            result.stdout = ""
+            result.stderr = ""
+            if branch_ref == "refs/heads/feat/my-feature":
+                result.returncode = 0
+                return result
+            if branch_ref == "refs/heads/nexus/issue-42":
+                result.returncode = 1
+                return result
+        if cmd[:4] == ["git", "worktree", "add", expected_dir]:
+            os.makedirs(expected_dir, exist_ok=True)
+            raise subprocess.CalledProcessError(
+                128,
+                cmd,
+                stderr="fatal: 'feat/my-feature' is already checked out at '/repo'",
+            )
+        if cmd[:4] == ["git", "worktree", "add", "-b"]:
+            assert not os.path.exists(expected_dir)
+            result = mock.MagicMock()
+            result.returncode = 0
+            result.stdout = ""
+            result.stderr = ""
+            return result
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    with mock.patch("nexus.core.workspace.subprocess.run", side_effect=_fake_run):
+        result = WorkspaceManager.provision_worktree(base, "42", branch_name="feat/my-feature")
+
+    assert result == expected_dir
 
 
 def test_provision_worktree_raises_when_initial_and_fallback_fail(tmp_path):

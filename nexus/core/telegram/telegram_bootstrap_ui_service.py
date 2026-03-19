@@ -1,6 +1,8 @@
 from typing import Any
 
 from nexus.core.command_visibility import is_command_visible
+from nexus.core.storage.capabilities import get_storage_capabilities
+
 
 def build_menu_keyboard(
     *,
@@ -17,6 +19,7 @@ def build_menu_keyboard(
 
 
 def build_help_text() -> str:
+    caps = get_storage_capabilities()
     monitoring_lines = [
         "/status [project|all] - View pending tasks in inbox",
         "/inboxq [limit] - Inspect inbox queue status (postgres mode)",
@@ -25,7 +28,7 @@ def build_help_text() -> str:
         "/tail <project> <issue#> [lines] [seconds] - Follow live log tail",
         "/tailstop - Stop current live tail session",
     ]
-    if is_command_visible("active"):
+    if caps.local_task_files:
         monitoring_lines.extend(
             [
                 "/active [project|all] [cleanup] - View tasks currently being worked on",

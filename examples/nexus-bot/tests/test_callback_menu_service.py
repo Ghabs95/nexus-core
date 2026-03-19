@@ -22,13 +22,13 @@ def test_menu_section_text_unknown():
 
 def test_menu_section_text_monitor_hides_filesystem_commands(monkeypatch):
     monkeypatch.setattr(
-        "nexus.core.callbacks.callback_menu_service.is_command_visible",
-        lambda command: command != "active",
+        "nexus.core.callbacks.callback_menu_service.get_storage_capabilities",
+        lambda: type("Caps", (), {"local_task_files": False})(),
     )
     text = menu_section_text("monitor")
     assert "/active" not in text
-    assert "/logs " in text
-    assert "/tail " in text
+    assert "/logs " not in text
+    assert "/tail " not in text
     assert "/status" in text
     assert "/audit" in text
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from nexus.core.utils.log_utils import log_unauthorized_access
 
@@ -19,6 +19,7 @@ class FeatureRegistryCommandDeps:
     normalize_project_key: Callable[[str | None], str | None]
     get_project_label: Callable[[str], str]
     feature_registry: Any
+    ensure_project: Callable[[InteractiveContext, str], Awaitable[str | None]] | None = None
 
 
 def _resolve_project_and_rest(
@@ -49,6 +50,12 @@ async def feature_done_handler(ctx: InteractiveContext, deps: FeatureRegistryCom
             "⚠️ Feature registry is disabled (`NEXUS_FEATURE_REGISTRY_ENABLED=false`)."
         )
         return
+
+    if not ctx.args and callable(deps.ensure_project):
+        selected_project = await deps.ensure_project(ctx, "feature_done")
+        if not selected_project:
+            return
+        ctx.args = [selected_project]
 
     project_key, rest = _resolve_project_and_rest(
         ctx.args,
@@ -94,6 +101,12 @@ async def feature_list_handler(ctx: InteractiveContext, deps: FeatureRegistryCom
         )
         return
 
+    if not ctx.args and callable(deps.ensure_project):
+        selected_project = await deps.ensure_project(ctx, "feature_list")
+        if not selected_project:
+            return
+        ctx.args = [selected_project]
+
     project_key, rest = _resolve_project_and_rest(
         ctx.args,
         iter_project_keys=deps.iter_project_keys,
@@ -134,6 +147,12 @@ async def feature_forget_handler(ctx: InteractiveContext, deps: FeatureRegistryC
             "⚠️ Feature registry is disabled (`NEXUS_FEATURE_REGISTRY_ENABLED=false`)."
         )
         return
+
+    if not ctx.args and callable(deps.ensure_project):
+        selected_project = await deps.ensure_project(ctx, "feature_forget")
+        if not selected_project:
+            return
+        ctx.args = [selected_project]
 
     project_key, rest = _resolve_project_and_rest(
         ctx.args,

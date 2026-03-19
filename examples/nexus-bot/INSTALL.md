@@ -196,10 +196,6 @@ NEXUS_HOST_STATE_BACKEND=postgres
 NEXUS_STORAGE_DSN=postgresql://nexus:your_password@127.0.0.1:5432/nexus
 BASE_DIR=/home/ubuntu/git
 NEXUS_RUNTIME_DIR=/var/lib/nexus
-LOGS_DIR=/var/lib/nexus/logs
-NEXUS_UID=1000
-NEXUS_GID=1000
-NEXUS_HOME_DIR=/var/lib/nexus/home
 
 # === Redis: Chat memory ===
 REDIS_URL=redis://localhost:6379/0
@@ -216,7 +212,6 @@ docker compose up -d
 ```
 
 This starts five services (`telegram`, `discord`, `processor`, `webhook`, `health`) as containers.
-By default they now run as `1000:1000` instead of `root`; override `NEXUS_UID` and `NEXUS_GID` in `.env` if your host user uses different IDs.
 
 ### Run with systemd (Production)
 

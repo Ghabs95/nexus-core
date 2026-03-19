@@ -9,6 +9,7 @@ import urllib.parse
 from datetime import UTC, datetime
 
 from nexus.adapters.git.base import Comment, GitPlatform, Issue, PullRequest
+from nexus.adapters.git.local_checkout_guard import ensure_safe_local_checkout
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +203,9 @@ class GitLabCLIPlatform(GitPlatform):
 
     async def create_pr_from_changes(self, repo_dir: str, issue_number: str, title: str, body: str, issue_repo: str | None = None, base_branch: str = "main", branch_prefix: str = "nexus") -> PullRequest | None:
         import re as _re
+
+        if not ensure_safe_local_checkout(repo_dir, issue_number=str(issue_number)):
+            return None
 
         issue_repo_ref = (issue_repo or self._repo or "").strip()
         same_repo_issue = not issue_repo_ref or issue_repo_ref == self._repo

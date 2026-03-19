@@ -313,31 +313,6 @@ def _allow_env_token_fallback_default() -> bool:
     return not _env_bool("NEXUS_AUTH_ENABLED", False)
 
 
-def _service_git_token(
-    *,
-    platform_type: str,
-    preferred_var: str,
-) -> str:
-    token_var_candidates = [preferred_var]
-    if platform_type == "gitlab":
-        token_var_candidates.extend(
-            ["GITLAB_TOKEN", "GLAB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"]
-        )
-    else:
-        token_var_candidates.extend(
-            ["GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN", "GLAB_TOKEN"]
-        )
-
-    for token_var_name in token_var_candidates:
-        name = str(token_var_name or "").strip()
-        if not name:
-            continue
-        token = str(os.getenv(name, "")).strip()
-        if token:
-            return token
-    return ""
-
-
 def get_git_platform(
     repo: str = None,
     project_name: str = None,
@@ -361,21 +336,14 @@ def get_git_platform(
     ).strip().lower() in {"1", "true", "yes", "on"}
     override_token = str(token_override or "").strip()
     token = override_token
-    should_fallback = (
-        _allow_env_token_fallback_default()
-        if allow_env_token_fallback is None
-        else bool(allow_env_token_fallback)
-    )
     if not token and not auth_is_enabled:
+        should_fallback = (
+            _allow_env_token_fallback_default()
+            if allow_env_token_fallback is None
+            else bool(allow_env_token_fallback)
+        )
         if should_fallback:
-            token = (
-                _service_git_token(
-                    platform_type=platform_type,
-                    preferred_var=token_var,
-                )
-                if allow_service_token_fallback
-                else ""
-            )
+            token = str((os.getenv(token_var, "")).strip() if allow_service_token_fallback else "")
 
     if platform_type == "gitlab":
         platform_cls = resolve_git_platform_class("gitlab")
@@ -390,7 +358,7 @@ def get_git_platform(
             base_url=get_gitlab_base_url(project_key),
         )
 
-    if not token and (auth_is_enabled or not should_fallback or not allow_service_token_fallback):
+    if auth_is_enabled and not token:
         raise ValueError(
             f"GitHub token required for project '{project_key}'. "
             "Provide requester-scoped token_override."

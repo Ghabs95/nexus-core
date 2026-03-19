@@ -422,48 +422,6 @@ def _persist_issue_excluded_tools(issue_num: str, tools: list[str]) -> None:
     HostStateManager.save_launched_agents(launched_agents)
 
 
-def clear_issue_excluded_tools(issue_num: str, tools: list[str] | None = None) -> bool:
-    """Clear persisted issue-level excluded tools.
-
-    Args:
-        issue_num: Issue identifier.
-        tools: Optional subset to clear. When omitted, clears all exclusions.
-
-    Returns:
-        True when persisted state changed, otherwise False.
-    """
-    issue_key = str(issue_num or "").strip()
-    if not issue_key or issue_key == "unknown":
-        return False
-
-    launched_agents = HostStateManager.load_launched_agents(recent_only=False)
-    entry = launched_agents.get(issue_key)
-    if not isinstance(entry, dict):
-        return False
-
-    existing = _merge_excluded_tools(entry.get("exclude_tools", []))
-    if not existing:
-        return False
-
-    if tools:
-        clear_set = set(_merge_excluded_tools(tools))
-        remaining = [tool for tool in existing if tool not in clear_set]
-    else:
-        remaining = []
-
-    if remaining == existing:
-        return False
-
-    updated = dict(entry)
-    if remaining:
-        updated["exclude_tools"] = remaining
-    else:
-        updated.pop("exclude_tools", None)
-    launched_agents[issue_key] = updated
-    HostStateManager.save_launched_agents(launched_agents)
-    return True
-
-
 def _read_tail(path: str, max_chars: int = 4000) -> str:
     try:
         with open(path, encoding="utf-8", errors="replace") as handle:
@@ -590,6 +548,37 @@ def _extract_completion_payload_from_log_text(
     agent_type: str,
 ) -> dict | None:
     """Best-effort extraction of completion JSON printed by an agent CLI."""
+
+    def _looks_like_instruction_template(value: object) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        lowered = text.lower()
+        markers = (
+            "<one-line summary of what you did>",
+            "<finding 1>",
+            "<finding 2>",
+            "<step name>",
+            "<agent_type from workflow steps",
+            "@<display name>",
+            "<placeholder>",
+        )
+        return any(marker in lowered for marker in markers)
+
+    def _is_template_payload(candidate: dict) -> bool:
+        if _looks_like_instruction_template(candidate.get("summary")):
+            return True
+        if _looks_like_instruction_template(candidate.get("next_agent")):
+            return True
+        if _looks_like_instruction_template(candidate.get("comment_markdown")):
+            return True
+        findings = candidate.get("key_findings")
+        if isinstance(findings, list):
+            for item in findings:
+                if _looks_like_instruction_template(item):
+                    return True
+        return False
+
     expected_issue = str(issue_num or "").strip()
     expected_agent = _normalize_agent_reference(agent_type)
     latest_match: dict | None = None
@@ -612,6 +601,8 @@ def _extract_completion_payload_from_log_text(
             continue
 
         if "summary" not in candidate and "comment_markdown" not in candidate:
+            continue
+        if _is_template_payload(candidate):
             continue
 
         payload = dict(candidate)
@@ -655,6 +646,8 @@ def _recover_completion_from_agent_log(
     issue_url: str = "",
 ) -> str | None:
     """Recover completion payload from agent stdout log when POST was not executed."""
+    if not is_postgres_backend(NEXUS_STORAGE_BACKEND):
+        return None
     if not log_path or not os.path.exists(log_path):
         return None
 
@@ -736,12 +729,6 @@ def _recover_completion_from_agent_log(
             if exact_body_required and body_norm_expected in body_norm:
                 return True
 
-            # When we have a concrete markdown body, avoid weak step-id/step-num
-            # dedupe. Reprocess/rerun can legitimately post a richer updated
-            # comment for the same step identity.
-            if exact_body_required:
-                continue
-
             if step_id_re.search(body) and step_num_re.search(body):
                 return True
         return False
@@ -786,27 +773,20 @@ def _recover_completion_from_agent_log(
 
     try:
         from nexus.core.completion_store import CompletionStore
-
-        backend = "postgres" if is_postgres_backend(NEXUS_STORAGE_BACKEND) else "filesystem"
-        storage = None
-        if backend == "postgres":
-            from nexus.core.integrations.workflow_state_factory import get_storage_backend
-
-            storage = get_storage_backend()
+        from nexus.core.integrations.workflow_state_factory import get_storage_backend
 
         store = CompletionStore(
-            backend=backend,
-            storage=storage,
+            backend="postgres",
+            storage=get_storage_backend(),
             base_dir=BASE_DIR,
             nexus_dir=get_nexus_dir_name(),
         )
         dedup_key = store.save(str(issue_num), str(agent_type), payload)
         logger.warning(
-            "Recovered completion payload from %s log for issue #%s (%s) backend=%s dedup=%s",
+            "Recovered completion payload from %s log for issue #%s (%s) dedup=%s",
             tool_name,
             issue_num,
             agent_type,
-            backend,
             dedup_key,
         )
         comment_ok = _post_recovered_completion_comment(payload)
@@ -855,42 +835,28 @@ def _start_completion_recovery_watchdog(
             launched = HostStateManager.load_launched_agents(recent_only=False)
             current = launched.get(str(issue_num), {})
             current_pid = int((current or {}).get("pid", 0) or 0) if isinstance(current, dict) else 0
-            tracked_pid_matches = current_pid == int(pid)
+            if current_pid != int(pid):
+                return
 
             if _pid_alive(pid):
-                # Another PID replaced this issue while the original process is still live.
-                # In this case the old run is no longer authoritative.
-                if not tracked_pid_matches:
-                    return
                 time.sleep(0.8)
                 continue
 
             # Give the log tee thread a short flush window.
             time.sleep(1.0)
-            workspaces: list[str] = []
-            for candidate in (workspace_dir, BASE_DIR, os.getcwd()):
-                normalized = str(candidate or "").strip()
-                if normalized and normalized not in workspaces:
-                    workspaces.append(normalized)
-
-            log_path = ""
-            for root in workspaces:
+            log_path = _find_latest_agent_log(
+                workspace_dir,
+                project_key,
+                str(issue_num),
+                tool_name=str(tool_name or "*"),
+            )
+            if not log_path:
                 log_path = _find_latest_agent_log(
-                    root,
-                    project_key,
-                    str(issue_num),
-                    tool_name=str(tool_name or "*"),
-                )
-                if log_path:
-                    break
-                log_path = _find_latest_agent_log(
-                    root,
+                    workspace_dir,
                     project_key,
                     str(issue_num),
                     tool_name="*",
                 )
-                if log_path:
-                    break
 
             dedup_key = _recover_completion_from_agent_log(
                 issue_num=str(issue_num),
@@ -1838,10 +1804,7 @@ def _resolve_issue_step_context(issue_url: str) -> tuple[str, int]:
         or status.get("current_step_name")
         or ""
     ).strip()
-    step_num_raw = status.get(
-        "current_execution_step_num",
-        status.get("current_step_num", status.get("current_step")),
-    )
+    step_num_raw = status.get("current_step_num", status.get("current_step"))
     try:
         step_num = int(step_num_raw)
     except (TypeError, ValueError):
@@ -2088,14 +2051,14 @@ def invoke_ai_agent(
                 issue_repo_slug=issue_repo_slug,
                 fallback_repo_dir=worktree_base_repo,
             )
+            if not worktree_targets:
+                logger.warning(
+                    "Skipping worktree provisioning for issue %s: no git repositories resolved "
+                    "(base=%s)",
+                    issue_num,
+                    worktree_base_repo,
+                )
             try:
-                if not worktree_targets:
-                    raise WorktreeProvisionError(
-                        "Required isolated worktree could not be resolved: "
-                        f"project={project_name or log_subdir or 'nexus'} "
-                        f"issue_repo={issue_repo_slug or 'unknown'} "
-                        f"base={worktree_base_repo}"
-                    )
                 provisioned_paths: dict[str, str] = {}
                 failures: dict[str, str] = {}
                 for target_repo, target_repo_dir in worktree_targets.items():

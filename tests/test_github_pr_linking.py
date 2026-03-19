@@ -14,7 +14,7 @@ class TestPRAutoLinking:
             return GitHubPlatform("owner/repo")
 
     @staticmethod
-    def _fake_git_run(feature_branch: str = "main"):
+    def _fake_git_run(feature_branch: str = "main", *, linked_worktree: bool = True):
         def fake_run(cmd, **kwargs):
             m = MagicMock()
             m.returncode = 0
@@ -24,6 +24,13 @@ class TestPRAutoLinking:
                 subcmd = cmd[1] if len(cmd) > 1 else ""
                 if subcmd == "rev-parse" and "--is-inside-work-tree" in cmd:
                     m.stdout = "true\n"
+                elif subcmd == "rev-parse" and "--absolute-git-dir" in cmd:
+                    if linked_worktree:
+                        m.stdout = "/tmp/repo/.git/worktrees/issue-42\n"
+                    else:
+                        m.stdout = "/tmp/repo/.git\n"
+                elif subcmd == "rev-parse" and "--git-common-dir" in cmd:
+                    m.stdout = "/tmp/repo/.git\n"
                 elif subcmd == "diff":
                     m.stdout = " file.py | 2 +-\n"
                 elif subcmd == "rev-parse" and "--abbrev-ref" in cmd:
@@ -189,6 +196,24 @@ class TestPRAutoLinking:
                     body="Body",
                 )
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_rejects_primary_checkout_for_local_pr_creation(self, platform, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        mock_post = AsyncMock()
+
+        with patch("subprocess.run", side_effect=self._fake_git_run(linked_worktree=False)):
+            with patch.object(platform, "_post", mock_post):
+                result = await platform.create_pr_from_changes(
+                    repo_dir=str(repo),
+                    issue_number="42",
+                    title="fix: worktree support",
+                    body="Body",
+                )
+
+        assert result is None
+        mock_post.assert_not_awaited()
 
 
 @pytest.mark.asyncio

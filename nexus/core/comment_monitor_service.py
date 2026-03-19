@@ -45,21 +45,14 @@ def run_comment_monitor_cycle(
     """Monitor issue comments and notify on agent blockers/questions."""
     loop_scope = "agent-comments:loop"
 
-    def _is_nonfatal_poll_error(exc: Exception) -> bool:
+    def _is_authz_error(exc: Exception) -> bool:
         text = str(exc or "").lower()
         return (
             " 401" in text
             or " 403" in text
-            or " 404" in text
-            or "404:" in text
             or "unauthorized" in text
             or "forbidden" in text
-            or "access denied" in text
-            or "token required" in text
-            or "token_override" in text
-            or "no requester token available" in text
             or "requester token" in text
-            or "not found" in text
         )
 
     try:
@@ -89,9 +82,9 @@ def run_comment_monitor_cycle(
                     all_issue_nums.append((issue_number, project_name, repo))
                 clear_polling_failures(list_scope)
             except Exception as exc:
-                if _is_nonfatal_poll_error(exc):
+                if _is_authz_error(exc):
                     logger.warning(
-                        "Skipping issue polling for project %s due to non-fatal remote access/setup error: %s",
+                        "Skipping issue polling for project %s due to access denial: %s",
                         project_name,
                         exc,
                     )
@@ -113,9 +106,9 @@ def run_comment_monitor_cycle(
                 bot_comments = get_bot_comments(project_name, repo, str(issue_num))
                 clear_polling_failures(comments_scope)
             except Exception as exc:
-                if _is_nonfatal_poll_error(exc):
+                if _is_authz_error(exc):
                     logger.warning(
-                        "Skipping comment polling for project %s issue #%s due to non-fatal remote access/setup error: %s",
+                        "Skipping comment polling for project %s issue #%s due to access denial: %s",
                         project_name,
                         issue_num,
                         exc,

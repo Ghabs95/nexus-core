@@ -61,7 +61,6 @@ class WorkflowHandlerDeps:
     workflow_resume_handler: Callable[[InteractiveContext], Awaitable[None]]
     workflow_stop_handler: Callable[[InteractiveContext], Awaitable[None]]
     requester_context_builder: Callable[[int], dict[str, Any]] | None = None
-    clear_issue_excluded_tools: Callable[[str], bool] | None = None
 
 
 async def reprocess_handler(

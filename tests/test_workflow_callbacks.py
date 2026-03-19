@@ -558,3 +558,31 @@ class TestMultiTierWorkflow:
         # Last non-router step should be deployer
         non_router = [s for s in wf.steps if s.agent.name != "router"]
         assert non_router[-1].agent.name == "deployer"
+
+    def test_social_media_marketing_workflow_loads(self):
+        """Smoke test: load the social media marketing workflow example."""
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "examples", "workflows", "social_media_marketing_workflow.yaml"
+        )
+        if not os.path.exists(path):
+            pytest.skip("social media marketing workflow not found")
+
+        wf = WorkflowDefinition.from_yaml(path)
+        non_router = [step for step in wf.steps if step.agent.name != "router"]
+
+        assert [step.agent.name for step in non_router] == [
+            "triage",
+            "designer",
+            "developer",
+            "reviewer",
+            "compliance",
+            "deployer",
+            "writer",
+            "finalizer",
+        ]
+        assert WorkflowDefinition.resolve_next_agents(path, "developer") == ["reviewer"]
+        assert set(WorkflowDefinition.resolve_next_agents(path, "reviewer")) == {
+            "compliance",
+            "developer",
+            "finalizer",
+        }

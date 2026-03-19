@@ -67,8 +67,6 @@ async def test_build_telegram_interactive_ctx_reply_text_uses_message():
     )
     message_id = await ctx.reply_text("hi", buttons=[["ignored"]], parse_mode=None)
     assert message_id == "123"
-    assert ctx.platform == "telegram"
-    assert ctx.platform_user_id == "7"
     assert captured["text"] == "hi"
     assert captured["kwargs"]["reply_markup"] == "markup"
 

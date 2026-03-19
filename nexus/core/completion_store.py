@@ -88,27 +88,7 @@ class CompletionStore:
         returned.
         """
         if self._backend == "postgres":
-            # Postgres is canonical, but keep filesystem scan as a resilience path
-            # for agents that could not reach the completion webhook endpoint.
-            detected: list[DetectedCompletion] = []
-            detected.extend(self._scan_postgres(issue_number))
-
-            if self._base_dir:
-                fs_detected = scan_for_completions(self._base_dir, nexus_dir=self._nexus_dir)
-                if issue_number:
-                    fs_detected = [c for c in fs_detected if c.issue_number == str(issue_number)]
-                detected.extend(fs_detected)
-
-            merged: list[DetectedCompletion] = []
-            seen_keys: set[str] = set()
-            for item in detected:
-                key = str(item.dedup_key or "").strip()
-                if key and key in seen_keys:
-                    continue
-                if key:
-                    seen_keys.add(key)
-                merged.append(item)
-            return merged
+            return self._scan_postgres(issue_number)
 
         # Filesystem: delegate to existing scanner
         all_completions = scan_for_completions(self._base_dir, nexus_dir=self._nexus_dir)

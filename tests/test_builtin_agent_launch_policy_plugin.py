@@ -276,20 +276,20 @@ def test_designer_prompt_includes_alignment_output_contract():
     assert "alignment_score" in prompt
 
 
-def test_continuation_prompt_forbids_manual_branch_checkout_and_creation():
+def test_continuation_prompt_forbids_manual_branch_checkout():
     plugin = AgentLaunchPolicyPlugin()
     prompt = plugin.build_agent_prompt(
-        issue_url="https://github.com/org/repo/issues/12",
+        issue_url="https://github.com/org/repo/issues/13",
         tier_name="full",
         task_content="Continue implementation",
         agent_type="developer",
         continuation=True,
-        continuation_prompt="You are @developer. Continue from the existing worktree.",
+        continuation_prompt="You are @Developer continuing the task.",
         workflow_path="",
         nexus_dir=".nexus",
     )
 
+    assert "Do not run `git checkout <target-branch>`" in prompt
+    assert "NEVER run `git checkout <branch>`, `git switch <branch>`" in prompt
     assert "git checkout develop && git pull && git checkout -b <branch-name>" not in prompt
     assert "git checkout main && git pull && git checkout -b <branch-name>" not in prompt
-    assert "Use only the Nexus-provisioned workspace and branch for this issue." in prompt
-    assert "NEVER run `git checkout <branch>`" in prompt

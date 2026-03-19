@@ -7,6 +7,7 @@ import subprocess
 from datetime import UTC, datetime
 
 from nexus.adapters.git.base import Comment, GitPlatform, Issue, PullRequest
+from nexus.adapters.git.local_checkout_guard import ensure_safe_local_checkout
 
 logger = logging.getLogger(__name__)
 
@@ -394,6 +395,8 @@ class GitHubPlatform(GitPlatform):
         )
         if git_repo_probe.returncode != 0:
             logger.warning(f"Not a git repo: {repo_dir}")
+            return None
+        if not ensure_safe_local_checkout(repo_dir, issue_number=str(issue_number)):
             return None
 
         issue_repo_ref = (issue_repo or self.repo or "").strip()
