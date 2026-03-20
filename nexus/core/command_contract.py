@@ -109,6 +109,25 @@ REQUIRED_PARITY_COMMANDS: set[str] = {
 }
 
 
+OPENCLAW_BRIDGE_COMMANDS: set[str] = {
+    "active",
+    "agents",
+    "audit",
+    "continue",
+    "implement",
+    "logs",
+    "pause",
+    "plan",
+    "prepare",
+    "respond",
+    "resume",
+    "stats",
+    "status",
+    "stop",
+    "wfstate",
+}
+
+
 PLATFORM_COMMANDS: dict[str, set[str]] = {
     "telegram": TELEGRAM_COMMANDS,
     "discord": DISCORD_COMMANDS,

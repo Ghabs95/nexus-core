@@ -10,6 +10,7 @@ TELEGRAM_BOOTSTRAP_FILE = REPO_ROOT / "nexus" / "core" / "telegram" / "telegram_
 TELEGRAM_BOT_FILE = REPO_ROOT / "examples" / "nexus-bot" / "src" / "telegram_bot.py"
 DISCORD_BOT_FILE = REPO_ROOT / "examples" / "nexus-bot" / "src" / "discord_bot.py"
 INTERACTIVE_AGENT_FILE = REPO_ROOT / "examples" / "nexus-bot" / "src" / "interactive_agent.py"
+COMMAND_ROUTER_FILE = REPO_ROOT / "nexus" / "core" / "command_bridge" / "router.py"
 
 TELEGRAM_FRONTEND_ONLY_COMMANDS = {
     "login",
@@ -145,6 +146,8 @@ def _extract_registered_plugin_commands(path: Path) -> list[str]:
             continue
         if not isinstance(node.func, ast.Attribute) or node.func.attr != "register_command":
             continue
+        if not isinstance(node.func.value, ast.Name) or node.func.value.id != "plugin":
+            continue
         if not node.args:
             continue
         command = _str_constant(node.args[0])
@@ -178,5 +181,5 @@ def test_discord_command_surface_matches_contract_and_frontend_extras():
 
 
 def test_centralized_interactive_command_surface_matches_expected_bridge_commands():
-    actual = _extract_registered_plugin_commands(INTERACTIVE_AGENT_FILE)
+    actual = _extract_registered_plugin_commands(COMMAND_ROUTER_FILE)
     _assert_command_surface_matches(actual, CENTRALIZED_INTERACTIVE_COMMANDS)

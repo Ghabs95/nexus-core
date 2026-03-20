@@ -1,13 +1,12 @@
 import asyncio
 import logging
 import signal
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from nexus.adapters.notifications.interactive import InteractiveClientPlugin
 from nexus.adapters.registry import AdapterRegistry
-from nexus.core.command_visibility import is_command_visible
+from nexus.core.command_bridge import CommandRouter
 from nexus.core.config.bootstrap import initialize_runtime
-from nexus.core.interactive.context import InteractiveContext
 
 # Setup logging
 logging.basicConfig(
@@ -22,52 +21,6 @@ from nexus.core.config import ORCHESTRATOR_CONFIG, PROJECT_CONFIG
 # Centralized dependency injection factories
 from dependencies import (
     get_hands_free_routing_handler_deps,
-    get_issue_handler_deps,
-    get_monitoring_handler_deps,
-    get_ops_handler_deps,
-    get_workflow_handler_deps,
-)
-from nexus.core.handlers.chat_command_handlers import (
-    chat_agents_handler,
-    chat_menu_handler,
-)
-from nexus.core.handlers.issue_command_handlers import (
-    assign_handler,
-    comments_handler,
-    implement_handler,
-    myissues_handler,
-    plan_handler,
-    prepare_handler,
-    respond_handler,
-    track_handler,
-    tracked_handler,
-    untrack_handler,
-)
-from nexus.core.handlers.monitoring_command_handlers import (
-    active_handler,
-    fuse_handler,
-    logs_handler,
-    logsfull_handler,
-    status_handler,
-    tail_handler,
-    tailstop_handler,
-)
-from nexus.core.handlers.ops_command_handlers import (
-    agents_handler,
-    audit_handler,
-    direct_handler,
-    stats_handler,
-)
-from nexus.core.handlers.workflow_command_handlers import (
-    continue_handler,
-    forget_handler,
-    kill_handler,
-    pause_handler,
-    reconcile_handler,
-    reprocess_handler,
-    resume_handler,
-    stop_handler,
-    wfstate_handler,
 )
 from nexus.core.orchestration.ai_orchestrator import get_orchestrator
 
@@ -111,9 +64,10 @@ async def main() -> None:
         return
 
     # 4. Bind unified handlers to all loaded plugins
+    command_router = CommandRouter(default_source_platform="telegram")
     for client_id, plugin in plugins.items():
         logger.info(f"Binding handlers for client: {client_id}")
-        _bind_handlers(plugin)
+        _bind_handlers(plugin, command_router)
 
     # 5. Handle shutdown elegantly
     loop = asyncio.get_running_loop()
@@ -160,107 +114,11 @@ async def main() -> None:
                 logger.error(f"Error stopping plugin {client_id}: {e}")
 
 
-def _bind_handlers(plugin: InteractiveClientPlugin) -> None:
+def _bind_handlers(plugin: InteractiveClientPlugin, command_router: CommandRouter) -> None:
     """Bind all platform-agnostic handlers to a specific plugin instance."""
 
-    # Resolve dependencies once per plugin
-    workflow_deps = get_workflow_handler_deps()
-    monitoring_deps = get_monitoring_handler_deps()
-    issue_deps = get_issue_handler_deps()
-    ops_deps = get_ops_handler_deps()
     routing_deps = get_hands_free_routing_handler_deps()
-
-    def _build_ctx(
-        attachments: list[Any] | None = None,
-        *,
-        user_id: str,
-        text: str,
-        args: list[str] | None,
-        raw_event: Any,
-    ) -> InteractiveContext:
-        return InteractiveContext(
-            client=plugin,
-            user_id=str(user_id),
-            text=str(text or ""),
-            args=list(args or []),
-            raw_event=raw_event,
-            user_state={},
-            attachments=attachments,
-        )
-
-    def _wrap_command_handler(
-        handler: Callable[..., Awaitable[None]],
-        deps: Any | None = None,
-    ) -> Callable[..., Awaitable[None]]:
-        async def _callback(
-            *,
-            user_id: str,
-            text: str,
-            context: list[str] | None = None,
-            raw_event: Any = None,
-            **_kwargs: Any,
-        ) -> None:
-            attachments = _kwargs.get("attachments")
-            ctx = _build_ctx(
-                user_id=user_id,
-                text=text,
-                args=context,
-                raw_event=raw_event,
-                attachments=attachments,
-            )
-            if deps is None:
-                await handler(ctx)
-                return
-            await handler(ctx, deps)
-
-        return _callback
-
-    # Chat Commands
-    plugin.register_command("chat", _wrap_command_handler(chat_menu_handler))
-    plugin.register_command("chatagents", _wrap_command_handler(chat_agents_handler))
-
-    # Issue Commands
-    plugin.register_command("assign", _wrap_command_handler(assign_handler, issue_deps))
-    plugin.register_command("comments", _wrap_command_handler(comments_handler, issue_deps))
-    plugin.register_command("implement", _wrap_command_handler(implement_handler, issue_deps))
-    plugin.register_command("myissues", _wrap_command_handler(myissues_handler, issue_deps))
-    plugin.register_command("plan", _wrap_command_handler(plan_handler, issue_deps))
-    plugin.register_command("prepare", _wrap_command_handler(prepare_handler, issue_deps))
-    plugin.register_command("respond", _wrap_command_handler(respond_handler, issue_deps))
-    plugin.register_command("track", _wrap_command_handler(track_handler, issue_deps))
-    plugin.register_command("tracked", _wrap_command_handler(tracked_handler, issue_deps))
-    plugin.register_command("untrack", _wrap_command_handler(untrack_handler, issue_deps))
-
-    # Monitoring Commands
-    if is_command_visible("active"):
-        plugin.register_command("active", _wrap_command_handler(active_handler, monitoring_deps))
-    plugin.register_command("fuse", _wrap_command_handler(fuse_handler, monitoring_deps))
-    if is_command_visible("logs"):
-        plugin.register_command("logs", _wrap_command_handler(logs_handler, monitoring_deps))
-    if is_command_visible("logsfull"):
-        plugin.register_command("logsfull", _wrap_command_handler(logsfull_handler, monitoring_deps))
-    plugin.register_command("status", _wrap_command_handler(status_handler, monitoring_deps))
-    if is_command_visible("tail"):
-        plugin.register_command("tail", _wrap_command_handler(tail_handler, monitoring_deps))
-    if is_command_visible("tailstop"):
-        plugin.register_command("tailstop", _wrap_command_handler(tailstop_handler, monitoring_deps))
-
-    # Ops Commands
-    plugin.register_command("agents", _wrap_command_handler(agents_handler, ops_deps))
-    plugin.register_command("audit", _wrap_command_handler(audit_handler, ops_deps))
-    plugin.register_command("direct", _wrap_command_handler(direct_handler, ops_deps))
-    plugin.register_command("stats", _wrap_command_handler(stats_handler, ops_deps))
-
-    # Workflow Control Commands
-    plugin.register_command("continue", _wrap_command_handler(continue_handler, workflow_deps))
-    plugin.register_command("forget", _wrap_command_handler(forget_handler, workflow_deps))
-    plugin.register_command("kill", _wrap_command_handler(kill_handler, workflow_deps))
-    plugin.register_command("pause", _wrap_command_handler(pause_handler, workflow_deps))
-    plugin.register_command("reconcile", _wrap_command_handler(reconcile_handler, workflow_deps))
-    plugin.register_command("reprocess", _wrap_command_handler(reprocess_handler, workflow_deps))
-    plugin.register_command("resume", _wrap_command_handler(resume_handler, workflow_deps))
-    plugin.register_command("stop", _wrap_command_handler(stop_handler, workflow_deps))
-    plugin.register_command("wfstate", _wrap_command_handler(wfstate_handler, workflow_deps))
+    command_router.bind_plugin(plugin)
 
     # Catch-all text message handler
     from nexus.core.handlers.inbox_routing_handler import route_hands_free_text
@@ -273,11 +131,13 @@ def _bind_handlers(plugin: InteractiveClientPlugin) -> None:
         **_kwargs: Any,
     ) -> None:
         attachments = _kwargs.get("attachments")
-        ctx = _build_ctx(
-            user_id=user_id,
-            text=text,
+        ctx = command_router.build_context(
+            client=plugin,
+            user_id=str(user_id or ""),
+            text=str(text or ""),
             args=[],
             raw_event=raw_event,
+            user_state={},
             attachments=attachments,
         )
         await route_hands_free_text(ctx, routing_deps)

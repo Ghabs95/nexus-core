@@ -1,0 +1,46 @@
+{
+  "id": "nexus-arc-command",
+  "name": "Nexus ARC Command Bridge",
+  "description": "Adds a /nexus command that forwards requests to a Nexus ARC command bridge.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "bridgeUrl": {
+        "type": "string",
+        "minLength": 1
+      },
+      "authToken": {
+        "type": "string"
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 120000
+      },
+      "sourcePlatform": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "uiHints": {
+    "bridgeUrl": {
+      "label": "Nexus Bridge URL",
+      "placeholder": "http://127.0.0.1:8091"
+    },
+    "authToken": {
+      "label": "Nexus Bridge Token",
+      "sensitive": true
+    },
+    "timeoutMs": {
+      "label": "Timeout (ms)",
+      "placeholder": "15000"
+    },
+    "sourcePlatform": {
+      "label": "Source Platform",
+      "placeholder": "openclaw"
+    }
+  }
+}

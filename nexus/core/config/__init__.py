@@ -155,6 +155,22 @@ NEXUS_WEBHOOK_INTERNAL_URL = str(
     os.getenv("NEXUS_WEBHOOK_INTERNAL_URL", f"http://127.0.0.1:{WEBHOOK_PORT}")
 ).strip().rstrip("/")
 
+# --- COMMAND BRIDGE CONFIGURATION ---
+NEXUS_COMMAND_BRIDGE_ENABLED = _env_bool("NEXUS_COMMAND_BRIDGE_ENABLED", False)
+NEXUS_COMMAND_BRIDGE_HOST = str(os.getenv("NEXUS_COMMAND_BRIDGE_HOST", "127.0.0.1")).strip()
+NEXUS_COMMAND_BRIDGE_PORT = _get_int_env("NEXUS_COMMAND_BRIDGE_PORT", 8091)
+NEXUS_COMMAND_BRIDGE_AUTH_TOKEN = str(os.getenv("NEXUS_COMMAND_BRIDGE_AUTH_TOKEN", "")).strip()
+NEXUS_COMMAND_BRIDGE_ALLOWED_SOURCES = [
+    str(value).strip().lower()
+    for value in _parse_csv_list("NEXUS_COMMAND_BRIDGE_ALLOWED_SOURCES")
+    if str(value).strip()
+]
+NEXUS_COMMAND_BRIDGE_ALLOWED_SENDER_IDS = [
+    str(value).strip()
+    for value in _parse_csv_list("NEXUS_COMMAND_BRIDGE_ALLOWED_SENDER_IDS")
+    if str(value).strip()
+]
+
 # --- AUTH / CREDENTIALS CONFIGURATION ---
 NEXUS_AUTH_ENABLED = str(os.getenv("NEXUS_AUTH_ENABLED", "false")).strip().lower() in {
     "1",
