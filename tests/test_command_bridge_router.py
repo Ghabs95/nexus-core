@@ -209,6 +209,16 @@ async def test_get_workflow_status_includes_usage(
     assert payload["usage"]["input_tokens"] == 90
 
 
+def test_get_capabilities_reports_bridge_enabled_commands(router: CommandRouter):
+    capabilities = router.get_capabilities()
+
+    assert capabilities["ok"] is True
+    assert capabilities["route_enabled"] is True
+    assert "plan" in capabilities["supported_commands"]
+    assert "wfstate" in capabilities["supported_commands"]
+    assert "plan" in capabilities["long_running_commands"]
+
+
 @pytest.mark.asyncio
 async def test_execute_usage_command_returns_usage_summary(
     router: CommandRouter, monkeypatch: pytest.MonkeyPatch

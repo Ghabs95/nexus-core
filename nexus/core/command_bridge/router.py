@@ -502,6 +502,22 @@ class CommandRouter:
         }
         return payload
 
+    def get_capabilities(self) -> dict[str, Any]:
+        supported = sorted(
+            command_name
+            for command_name, spec in self._command_registry.items()
+            if spec.bridge_enabled and command_name in OPENCLAW_BRIDGE_COMMANDS
+        )
+        long_running = sorted(command for command in supported if command in _LONG_RUNNING_COMMANDS)
+        return {
+            "ok": True,
+            "version": "v1",
+            "route_enabled": True,
+            "supported_commands": supported,
+            "long_running_commands": long_running,
+            "clarification_hint": self._clarification_message(),
+        }
+
     def _plugin_callback(
         self, plugin: InteractiveClientPlugin, command_name: str
     ) -> Callable[..., Awaitable[None]]:

@@ -22,6 +22,40 @@
       "sourcePlatform": {
         "type": "string",
         "minLength": 1
+      },
+      "defaultProject": {
+        "type": "string",
+        "minLength": 1
+      },
+      "renderMode": {
+        "type": "string",
+        "enum": [
+          "text",
+          "rich"
+        ]
+      },
+      "sessionMemory": {
+        "type": "boolean"
+      },
+      "requireConfirmFor": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "autoPollAccepted": {
+        "type": "boolean"
+      },
+      "acceptedPollDelayMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 120000
+      },
+      "acceptedPollAttempts": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 10
       }
     }
   },
@@ -41,6 +75,31 @@
     "sourcePlatform": {
       "label": "Source Platform",
       "placeholder": "openclaw"
+    },
+    "defaultProject": {
+      "label": "Default Project",
+      "placeholder": "demo"
+    },
+    "renderMode": {
+      "label": "Render Mode",
+      "placeholder": "rich"
+    },
+    "sessionMemory": {
+      "label": "Remember Session Context"
+    },
+    "requireConfirmFor": {
+      "label": "Commands Requiring Confirmation"
+    },
+    "autoPollAccepted": {
+      "label": "Poll Accepted Workflows"
+    },
+    "acceptedPollDelayMs": {
+      "label": "Accepted Poll Delay (ms)",
+      "placeholder": "1500"
+    },
+    "acceptedPollAttempts": {
+      "label": "Accepted Poll Attempts",
+      "placeholder": "1"
     }
   }
 }

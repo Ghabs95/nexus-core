@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --test"
+    "test": "node --test src/index.test.ts"
   },
   "devDependencies": {
     "typescript": "^5.8.2"

@@ -25,7 +25,10 @@ Recommended plugin config:
           defaultProject: "demo",
           renderMode: "rich",
           sessionMemory: true,
-          requireConfirmFor: ["implement", "respond", "stop"]
+          requireConfirmFor: ["implement", "respond", "stop"],
+          autoPollAccepted: true,
+          acceptedPollDelayMs: 1500,
+          acceptedPollAttempts: 1
         }
       }
     }
@@ -44,12 +47,15 @@ openclaw config validate
 Examples:
 
 - `/nexus help`
+- `/nexus health`
 - `/nexus current`
 - `/nexus use demo`
 - `/nexus usage demo#42`
+- `/nexus usage #42`
 - `/nexus refresh`
 - `/nexus status demo`
 - `/nexus new demo investigate flaky retries`
+- `/nexus plan demo 42`
 - `/nexus plan demo#42`
 - `/nexus track demo#42`
 - `/nexus tracked`
@@ -59,12 +65,14 @@ Examples:
 - `/nexus resume demo#42`
 - `/nexus stop demo#42`
 - `/nexus logs demo#42`
+- `/nexus wfstate demo-42-full`
 - `/nexus show me the workflow state for demo#42`
 
 The plugin now forwards richer bridge metadata with each request:
 
 - requester identity: `operator_id`, `session_id`, `roles`
-- session hints: `context.current_project`, `context.current_issue_ref`
+- requester metadata: raw args, message id, thread id, attachment summaries
+- session hints: `context.current_project`, `context.current_issue_ref`, `context.current_workflow_id`
 - client metadata: `client.plugin_version`, `client.render_mode`
 
 It also keeps per-session local context in memory so `/nexus use <project>` and
@@ -79,3 +87,10 @@ When the Nexus bridge returns `usage` metadata, the plugin renders provider,
 model, token, and estimated cost details directly in the OpenClaw response.
 The bridge now fills that field on a best-effort basis from recent completion
 storage or the latest agent log for the referenced issue/workflow.
+
+Additional bridge-aware behavior:
+
+- `/nexus help` tries to render the live bridge command catalog from `/api/v1/capabilities`
+- `/nexus health` checks `/healthz` and reports config warnings
+- accepted long-running commands can poll the workflow status endpoint once before replying
+- bridge auth, allowlist, timeout, and connectivity failures render as distinct user-facing errors

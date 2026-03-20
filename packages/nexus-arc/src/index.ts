@@ -1,5 +1,5 @@
 const PLUGIN_ID = "nexus-arc";
-const PLUGIN_VERSION = "0.1.0";
+const PLUGIN_VERSION = "0.2.0";
 
 type PluginConfig = {
     bridgeUrl?: string;
@@ -10,6 +10,9 @@ type PluginConfig = {
     renderMode?: string;
     sessionMemory?: boolean;
     requireConfirmFor?: string[];
+    autoPollAccepted?: boolean;
+    acceptedPollDelayMs?: number;
+    acceptedPollAttempts?: number;
 };
 
 type CommandHandlerContext = {
@@ -17,9 +20,12 @@ type CommandHandlerContext = {
     senderName?: string;
     channel?: string;
     channelId?: string;
+    threadId?: string;
+    messageId?: string;
     isAuthorizedSender?: boolean;
     args?: string;
     commandBody?: string;
+    attachments?: unknown[];
     config?: Record<string, unknown>;
 };
 
@@ -83,6 +89,11 @@ type RequesterPayload = {
     access_groups: string[];
     metadata: {
         command_body: string;
+        raw_args: string;
+        message_id: string;
+        thread_id: string;
+        attachments_count: number;
+        attachments: Array<Record<string, unknown>>;
     };
 };
 
@@ -106,9 +117,47 @@ type WorkflowStatusPayload = {
     project_key?: string | null;
     status?: Record<string, unknown>;
     usage?: NexusCommandResult["usage"];
+    error?: string;
+    error_code?: string;
 };
 
-const SUPPORTED_COMMANDS = [
+type BridgeCapabilitiesPayload = {
+    ok?: boolean;
+    version?: string;
+    route_enabled?: boolean;
+    supported_commands?: string[];
+    long_running_commands?: string[];
+    clarification_hint?: string;
+};
+
+type ParsedInvocation = {
+    command: string;
+    args: string[];
+    freeform: string;
+    explicitCommand: boolean;
+};
+
+type BridgeErrorOptions = {
+    status?: number;
+    code?: string;
+    cause?: unknown;
+};
+
+export class BridgeRequestError extends Error {
+    status: number | null;
+    code: string;
+    cause?: unknown;
+
+    constructor(message: string, options: BridgeErrorOptions = {}) {
+        super(message);
+        this.name = "BridgeRequestError";
+        this.status = typeof options.status === "number" ? options.status : null;
+        this.code = stringValue(options.code) || "bridge_error";
+        this.cause = options.cause;
+    }
+}
+
+const STATIC_SUPPORTED_COMMANDS = [
     "status",
     "active",
     "logs",
@@ -132,8 +181,28 @@ const SUPPORTED_COMMANDS = [
     "stats"
 ] as const;
 
-const LOCAL_COMMANDS = ["current", "use", "confirm", "cancel", "refresh"] as const;
+const LOCAL_COMMANDS = ["current", "use", "confirm", "cancel", "refresh", "help", "health"] as const;
+const HELP_TOKENS = new Set(["help", "--help", "-h", "?"]);
+const ISSUE_SCOPED_COMMANDS = new Set([
+    "logs",
+    "wfstate",
+    "usage",
+    "new",
+    "plan",
+    "prepare",
+    "implement",
+    "respond",
+    "track",
+    "tracked",
+    "untrack",
+    "pause",
+    "resume",
+    "stop",
+    "continue"
+]);
 const CONFIRMATION_TTL_MS = 2 * 60 * 1000;
+const warnedConfigKeys = new Set<string>();
+const capabilitiesCache = new Map<string, BridgeCapabilitiesPayload>();
 const sessionStateStore = new Map<string, SessionState>();
 const pendingConfirmations = new Map<string, PendingConfirmation>();
 
@@ -159,7 +228,10 @@ function resolvePluginConfig(ctx: CommandHandlerContext): Required<PluginConfig>
         requireConfirmFor:
             stringArrayValue(pluginConfig.requireConfirmFor).length > 0
                 ? stringArrayValue(pluginConfig.requireConfirmFor)
-                : ["implement", "respond", "stop"]
+                : ["implement", "respond", "stop"],
+        autoPollAccepted: booleanValue(pluginConfig.autoPollAccepted) ?? true,
+        acceptedPollDelayMs: numberValue(pluginConfig.acceptedPollDelayMs) ?? 1500,
+        acceptedPollAttempts: numberValue(pluginConfig.acceptedPollAttempts) ?? 1
     };
 }
 
@@ -182,28 +254,85 @@ function stringArrayValue(value: unknown): string[] {
     return value.map(stringValue).filter(Boolean);
 }
 
-function tokenizeArgs(rawArgs: string | undefined): string[] {
-    return String(rawArgs ?? "")
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean);
+export function tokenizeInput(rawArgs: string | undefined): string[] {
+    const input = String(rawArgs ?? "").trim();
+    if (!input) {
+        return [];
+    }
+    const tokens: string[] = [];
+    let current = "";
+    let quote: "'" | '"' | "" = "";
+    let escaping = false;
+    for (const char of input) {
+        if (escaping) {
+            current += char;
+            escaping = false;
+            continue;
+        }
+        if (char === "\\") {
+            escaping = true;
+            continue;
+        }
+        if (quote) {
+            if (char === quote) {
+                quote = "";
+            } else {
+                current += char;
+            }
+            continue;
+        }
+        if (char === "'" || char === '"') {
+            quote = char;
+            continue;
+        }
+        if (/\s/.test(char)) {
+            if (current) {
+                tokens.push(current);
+                current = "";
+            }
+            continue;
+        }
+        current += char;
+    }
+    if (current) {
+        tokens.push(current);
+    }
+    return tokens;
 }
 
-function parseNexusInvocation(rawArgs: string | undefined): {
-    command: string;
-    args: string[];
-    freeform: string;
-} {
+function normalizeSupportedCommands(capabilities?: BridgeCapabilitiesPayload): string[] {
+    const fromBridge = Array.isArray(capabilities?.supported_commands)
+        ? capabilities?.supported_commands?.map(stringValue).filter(Boolean)
+        : [];
+    return fromBridge.length > 0 ? fromBridge : [...STATIC_SUPPORTED_COMMANDS];
+}
+
+export function parseNexusInvocation(
+    rawArgs: string | undefined,
+    capabilities?: BridgeCapabilitiesPayload
+): ParsedInvocation {
     const freeform = String(rawArgs ?? "").trim();
-    const tokens = tokenizeArgs(rawArgs);
+    const tokens = tokenizeInput(rawArgs);
     if (tokens.length === 0) {
-        return {command: "", args: [], freeform: ""};
+        return {command: "", args: [], freeform: "", explicitCommand: false};
     }
-    const [command, ...args] = tokens;
+    const supportedCommands = new Set(normalizeSupportedCommands(capabilities));
+    const localCommands = new Set(LOCAL_COMMANDS);
+    const [first, ...rest] = tokens;
+    const normalized = first.toLowerCase();
+    if (supportedCommands.has(normalized) || localCommands.has(normalized) || HELP_TOKENS.has(normalized)) {
+        return {
+            command: HELP_TOKENS.has(normalized) ? "help" : normalized,
+            args: rest,
+            freeform,
+            explicitCommand: true
+        };
+    }
     return {
-        command: command.toLowerCase(),
-        args,
-        freeform
+        command: "",
+        args: [],
+        freeform,
+        explicitCommand: false
     };
 }
 
@@ -215,16 +344,22 @@ function buildScopedIdentity(parts: Array<string | undefined>, fallback: string)
     return value || fallback;
 }
 
-function parseIssueRef(value: string): { projectKey: string; issueRef: string } | null {
+function parseIssueRef(value: string): { projectKey: string; issueRef: string; issueNumber: string } | null {
     const trimmed = String(value ?? "").trim();
-    const match = /^([A-Za-z0-9_.-]+)#(.+)$/.exec(trimmed);
-    if (!match) {
+    const match = /^([A-Za-z0-9_.-]+)#(?<issue>\d+)$/.exec(trimmed);
+    if (!match?.groups?.issue) {
         return null;
     }
     return {
         projectKey: match[1],
-        issueRef: trimmed
+        issueRef: trimmed,
+        issueNumber: match.groups.issue
     };
+}
+
+function parseBareIssue(value: string): string | null {
+    const match = /^#?(?<issue>\d+)$/.exec(String(value ?? "").trim());
+    return match?.groups?.issue ? match.groups.issue : null;
 }
 
 function buildIssueRef(projectKey: string | null | undefined, issueNumber: string | null | undefined): string | null {
@@ -234,6 +369,65 @@ function buildIssueRef(projectKey: string | null | undefined, issueNumber: strin
         return null;
     }
     return `${normalizedProjectKey}#${normalizedIssueNumber}`;
+}
+
+function looksLikeWorkflowId(value: string): boolean {
+    const trimmed = stringValue(value);
+    if (!trimmed) {
+        return false;
+    }
+    if (parseIssueRef(trimmed) || parseBareIssue(trimmed)) {
+        return false;
+    }
+    return /[-:_]/.test(trimmed) || /^[A-Za-z][A-Za-z0-9._-]{5,}$/.test(trimmed);
+}
+
+function normalizeIssueScopedArgs(
+    command: string,
+    args: string[],
+    sessionState: SessionState,
+    config: Required<PluginConfig>
+): string[] {
+    if (!command) {
+        return [];
+    }
+    const normalized = [...args];
+    if (normalized.length === 0) {
+        return normalized;
+    }
+    const firstIssueRef = parseIssueRef(normalized[0]);
+    if (firstIssueRef) {
+        return [firstIssueRef.projectKey, firstIssueRef.issueNumber, ...normalized.slice(1)];
+    }
+    if (normalized.length >= 2) {
+        const secondIssue = parseBareIssue(normalized[1]);
+        if (secondIssue) {
+            return [normalized[0], secondIssue, ...normalized.slice(2)];
+        }
+    }
+    const firstIssue = parseBareIssue(normalized[0]);
+    if (firstIssue && ISSUE_SCOPED_COMMANDS.has(command)) {
+        const projectKey = sessionState.currentProject || config.defaultProject;
+        if (projectKey) {
+            return [projectKey, firstIssue, ...normalized.slice(1)];
+        }
+    }
+    return normalized;
+}
+
+export function normalizeInvocationArgs(
+    parsed: ParsedInvocation,
+    sessionState: SessionState,
+    config: Required<PluginConfig>
+): ParsedInvocation {
+    if (!parsed.command) {
+        return parsed;
+    }
+    const normalizedArgs = normalizeIssueScopedArgs(parsed.command, parsed.args, sessionState, config);
+    return {
+        ...parsed,
+        args: normalizedArgs
+    };
 }
 
 function getSessionState(sessionId: string): SessionState {
@@ -250,6 +444,13 @@ function setSessionState(sessionId: string, nextState: SessionState): void {
     sessionStateStore.set(sessionId, nextState);
 }
 
+function normalizeAttachment(value: unknown): Record<string, unknown> {
+    if (isRecord(value)) {
+        return value;
+    }
+    return {value: String(value ?? "")};
+}
+
 function getRequesterContext(
     ctx: CommandHandlerContext,
     config: Required<PluginConfig>
@@ -257,6 +458,7 @@ function getRequesterContext(
     const senderId = String(ctx.senderId ?? "");
     const channelName = String(ctx.channel ?? "");
     const channelId = String(ctx.channelId ?? "");
+    const attachments = Array.isArray(ctx.attachments) ? ctx.attachments.map(normalizeAttachment) : [];
     const operatorId = buildScopedIdentity(
         [config.sourcePlatform, channelName || "unknown", senderId || channelId],
         `${config.sourcePlatform}:operator`
@@ -278,26 +480,43 @@ function getRequesterContext(
         roles: ["operator"],
         access_groups: [],
         metadata: {
-            command_body: String(ctx.commandBody ?? "")
+            command_body: String(ctx.commandBody ?? ""),
+            raw_args: String(ctx.args ?? ""),
+            message_id: String(ctx.messageId ?? ""),
+            thread_id: String(ctx.threadId ?? ""),
+            attachments_count: attachments.length,
+            attachments
         }
     };
 }
 
-function inferCommandContext(
-    parsed: ReturnType<typeof parseNexusInvocation>,
+export function inferCommandContext(
+    parsed: ParsedInvocation,
     sessionState: SessionState,
     config: Required<PluginConfig>
 ): Record<string, unknown> {
     const context: Record<string, unknown> = {
         current_project: sessionState.currentProject || config.defaultProject || null,
         current_workflow_id: sessionState.currentWorkflowId,
-        current_issue_ref: sessionState.currentIssueRef
+        current_issue_ref: sessionState.currentIssueRef,
+        metadata: {}
     };
     const firstArg = parsed.args[0] ?? "";
-    const issueRef = parseIssueRef(firstArg);
-    if (issueRef) {
-        context.current_project = issueRef.projectKey;
-        context.current_issue_ref = issueRef.issueRef;
+    const secondArg = parsed.args[1] ?? "";
+    const firstIssueRef = parseIssueRef(firstArg);
+    if (firstIssueRef) {
+        context.current_project = firstIssueRef.projectKey;
+        context.current_issue_ref = firstIssueRef.issueRef;
+        return context;
+    }
+    const secondIssue = parseBareIssue(secondArg);
+    if (firstArg && secondIssue) {
+        context.current_project = firstArg;
+        context.current_issue_ref = `${firstArg}#${secondIssue}`;
+        return context;
+    }
+    if (parsed.command === "wfstate" && looksLikeWorkflowId(firstArg)) {
+        context.current_workflow_id = firstArg;
         return context;
     }
     if (firstArg && parsed.command === "status") {
@@ -306,8 +525,8 @@ function inferCommandContext(
     return context;
 }
 
-function isBoundedBridgeCommand(command: string): boolean {
-    return new Set(SUPPORTED_COMMANDS).has(command as (typeof SUPPORTED_COMMANDS)[number]);
+function isBoundedBridgeCommand(command: string, capabilities?: BridgeCapabilitiesPayload): boolean {
+    return new Set(normalizeSupportedCommands(capabilities)).has(command);
 }
 
 function renderCurrentState(sessionState: SessionState, config: Required<PluginConfig>): string {
@@ -319,7 +538,7 @@ function renderCurrentState(sessionState: SessionState, config: Required<PluginC
 }
 
 function handleLocalCommand(
-    parsed: ReturnType<typeof parseNexusInvocation>,
+    parsed: ParsedInvocation,
     sessionState: SessionState,
     sessionId: string,
     config: Required<PluginConfig>
@@ -349,20 +568,19 @@ function handleLocalCommand(
     return null;
 }
 
-function isRiskyCommand(
-    command: string,
-    config: Required<PluginConfig>
-): boolean {
+function isRiskyCommand(command: string, config: Required<PluginConfig>): boolean {
     return new Set(config.requireConfirmFor).has(command);
 }
 
 function buildBridgeRequest(
-    parsed: ReturnType<typeof parseNexusInvocation>,
+    parsed: ParsedInvocation,
     requester: RequesterPayload,
     context: Record<string, unknown>,
-    client: Record<string, unknown>
+    client: Record<string, unknown>,
+    attachments: unknown[],
+    capabilities?: BridgeCapabilitiesPayload
 ): PendingConfirmation {
-    const bounded = parsed.command && isBoundedBridgeCommand(parsed.command);
+    const bounded = parsed.command && isBoundedBridgeCommand(parsed.command, capabilities);
     return bounded
         ? {
             path: "/api/v1/commands/execute",
@@ -372,7 +590,8 @@ function buildBridgeRequest(
                 raw_text: parsed.freeform,
                 requester,
                 context,
-                client
+                client,
+                attachments
             },
             summary: `${parsed.command} ${parsed.args.join(" ")}`.trim(),
             createdAt: Date.now()
@@ -383,7 +602,8 @@ function buildBridgeRequest(
                 raw_text: parsed.freeform,
                 requester,
                 context,
-                client
+                client,
+                attachments
             },
             summary: parsed.freeform,
             createdAt: Date.now()
@@ -427,24 +647,27 @@ function updateSessionStateFromResult(
     });
 }
 
-function renderHelpText(): string {
+function renderHelpText(capabilities?: BridgeCapabilitiesPayload): string {
+    const supported = normalizeSupportedCommands(capabilities);
     return [
         "Nexus ARC bridge commands:",
-        SUPPORTED_COMMANDS.join(", "),
+        supported.join(", "),
         "",
         "Local session commands:",
-        LOCAL_COMMANDS.join(", "),
+        [...LOCAL_COMMANDS].join(", "),
         "",
         "Examples:",
         "/nexus current",
         "/nexus use demo",
         "/nexus usage demo#42",
+        "/nexus usage #42",
+        "/nexus health",
         "/nexus refresh",
         "/nexus status demo",
-        "/nexus new demo investigate agent launch retries",
-        "/nexus plan demo#42",
+        '/nexus new demo "investigate agent launch retries"',
+        "/nexus plan demo 42",
         "/nexus implement demo#42",
-        "/nexus logs demo#42",
+        "/nexus wfstate demo-42-full",
         "/nexus show me the workflow state for demo#42",
         "",
         "You can also use freeform requests and the plugin will try to route them.",
@@ -452,86 +675,28 @@ function renderHelpText(): string {
     ].join("\n");
 }
 
-async function callBridge(
-    path: string,
-    payload: Record<string, unknown>,
-    config: Required<PluginConfig>
-): Promise<NexusCommandResult> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
-
-    try {
-        const headers: Record<string, string> = {
-            "content-type": "application/json"
-        };
-        if (config.authToken) {
-            headers.authorization = `Bearer ${config.authToken}`;
-        }
-
-        const response = await fetch(`${config.bridgeUrl}${path}`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify(payload),
-            signal: controller.signal
-        });
-
-        const responseText = await response.text();
-        const parsed = responseText ? safeJsonParse(responseText) : {};
-
-        if (!response.ok) {
-            const errorMessage =
-                isRecord(parsed) && typeof parsed.error === "string"
-                    ? parsed.error
-                    : `HTTP ${response.status}`;
-            throw new Error(errorMessage);
-        }
-
-        if (!isRecord(parsed) || typeof parsed.message !== "string") {
-            throw new Error("Bridge returned an invalid response");
-        }
-
-        return parsed as NexusCommandResult;
-    } finally {
-        clearTimeout(timer);
+function summarizeConfigWarnings(config: Required<PluginConfig>): string[] {
+    const warnings: string[] = [];
+    if (!config.bridgeUrl) {
+        warnings.push("Bridge URL is not configured.");
     }
+    if (!config.authToken) {
+        warnings.push("Bridge auth token is not configured.");
+    }
+    return warnings;
 }
 
-async function callBridgeGet(
-    path: string,
-    config: Required<PluginConfig>
-): Promise<WorkflowStatusPayload> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
-
-    try {
-        const headers: Record<string, string> = {};
-        if (config.authToken) {
-            headers.authorization = `Bearer ${config.authToken}`;
-        }
-
-        const response = await fetch(`${config.bridgeUrl}${path}`, {
-            method: "GET",
-            headers,
-            signal: controller.signal
-        });
-        const responseText = await response.text();
-        const parsed = responseText ? safeJsonParse(responseText) : {};
-
-        if (!response.ok) {
-            const errorMessage =
-                isRecord(parsed) && typeof parsed.error === "string"
-                    ? parsed.error
-                    : `HTTP ${response.status}`;
-            throw new Error(errorMessage);
-        }
-
-        if (!isRecord(parsed)) {
-            throw new Error("Bridge returned an invalid workflow status response");
-        }
-        return parsed as WorkflowStatusPayload;
-    } finally {
-        clearTimeout(timer);
+function maybeWarnConfig(config: Required<PluginConfig>): void {
+    const warnings = summarizeConfigWarnings(config);
+    if (warnings.length === 0) {
+        return;
     }
+    const cacheKey = `${config.bridgeUrl}|${config.authToken ? "token" : "no-token"}`;
+    if (warnedConfigKeys.has(cacheKey)) {
+        return;
+    }
+    warnedConfigKeys.add(cacheKey);
+    console.warn(`[${PLUGIN_ID}] ${warnings.join(" ")}`);
 }
 
 function safeJsonParse(value: string): unknown {
@@ -540,6 +705,129 @@ function safeJsonParse(value: string): unknown {
     } catch {
         return {};
     }
+}
+
+async function fetchJson(
+    path: string,
+    config: Required<PluginConfig>,
+    init: {
+        method: "GET" | "POST";
+        body?: Record<string, unknown>;
+    }
+): Promise<{ status: number; payload: Record<string, unknown> }> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+
+    try {
+        const headers: Record<string, string> = {};
+        if (init.body) {
+            headers["content-type"] = "application/json";
+        }
+        if (config.authToken) {
+            headers.authorization = `Bearer ${config.authToken}`;
+        }
+        let response: Response;
+        try {
+            response = await fetch(`${config.bridgeUrl}${path}`, {
+                method: init.method,
+                headers,
+                body: init.body ? JSON.stringify(init.body) : undefined,
+                signal: controller.signal
+            });
+        } catch (error) {
+            if (error instanceof Error && error.name === "AbortError") {
+                throw new BridgeRequestError(
+                    `Nexus bridge timed out after ${config.timeoutMs} ms.`,
+                    {code: "bridge_timeout", cause: error}
+                );
+            }
+            throw new BridgeRequestError(
+                "Could not reach the Nexus bridge. Check the bridge URL and network path.",
+                {code: "bridge_unreachable", cause: error}
+            );
+        }
+
+        const responseText = await response.text();
+        const parsed = responseText ? safeJsonParse(responseText) : {};
+        const payload = isRecord(parsed) ? parsed : {};
+        if (!response.ok) {
+            const errorMessage =
+                typeof payload.error === "string" && payload.error
+                    ? payload.error
+                    : `HTTP ${response.status}`;
+            throw new BridgeRequestError(errorMessage, {
+                status: response.status,
+                code: stringValue(payload.error_code) || `http_${response.status}`
+            });
+        }
+        return {status: response.status, payload};
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function callBridge(
+    path: string,
+    payload: Record<string, unknown>,
+    config: Required<PluginConfig>
+): Promise<NexusCommandResult> {
+    const response = await fetchJson(path, config, {method: "POST", body: payload});
+    if (typeof response.payload.message !== "string") {
+        throw new BridgeRequestError("Bridge returned an invalid response.", {code: "invalid_bridge_response"});
+    }
+    return response.payload as NexusCommandResult;
+}
+
+async function callBridgeGet(
+    path: string,
+    config: Required<PluginConfig>
+): Promise<Record<string, unknown>> {
+    const response = await fetchJson(path, config, {method: "GET"});
+    return response.payload;
+}
+
+async function getBridgeCapabilities(config: Required<PluginConfig>): Promise<BridgeCapabilitiesPayload | null> {
+    const cacheKey = `${config.bridgeUrl}|${config.authToken}`;
+    if (capabilitiesCache.has(cacheKey)) {
+        return capabilitiesCache.get(cacheKey) ?? null;
+    }
+    try {
+        const payload = await callBridgeGet("/api/v1/capabilities", config);
+        const capabilities = payload as BridgeCapabilitiesPayload;
+        capabilitiesCache.set(cacheKey, capabilities);
+        return capabilities;
+    } catch {
+        return null;
+    }
+}
+
+async function getBridgeHealth(config: Required<PluginConfig>): Promise<Record<string, unknown>> {
+    return callBridgeGet("/healthz", config);
+}
+
+export function formatBridgeError(error: unknown): string {
+    if (error instanceof BridgeRequestError) {
+        if (error.code === "missing_bearer_token" || error.code === "invalid_bearer_token") {
+            return "Nexus bridge authentication failed. Check the configured bearer token.";
+        }
+        if (error.code === "sender_not_allowed" || error.code === "source_not_allowed") {
+            return `Nexus bridge denied this sender: ${error.message}`;
+        }
+        if (error.code === "bridge_timeout") {
+            return error.message;
+        }
+        if (error.code === "bridge_unreachable") {
+            return error.message;
+        }
+        if (error.code === "unsupported_command") {
+            return `Nexus bridge did not accept that command: ${error.message}`;
+        }
+        return `Nexus bridge error: ${error.message}`;
+    }
+    if (error instanceof Error) {
+        return `Nexus bridge error: ${error.message}`;
+    }
+    return "Nexus bridge error: Unknown failure.";
 }
 
 function renderResult(result: NexusCommandResult): string {
@@ -649,18 +937,84 @@ function renderWorkflowStatus(payload: WorkflowStatusPayload): string {
     return lines.join("\n");
 }
 
+function renderHealthText(
+    config: Required<PluginConfig>,
+    healthPayload: Record<string, unknown>,
+    capabilities: BridgeCapabilitiesPayload | null
+): string {
+    const warnings = summarizeConfigWarnings(config);
+    const lines = ["Nexus bridge health:"];
+    lines.push(`Bridge URL: ${config.bridgeUrl}`);
+    lines.push(`HTTP: ${healthPayload.ok === true ? "ok" : "unexpected"}`);
+    lines.push(`Auth token configured: ${config.authToken ? "yes" : "no"}`);
+    if (Array.isArray(capabilities?.supported_commands) && capabilities.supported_commands.length > 0) {
+        lines.push(`Supported commands: ${capabilities.supported_commands.join(", ")}`);
+    }
+    if (warnings.length > 0) {
+        lines.push(`Warnings: ${warnings.join(" ")}`);
+    }
+    return lines.join("\n");
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function maybePollAcceptedWorkflow(
+    result: NexusCommandResult,
+    config: Required<PluginConfig>
+): Promise<string> {
+    const baseText = renderResult(result);
+    if (!config.autoPollAccepted || result.status !== "accepted") {
+        return baseText;
+    }
+    const workflowId = stringValue(result.workflow?.id) || stringValue(result.workflow_id);
+    if (!workflowId) {
+        return baseText;
+    }
+    const attempts = Math.max(0, Math.trunc(config.acceptedPollAttempts));
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        if (config.acceptedPollDelayMs > 0) {
+            await sleep(config.acceptedPollDelayMs);
+        }
+        try {
+            const payload = (await callBridgeGet(
+                `/api/v1/workflows/${encodeURIComponent(workflowId)}`,
+                config
+            )) as WorkflowStatusPayload;
+            if (payload.ok) {
+                return `${baseText}\n\n${renderWorkflowStatus(payload)}`;
+            }
+        } catch {
+            break;
+        }
+    }
+    return baseText;
+}
+
 async function handleNexusCommand(ctx: CommandHandlerContext): Promise<CommandResponse> {
     const config = resolvePluginConfig(ctx);
-    const parsed = parseNexusInvocation(ctx.args);
+    maybeWarnConfig(config);
+    const capabilities = await getBridgeCapabilities(config);
     const requester = getRequesterContext(ctx, config);
     const sessionState = getSessionState(requester.session_id);
+    const parsed = normalizeInvocationArgs(parseNexusInvocation(ctx.args, capabilities ?? undefined), sessionState, config);
 
     if (!parsed.command && !parsed.freeform) {
-        return {text: renderHelpText()};
+        return {text: renderHelpText(capabilities ?? undefined)};
     }
 
-    if (new Set(["help", "--help", "-h", "?"]).has(parsed.command)) {
-        return {text: renderHelpText()};
+    if (parsed.command === "help") {
+        return {text: renderHelpText(capabilities ?? undefined)};
+    }
+
+    if (parsed.command === "health") {
+        try {
+            const healthPayload = await getBridgeHealth(config);
+            return {text: renderHealthText(config, healthPayload, capabilities)};
+        } catch (error) {
+            return {text: formatBridgeError(error)};
+        }
     }
 
     if (parsed.command === "confirm") {
@@ -673,25 +1027,33 @@ async function handleNexusCommand(ctx: CommandHandlerContext): Promise<CommandRe
             return {text: "The pending Nexus ARC confirmation expired. Re-run the command."};
         }
         pendingConfirmations.delete(requester.session_id);
-        const confirmedResult = await callBridge(pending.path, pending.payload, config);
-        updateSessionStateFromResult(
-            requester.session_id,
-            sessionState,
-            (pending.payload.context as Record<string, unknown>) ?? {},
-            confirmedResult,
-            config
-        );
-        return {text: renderResult(confirmedResult)};
+        try {
+            const confirmedResult = await callBridge(pending.path, pending.payload, config);
+            updateSessionStateFromResult(
+                requester.session_id,
+                sessionState,
+                (pending.payload.context as Record<string, unknown>) ?? {},
+                confirmedResult,
+                config
+            );
+            return {text: await maybePollAcceptedWorkflow(confirmedResult, config)};
+        } catch (error) {
+            return {text: formatBridgeError(error)};
+        }
     }
 
     if (parsed.command === "refresh") {
         const workflowId = sessionState.currentWorkflowId || stringValue(parsed.args[0]);
         if (workflowId) {
-            const statusPayload = await callBridgeGet(
-                `/api/v1/workflows/${encodeURIComponent(workflowId)}`,
-                config
-            );
-            return {text: renderWorkflowStatus(statusPayload)};
+            try {
+                const statusPayload = (await callBridgeGet(
+                    `/api/v1/workflows/${encodeURIComponent(workflowId)}`,
+                    config
+                )) as WorkflowStatusPayload;
+                return {text: renderWorkflowStatus(statusPayload)};
+            } catch (error) {
+                return {text: formatBridgeError(error)};
+            }
         }
         const fallbackIssueRef = sessionState.currentIssueRef || stringValue(parsed.args[0]);
         if (!fallbackIssueRef) {
@@ -700,58 +1062,103 @@ async function handleNexusCommand(ctx: CommandHandlerContext): Promise<CommandRe
                     "Usage: /nexus refresh\nRun it after /nexus plan, /nexus status, /nexus usage, or /nexus use <project>."
             };
         }
-        const refreshResult = await callBridge(
-            "/api/v1/commands/execute",
+        const refreshParsed = normalizeInvocationArgs(
             {
                 command: "wfstate",
                 args: [fallbackIssueRef],
-                raw_text: `wfstate ${fallbackIssueRef}`,
-                requester,
-                context: inferCommandContext(
-                    {command: "wfstate", args: [fallbackIssueRef], freeform: `wfstate ${fallbackIssueRef}`},
-                    sessionState,
-                    config
-                ),
-                client: {
-                    plugin_version: PLUGIN_VERSION,
-                    render_mode: config.renderMode
-                }
+                freeform: `wfstate ${fallbackIssueRef}`,
+                explicitCommand: true
             },
-            config
-        );
-        updateSessionStateFromResult(
-            requester.session_id,
             sessionState,
-            inferCommandContext(
-                {command: "wfstate", args: [fallbackIssueRef], freeform: `wfstate ${fallbackIssueRef}`},
-                sessionState,
-                config
-            ),
-            refreshResult,
             config
         );
-        return {text: renderResult(refreshResult)};
+        const refreshContext = inferCommandContext(refreshParsed, sessionState, config);
+        try {
+            const refreshResult = await callBridge(
+                "/api/v1/commands/execute",
+                {
+                    command: "wfstate",
+                    args: refreshParsed.args,
+                    raw_text: refreshParsed.freeform,
+                    requester,
+                    context: refreshContext,
+                    client: {
+                        plugin_version: PLUGIN_VERSION,
+                        render_mode: config.renderMode
+                    },
+                    attachments: Array.isArray(ctx.attachments) ? ctx.attachments : []
+                },
+                config
+            );
+            updateSessionStateFromResult(
+                requester.session_id,
+                sessionState,
+                refreshContext,
+                refreshResult,
+                config
+            );
+            return {text: renderResult(refreshResult)};
+        } catch (error) {
+            return {text: formatBridgeError(error)};
+        }
     }
 
     if (new Set(LOCAL_COMMANDS).has(parsed.command as (typeof LOCAL_COMMANDS)[number])) {
         return handleLocalCommand(parsed, sessionState, requester.session_id, config) as CommandResponse;
     }
 
+    if (parsed.command === "wfstate" && looksLikeWorkflowId(parsed.args[0] ?? "")) {
+        try {
+            const payload = (await callBridgeGet(
+                `/api/v1/workflows/${encodeURIComponent(parsed.args[0])}`,
+                config
+            )) as WorkflowStatusPayload;
+            if (!payload.ok) {
+                return {text: payload.error || `Workflow '${parsed.args[0]}' was not found.`};
+            }
+            if (config.sessionMemory) {
+                setSessionState(requester.session_id, {
+                    currentProject: stringValue(payload.project_key) || sessionState.currentProject,
+                    currentIssueRef:
+                        buildIssueRef(stringValue(payload.project_key), stringValue(payload.issue_number)) ||
+                        sessionState.currentIssueRef,
+                    currentWorkflowId: stringValue(payload.workflow_id) || sessionState.currentWorkflowId
+                });
+            }
+            return {text: renderWorkflowStatus(payload)};
+        } catch (error) {
+            return {text: formatBridgeError(error)};
+        }
+    }
+
     const context = inferCommandContext(parsed, sessionState, config);
     const client = {
         plugin_version: PLUGIN_VERSION,
-        render_mode: config.renderMode
+        render_mode: config.renderMode,
+        metadata: {
+            source_plugin: PLUGIN_ID
+        }
     };
     const yesArgs = parsed.args.filter((arg) => arg !== "--yes");
     const normalizedParsed =
         yesArgs.length === parsed.args.length
             ? parsed
             : {
-                command: parsed.command,
+                ...parsed,
                 args: yesArgs,
-                freeform: [parsed.command, ...yesArgs].filter(Boolean).join(" ")
+                freeform:
+                    parsed.explicitCommand
+                        ? [parsed.command, ...yesArgs].filter(Boolean).join(" ")
+                        : parsed.freeform
             };
-    const request = buildBridgeRequest(normalizedParsed, requester, context, client);
+    const request = buildBridgeRequest(
+        normalizedParsed,
+        requester,
+        context,
+        client,
+        Array.isArray(ctx.attachments) ? ctx.attachments : [],
+        capabilities ?? undefined
+    );
 
     if (
         normalizedParsed.command &&
@@ -767,10 +1174,13 @@ async function handleNexusCommand(ctx: CommandHandlerContext): Promise<CommandRe
         };
     }
 
-    const result = await callBridge(request.path, request.payload, config);
-
-    updateSessionStateFromResult(requester.session_id, sessionState, context, result, config);
-    return {text: renderResult(result)};
+    try {
+        const result = await callBridge(request.path, request.payload, config);
+        updateSessionStateFromResult(requester.session_id, sessionState, context, result, config);
+        return {text: await maybePollAcceptedWorkflow(result, config)};
+    } catch (error) {
+        return {text: formatBridgeError(error)};
+    }
 }
 
 const plugin = {
@@ -790,7 +1200,10 @@ const plugin = {
             requireConfirmFor: {
                 type: "array",
                 items: {type: "string"}
-            }
+            },
+            autoPollAccepted: {type: "boolean"},
+            acceptedPollDelayMs: {type: "integer"},
+            acceptedPollAttempts: {type: "integer"}
         }
     },
     register(api: RegisterCommandApi): void {

@@ -8,6 +8,15 @@ from nexus.core.command_bridge.models import CommandResult
 
 
 class _FakeRouter:
+    def get_capabilities(self):
+        return {
+            "ok": True,
+            "version": "v1",
+            "route_enabled": True,
+            "supported_commands": ["plan", "wfstate"],
+            "long_running_commands": ["plan"],
+        }
+
     async def execute(self, request):
         return CommandResult(
             status="accepted",
@@ -73,6 +82,31 @@ def test_execute_requires_bearer_auth():
 
     assert status.startswith("401")
     assert "bearer token" in payload["error"].lower()
+    assert payload["error_code"] == "missing_bearer_token"
+
+
+def test_capabilities_endpoint_requires_auth_and_returns_payload():
+    app = create_command_bridge_app(
+        _FakeRouter(),
+        config=CommandBridgeConfig(auth_token="secret"),
+    )
+
+    unauthorized_status, unauthorized_payload = _call_app(
+        app,
+        method="GET",
+        path="/api/v1/capabilities",
+    )
+    authorized_status, authorized_payload = _call_app(
+        app,
+        method="GET",
+        path="/api/v1/capabilities",
+        auth="Bearer secret",
+    )
+
+    assert unauthorized_status.startswith("401")
+    assert unauthorized_payload["error_code"] == "missing_bearer_token"
+    assert authorized_status.startswith("200")
+    assert authorized_payload["supported_commands"] == ["plan", "wfstate"]
 
 
 def test_execute_returns_accepted_response():
@@ -100,6 +134,32 @@ def test_execute_returns_accepted_response():
     assert status.startswith("202")
     assert payload["workflow_id"] == "demo-42-full"
     assert payload["status"] == "accepted"
+
+
+def test_execute_rejects_sender_allowlist_with_structured_error():
+    app = create_command_bridge_app(
+        _FakeRouter(),
+        config=CommandBridgeConfig(
+            auth_token="secret",
+            allowed_sources=["openclaw"],
+            allowed_sender_ids=["alice"],
+        ),
+    )
+
+    status, payload = _call_app(
+        app,
+        method="POST",
+        path="/api/v1/commands/execute",
+        auth="Bearer secret",
+        payload={
+            "command": "plan",
+            "args": ["demo", "42"],
+            "requester": {"source_platform": "openclaw", "sender_id": "mallory"},
+        },
+    )
+
+    assert status.startswith("403")
+    assert payload["error_code"] == "sender_not_allowed"
 
 
 def test_workflow_status_endpoint_returns_payload():

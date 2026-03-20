@@ -38,14 +38,26 @@ def create_command_bridge_app(
             if path.startswith("/api/v1/"):
                 auth_error = _authorize_request(environ, config=config)
                 if auth_error is not None:
-                    return _json_response(start_response, auth_error[0], {"error": auth_error[1]})
+                    return _json_response(
+                        start_response,
+                        auth_error[0],
+                        {"error": auth_error[1], "error_code": auth_error[2]},
+                    )
+
+            if method == "GET" and path == "/api/v1/capabilities":
+                payload = router.get_capabilities()
+                return _json_response(start_response, 200, payload)
 
             if method == "POST" and path == "/api/v1/commands/execute":
                 payload = _load_json_body(environ)
                 request = CommandRequest.from_dict(payload)
                 allow_error = _validate_requester(request, config=config)
                 if allow_error is not None:
-                    return _json_response(start_response, 403, {"error": allow_error})
+                    return _json_response(
+                        start_response,
+                        403,
+                        {"error": allow_error[0], "error_code": allow_error[1]},
+                    )
                 result = asyncio.run(router.execute(request))
                 return _command_result_response(start_response, result)
 
@@ -54,7 +66,11 @@ def create_command_bridge_app(
                 request = CommandRequest.from_dict(payload)
                 allow_error = _validate_requester(request, config=config)
                 if allow_error is not None:
-                    return _json_response(start_response, 403, {"error": allow_error})
+                    return _json_response(
+                        start_response,
+                        403,
+                        {"error": allow_error[0], "error_code": allow_error[1]},
+                    )
                 result = asyncio.run(router.route(request))
                 return _command_result_response(start_response, result)
 
@@ -86,31 +102,35 @@ def run_command_bridge_server(
         server.serve_forever()
 
 
-def _authorize_request(environ: dict[str, Any], *, config: CommandBridgeConfig) -> tuple[int, str] | None:
+def _authorize_request(
+    environ: dict[str, Any], *, config: CommandBridgeConfig
+) -> tuple[int, str, str] | None:
     expected = str(config.auth_token or "").strip()
     if not expected:
-        return 503, "Command bridge auth token is not configured"
+        return 503, "Command bridge auth token is not configured", "auth_token_not_configured"
     header = str(environ.get("HTTP_AUTHORIZATION", "") or "").strip()
     if not header.startswith("Bearer "):
-        return 401, "Missing bearer token"
+        return 401, "Missing bearer token", "missing_bearer_token"
     token = header.partition("Bearer ")[2].strip()
     if token != expected:
-        return 401, "Invalid bearer token"
+        return 401, "Invalid bearer token", "invalid_bearer_token"
     return None
 
 
-def _validate_requester(request: CommandRequest, *, config: CommandBridgeConfig) -> str | None:
+def _validate_requester(
+    request: CommandRequest, *, config: CommandBridgeConfig
+) -> tuple[str, str] | None:
     requester = request.requester
     allowed_sources = [str(item or "").strip().lower() for item in (config.allowed_sources or []) if str(item or "").strip()]
     if allowed_sources:
         source = str(requester.source_platform or "").strip().lower()
         if source not in allowed_sources:
-            return f"Source '{requester.source_platform}' is not allowed"
+            return f"Source '{requester.source_platform}' is not allowed", "source_not_allowed"
     allowed_sender_ids = [str(item or "").strip() for item in (config.allowed_sender_ids or []) if str(item or "").strip()]
     if allowed_sender_ids:
         sender_id = str(requester.sender_id or "").strip()
         if sender_id not in allowed_sender_ids:
-            return f"Sender '{sender_id}' is not allowed"
+            return f"Sender '{sender_id}' is not allowed", "sender_not_allowed"
     return None
 
 

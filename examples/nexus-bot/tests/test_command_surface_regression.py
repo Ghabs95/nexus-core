@@ -42,6 +42,7 @@ CENTRALIZED_INTERACTIVE_COMMANDS = {
     "logs",
     "logsfull",
     "myissues",
+    "new",
     "pause",
     "plan",
     "prepare",
@@ -57,6 +58,7 @@ CENTRALIZED_INTERACTIVE_COMMANDS = {
     "track",
     "tracked",
     "untrack",
+    "usage",
     "wfstate",
 }
 
