@@ -418,6 +418,16 @@ def create_command_bridge_app(
                 status = 200 if result.get("ok") else 400
                 return _json_response(start_response, status, result)
 
+            if method == "GET" and path == "/api/v1/operator/linkedin/auth-status":
+                payload = asyncio.run(
+                    router.operator_service.linkedin_auth_status(
+                        headers=environ,
+                    )
+                )
+                if payload.get("ok") and isinstance(payload.get("status"), dict):
+                    payload = {**payload, **payload["status"]}
+                return _json_response(start_response, 200 if payload.get("ok") else 400, payload)
+
             if method == "GET" and path == "/api/v1/operator/linkedin/profile/me":
                 payload = asyncio.run(
                     router.operator_service.linkedin_profile_me(

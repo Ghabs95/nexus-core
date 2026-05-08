@@ -857,3 +857,11 @@ bot?"*
 - **Integration:** No ❌ (Knows about your tiers, projects, Telegram bot, etc.)
 
 That's the right separation.
+
+---
+
+## Provider-neutral graph workflows
+
+For the ADK-style Nexus-native workflow runtime (`Workflow`, `START`, routed
+edges, collaborative agents, dynamic `@node` workflows, nested workflows,
+schemas, and checkpoints), see [`docs/WORKFLOWS.md`](WORKFLOWS.md).

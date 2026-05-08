@@ -57,7 +57,11 @@ def candidate_repos_for_issue_lookup(
             continue
         if other_cfg is preferred_config or other_cfg is normalized_project_cfg:
             continue
-        _add_config(other_cfg)
+        repo_list = other_cfg.get("git_repos")
+        if isinstance(repo_list, list) and repo_list:
+            _add_repo(str(repo_list[0] or ""))
+        else:
+            _add_repo(str(other_cfg.get("git_repo") or ""))
 
     if not candidates:
         _add_repo(default_repo)
@@ -77,10 +81,41 @@ def resolve_project_config_for_repo(
         for project_name, cfg in project_config.items():
             if not isinstance(cfg, dict):
                 continue
-            if normalized_repo in configured_repos(cfg):
+            if normalized_repo in configured_repos(cfg) or _same_repo_family(
+                normalized_repo, str(cfg.get("git_repo") or "")
+            ):
                 return str(project_name), cfg
 
     fallback_cfg = project_config.get(requested_project_key)
     if isinstance(fallback_cfg, dict):
         return requested_project_key, fallback_cfg
     return None, None
+
+
+def _same_repo_family(repo: str, configured_repo: str) -> bool:
+    """Return true for sibling repos that share an owner and base project slug.
+
+    Example: ``acme/projectA-be`` belongs to the same configured project family
+    as ``acme/projectA-os``. This lets issue lookup rebind from a default
+    project to the project that owns the selected implementation repo.
+    """
+    owner, slug = _split_repo(repo)
+    configured_owner, configured_slug = _split_repo(configured_repo)
+    if not owner or owner != configured_owner:
+        return False
+    return _repo_family_slug(slug) == _repo_family_slug(configured_slug)
+
+
+def _split_repo(repo: str) -> tuple[str, str]:
+    value = str(repo or "").strip()
+    if "/" not in value:
+        return "", value
+    owner, slug = value.split("/", 1)
+    return owner, slug
+
+
+def _repo_family_slug(slug: str) -> str:
+    value = str(slug or "").strip()
+    if "-" not in value:
+        return value
+    return value.rsplit("-", 1)[0]
