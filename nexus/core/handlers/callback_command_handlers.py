@@ -24,6 +24,7 @@ from nexus.core.telegram.telegram_router_feedback_service import (
     PENDING_KEY,
     TASK_LABELS,
     build_feedback_payload,
+    build_feedback_prompt,
     build_wrong_model_prompt,
     build_wrong_task_prompt,
     clear_external_pending_feedback,
@@ -36,8 +37,7 @@ from nexus.core.telegram.telegram_router_feedback_service import (
     submit_feedback,
 )
 
-
-_ROUTE_FEEDBACK_VALID_ACTIONS = {"ok", "wrong", "fix", "wrong_task", "wrong_model"}
+_ROUTE_FEEDBACK_VALID_ACTIONS = {"ok", "wrong", "fix", "wrong_task", "wrong_model", "back"}
 
 
 def _is_uuid(value: str | None) -> bool:
@@ -274,13 +274,17 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
     query_data = str(query.action_data or "")
     parts = query_data.split(":", 4)
     if len(parts) < 3:
-        await ctx.edit_message_text(message_id=query.message_id, text="⚠️ Invalid feedback action.", buttons=[])
+        await ctx.edit_message_text(
+            message_id=query.message_id, text="⚠️ Invalid feedback action.", buttons=[]
+        )
         return
     action = parts[1]
     decision_ref = parts[2]
 
     if action not in _ROUTE_FEEDBACK_VALID_ACTIONS:
-        await ctx.edit_message_text(message_id=query.message_id, text="⚠️ Invalid feedback action.", buttons=[])
+        await ctx.edit_message_text(
+            message_id=query.message_id, text="⚠️ Invalid feedback action.", buttons=[]
+        )
         return
 
     pending = ctx.user_state.get(PENDING_KEY)
@@ -297,11 +301,13 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
         return
 
     actual_decision_id = str(pending.get("decision_id") or "")
-    if not _is_uuid(actual_decision_id):
+    expected_refs = {actual_decision_id, decision_token(actual_decision_id)}
+    if not _is_uuid(actual_decision_id) and decision_ref not in expected_refs:
         resolved = resolve_feedback_token(user_id=str(ctx.user_id or ""), decision_ref=decision_ref)
         if resolved and _is_uuid(resolved):
             pending["decision_id"] = resolved
             actual_decision_id = resolved
+            expected_refs = {actual_decision_id, decision_token(actual_decision_id)}
             ctx.user_state[PENDING_KEY] = pending
         else:
             await ctx.edit_message_text(
@@ -310,16 +316,21 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
                 buttons=[],
             )
             return
-    expected_refs = {actual_decision_id, decision_token(actual_decision_id)}
     if decision_ref not in expected_refs:
         # Allow older cards to be submitted when a newer card overwrote the
         # single pending slot. Recover the exact stored metadata for the
         # clicked card when possible so delayed/batched feedback still maps to
         # the original routed decision.
-        recovered = load_feedback_meta_for_ref(user_id=str(ctx.user_id or ""), decision_ref=decision_ref)
+        recovered = load_feedback_meta_for_ref(
+            user_id=str(ctx.user_id or ""), decision_ref=decision_ref
+        )
         resolved = resolve_feedback_token(user_id=str(ctx.user_id or ""), decision_ref=decision_ref)
         if not resolved or not _is_uuid(resolved):
-            await ctx.edit_message_text(message_id=query.message_id, text="⚠️ Feedback no longer matches the latest route.", buttons=[])
+            await ctx.edit_message_text(
+                message_id=query.message_id,
+                text="⚠️ Feedback no longer matches the latest route.",
+                buttons=[],
+            )
             return
         if isinstance(recovered, dict):
             pending = dict(recovered)
@@ -330,7 +341,9 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
                 "task_type": str(pending.get("task_type") or "unknown"),
                 "selected_model": str(pending.get("selected_model") or "unknown"),
                 "source_channel": str(pending.get("source_channel") or "telegram"),
-                "metadata": pending.get("metadata") if isinstance(pending.get("metadata"), dict) else {},
+                "metadata": (
+                    pending.get("metadata") if isinstance(pending.get("metadata"), dict) else {}
+                ),
             }
         pending["decision_id"] = resolved
         ctx.user_state[PENDING_KEY] = pending
@@ -338,7 +351,28 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
 
     user_id = str(ctx.user_id or "") or None
     if has_feedback_submission(ctx.user_state, decision_id=actual_decision_id, user_id=user_id):
-        await ctx.edit_message_text(message_id=query.message_id, text="✅ Feedback already recorded.", buttons=[])
+        await ctx.edit_message_text(
+            message_id=query.message_id, text="✅ Feedback already recorded.", buttons=[]
+        )
+        return
+
+    # ── Back navigation for non-final feedback menus ───────────────────────
+    if action == "back":
+        target = parts[3] if len(parts) >= 4 else "initial"
+        pending.pop("_pending_corrected_task", None)
+        ctx.user_state[PENDING_KEY] = pending
+        if target == "initial":
+            text, buttons = build_feedback_prompt(pending)
+        elif target == "wrong_task":
+            text, buttons = build_wrong_task_prompt(pending)
+        else:
+            await ctx.edit_message_text(
+                message_id=query.message_id, text="⚠️ Invalid feedback action.", buttons=[]
+            )
+            return
+        await ctx.edit_message_text(
+            message_id=query.message_id, text=text, buttons=buttons, parse_mode=None
+        )
         return
 
     # ── ✅ Correct ──────────────────────────────────────────────────────────
@@ -351,7 +385,9 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
             source_message_id=str(query.message_id or "") or None,
             source_user_id=user_id,
         )
-        ok, _detail = submit_feedback(router_url=str(deps.router_feedback_url or ""), payload=payload)
+        ok, _detail = submit_feedback(
+            router_url=str(deps.router_feedback_url or ""), payload=payload
+        )
         if not ok:
             await ctx.edit_message_text(
                 message_id=query.message_id,
@@ -360,10 +396,16 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
                 parse_mode=None,
             )
             return
-        remember_feedback_submission(ctx.user_state, decision_id=actual_decision_id, user_id=user_id)
+        remember_feedback_submission(
+            ctx.user_state, decision_id=actual_decision_id, user_id=user_id
+        )
         ctx.user_state.pop(PENDING_KEY, None)
-        clear_external_pending_feedback(user_id=str(ctx.user_id or ""), decision_id=actual_decision_id)
-        await ctx.edit_message_text(message_id=query.message_id, text="✅ Feedback recorded.", buttons=[])
+        clear_external_pending_feedback(
+            user_id=str(ctx.user_id or ""), decision_id=actual_decision_id
+        )
+        await ctx.edit_message_text(
+            message_id=query.message_id, text="✅ Feedback recorded.", buttons=[]
+        )
         return
 
     # ── ❌ Wrong — Step 1: show task selection ───────────────────────────────
@@ -375,7 +417,9 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
     # ── wrong_task — store task choice, show model verdict step ─────────────
     if action == "wrong_task":
         raw_task = parts[3] if len(parts) >= 4 else "skip"
-        corrected_task: str | None = raw_task if raw_task != "skip" and raw_task in TASK_LABELS else None
+        corrected_task: str | None = (
+            raw_task if raw_task != "skip" and raw_task in TASK_LABELS else None
+        )
         # Persist chosen task in pending so step 2 can read it
         pending["_pending_corrected_task"] = corrected_task
         ctx.user_state[PENDING_KEY] = pending
@@ -389,7 +433,9 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
         task_slot = parts[3] if len(parts) >= 4 else "skip"
         raw_model_verdict = parts[4] if len(parts) >= 5 else "skip"
         corrected_task = task_slot if task_slot != "skip" and task_slot in TASK_LABELS else None
-        model_verdict: str | None = raw_model_verdict if raw_model_verdict in MODEL_VERDICTS else None
+        model_verdict: str | None = (
+            raw_model_verdict if raw_model_verdict in MODEL_VERDICTS else None
+        )
         payload = build_feedback_payload(
             meta=pending,
             verdict="wrong",
@@ -398,7 +444,9 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
             source_message_id=str(query.message_id or "") or None,
             source_user_id=user_id,
         )
-        ok, _detail = submit_feedback(router_url=str(deps.router_feedback_url or ""), payload=payload)
+        ok, _detail = submit_feedback(
+            router_url=str(deps.router_feedback_url or ""), payload=payload
+        )
         if not ok:
             await ctx.edit_message_text(
                 message_id=query.message_id,
@@ -407,15 +455,21 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
                 parse_mode=None,
             )
             return
-        remember_feedback_submission(ctx.user_state, decision_id=actual_decision_id, user_id=user_id)
+        remember_feedback_submission(
+            ctx.user_state, decision_id=actual_decision_id, user_id=user_id
+        )
         ctx.user_state.pop(PENDING_KEY, None)
-        clear_external_pending_feedback(user_id=str(ctx.user_id or ""), decision_id=actual_decision_id)
+        clear_external_pending_feedback(
+            user_id=str(ctx.user_id or ""), decision_id=actual_decision_id
+        )
         parts_summary = []
         if corrected_task:
             parts_summary.append(f"task→{corrected_task}")
         if model_verdict:
             parts_summary.append(f"model→{model_verdict}")
-        summary = "✅ Marked wrong" + (f" ({', '.join(parts_summary)})" if parts_summary else "") + "."
+        summary = (
+            "✅ Marked wrong" + (f" ({', '.join(parts_summary)})" if parts_summary else "") + "."
+        )
         await ctx.edit_message_text(message_id=query.message_id, text=summary, buttons=[])
         return
 
@@ -423,7 +477,11 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
     if action == "fix":
         corrected_task = parts[3] if len(parts) >= 4 else None
         if not corrected_task or corrected_task not in TASK_LABELS:
-            await ctx.edit_message_text(message_id=query.message_id, text="⚠️ Invalid or missing correction task.", buttons=[])
+            await ctx.edit_message_text(
+                message_id=query.message_id,
+                text="⚠️ Invalid or missing correction task.",
+                buttons=[],
+            )
             return
         payload = build_feedback_payload(
             meta=pending,
@@ -433,7 +491,9 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
             source_message_id=str(query.message_id or "") or None,
             source_user_id=user_id,
         )
-        ok, _detail = submit_feedback(router_url=str(deps.router_feedback_url or ""), payload=payload)
+        ok, _detail = submit_feedback(
+            router_url=str(deps.router_feedback_url or ""), payload=payload
+        )
         if not ok:
             await ctx.edit_message_text(
                 message_id=query.message_id,
@@ -442,10 +502,16 @@ async def route_feedback_callback_handler(ctx: InteractiveContext, deps: Callbac
                 parse_mode=None,
             )
             return
-        remember_feedback_submission(ctx.user_state, decision_id=actual_decision_id, user_id=user_id)
+        remember_feedback_submission(
+            ctx.user_state, decision_id=actual_decision_id, user_id=user_id
+        )
         ctx.user_state.pop(PENDING_KEY, None)
-        clear_external_pending_feedback(user_id=str(ctx.user_id or ""), decision_id=actual_decision_id)
-        await ctx.edit_message_text(message_id=query.message_id, text=f"✅ Marked wrong → {corrected_task}.", buttons=[])
+        clear_external_pending_feedback(
+            user_id=str(ctx.user_id or ""), decision_id=actual_decision_id
+        )
+        await ctx.edit_message_text(
+            message_id=query.message_id, text=f"✅ Marked wrong → {corrected_task}.", buttons=[]
+        )
         return
 
 

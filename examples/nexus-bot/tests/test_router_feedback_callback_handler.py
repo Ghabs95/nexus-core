@@ -4,6 +4,7 @@ from nexus.core.handlers.callback_command_handlers import (
     CallbackHandlerDeps,
     route_feedback_callback_handler,
 )
+from nexus.core.telegram.telegram_router_feedback_service import decision_token
 
 
 class _Ctx:
@@ -16,7 +17,15 @@ class _Ctx:
     async def answer_callback_query(self, text=None):
         return None
 
-    async def edit_message_text(self, *, message_id=None, text, buttons=None, parse_mode="Markdown", disable_web_page_preview=True):
+    async def edit_message_text(
+        self,
+        *,
+        message_id=None,
+        text,
+        buttons=None,
+        parse_mode="Markdown",
+        disable_web_page_preview=True,
+    ):
         self.edits.append({"message_id": message_id, "text": text, "buttons": buttons})
 
 
@@ -103,3 +112,79 @@ async def test_route_feedback_callback_deduplicates(monkeypatch):
     await route_feedback_callback_handler(ctx, _deps())
 
     assert ctx.edits[-1]["text"] == "✅ Feedback already recorded."
+
+
+@pytest.mark.asyncio
+async def test_route_feedback_wrong_step_shows_back_button():
+    ctx = _Ctx(
+        "routefb:wrong:dec-1",
+        {"decision_id": "dec-1", "source_channel": "telegram", "metadata": {}},
+    )
+
+    await route_feedback_callback_handler(ctx, _deps())
+
+    assert ctx.edits[-1]["text"] == "❌ Step 1/2 — Which task was it?"
+    labels = [button.label for row in ctx.edits[-1]["buttons"] for button in row]
+    callbacks = [button.callback_data for row in ctx.edits[-1]["buttons"] for button in row]
+    assert "⬅️ Back" in labels
+    assert f"routefb:back:{decision_token('dec-1')}:initial" in callbacks
+
+
+@pytest.mark.asyncio
+async def test_route_feedback_back_to_initial_restores_root_menu():
+    ctx = _Ctx(
+        "routefb:back:dec-1:initial",
+        {
+            "decision_id": "dec-1",
+            "task_type": "reasoning",
+            "selected_model": "model/a",
+            "source_channel": "telegram",
+            "metadata": {},
+        },
+    )
+
+    await route_feedback_callback_handler(ctx, _deps())
+
+    assert ctx.edits[-1]["text"].endswith("Feedback?")
+    labels = [button.label for row in ctx.edits[-1]["buttons"] for button in row]
+    assert labels == ["✅ Correct", "❌ Wrong"]
+
+
+@pytest.mark.asyncio
+async def test_route_feedback_back_from_model_step_returns_to_task_step():
+    ctx = _Ctx(
+        "routefb:back:dec-1:wrong_task",
+        {
+            "decision_id": "dec-1",
+            "source_channel": "telegram",
+            "metadata": {},
+            "_pending_corrected_task": "reasoning",
+        },
+    )
+
+    await route_feedback_callback_handler(ctx, _deps())
+
+    assert ctx.edits[-1]["text"] == "❌ Step 1/2 — Which task was it?"
+    labels = [button.label for row in ctx.edits[-1]["buttons"] for button in row]
+    assert "⬅️ Back" in labels
+    assert "_pending_corrected_task" not in ctx.user_state["router_feedback_pending"]
+
+
+@pytest.mark.asyncio
+async def test_route_feedback_final_state_has_no_back_button(monkeypatch):
+    def _submit_feedback(*, router_url, payload, timeout_seconds=3.0, fallback_store_path=None):
+        return (True, '{"ok":true}')
+
+    monkeypatch.setattr(
+        "nexus.core.handlers.callback_command_handlers.submit_feedback",
+        _submit_feedback,
+    )
+    ctx = _Ctx(
+        "routefb:wrong_model:dec-1:reasoning:ok",
+        {"decision_id": "dec-1", "source_channel": "telegram", "metadata": {}},
+    )
+
+    await route_feedback_callback_handler(ctx, _deps())
+
+    assert ctx.edits[-1]["text"] == "✅ Marked wrong (task→reasoning, model→ok)."
+    assert ctx.edits[-1]["buttons"] == []
