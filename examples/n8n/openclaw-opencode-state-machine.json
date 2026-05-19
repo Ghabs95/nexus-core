@@ -1,0 +1,111 @@
+{
+  "name": "OpenClaw + OpenCode State Machine",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"task\": \"={{$json.task || 'Implement the approved task'}}\",\n  \"project_key\": \"={{$json.project_key || 'nexus'}}\",\n  \"issue_number\": \"={{$json.issue_number || ''}}\",\n  \"requester\": {\n    \"source\": \"n8n\"\n  }\n}"
+      },
+      "id": "create-run",
+      "name": "Create Nexus Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run.run_id}}\",\n  \"state\": \"approved\",\n  \"message\": \"Approved from n8n\"\n}"
+      },
+      "id": "mark-approved",
+      "name": "Mark Approved",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/coding/execute",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run.run_id}}\",\n  \"task\": \"={{$json.run.task}}\",\n  \"project_key\": \"={{$json.run.project_key}}\",\n  \"worker\": \"opencode\",\n  \"agent\": \"build\",\n  \"base_branch\": \"develop\"\n}"
+      },
+      "id": "execute-opencode",
+      "name": "Execute OpenCode",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Create Nexus Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Nexus Run": {
+      "main": [
+        [
+          {
+            "node": "Mark Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Approved": {
+      "main": [
+        [
+          {
+            "node": "Execute OpenCode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

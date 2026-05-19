@@ -121,7 +121,9 @@ def create_command_bridge_app(
                         {"error": allow_error[0], "error_code": allow_error[1]},
                     )
                 result = asyncio.run(router.route(request))
-                _maybe_dispatch_route_feedback_prompt_external(router=router, request=request, result=result)
+                _maybe_dispatch_route_feedback_prompt_external(
+                    router=router, request=request, result=result
+                )
                 return _command_result_response(start_response, result)
 
             if method == "POST" and path == "/api/v1/router/feedback-card":
@@ -137,13 +139,17 @@ def create_command_bridge_app(
 
                 task_type = str(payload.get("task_type") or "").strip() or "unknown"
                 selected_model = str(payload.get("selected_model") or "").strip() or "unknown"
-                source_channel = str(payload.get("source_channel") or "openclaw").strip() or "openclaw"
+                source_channel = (
+                    str(payload.get("source_channel") or "openclaw").strip() or "openclaw"
+                )
                 source_message_id = str(payload.get("source_message_id") or "").strip() or None
                 confidence = payload.get("confidence")
                 classifier_source = str(payload.get("classifier_source") or "").strip() or None
                 shadow_mode = bool(payload.get("shadow_mode"))
                 actual_model = str(payload.get("actual_model") or "").strip() or None
-                source_message_preview = str(payload.get("source_message_preview") or "").strip() or None
+                source_message_preview = (
+                    str(payload.get("source_message_preview") or "").strip() or None
+                )
 
                 result_payload = {
                     "routing_feedback": {
@@ -168,7 +174,9 @@ def create_command_bridge_app(
                 sent = asyncio.run(
                     maybe_send_feedback_prompt_external(
                         telegram_user_id=telegram_user_id,
-                        feedback_config=getattr(router.hands_free_deps, "router_feedback_config", None),
+                        feedback_config=getattr(
+                            router.hands_free_deps, "router_feedback_config", None
+                        ),
                         result=result_payload,
                         source_message_id=source_message_id,
                         source_channel=source_channel,
@@ -201,17 +209,23 @@ def create_command_bridge_app(
 
             if method == "GET" and path == "/api/v1/operator/workflows/active":
                 params = _query_params(environ)
-                payload = asyncio.run(router.get_active_workflows(limit=_int_param(params, "limit", 20)))
+                payload = asyncio.run(
+                    router.get_active_workflows(limit=_int_param(params, "limit", 20))
+                )
                 return _json_response(start_response, 200 if payload.get("ok") else 500, payload)
 
             if method == "GET" and path == "/api/v1/operator/workflows/recent-failures":
                 params = _query_params(environ)
-                payload = asyncio.run(router.get_recent_failures(limit=_int_param(params, "limit", 20)))
+                payload = asyncio.run(
+                    router.get_recent_failures(limit=_int_param(params, "limit", 20))
+                )
                 return _json_response(start_response, 200 if payload.get("ok") else 500, payload)
 
             if method == "GET" and path == "/api/v1/operator/workflows/recent-incidents":
                 params = _query_params(environ)
-                payload = asyncio.run(router.get_recent_incidents(limit=_int_param(params, "limit", 20)))
+                payload = asyncio.run(
+                    router.get_recent_incidents(limit=_int_param(params, "limit", 20))
+                )
                 return _json_response(start_response, 200 if payload.get("ok") else 500, payload)
 
             if method == "GET" and path == "/api/v1/operator/workflows/status":
@@ -222,7 +236,10 @@ def create_command_bridge_app(
                     return _json_response(
                         start_response,
                         400,
-                        {"ok": False, "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'."},
+                        {
+                            "ok": False,
+                            "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'.",
+                        },
                     )
                 payload = asyncio.run(
                     router.operator_service.workflow_status(
@@ -240,7 +257,10 @@ def create_command_bridge_app(
                     return _json_response(
                         start_response,
                         400,
-                        {"ok": False, "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'."},
+                        {
+                            "ok": False,
+                            "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'.",
+                        },
                     )
                 payload = asyncio.run(
                     router.get_workflow_summary(
@@ -258,7 +278,10 @@ def create_command_bridge_app(
                     return _json_response(
                         start_response,
                         400,
-                        {"ok": False, "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'."},
+                        {
+                            "ok": False,
+                            "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'.",
+                        },
                     )
                 payload = asyncio.run(
                     router.get_workflow_timeline(
@@ -276,7 +299,10 @@ def create_command_bridge_app(
                     return _json_response(
                         start_response,
                         400,
-                        {"ok": False, "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'."},
+                        {
+                            "ok": False,
+                            "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'.",
+                        },
                     )
                 payload = asyncio.run(
                     router.get_workflow_diagnosis(
@@ -294,7 +320,10 @@ def create_command_bridge_app(
                     return _json_response(
                         start_response,
                         400,
-                        {"ok": False, "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'."},
+                        {
+                            "ok": False,
+                            "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'.",
+                        },
                     )
                 payload = asyncio.run(
                     router.get_workflow_authorship_audit(
@@ -312,7 +341,10 @@ def create_command_bridge_app(
                     return _json_response(
                         start_response,
                         400,
-                        {"ok": False, "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'."},
+                        {
+                            "ok": False,
+                            "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'.",
+                        },
                     )
                 payload = asyncio.run(
                     router.get_workflow_blockers(
@@ -330,7 +362,10 @@ def create_command_bridge_app(
                     return _json_response(
                         start_response,
                         400,
-                        {"ok": False, "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'."},
+                        {
+                            "ok": False,
+                            "error": "Missing query parameter: provide 'workflow_id' or 'issue_number'.",
+                        },
                     )
                 payload = asyncio.run(
                     router.get_workflow_logs_context(
@@ -375,7 +410,11 @@ def create_command_bridge_app(
                 # Validate required fields
                 content = payload.get("content")
                 if not isinstance(content, str) or not content.strip():
-                    return _json_response(start_response, 400, {"ok": False, "error": "content is required and must be non-empty"})
+                    return _json_response(
+                        start_response,
+                        400,
+                        {"ok": False, "error": "content is required and must be non-empty"},
+                    )
                 campaign_id = payload.get("campaign_id") or payload.get("campaign") or None
                 dry_run_raw = payload.get("dry_run", True)
                 if isinstance(dry_run_raw, bool):
@@ -388,19 +427,31 @@ def create_command_bridge_app(
                 nexus_id = payload.get("nexus_id") or None
                 chat_platform = payload.get("chat_platform") or None
                 chat_id = payload.get("chat_id") or None
-                metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None
+                metadata = (
+                    payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None
+                )
 
                 # Fallback: use authenticated sender id header if available
                 if not nexus_id and not (chat_platform and chat_id):
-                    sender_hdr = environ.get("HTTP_X_SENDER_ID") or environ.get("HTTP_X_OPENCLAW_SENDER_ID") or ""
+                    sender_hdr = (
+                        environ.get("HTTP_X_SENDER_ID")
+                        or environ.get("HTTP_X_OPENCLAW_SENDER_ID")
+                        or ""
+                    )
                     sender_hdr = str(sender_hdr).strip()
                     if sender_hdr:
                         # assume openclaw/telegram callers carry platform info
                         chat_id = chat_id or sender_hdr
-                        chat_platform = chat_platform or environ.get("HTTP_X_SENDER_PLATFORM") or environ.get("HTTP_X_OPENCLAW_PLATFORM") or None
+                        chat_platform = (
+                            chat_platform
+                            or environ.get("HTTP_X_SENDER_PLATFORM")
+                            or environ.get("HTTP_X_OPENCLAW_PLATFORM")
+                            or None
+                        )
 
                 try:
                     from nexus.core.social_publish_linkedin import publish_linkedin_text
+
                     result = publish_linkedin_text(
                         content=content,
                         campaign_id=campaign_id,
@@ -413,7 +464,11 @@ def create_command_bridge_app(
                     )
                 except Exception as exc:
                     _logger.exception("LinkedIn publish handler failed")
-                    return _json_response(start_response, 500, {"ok": False, "error": "internal_error", "error_detail": str(exc)})
+                    return _json_response(
+                        start_response,
+                        500,
+                        {"ok": False, "error": "internal_error", "error_detail": str(exc)},
+                    )
 
                 status = 200 if result.get("ok") else 400
                 return _json_response(start_response, status, result)
@@ -515,14 +570,45 @@ def create_command_bridge_app(
             if method == "POST" and path == "/api/v1/agents/run":
                 payload = _load_json_body(environ)
                 from nexus.core.command_bridge.agents_handler import handle_agents_run
+
                 result = asyncio.run(handle_agents_run(payload, config=config))
                 status = 200 if result.get("ok") else 400
                 return _json_response(start_response, status, result)
 
+            if method == "POST" and path == "/api/v1/n8n/runs":
+                payload = _load_json_body(environ)
+                from nexus.core.command_bridge.n8n_state_machine import create_run
+
+                result = create_run(payload)
+                return _json_response(start_response, 201, result)
+
+            if method == "POST" and path == "/api/v1/n8n/runs/update":
+                payload = _load_json_body(environ)
+                from nexus.core.command_bridge.n8n_state_machine import update_run
+
+                result = update_run(payload)
+                return _json_response(start_response, 200, result)
+
+            if method == "GET" and path.startswith("/api/v1/n8n/runs/"):
+                run_id = path.rsplit("/", 1)[-1]
+                from nexus.core.command_bridge.n8n_state_machine import get_run
+
+                result = get_run(run_id)
+                return _json_response(start_response, 200, result)
+
+            if method == "POST" and path == "/api/v1/n8n/coding/execute":
+                payload = _load_json_body(environ)
+                from nexus.core.command_bridge.n8n_state_machine import execute_coding_task
+
+                result = execute_coding_task(payload)
+                return _json_response(start_response, 202, result)
+
             return _json_response(start_response, 404, {"error": "Not found"})
         except ReplyTokenError as exc:
             error_code = getattr(exc, "code", "invalid_reply_token")
-            status_code = 410 if error_code in {"reply_token_expired", "reply_replay_detected"} else 409
+            status_code = (
+                410 if error_code in {"reply_token_expired", "reply_replay_detected"} else 409
+            )
             return _json_response(
                 start_response, status_code, {"error": str(exc), "error_code": error_code}
             )
@@ -623,7 +709,9 @@ def _validate_requester(
     requester = request.requester
     sender_id = str(requester.sender_id or "").strip()
     allowed_sender_ids = [
-        str(item or "").strip() for item in (config.allowed_sender_ids or []) if str(item or "").strip()
+        str(item or "").strip()
+        for item in (config.allowed_sender_ids or [])
+        if str(item or "").strip()
     ]
 
     # Backward-compatible auth gate:
@@ -633,7 +721,9 @@ def _validate_requester(
             return "Authenticated OpenClaw requester is required", "requester_not_authorized"
 
     allowed_sources = [
-        str(item or "").strip().lower() for item in (config.allowed_sources or []) if str(item or "").strip()
+        str(item or "").strip().lower()
+        for item in (config.allowed_sources or [])
+        if str(item or "").strip()
     ]
     if allowed_sources:
         source = str(requester.source_platform or "").strip().lower()
@@ -643,7 +733,6 @@ def _validate_requester(
     if allowed_sender_ids and sender_id not in allowed_sender_ids:
         return f"Sender '{sender_id}' is not allowed", "sender_not_allowed"
     return None
-
 
 
 def _query_params(environ: dict[str, Any]) -> dict[str, list[str]]:
@@ -717,7 +806,9 @@ def _command_result_response(start_response, result: CommandResult):
     return _json_response(start_response, status_code, result.to_dict())
 
 
-def _maybe_dispatch_route_feedback_prompt_external(*, router: CommandRouter, request: CommandRequest, result: CommandResult) -> None:
+def _maybe_dispatch_route_feedback_prompt_external(
+    *, router: CommandRouter, request: CommandRequest, result: CommandResult
+) -> None:
     """Best-effort fallback: send router feedback card directly from /commands/route.
 
     This removes hard dependency on a second /router/feedback-card callback from OpenClaw.
@@ -734,14 +825,20 @@ def _maybe_dispatch_route_feedback_prompt_external(*, router: CommandRouter, req
         source_message_id = None
         metadata = getattr(request.context, "metadata", {}) if request.context is not None else {}
         if isinstance(metadata, dict):
-            source_message_id = str(
-                metadata.get("source_message_id")
-                or metadata.get("message_id")
-                or metadata.get("telegram_message_id")
-                or ""
-            ).strip() or None
+            source_message_id = (
+                str(
+                    metadata.get("source_message_id")
+                    or metadata.get("message_id")
+                    or metadata.get("telegram_message_id")
+                    or ""
+                ).strip()
+                or None
+            )
 
-        source_channel = str(getattr(request.requester, "source_platform", "") or "openclaw").strip() or "openclaw"
+        source_channel = (
+            str(getattr(request.requester, "source_platform", "") or "openclaw").strip()
+            or "openclaw"
+        )
 
         sent = asyncio.run(
             maybe_send_feedback_prompt_external(
