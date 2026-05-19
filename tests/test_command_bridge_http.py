@@ -78,7 +78,11 @@ class _FakeRouter:
         return {"ok": True, "runtime_mode": "openclaw"}
 
     async def get_doctor(self, **kwargs):
-        return {"ok": True, "scope": "workflow" if kwargs.get("issue_number") else "runtime", **kwargs}
+        return {
+            "ok": True,
+            "scope": "workflow" if kwargs.get("issue_number") else "runtime",
+            **kwargs,
+        }
 
     async def get_active_workflows(self, *, limit: int = 20):
         return {"ok": True, "count": 1, "items": [{"workflow_id": "demo-42-full"}], "limit": limit}
@@ -87,28 +91,65 @@ class _FakeRouter:
         return {"ok": True, "count": 1, "items": [{"workflow_id": "demo-99-full"}], "limit": limit}
 
     async def get_recent_incidents(self, *, limit: int = 20):
-        return {"ok": True, "count": 1, "items": [{"workflow_id": "demo-88-full", "severity": "high"}], "limit": limit}
+        return {
+            "ok": True,
+            "count": 1,
+            "items": [{"workflow_id": "demo-88-full", "severity": "high"}],
+            "limit": limit,
+        }
 
     async def get_git_identity_status(self):
         return {"ok": True, "github": {"installed": True}}
 
     async def get_workflow_summary(self, *, workflow_id=None, issue_number=None):
-        return {"ok": True, "summary": "demo summary", "workflow_id": workflow_id, "issue_number": issue_number}
+        return {
+            "ok": True,
+            "summary": "demo summary",
+            "workflow_id": workflow_id,
+            "issue_number": issue_number,
+        }
 
     async def get_workflow_timeline(self, *, workflow_id=None, issue_number=None):
-        return {"ok": True, "workflow_id": workflow_id, "issue_number": issue_number, "timeline": [{"step_num": 1, "name": "triage"}]}
+        return {
+            "ok": True,
+            "workflow_id": workflow_id,
+            "issue_number": issue_number,
+            "timeline": [{"step_num": 1, "name": "triage"}],
+        }
 
     async def get_workflow_diagnosis(self, *, workflow_id=None, issue_number=None):
-        return {"ok": True, "diagnosis": "agent_running", "likely_cause": "demo cause", "workflow_id": workflow_id, "issue_number": issue_number}
+        return {
+            "ok": True,
+            "diagnosis": "agent_running",
+            "likely_cause": "demo cause",
+            "workflow_id": workflow_id,
+            "issue_number": issue_number,
+        }
 
     async def get_workflow_authorship_audit(self, *, workflow_id=None, issue_number=None):
-        return {"ok": True, "workflow_id": workflow_id, "issue_number": issue_number, "authorship": {"classification": "human_requested"}}
+        return {
+            "ok": True,
+            "workflow_id": workflow_id,
+            "issue_number": issue_number,
+            "authorship": {"classification": "human_requested"},
+        }
 
     async def get_workflow_blockers(self, *, workflow_id=None, issue_number=None):
-        return {"ok": True, "workflow_id": workflow_id, "issue_number": issue_number, "blocking": True, "blockers": [{"type": "approval_required"}]}
+        return {
+            "ok": True,
+            "workflow_id": workflow_id,
+            "issue_number": issue_number,
+            "blocking": True,
+            "blockers": [{"type": "approval_required"}],
+        }
 
     async def get_workflow_logs_context(self, *, workflow_id=None, issue_number=None):
-        return {"ok": True, "workflow_id": workflow_id, "issue_number": issue_number, "log_context": [{"file": "demo.log", "lines": ["hello"]}]}
+        return {
+            "ok": True,
+            "workflow_id": workflow_id,
+            "issue_number": issue_number,
+            "log_context": [{"file": "demo.log", "lines": ["hello"]}],
+        }
 
     async def explain_routing(self, **kwargs):
         return {"ok": True, **kwargs}
@@ -137,11 +178,17 @@ class _FakeRouter:
             "cancel": "cancel",
             "refresh_state": "refresh_state",
         }.get(action, "ack")
-        message = "Reply received" if action_name == "ack" else f"Reply action '{action_name}' accepted"
+        message = (
+            "Reply received" if action_name == "ack" else f"Reply action '{action_name}' accepted"
+        )
         return CommandResult(
             status="success",
             message=message,
-            data={"correlation_id": reply.correlation_id, "received": True, "reply_action": action_name},
+            data={
+                "correlation_id": reply.correlation_id,
+                "received": True,
+                "reply_action": action_name,
+            },
         )
 
 
@@ -254,6 +301,93 @@ def test_execute_returns_accepted_response():
     assert status.startswith("202")
     assert payload["workflow_id"] == "demo-42-full"
     assert payload["status"] == "accepted"
+
+
+def test_n8n_run_lifecycle_requires_auth_and_persists_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEXUS_N8N_STATE_DIR", str(tmp_path / "state"))
+    app = create_command_bridge_app(
+        _FakeRouter(),
+        config=CommandBridgeConfig(auth_token="secret"),
+    )
+
+    unauthorized_status, unauthorized_payload = _call_app(
+        app,
+        method="POST",
+        path="/api/v1/n8n/runs",
+        payload={"run_id": "demo-run", "task": "ship the bridge"},
+    )
+    create_status, create_payload = _call_app(
+        app,
+        method="POST",
+        path="/api/v1/n8n/runs",
+        auth="Bearer secret",
+        payload={"run_id": "demo-run", "task": "ship the bridge", "project_key": "nexus"},
+    )
+    update_status, update_payload = _call_app(
+        app,
+        method="POST",
+        path="/api/v1/n8n/runs/update",
+        auth="Bearer secret",
+        payload={"run_id": "demo-run", "state": "approved", "message": "Gab approved"},
+    )
+    get_status, get_payload = _call_app(
+        app,
+        method="GET",
+        path="/api/v1/n8n/runs/demo-run",
+        auth="Bearer secret",
+    )
+
+    assert unauthorized_status.startswith("401")
+    assert unauthorized_payload["error_code"] == "missing_bearer_token"
+    assert create_status.startswith("201")
+    assert create_payload["run"]["state"] == "queued"
+    assert update_status.startswith("200")
+    assert update_payload["run"]["state"] == "approved"
+    assert get_status.startswith("200")
+    assert get_payload["run"]["events"][-1]["message"] == "Gab approved"
+
+
+def test_n8n_coding_execute_prepares_opencode_dry_run(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    monkeypatch.setenv("NEXUS_N8N_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("NEXUS_N8N_WORKTREE_DIR", str(tmp_path / "worktrees"))
+    monkeypatch.setenv("NEXUS_N8N_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("NEXUS_N8N_REPO_ALLOWLIST", str(tmp_path))
+    monkeypatch.setenv("NEXUS_OPENCODE_CLI", "/usr/bin/opencode")
+    app = create_command_bridge_app(
+        _FakeRouter(),
+        config=CommandBridgeConfig(auth_token="secret"),
+    )
+    _call_app(
+        app,
+        method="POST",
+        path="/api/v1/n8n/runs",
+        auth="Bearer secret",
+        payload={"run_id": "demo-run", "task": "implement the task"},
+    )
+
+    status, payload = _call_app(
+        app,
+        method="POST",
+        path="/api/v1/n8n/coding/execute",
+        auth="Bearer secret",
+        payload={
+            "run_id": "demo-run",
+            "task": "add a small feature",
+            "repo_dir": str(repo),
+            "dry_run": True,
+        },
+    )
+
+    assert status.startswith("202")
+    assert payload["ok"] is True
+    assert payload["dry_run"] is True
+    assert payload["job"]["worker"] == "opencode"
+    assert payload["job"]["state"] == "dry_run"
+    assert payload["job"]["worktree_dir"].endswith("demo-run/repo")
+    assert payload["command_preview"][-1] == "<prompt>"
 
 
 def test_execute_rejects_sender_allowlist_with_structured_error():
@@ -427,6 +561,7 @@ def test_replay_protection_rejects_duplicate_nonce():
     )
 
     import uuid
+
     fresh_ts = str(time.time())
     nonce = f"unique-nonce-{uuid.uuid4().hex}"
 
