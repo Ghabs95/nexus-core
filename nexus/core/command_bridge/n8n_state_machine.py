@@ -28,6 +28,7 @@ _VALID_STATES = {
 }
 _TERMINAL_STATES = {"done", "blocked", "failed", "cancelled"}
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+_STATE_RE = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
 
 
 def create_run(payload: dict[str, Any]) -> dict[str, Any]:
@@ -366,7 +367,7 @@ def _command_preview(cmd: list[str]) -> list[str]:
 
 def _normalize_state(value: Any) -> str:
     state = str(value or "").strip().lower().replace("-", "_")
-    if state not in _VALID_STATES:
+    if state not in _VALID_STATES and not _STATE_RE.match(state):
         raise ValueError(f"invalid run state: {value}")
     return state
 
