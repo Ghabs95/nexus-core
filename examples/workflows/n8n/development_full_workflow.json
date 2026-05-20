@@ -1,0 +1,807 @@
+{
+  "name": "Development Full Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"task\": \"={{$json.task || $json.title || 'Run Nexus workflow'}}\",\n  \"project_key\": \"={{$json.project_key || $json.project || 'nexus'}}\",\n  \"issue_number\": \"={{$json.issue_number || $json.issue || ''}}\",\n  \"requester\": {\n    \"source\": \"n8n\",\n    \"workflow\": \"Development Full Workflow\"\n  },\n  \"metadata\": {\n    \"nexus_workflow\": {\n      \"name\": \"Development Full Workflow\",\n      \"description\": \"Multi-agent workflow for processing feature requests and bug reports.\",\n      \"version\": \"0.1.0\"\n    },\n    \"workflow_type\": \"full\",\n    \"source\": \"examples/workflows/development_full_workflow.yaml\"\n  }\n}"
+      },
+      "id": "create-nexus-run",
+      "name": "Create Nexus Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Creates the durable Nexus run that n8n will advance."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"triage\",\n  \"message\": \"Starting Nexus step triage\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"triage\",\n      \"index\": 1,\n      \"name\": \"Initial Routing\",\n      \"description\": \"Analyze issue and classify as bug/feature/doc, suggest priority\",\n      \"agent_type\": \"triage\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_comment\",\n        \"vcs:add_label\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"classification\": \"enum[bug|feature|doc|support]\"\n        },\n        {\n          \"priority\": \"enum[p0-critical|p1-high|p2-medium|p3-low]\"\n        },\n        {\n          \"recommended_assignee\": \"string\"\n        }\n      ],\n      \"on_success\": \"route_by_type\",\n      \"include_audit_history\": false\n    }\n  }\n}"
+      },
+      "id": "start-triage",
+      "name": "01 Start triage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Analyze issue and classify as bug/feature/doc, suggest priority"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"triage_completed\",\n  \"message\": \"Completed Nexus step triage\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"triage\",\n      \"name\": \"Initial Routing\",\n      \"description\": \"Analyze issue and classify as bug/feature/doc, suggest priority\",\n      \"agent_type\": \"triage\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_comment\",\n        \"vcs:add_label\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"classification\": \"enum[bug|feature|doc|support]\"\n        },\n        {\n          \"priority\": \"enum[p0-critical|p1-high|p2-medium|p3-low]\"\n        },\n        {\n          \"recommended_assignee\": \"string\"\n        }\n      ],\n      \"on_success\": \"route_by_type\",\n      \"include_audit_history\": false\n    }\n  }\n}"
+      },
+      "id": "complete-triage",
+      "name": "Complete triage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"route_by_type\",\n  \"message\": \"Starting Nexus step route_by_type\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"route_by_type\",\n      \"index\": 2,\n      \"name\": \"Route to Specialist\",\n      \"description\": \"Conditional routing based on issue type\",\n      \"agent_type\": \"router\",\n      \"context_policy\": \"minimal\",\n      \"routes\": [\n        {\n          \"when\": \"classification == 'feature'\",\n          \"then\": \"design\"\n        },\n        {\n          \"when\": \"classification == 'bug'\",\n          \"then\": \"debug\"\n        },\n        {\n          \"when\": \"classification == 'doc'\",\n          \"then\": \"docs_update\"\n        },\n        {\n          \"default\": \"close_loop\"\n        }\n      ]\n    }\n  }\n}"
+      },
+      "id": "start-route_by_type",
+      "name": "02 Start route_by_type",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        920,
+        260
+      ],
+      "notesInFlow": true,
+      "notes": "Conditional routing based on issue type"
+    },
+    {
+      "parameters": {
+        "jsCode": "const routes = [\n  {\n    \"when\": \"classification == 'feature'\",\n    \"then\": \"design\"\n  },\n  {\n    \"when\": \"classification == 'bug'\",\n    \"then\": \"debug\"\n  },\n  {\n    \"when\": \"classification == 'doc'\",\n    \"then\": \"docs_update\"\n  },\n  {\n    \"default\": \"close_loop\"\n  }\n];\nconst state = $json;\n\nfunction toJsExpression(expr) {\n  return String(expr)\n    .replace(/\\band\\b/g, '&&')\n    .replace(/\\bor\\b/g, '||')\n    .replace(/\\bnot\\b/g, '!')\n    .replace(/\\bTrue\\b/g, 'true')\n    .replace(/\\bFalse\\b/g, 'false')\n    .replace(/\\bNone\\b/g, 'null');\n}\n\nfunction evaluate(expr) {\n  const keys = Object.keys(state);\n  const values = Object.values(state);\n  try {\n    return Boolean(Function(...keys, `return (${toJsExpression(expr)});`)(...values));\n  } catch (error) {\n    return false;\n  }\n}\n\nlet nextStep = null;\nfor (const route of routes) {\n  if (route.when && evaluate(route.when)) {\n    nextStep = route.then;\n    break;\n  }\n  if (!route.when && route.default && nextStep === null) {\n    nextStep = route.default;\n  }\n}\n\nreturn [{ json: { ...state, next_step: nextStep } }];\n"
+      },
+      "id": "route-route_by_type",
+      "name": "Route route_by_type",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        260
+      ],
+      "notesInFlow": true,
+      "notes": "Evaluates Nexus route rules and writes next_step."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"design\",\n  \"message\": \"Starting Nexus step design\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"design\",\n      \"index\": 3,\n      \"name\": \"Create Design Proposal\",\n      \"description\": \"For feature requests: create design doc in PR\",\n      \"agent_type\": \"design\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:create_branch\",\n        \"vcs:create_file\",\n        \"vcs:create_pr\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"feature_description\": \"string\"\n        },\n        {\n          \"scope\": \"enum[small|medium|large]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"design_pr_url\": \"string\"\n        },\n        {\n          \"estimated_effort\": \"string\"\n        }\n      ],\n      \"on_success\": \"develop\"\n    }\n  }\n}"
+      },
+      "id": "start-design",
+      "name": "03 Start design",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "For feature requests: create design doc in PR"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"design_completed\",\n  \"message\": \"Completed Nexus step design\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"design\",\n      \"name\": \"Create Design Proposal\",\n      \"description\": \"For feature requests: create design doc in PR\",\n      \"agent_type\": \"design\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:create_branch\",\n        \"vcs:create_file\",\n        \"vcs:create_pr\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"feature_description\": \"string\"\n        },\n        {\n          \"scope\": \"enum[small|medium|large]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"design_pr_url\": \"string\"\n        },\n        {\n          \"estimated_effort\": \"string\"\n        }\n      ],\n      \"on_success\": \"develop\"\n    }\n  }\n}"
+      },
+      "id": "complete-design",
+      "name": "Complete design",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"debug\",\n  \"message\": \"Starting Nexus step debug\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"debug\",\n      \"index\": 4,\n      \"name\": \"Debug & Root Cause Analysis\",\n      \"description\": \"Identify root cause, reproduction steps, and propose fix architecture\",\n      \"agent_type\": \"debug\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:add_comment\",\n        \"vcs:search_codebase\",\n        \"vcs:add_label\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"suspected_cause\": \"string\"\n        },\n        {\n          \"reproduction_steps\": \"string\"\n        },\n        {\n          \"affected_versions\": \"list[string]\"\n        }\n      ],\n      \"on_success\": \"develop\"\n    }\n  }\n}"
+      },
+      "id": "start-debug",
+      "name": "04 Start debug",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1640,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Identify root cause, reproduction steps, and propose fix architecture"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"debug_completed\",\n  \"message\": \"Completed Nexus step debug\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"debug\",\n      \"name\": \"Debug & Root Cause Analysis\",\n      \"description\": \"Identify root cause, reproduction steps, and propose fix architecture\",\n      \"agent_type\": \"debug\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:add_comment\",\n        \"vcs:search_codebase\",\n        \"vcs:add_label\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"suspected_cause\": \"string\"\n        },\n        {\n          \"reproduction_steps\": \"string\"\n        },\n        {\n          \"affected_versions\": \"list[string]\"\n        }\n      ],\n      \"on_success\": \"develop\"\n    }\n  }\n}"
+      },
+      "id": "complete-debug",
+      "name": "Complete debug",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1860,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"develop\",\n  \"message\": \"Starting Nexus step develop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"develop\",\n      \"index\": 5,\n      \"name\": \"Implement Changes\",\n      \"description\": \"Implement code changes based on debug analysis or design proposal\",\n      \"agent_type\": \"developer\",\n      \"context_policy\": \"deep\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:read_comments\",\n        \"vcs:add_comment\",\n        \"vcs:create_branch\",\n        \"vcs:edit_file\",\n        \"vcs:create_file\",\n        \"vcs:search_codebase\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"branch_name\": \"string\"\n        },\n        {\n          \"files_changed\": \"list[string]\"\n        },\n        {\n          \"implementation_summary\": \"string\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 50,\n      \"include_audit_history\": true\n    }\n  }\n}"
+      },
+      "id": "start-develop",
+      "name": "05 Start develop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Implement code changes based on debug analysis or design proposal"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/coding/execute",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"task\": \"={{$json.task || $json.run?.task || \\\"Implement code changes based on debug analysis or design proposal\\\"}}\",\n  \"project_key\": \"={{$json.project_key || $json.run?.project_key || 'nexus'}}\",\n  \"worker\": \"opencode\",\n  \"agent\": \"build\",\n  \"base_branch\": \"develop\",\n  \"metadata\": {\n    \"step\": {\n      \"id\": \"develop\",\n      \"name\": \"Implement Changes\",\n      \"description\": \"Implement code changes based on debug analysis or design proposal\",\n      \"agent_type\": \"developer\",\n      \"context_policy\": \"deep\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:read_comments\",\n        \"vcs:add_comment\",\n        \"vcs:create_branch\",\n        \"vcs:edit_file\",\n        \"vcs:create_file\",\n        \"vcs:search_codebase\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"branch_name\": \"string\"\n        },\n        {\n          \"files_changed\": \"list[string]\"\n        },\n        {\n          \"implementation_summary\": \"string\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 50,\n      \"include_audit_history\": true\n    }\n  }\n}"
+      },
+      "id": "execute-opencode-develop",
+      "name": "Execute OpenCode develop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Guarded Nexus endpoint: allowlist, isolated worktree, no push/merge/PR."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"review\",\n  \"message\": \"Starting Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"index\": 6,\n      \"name\": \"Review Implementation\",\n      \"description\": \"Review implementation quality and correctness; approve only after full regression (or equivalent full CI suite) passes\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:review_pr\",\n        \"vcs:suggest_changes\",\n        \"vcs:add_comment\",\n        \"vcs:request_changes\",\n        \"vcs:approve_pr\"\n      ],\n      \"inputs\": [\n        {\n          \"pr_urls\": \"list[string]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"review_comments\": \"list[string]\"\n        },\n        {\n          \"approval_status\": \"enum[approved|changes_requested]\"\n        }\n      ],\n      \"on_success\": \"route_review\"\n    }\n  }\n}"
+      },
+      "id": "start-review",
+      "name": "06 Start review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2360,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Review implementation quality and correctness; approve only after full regression (or equivalent full CI suite) passes"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"review_completed\",\n  \"message\": \"Completed Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"name\": \"Review Implementation\",\n      \"description\": \"Review implementation quality and correctness; approve only after full regression (or equivalent full CI suite) passes\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:review_pr\",\n        \"vcs:suggest_changes\",\n        \"vcs:add_comment\",\n        \"vcs:request_changes\",\n        \"vcs:approve_pr\"\n      ],\n      \"inputs\": [\n        {\n          \"pr_urls\": \"list[string]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"review_comments\": \"list[string]\"\n        },\n        {\n          \"approval_status\": \"enum[approved|changes_requested]\"\n        }\n      ],\n      \"on_success\": \"route_review\"\n    }\n  }\n}"
+      },
+      "id": "complete-review",
+      "name": "Complete review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2580,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"route_review\",\n  \"message\": \"Starting Nexus step route_review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"route_review\",\n      \"index\": 7,\n      \"name\": \"Route After Review\",\n      \"agent_type\": \"router\",\n      \"context_policy\": \"minimal\",\n      \"routes\": [\n        {\n          \"when\": \"approval_status == 'approved'\",\n          \"then\": \"close_loop\"\n        },\n        {\n          \"default\": \"develop\"\n        }\n      ]\n    }\n  }\n}"
+      },
+      "id": "start-route_review",
+      "name": "07 Start route_review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2720,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const routes = [\n  {\n    \"when\": \"approval_status == 'approved'\",\n    \"then\": \"close_loop\"\n  },\n  {\n    \"default\": \"develop\"\n  }\n];\nconst state = $json;\n\nfunction toJsExpression(expr) {\n  return String(expr)\n    .replace(/\\band\\b/g, '&&')\n    .replace(/\\bor\\b/g, '||')\n    .replace(/\\bnot\\b/g, '!')\n    .replace(/\\bTrue\\b/g, 'true')\n    .replace(/\\bFalse\\b/g, 'false')\n    .replace(/\\bNone\\b/g, 'null');\n}\n\nfunction evaluate(expr) {\n  const keys = Object.keys(state);\n  const values = Object.values(state);\n  try {\n    return Boolean(Function(...keys, `return (${toJsExpression(expr)});`)(...values));\n  } catch (error) {\n    return false;\n  }\n}\n\nlet nextStep = null;\nfor (const route of routes) {\n  if (route.when && evaluate(route.when)) {\n    nextStep = route.then;\n    break;\n  }\n  if (!route.when && route.default && nextStep === null) {\n    nextStep = route.default;\n  }\n}\n\nreturn [{ json: { ...state, next_step: nextStep } }];\n"
+      },
+      "id": "route-route_review",
+      "name": "Route route_review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2940,
+        260
+      ],
+      "notesInFlow": true,
+      "notes": "Evaluates Nexus route rules and writes next_step."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"docs_update\",\n  \"message\": \"Starting Nexus step docs_update\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"docs_update\",\n      \"index\": 8,\n      \"name\": \"Update Documentation\",\n      \"description\": \"For doc issues: update README/docs automatically\",\n      \"agent_type\": \"docs\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_file\",\n        \"vcs:create_branch\",\n        \"vcs:edit_file\",\n        \"vcs:create_pr\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"docs_pr_url\": \"string\"\n        }\n      ],\n      \"on_success\": \"close_loop\"\n    }\n  }\n}"
+      },
+      "id": "start-docs_update",
+      "name": "08 Start docs_update",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "For doc issues: update README/docs automatically"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"docs_update_completed\",\n  \"message\": \"Completed Nexus step docs_update\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"docs_update\",\n      \"name\": \"Update Documentation\",\n      \"description\": \"For doc issues: update README/docs automatically\",\n      \"agent_type\": \"docs\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_file\",\n        \"vcs:create_branch\",\n        \"vcs:edit_file\",\n        \"vcs:create_pr\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"docs_pr_url\": \"string\"\n        }\n      ],\n      \"on_success\": \"close_loop\"\n    }\n  }\n}"
+      },
+      "id": "complete-docs_update",
+      "name": "Complete docs_update",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"close_loop\",\n  \"message\": \"Starting Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"index\": 9,\n      \"name\": \"Summarize & Close\",\n      \"description\": \"Final summary comment on original issue\",\n      \"agent_type\": \"summarizer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"summary\": \"string\"\n        }\n      ],\n      \"final_step\": true,\n      \"audit_limit\": 10\n    }\n  }\n}"
+      },
+      "id": "start-close_loop",
+      "name": "09 Start close_loop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3440,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Final summary comment on original issue"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"close_loop_completed\",\n  \"message\": \"Completed Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"name\": \"Summarize & Close\",\n      \"description\": \"Final summary comment on original issue\",\n      \"agent_type\": \"summarizer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"summary\": \"string\"\n        }\n      ],\n      \"final_step\": true,\n      \"audit_limit\": 10\n    }\n  }\n}"
+      },
+      "id": "complete-close_loop",
+      "name": "Complete close_loop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3660,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.next_step}}",
+                    "rightValue": "design",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.next_step}}",
+                    "rightValue": "debug",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.next_step}}",
+                    "rightValue": "docs_update",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.next_step}}",
+                    "rightValue": "close_loop",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-switch-route_by_type",
+      "name": "Switch route_by_type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1360,
+        260
+      ],
+      "notesInFlow": true,
+      "notes": "Routes to the Nexus step selected by the preceding Code node."
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.next_step}}",
+                    "rightValue": "close_loop",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.next_step}}",
+                    "rightValue": "develop",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-switch-route_review",
+      "name": "Switch route_review",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        3160,
+        260
+      ],
+      "notesInFlow": true,
+      "notes": "Routes to the Nexus step selected by the preceding Code node."
+    }
+  ],
+  "connections": {
+    "01 Start triage": {
+      "main": [
+        [
+          {
+            "node": "Complete triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 Start route_by_type": {
+      "main": [
+        [
+          {
+            "node": "Route route_by_type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 Start design": {
+      "main": [
+        [
+          {
+            "node": "Complete design",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 Start debug": {
+      "main": [
+        [
+          {
+            "node": "Complete debug",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 Start develop": {
+      "main": [
+        [
+          {
+            "node": "Execute OpenCode develop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06 Start review": {
+      "main": [
+        [
+          {
+            "node": "Complete review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07 Start route_review": {
+      "main": [
+        [
+          {
+            "node": "Route route_review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08 Start docs_update": {
+      "main": [
+        [
+          {
+            "node": "Complete docs_update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "09 Start close_loop": {
+      "main": [
+        [
+          {
+            "node": "Complete close_loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Nexus Run": {
+      "main": [
+        [
+          {
+            "node": "01 Start triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Create Nexus Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete triage": {
+      "main": [
+        [
+          {
+            "node": "02 Start route_by_type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route route_by_type": {
+      "main": [
+        [
+          {
+            "node": "Switch route_by_type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch route_by_type": {
+      "main": [
+        [
+          {
+            "node": "03 Start design",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "04 Start debug",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "08 Start docs_update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "09 Start close_loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete design": {
+      "main": [
+        [
+          {
+            "node": "05 Start develop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete debug": {
+      "main": [
+        [
+          {
+            "node": "05 Start develop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute OpenCode develop": {
+      "main": [
+        [
+          {
+            "node": "06 Start review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete review": {
+      "main": [
+        [
+          {
+            "node": "07 Start route_review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route route_review": {
+      "main": [
+        [
+          {
+            "node": "Switch route_review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch route_review": {
+      "main": [
+        [
+          {
+            "node": "09 Start close_loop",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "05 Start develop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete docs_update": {
+      "main": [
+        [
+          {
+            "node": "09 Start close_loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    "nexus-arc",
+    "generated"
+  ],
+  "meta": {
+    "nexusArc": {
+      "source": "examples/workflows/development_full_workflow.yaml",
+      "workflowType": "full",
+      "converter": "nexus.translators.to_n8n"
+    }
+  }
+}

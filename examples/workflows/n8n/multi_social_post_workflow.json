@@ -1,0 +1,861 @@
+{
+  "name": "Multi-Platform Social Post Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"task\": \"={{$json.task || $json.title || 'Run Nexus workflow'}}\",\n  \"project_key\": \"={{$json.project_key || $json.project || 'nexus'}}\",\n  \"issue_number\": \"={{$json.issue_number || $json.issue || ''}}\",\n  \"requester\": {\n    \"source\": \"n8n\",\n    \"workflow\": \"Multi-Platform Social Post Workflow\"\n  },\n  \"metadata\": {\n    \"nexus_workflow\": {\n      \"name\": \"Multi-Platform Social Post Workflow\",\n      \"description\": \"Research a topic, write platform-adapted content, validate all, then publish to LinkedIn, X, and Instagram in sequence.\\n\",\n      \"version\": \"1.0.0\"\n    },\n    \"workflow_type\": \"social-post\",\n    \"source\": \"examples/workflows/multi_social_post_workflow.yaml\"\n  }\n}"
+      },
+      "id": "create-nexus-run",
+      "name": "Create Nexus Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Creates the durable Nexus run that n8n will advance."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"research\",\n  \"message\": \"Starting Nexus step research\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"research\",\n      \"index\": 1,\n      \"name\": \"Research\",\n      \"description\": \"Research the topic deeply. Produce a master brief covering: core insight, key facts, audience for each platform (LinkedIn=professional, X=technical/punchy, Instagram=visual/human), CTA options, 3\\u20135 universal themes, and image concept.\\n\",\n      \"agent_type\": \"researcher\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"topic\": \"string\"\n        },\n        {\n          \"platforms\": \"list[string]\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"key_facts\": \"list[string]\"\n        },\n        {\n          \"visual_concept\": \"string\"\n        }\n      ],\n      \"on_success\": \"write_linkedin\"\n    }\n  }\n}"
+      },
+      "id": "start-research",
+      "name": "01 Start research",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Research the topic deeply. Produce a master brief covering: core insight, key facts, audience for each platform (LinkedIn=professional, X=technical/punchy, Instagram=visual/human), CTA options, 3\u20135 universal themes, and image concept.\n"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"research_completed\",\n  \"message\": \"Completed Nexus step research\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"research\",\n      \"name\": \"Research\",\n      \"description\": \"Research the topic deeply. Produce a master brief covering: core insight, key facts, audience for each platform (LinkedIn=professional, X=technical/punchy, Instagram=visual/human), CTA options, 3\\u20135 universal themes, and image concept.\\n\",\n      \"agent_type\": \"researcher\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"topic\": \"string\"\n        },\n        {\n          \"platforms\": \"list[string]\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"key_facts\": \"list[string]\"\n        },\n        {\n          \"visual_concept\": \"string\"\n        }\n      ],\n      \"on_success\": \"write_linkedin\"\n    }\n  }\n}"
+      },
+      "id": "complete-research",
+      "name": "Complete research",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"write_linkedin\",\n  \"message\": \"Starting Nexus step write_linkedin\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"write_linkedin\",\n      \"index\": 2,\n      \"name\": \"Write LinkedIn Post\",\n      \"description\": \"Write a LinkedIn post based on the research brief. Format: hook \\u2192 body (3\\u20135 paragraphs) \\u2192 CTA \\u2192 hashtags (3\\u20135). Max 3000 chars. Tone: professional, insightful, human.\\n\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"key_facts\": \"list[string]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"linkedin_post\": \"string\"\n        }\n      ],\n      \"on_success\": \"write_x\",\n      \"audit_limit\": 10,\n      \"include_audit_history\": true\n    }\n  }\n}"
+      },
+      "id": "start-write_linkedin",
+      "name": "02 Start write_linkedin",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        920,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Write a LinkedIn post based on the research brief. Format: hook \u2192 body (3\u20135 paragraphs) \u2192 CTA \u2192 hashtags (3\u20135). Max 3000 chars. Tone: professional, insightful, human.\n"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"write_linkedin_completed\",\n  \"message\": \"Completed Nexus step write_linkedin\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"write_linkedin\",\n      \"name\": \"Write LinkedIn Post\",\n      \"description\": \"Write a LinkedIn post based on the research brief. Format: hook \\u2192 body (3\\u20135 paragraphs) \\u2192 CTA \\u2192 hashtags (3\\u20135). Max 3000 chars. Tone: professional, insightful, human.\\n\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"key_facts\": \"list[string]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"linkedin_post\": \"string\"\n        }\n      ],\n      \"on_success\": \"write_x\",\n      \"audit_limit\": 10,\n      \"include_audit_history\": true\n    }\n  }\n}"
+      },
+      "id": "complete-write_linkedin",
+      "name": "Complete write_linkedin",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1140,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"write_x\",\n  \"message\": \"Starting Nexus step write_x\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"write_x\",\n      \"index\": 3,\n      \"name\": \"Write X Post/Thread\",\n      \"description\": \"Adapt the LinkedIn content for X. Either a single punchy tweet (\\u2264280 chars) or a thread (3\\u20138 tweets). Lead with the sharpest insight. Hashtags: max 2\\u20133 at the end of the last tweet only.\\n\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"linkedin_post\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"x_post\": \"string\"\n        },\n        {\n          \"x_is_thread\": \"boolean\"\n        }\n      ],\n      \"on_success\": \"write_instagram\",\n      \"audit_limit\": 15,\n      \"include_audit_history\": true\n    }\n  }\n}"
+      },
+      "id": "start-write_x",
+      "name": "03 Start write_x",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Adapt the LinkedIn content for X. Either a single punchy tweet (\u2264280 chars) or a thread (3\u20138 tweets). Lead with the sharpest insight. Hashtags: max 2\u20133 at the end of the last tweet only.\n"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"write_x_completed\",\n  \"message\": \"Completed Nexus step write_x\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"write_x\",\n      \"name\": \"Write X Post/Thread\",\n      \"description\": \"Adapt the LinkedIn content for X. Either a single punchy tweet (\\u2264280 chars) or a thread (3\\u20138 tweets). Lead with the sharpest insight. Hashtags: max 2\\u20133 at the end of the last tweet only.\\n\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"linkedin_post\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"x_post\": \"string\"\n        },\n        {\n          \"x_is_thread\": \"boolean\"\n        }\n      ],\n      \"on_success\": \"write_instagram\",\n      \"audit_limit\": 15,\n      \"include_audit_history\": true\n    }\n  }\n}"
+      },
+      "id": "complete-write_x",
+      "name": "Complete write_x",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"write_instagram\",\n  \"message\": \"Starting Nexus step write_instagram\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"write_instagram\",\n      \"index\": 4,\n      \"name\": \"Write Instagram Caption\",\n      \"description\": \"Write an Instagram caption. Hook \\u2192 story/insight \\u2192 CTA \\u2192 hashtag block (10\\u201320). Max 2200 chars. Tone: authentic and visual-first. image_url must be set in the issue for the publish step.\\n\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"visual_concept\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"instagram_post\": \"string\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 15,\n      \"include_audit_history\": true\n    }\n  }\n}"
+      },
+      "id": "start-write_instagram",
+      "name": "04 Start write_instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1640,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Write an Instagram caption. Hook \u2192 story/insight \u2192 CTA \u2192 hashtag block (10\u201320). Max 2200 chars. Tone: authentic and visual-first. image_url must be set in the issue for the publish step.\n"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"write_instagram_completed\",\n  \"message\": \"Completed Nexus step write_instagram\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"write_instagram\",\n      \"name\": \"Write Instagram Caption\",\n      \"description\": \"Write an Instagram caption. Hook \\u2192 story/insight \\u2192 CTA \\u2192 hashtag block (10\\u201320). Max 2200 chars. Tone: authentic and visual-first. image_url must be set in the issue for the publish step.\\n\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"visual_concept\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"instagram_post\": \"string\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 15,\n      \"include_audit_history\": true\n    }\n  }\n}"
+      },
+      "id": "complete-write_instagram",
+      "name": "Complete write_instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1860,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"review\",\n  \"message\": \"Starting Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"index\": 5,\n      \"name\": \"Review All Three Posts\",\n      \"description\": \"Review all three posts together for: character limits, tone consistency, cross-platform coherence, hashtag counts, no unverified claims. Approve all or request specific changes per platform.\\n\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"linkedin_post\": \"string\"\n        },\n        {\n          \"x_post\": \"string\"\n        },\n        {\n          \"instagram_post\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"review_status\": \"enum[approved|changes_requested]\"\n        },\n        {\n          \"review_notes\": \"string\"\n        },\n        {\n          \"platforms_approved\": \"list[string]\"\n        }\n      ],\n      \"on_success\": \"route_review\",\n      \"audit_limit\": 30,\n      \"include_audit_history\": true\n    }\n  }\n}"
+      },
+      "id": "start-review",
+      "name": "05 Start review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Review all three posts together for: character limits, tone consistency, cross-platform coherence, hashtag counts, no unverified claims. Approve all or request specific changes per platform.\n"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"review_completed\",\n  \"message\": \"Completed Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"name\": \"Review All Three Posts\",\n      \"description\": \"Review all three posts together for: character limits, tone consistency, cross-platform coherence, hashtag counts, no unverified claims. Approve all or request specific changes per platform.\\n\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"linkedin_post\": \"string\"\n        },\n        {\n          \"x_post\": \"string\"\n        },\n        {\n          \"instagram_post\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"review_status\": \"enum[approved|changes_requested]\"\n        },\n        {\n          \"review_notes\": \"string\"\n        },\n        {\n          \"platforms_approved\": \"list[string]\"\n        }\n      ],\n      \"on_success\": \"route_review\",\n      \"audit_limit\": 30,\n      \"include_audit_history\": true\n    }\n  }\n}"
+      },
+      "id": "complete-review",
+      "name": "Complete review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"route_review\",\n  \"message\": \"Starting Nexus step route_review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"route_review\",\n      \"index\": 6,\n      \"name\": \"Route After Review\",\n      \"agent_type\": \"router\",\n      \"context_policy\": \"minimal\",\n      \"routes\": [\n        {\n          \"when\": \"review_status == 'approved'\",\n          \"then\": \"publish_linkedin\"\n        },\n        {\n          \"when\": \"review_status == 'changes_requested'\",\n          \"then\": \"write_linkedin\"\n        },\n        {\n          \"default\": \"write_linkedin\"\n        }\n      ]\n    }\n  }\n}"
+      },
+      "id": "start-route_review",
+      "name": "06 Start route_review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2360,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const routes = [\n  {\n    \"when\": \"review_status == 'approved'\",\n    \"then\": \"publish_linkedin\"\n  },\n  {\n    \"when\": \"review_status == 'changes_requested'\",\n    \"then\": \"write_linkedin\"\n  },\n  {\n    \"default\": \"write_linkedin\"\n  }\n];\nconst state = $json;\n\nfunction toJsExpression(expr) {\n  return String(expr)\n    .replace(/\\band\\b/g, '&&')\n    .replace(/\\bor\\b/g, '||')\n    .replace(/\\bnot\\b/g, '!')\n    .replace(/\\bTrue\\b/g, 'true')\n    .replace(/\\bFalse\\b/g, 'false')\n    .replace(/\\bNone\\b/g, 'null');\n}\n\nfunction evaluate(expr) {\n  const keys = Object.keys(state);\n  const values = Object.values(state);\n  try {\n    return Boolean(Function(...keys, `return (${toJsExpression(expr)});`)(...values));\n  } catch (error) {\n    return false;\n  }\n}\n\nlet nextStep = null;\nfor (const route of routes) {\n  if (route.when && evaluate(route.when)) {\n    nextStep = route.then;\n    break;\n  }\n  if (!route.when && route.default && nextStep === null) {\n    nextStep = route.default;\n  }\n}\n\nreturn [{ json: { ...state, next_step: nextStep } }];\n"
+      },
+      "id": "route-route_review",
+      "name": "Route route_review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2580,
+        260
+      ],
+      "notesInFlow": true,
+      "notes": "Evaluates Nexus route rules and writes next_step."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"publish_linkedin\",\n  \"message\": \"Starting Nexus step publish_linkedin\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"publish_linkedin\",\n      \"index\": 7,\n      \"name\": \"Publish to LinkedIn\",\n      \"description\": \"Run dry_run on LinkedIn post. If PASSED: publish. Post result as comment. Continue to X publish regardless of outcome (each platform publishes independently).\\n\",\n      \"agent_type\": \"publisher\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"linkedin_post\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"linkedin_publish_status\": \"enum[published|dry_run_only|failed]\"\n        },\n        {\n          \"linkedin_url\": \"string\"\n        }\n      ],\n      \"on_success\": \"publish_x\",\n      \"require_human_approval\": true\n    }\n  }\n}"
+      },
+      "id": "start-publish_linkedin",
+      "name": "07 Start publish_linkedin",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2720,
+        -180
+      ],
+      "notesInFlow": true,
+      "notes": "Run dry_run on LinkedIn post. If PASSED: publish. Post result as comment. Continue to X publish regardless of outcome (each platform publishes independently).\n"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"publish_linkedin_awaiting_approval\",\n  \"message\": \"Human approval required before publish_linkedin\",\n  \"data\": {\n    \"step_id\": \"publish_linkedin\",\n    \"agent_type\": \"publisher\"\n  }\n}"
+      },
+      "id": "approval-publish_linkedin",
+      "name": "Approval Gate publish_linkedin",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2940,
+        -300
+      ],
+      "notesInFlow": true,
+      "notes": "Connect this node to an n8n approval/wait mechanism if the gate must pause."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"publish_linkedin_completed\",\n  \"message\": \"Completed Nexus step publish_linkedin\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"publish_linkedin\",\n      \"name\": \"Publish to LinkedIn\",\n      \"description\": \"Run dry_run on LinkedIn post. If PASSED: publish. Post result as comment. Continue to X publish regardless of outcome (each platform publishes independently).\\n\",\n      \"agent_type\": \"publisher\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"linkedin_post\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"linkedin_publish_status\": \"enum[published|dry_run_only|failed]\"\n        },\n        {\n          \"linkedin_url\": \"string\"\n        }\n      ],\n      \"on_success\": \"publish_x\",\n      \"require_human_approval\": true\n    }\n  }\n}"
+      },
+      "id": "complete-publish_linkedin",
+      "name": "Complete publish_linkedin",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2940,
+        -180
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"publish_x\",\n  \"message\": \"Starting Nexus step publish_x\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"publish_x\",\n      \"index\": 8,\n      \"name\": \"Publish to X\",\n      \"description\": \"Run dry_run on X post/thread. If PASSED: publish. Post result as comment. Continue to Instagram publish.\\n\",\n      \"agent_type\": \"publisher\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"x_post\": \"string\"\n        },\n        {\n          \"x_is_thread\": \"boolean\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"x_publish_status\": \"enum[published|dry_run_only|failed]\"\n        },\n        {\n          \"x_url\": \"string\"\n        }\n      ],\n      \"on_success\": \"publish_instagram\",\n      \"require_human_approval\": true\n    }\n  }\n}"
+      },
+      "id": "start-publish_x",
+      "name": "08 Start publish_x",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        -180
+      ],
+      "notesInFlow": true,
+      "notes": "Run dry_run on X post/thread. If PASSED: publish. Post result as comment. Continue to Instagram publish.\n"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"publish_x_awaiting_approval\",\n  \"message\": \"Human approval required before publish_x\",\n  \"data\": {\n    \"step_id\": \"publish_x\",\n    \"agent_type\": \"publisher\"\n  }\n}"
+      },
+      "id": "approval-publish_x",
+      "name": "Approval Gate publish_x",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        -300
+      ],
+      "notesInFlow": true,
+      "notes": "Connect this node to an n8n approval/wait mechanism if the gate must pause."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"publish_x_completed\",\n  \"message\": \"Completed Nexus step publish_x\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"publish_x\",\n      \"name\": \"Publish to X\",\n      \"description\": \"Run dry_run on X post/thread. If PASSED: publish. Post result as comment. Continue to Instagram publish.\\n\",\n      \"agent_type\": \"publisher\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"x_post\": \"string\"\n        },\n        {\n          \"x_is_thread\": \"boolean\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"x_publish_status\": \"enum[published|dry_run_only|failed]\"\n        },\n        {\n          \"x_url\": \"string\"\n        }\n      ],\n      \"on_success\": \"publish_instagram\",\n      \"require_human_approval\": true\n    }\n  }\n}"
+      },
+      "id": "complete-publish_x",
+      "name": "Complete publish_x",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        -180
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"publish_instagram\",\n  \"message\": \"Starting Nexus step publish_instagram\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"publish_instagram\",\n      \"index\": 9,\n      \"name\": \"Publish to Instagram\",\n      \"description\": \"Run dry_run on Instagram caption + image. If PASSED: publish via Meta adapter. Post result as comment.\\n\",\n      \"agent_type\": \"publisher\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"instagram_post\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"instagram_publish_status\": \"enum[published|dry_run_only|failed]\"\n        },\n        {\n          \"instagram_url\": \"string\"\n        }\n      ],\n      \"on_success\": \"close_loop\",\n      \"require_human_approval\": true\n    }\n  }\n}"
+      },
+      "id": "start-publish_instagram",
+      "name": "09 Start publish_instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3440,
+        -180
+      ],
+      "notesInFlow": true,
+      "notes": "Run dry_run on Instagram caption + image. If PASSED: publish via Meta adapter. Post result as comment.\n"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"publish_instagram_awaiting_approval\",\n  \"message\": \"Human approval required before publish_instagram\",\n  \"data\": {\n    \"step_id\": \"publish_instagram\",\n    \"agent_type\": \"publisher\"\n  }\n}"
+      },
+      "id": "approval-publish_instagram",
+      "name": "Approval Gate publish_instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3660,
+        -300
+      ],
+      "notesInFlow": true,
+      "notes": "Connect this node to an n8n approval/wait mechanism if the gate must pause."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"publish_instagram_completed\",\n  \"message\": \"Completed Nexus step publish_instagram\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"publish_instagram\",\n      \"name\": \"Publish to Instagram\",\n      \"description\": \"Run dry_run on Instagram caption + image. If PASSED: publish via Meta adapter. Post result as comment.\\n\",\n      \"agent_type\": \"publisher\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"instagram_post\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"instagram_publish_status\": \"enum[published|dry_run_only|failed]\"\n        },\n        {\n          \"instagram_url\": \"string\"\n        }\n      ],\n      \"on_success\": \"close_loop\",\n      \"require_human_approval\": true\n    }\n  }\n}"
+      },
+      "id": "complete-publish_instagram",
+      "name": "Complete publish_instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3660,
+        -180
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"close_loop\",\n  \"message\": \"Starting Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"index\": 10,\n      \"name\": \"Document & Close\",\n      \"description\": \"Summarise all three publish outcomes. Add label social:published. Close the issue.\\n\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:add_comment\",\n        \"vcs:add_label\",\n        \"vcs:close_issue\"\n      ],\n      \"inputs\": [\n        {\n          \"linkedin_url\": \"string\"\n        },\n        {\n          \"x_url\": \"string\"\n        },\n        {\n          \"instagram_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"summary\": \"string\"\n        }\n      ],\n      \"final_step\": true\n    }\n  }\n}"
+      },
+      "id": "start-close_loop",
+      "name": "10 Start close_loop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3800,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Summarise all three publish outcomes. Add label social:published. Close the issue.\n"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"close_loop_completed\",\n  \"message\": \"Completed Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"name\": \"Document & Close\",\n      \"description\": \"Summarise all three publish outcomes. Add label social:published. Close the issue.\\n\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:add_comment\",\n        \"vcs:add_label\",\n        \"vcs:close_issue\"\n      ],\n      \"inputs\": [\n        {\n          \"linkedin_url\": \"string\"\n        },\n        {\n          \"x_url\": \"string\"\n        },\n        {\n          \"instagram_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"summary\": \"string\"\n        }\n      ],\n      \"final_step\": true\n    }\n  }\n}"
+      },
+      "id": "complete-close_loop",
+      "name": "Complete close_loop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4020,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.next_step}}",
+                    "rightValue": "publish_linkedin",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.next_step}}",
+                    "rightValue": "write_linkedin",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-switch-route_review",
+      "name": "Switch route_review",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        2800,
+        260
+      ],
+      "notesInFlow": true,
+      "notes": "Routes to the Nexus step selected by the preceding Code node."
+    }
+  ],
+  "connections": {
+    "01 Start research": {
+      "main": [
+        [
+          {
+            "node": "Complete research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 Start write_linkedin": {
+      "main": [
+        [
+          {
+            "node": "Complete write_linkedin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 Start write_x": {
+      "main": [
+        [
+          {
+            "node": "Complete write_x",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 Start write_instagram": {
+      "main": [
+        [
+          {
+            "node": "Complete write_instagram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 Start review": {
+      "main": [
+        [
+          {
+            "node": "Complete review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06 Start route_review": {
+      "main": [
+        [
+          {
+            "node": "Route route_review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "07 Start publish_linkedin": {
+      "main": [
+        [
+          {
+            "node": "Approval Gate publish_linkedin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Gate publish_linkedin": {
+      "main": [
+        [
+          {
+            "node": "Complete publish_linkedin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "08 Start publish_x": {
+      "main": [
+        [
+          {
+            "node": "Approval Gate publish_x",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Gate publish_x": {
+      "main": [
+        [
+          {
+            "node": "Complete publish_x",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "09 Start publish_instagram": {
+      "main": [
+        [
+          {
+            "node": "Approval Gate publish_instagram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Gate publish_instagram": {
+      "main": [
+        [
+          {
+            "node": "Complete publish_instagram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10 Start close_loop": {
+      "main": [
+        [
+          {
+            "node": "Complete close_loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Nexus Run": {
+      "main": [
+        [
+          {
+            "node": "01 Start research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Create Nexus Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete research": {
+      "main": [
+        [
+          {
+            "node": "02 Start write_linkedin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete write_linkedin": {
+      "main": [
+        [
+          {
+            "node": "03 Start write_x",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete write_x": {
+      "main": [
+        [
+          {
+            "node": "04 Start write_instagram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete write_instagram": {
+      "main": [
+        [
+          {
+            "node": "05 Start review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete review": {
+      "main": [
+        [
+          {
+            "node": "06 Start route_review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route route_review": {
+      "main": [
+        [
+          {
+            "node": "Switch route_review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch route_review": {
+      "main": [
+        [
+          {
+            "node": "07 Start publish_linkedin",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "02 Start write_linkedin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete publish_linkedin": {
+      "main": [
+        [
+          {
+            "node": "08 Start publish_x",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete publish_x": {
+      "main": [
+        [
+          {
+            "node": "09 Start publish_instagram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete publish_instagram": {
+      "main": [
+        [
+          {
+            "node": "10 Start close_loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    "nexus-arc",
+    "generated"
+  ],
+  "meta": {
+    "nexusArc": {
+      "source": "examples/workflows/multi_social_post_workflow.yaml",
+      "workflowType": "social-post",
+      "converter": "nexus.translators.to_n8n"
+    }
+  }
+}
