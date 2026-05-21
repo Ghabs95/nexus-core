@@ -347,6 +347,60 @@ def test_n8n_run_lifecycle_requires_auth_and_persists_state(tmp_path, monkeypatc
     assert get_payload["run"]["events"][-1]["message"] == "Gab approved"
 
 
+def test_n8n_run_lifecycle_accepts_workflow_step_states(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEXUS_N8N_STATE_DIR", str(tmp_path / "state"))
+    app = create_command_bridge_app(
+        _FakeRouter(),
+        config=CommandBridgeConfig(auth_token="secret"),
+    )
+    _call_app(
+        app,
+        method="POST",
+        path="/api/v1/n8n/runs",
+        auth="Bearer secret",
+        payload={"run_id": "enterprise-run", "task": "ship the converter"},
+    )
+
+    states = ["triage", "design_completed", "compliance_awaiting_approval", "route_review"]
+    for state in states:
+        status, payload = _call_app(
+            app,
+            method="POST",
+            path="/api/v1/n8n/runs/update",
+            auth="Bearer secret",
+            payload={"run_id": "enterprise-run", "state": state},
+        )
+
+        assert status.startswith("200")
+        assert payload["run"]["state"] == state
+
+
+def test_n8n_run_lifecycle_rejects_malformed_custom_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEXUS_N8N_STATE_DIR", str(tmp_path / "state"))
+    app = create_command_bridge_app(
+        _FakeRouter(),
+        config=CommandBridgeConfig(auth_token="secret"),
+    )
+    _call_app(
+        app,
+        method="POST",
+        path="/api/v1/n8n/runs",
+        auth="Bearer secret",
+        payload={"run_id": "enterprise-run", "task": "ship the converter"},
+    )
+
+    status, payload = _call_app(
+        app,
+        method="POST",
+        path="/api/v1/n8n/runs/update",
+        auth="Bearer secret",
+        payload={"run_id": "enterprise-run", "state": "../bad-state"},
+    )
+
+    assert status.startswith("400")
+    assert "invalid run state" in payload["error"]
+
+
 def test_n8n_coding_execute_prepares_opencode_dry_run(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()

@@ -1,0 +1,263 @@
+{
+  "name": "Development Workflow Router",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"task\": \"={{$json.task || $json.title || 'Run Nexus workflow'}}\",\n  \"project_key\": \"={{$json.project_key || $json.project || 'nexus'}}\",\n  \"issue_number\": \"={{$json.issue_number || $json.issue || ''}}\",\n  \"requester\": {\n    \"source\": \"n8n\",\n    \"workflow\": \"Development Workflow Router\"\n  },\n  \"metadata\": {\n    \"nexus_workflow\": {\n      \"name\": \"Development Workflow Router\",\n      \"description\": \"Router workflow for development full/shortened/fast-track tiers.\",\n      \"version\": \"0.1.0\"\n    },\n    \"workflow_type\": \"orchestrator\",\n    \"source\": \"examples/workflows/development_workflow.yaml\"\n  }\n}"
+      },
+      "id": "create-nexus-run",
+      "name": "Create Nexus Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Creates the durable Nexus run that n8n will advance."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"triage\",\n  \"message\": \"Starting Nexus step triage\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"triage\",\n      \"index\": 1,\n      \"name\": \"Development Tier Selection\",\n      \"description\": \"Classify the request and choose full, shortened, or fast-track\",\n      \"agent_type\": \"triage\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"request_context\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"selected_workflow\": \"enum[development_full, development_shortened, development_fast_track]\"\n        },\n        {\n          \"initial_analysis\": \"string\"\n        }\n      ],\n      \"on_success\": \"dispatch\"\n    }\n  }\n}"
+      },
+      "id": "start-triage",
+      "name": "01 Start triage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Classify the request and choose full, shortened, or fast-track"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"triage_completed\",\n  \"message\": \"Completed Nexus step triage\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"triage\",\n      \"name\": \"Development Tier Selection\",\n      \"description\": \"Classify the request and choose full, shortened, or fast-track\",\n      \"agent_type\": \"triage\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"request_context\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"selected_workflow\": \"enum[development_full, development_shortened, development_fast_track]\"\n        },\n        {\n          \"initial_analysis\": \"string\"\n        }\n      ],\n      \"on_success\": \"dispatch\"\n    }\n  }\n}"
+      },
+      "id": "complete-triage",
+      "name": "Complete triage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "Replace this state transition with a concrete agent/tool call when available."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs/update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"dispatch\",\n  \"message\": \"Starting Nexus step dispatch\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"dispatch\",\n      \"index\": 2,\n      \"name\": \"Dispatch\",\n      \"description\": \"Trigger selected development sub-workflow\",\n      \"agent_type\": \"triage\",\n      \"context_policy\": \"minimal\",\n      \"inputs\": [\n        {\n          \"selected_workflow\": \"string\"\n        }\n      ],\n      \"routes\": [\n        {\n          \"when\": \"selected_workflow == 'development_full'\",\n          \"then\": \"development_full_workflow\"\n        },\n        {\n          \"when\": \"selected_workflow == 'development_shortened'\",\n          \"then\": \"development_shortened_workflow\"\n        },\n        {\n          \"when\": \"selected_workflow == 'development_fast_track'\",\n          \"then\": \"development_fast_track_workflow\"\n        },\n        {\n          \"default\": \"development_full_workflow\"\n        }\n      ]\n    }\n  }\n}"
+      },
+      "id": "start-dispatch",
+      "name": "02 Start dispatch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        920,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Trigger selected development sub-workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "const routes = [\n  {\n    \"when\": \"selected_workflow == 'development_full'\",\n    \"then\": \"development_full_workflow\"\n  },\n  {\n    \"when\": \"selected_workflow == 'development_shortened'\",\n    \"then\": \"development_shortened_workflow\"\n  },\n  {\n    \"when\": \"selected_workflow == 'development_fast_track'\",\n    \"then\": \"development_fast_track_workflow\"\n  },\n  {\n    \"default\": \"development_full_workflow\"\n  }\n];\nconst state = $json;\n\nfunction toJsExpression(expr) {\n  return String(expr)\n    .replace(/\\band\\b/g, '&&')\n    .replace(/\\bor\\b/g, '||')\n    .replace(/\\bnot\\b/g, '!')\n    .replace(/\\bTrue\\b/g, 'true')\n    .replace(/\\bFalse\\b/g, 'false')\n    .replace(/\\bNone\\b/g, 'null');\n}\n\nfunction evaluate(expr) {\n  const keys = Object.keys(state);\n  const values = Object.values(state);\n  try {\n    return Boolean(Function(...keys, `return (${toJsExpression(expr)});`)(...values));\n  } catch (error) {\n    return false;\n  }\n}\n\nlet nextStep = null;\nfor (const route of routes) {\n  if (route.when && evaluate(route.when)) {\n    nextStep = route.then;\n    break;\n  }\n  if (!route.when && route.default && nextStep === null) {\n    nextStep = route.default;\n  }\n}\n\nreturn [{ json: { ...state, next_step: nextStep } }];\n"
+      },
+      "id": "route-dispatch",
+      "name": "Route dispatch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Evaluates Nexus route rules and writes next_step."
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.next_step}}",
+                    "rightValue": "development_full_workflow",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.next_step}}",
+                    "rightValue": "development_shortened_workflow",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.next_step}}",
+                    "rightValue": "development_fast_track_workflow",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-switch-dispatch",
+      "name": "Switch dispatch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1360,
+        120
+      ],
+      "notesInFlow": true,
+      "notes": "Routes to the Nexus step selected by the preceding Code node."
+    }
+  ],
+  "connections": {
+    "01 Start triage": {
+      "main": [
+        [
+          {
+            "node": "Complete triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 Start dispatch": {
+      "main": [
+        [
+          {
+            "node": "Route dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Nexus Run": {
+      "main": [
+        [
+          {
+            "node": "01 Start triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Create Nexus Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete triage": {
+      "main": [
+        [
+          {
+            "node": "02 Start dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route dispatch": {
+      "main": [
+        [
+          {
+            "node": "Switch dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    "nexus-arc",
+    "generated"
+  ],
+  "meta": {
+    "nexusArc": {
+      "source": "examples/workflows/development_workflow.yaml",
+      "workflowType": "orchestrator",
+      "converter": "nexus.translators.to_n8n"
+    }
+  }
+}
