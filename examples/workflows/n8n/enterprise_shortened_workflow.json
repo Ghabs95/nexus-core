@@ -14,20 +14,35 @@
     },
     {
       "parameters": {
+        "jsCode": "// Fill these values for Manual Trigger runs.\n// Webhook/Form/parent workflow input overrides matching manualInput fields.\nconst manualInput = {\n  task: '',\n  project_key: '',\n  issue_number: '',\n  repo_dir: '',\n};\n\nconst input = { ...manualInput, ...$json };\nconst task = String(input.task || input.title || input.run?.task || '').trim();\nconst projectKey = String(input.project_key || input.project || input.run?.project_key || '').trim();\nconst issueNumber = String(input.issue_number || input.issue || input.run?.issue_number || '').trim();\nconst repoDir = String(input.repo_dir || input.repo_path || input.run?.metadata?.repo_dir || '').trim();\n\nif (!task) {\n  throw new Error('Set task in Prepare Nexus Input or pass task/title into the workflow.');\n}\nif (!projectKey) {\n  throw new Error('Set project_key in Prepare Nexus Input or pass project/project_key into the workflow.');\n}\n\nreturn [{\n  json: {\n    ...input,\n    task,\n    project_key: projectKey,\n    issue_number: issueNumber,\n    repo_dir: repoDir,\n  },\n}];\n"
+      },
+      "id": "prepare-nexus-input",
+      "name": "Prepare Nexus Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "For Manual Trigger runs, fill manualInput in this node. Webhook/Form/parent workflows can provide task, project_key, issue_number, and repo_dir on the incoming item instead."
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"task\": \"={{$json.task || $json.title || 'Run Nexus workflow'}}\",\n  \"project_key\": \"={{$json.project_key || $json.project || 'nexus'}}\",\n  \"issue_number\": \"={{$json.issue_number || $json.issue || ''}}\",\n  \"requester\": {\n    \"source\": \"n8n\",\n    \"workflow\": \"Enterprise Shortened Workflow\"\n  },\n  \"metadata\": {\n    \"nexus_workflow\": {\n      \"name\": \"Enterprise Shortened Workflow\",\n      \"description\": \"Expedited enterprise delivery pipeline with rapid debug, review, and deploy.\",\n      \"version\": \"1.0.0\"\n    },\n    \"workflow_type\": \"shortened\",\n    \"source\": \"examples/workflows/enterprise_shortened_workflow.yaml\"\n  }\n}"
+        "jsonBody": "={{\n{\n  \"task\": $json.task || $json.run?.task,\n  \"project_key\": $json.project_key || $json.run?.project_key,\n  \"issue_number\": $json.issue_number || $json.issue || $json.run?.issue_number || '',\n  \"requester\": {\n    \"source\": \"n8n\",\n    \"workflow\": \"Enterprise Shortened Workflow\"\n  },\n  \"metadata\": {\n    \"repo_dir\": $json.repo_dir || $json.repo_path || $json.run?.metadata?.repo_dir || '',\n    \"nexus_workflow\": {\n      \"name\": \"Enterprise Shortened Workflow\",\n      \"description\": \"Expedited enterprise delivery pipeline with rapid debug, review, and deploy.\",\n      \"version\": \"1.0.0\"\n    },\n    \"workflow_type\": \"shortened\",\n    \"source\": \"examples/workflows/enterprise_shortened_workflow.yaml\"\n  }\n}\n}}"
       },
       "id": "create-nexus-run",
       "name": "Create Nexus Run",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        260,
+        520,
         0
       ],
       "notesInFlow": true,
@@ -41,14 +56,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"triage\",\n  \"message\": \"Starting Nexus step triage\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"triage\",\n      \"index\": 1,\n      \"name\": \"Intake & Triage\",\n      \"description\": \"Classify priority, scope, and affected components\",\n      \"agent_type\": \"triage\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_label\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"severity\": \"enum[critical|high|medium|low]\"\n        },\n        {\n          \"priority\": \"enum[p0|p1|p2|p3]\"\n        }\n      ],\n      \"on_success\": \"debug\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"triage\",\n  \"message\": \"Starting Nexus step triage\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"triage\",\n      \"index\": 1,\n      \"name\": \"Intake & Triage\",\n      \"description\": \"Classify priority, scope, and affected components\",\n      \"agent_type\": \"triage\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_label\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"severity\": \"enum[critical|high|medium|low]\"\n        },\n        {\n          \"priority\": \"enum[p0|p1|p2|p3]\"\n        }\n      ],\n      \"on_success\": \"debug\"\n    }\n  }\n}\n}}"
       },
       "id": "start-triage",
       "name": "01 Start triage",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        560,
+        820,
         0
       ],
       "notesInFlow": true,
@@ -62,14 +77,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"triage_completed\",\n  \"message\": \"Completed Nexus step triage\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"triage\",\n      \"name\": \"Intake & Triage\",\n      \"description\": \"Classify priority, scope, and affected components\",\n      \"agent_type\": \"triage\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_label\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"severity\": \"enum[critical|high|medium|low]\"\n        },\n        {\n          \"priority\": \"enum[p0|p1|p2|p3]\"\n        }\n      ],\n      \"on_success\": \"debug\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"triage_completed\",\n  \"message\": \"Completed Nexus step triage\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"triage\",\n      \"name\": \"Intake & Triage\",\n      \"description\": \"Classify priority, scope, and affected components\",\n      \"agent_type\": \"triage\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_label\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"severity\": \"enum[critical|high|medium|low]\"\n        },\n        {\n          \"priority\": \"enum[p0|p1|p2|p3]\"\n        }\n      ],\n      \"on_success\": \"debug\"\n    }\n  }\n}\n}}"
       },
       "id": "complete-triage",
       "name": "Complete triage",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        780,
+        1040,
         0
       ],
       "notesInFlow": true,
@@ -83,14 +98,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"debug\",\n  \"message\": \"Starting Nexus step debug\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"debug\",\n      \"index\": 2,\n      \"name\": \"Root Cause Analysis\",\n      \"description\": \"Investigate the issue and identify root cause\",\n      \"agent_type\": \"debug\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:search_codebase\",\n        \"vcs:read_file\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"severity\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"root_cause\": \"string\"\n        },\n        {\n          \"affected_components\": \"list[string]\"\n        },\n        {\n          \"fix_approach\": \"string\"\n        }\n      ],\n      \"on_success\": \"develop\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"debug\",\n  \"message\": \"Starting Nexus step debug\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"debug\",\n      \"index\": 2,\n      \"name\": \"Root Cause Analysis\",\n      \"description\": \"Investigate the issue and identify root cause\",\n      \"agent_type\": \"debug\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:search_codebase\",\n        \"vcs:read_file\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"severity\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"root_cause\": \"string\"\n        },\n        {\n          \"affected_components\": \"list[string]\"\n        },\n        {\n          \"fix_approach\": \"string\"\n        }\n      ],\n      \"on_success\": \"develop\"\n    }\n  }\n}\n}}"
       },
       "id": "start-debug",
       "name": "02 Start debug",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        920,
+        1180,
         120
       ],
       "notesInFlow": true,
@@ -104,14 +119,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"debug_completed\",\n  \"message\": \"Completed Nexus step debug\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"debug\",\n      \"name\": \"Root Cause Analysis\",\n      \"description\": \"Investigate the issue and identify root cause\",\n      \"agent_type\": \"debug\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:search_codebase\",\n        \"vcs:read_file\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"severity\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"root_cause\": \"string\"\n        },\n        {\n          \"affected_components\": \"list[string]\"\n        },\n        {\n          \"fix_approach\": \"string\"\n        }\n      ],\n      \"on_success\": \"develop\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"debug_completed\",\n  \"message\": \"Completed Nexus step debug\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"debug\",\n      \"name\": \"Root Cause Analysis\",\n      \"description\": \"Investigate the issue and identify root cause\",\n      \"agent_type\": \"debug\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:search_codebase\",\n        \"vcs:read_file\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"severity\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"root_cause\": \"string\"\n        },\n        {\n          \"affected_components\": \"list[string]\"\n        },\n        {\n          \"fix_approach\": \"string\"\n        }\n      ],\n      \"on_success\": \"develop\"\n    }\n  }\n}\n}}"
       },
       "id": "complete-debug",
       "name": "Complete debug",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1140,
+        1400,
         120
       ],
       "notesInFlow": true,
@@ -125,14 +140,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"develop\",\n  \"message\": \"Starting Nexus step develop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"develop\",\n      \"index\": 3,\n      \"name\": \"Implement Change\",\n      \"description\": \"Implement the change and open a PR\",\n      \"agent_type\": \"developer\",\n      \"context_policy\": \"deep\",\n      \"tools\": [\n        \"vcs:create_branch\",\n        \"vcs:commit_changes\",\n        \"vcs:create_pr\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"root_cause\": \"string\"\n        },\n        {\n          \"fix_approach\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"fix_pr_url\": \"string\"\n        },\n        {\n          \"test_coverage\": \"string\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 50,\n      \"include_audit_history\": true\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"develop\",\n  \"message\": \"Starting Nexus step develop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"develop\",\n      \"index\": 3,\n      \"name\": \"Implement Change\",\n      \"description\": \"Implement the change and open a PR\",\n      \"agent_type\": \"developer\",\n      \"context_policy\": \"deep\",\n      \"tools\": [\n        \"vcs:create_branch\",\n        \"vcs:commit_changes\",\n        \"vcs:create_pr\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"root_cause\": \"string\"\n        },\n        {\n          \"fix_approach\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"fix_pr_url\": \"string\"\n        },\n        {\n          \"test_coverage\": \"string\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 50,\n      \"include_audit_history\": true\n    }\n  }\n}\n}}"
       },
       "id": "start-develop",
       "name": "03 Start develop",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1280,
+        1540,
         0
       ],
       "notesInFlow": true,
@@ -146,14 +161,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"task\": \"={{$json.task || $json.run?.task || \\\"Implement the change and open a PR\\\"}}\",\n  \"project_key\": \"={{$json.project_key || $json.run?.project_key || 'nexus'}}\",\n  \"worker\": \"opencode\",\n  \"agent\": \"build\",\n  \"base_branch\": \"develop\",\n  \"metadata\": {\n    \"step\": {\n      \"id\": \"develop\",\n      \"name\": \"Implement Change\",\n      \"description\": \"Implement the change and open a PR\",\n      \"agent_type\": \"developer\",\n      \"context_policy\": \"deep\",\n      \"tools\": [\n        \"vcs:create_branch\",\n        \"vcs:commit_changes\",\n        \"vcs:create_pr\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"root_cause\": \"string\"\n        },\n        {\n          \"fix_approach\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"fix_pr_url\": \"string\"\n        },\n        {\n          \"test_coverage\": \"string\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 50,\n      \"include_audit_history\": true\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"task\": $json.task || $json.run?.task || \"Implement the change and open a PR\",\n  \"project_key\": $json.project_key || $json.run?.project_key || 'nexus',\n  \"repo_dir\": $json.repo_dir || $json.run?.metadata?.repo_dir || '',\n  \"worker\": \"opencode\",\n  \"agent\": \"build\",\n  \"base_branch\": \"develop\",\n  \"metadata\": {\n    \"step\": {\n      \"id\": \"develop\",\n      \"name\": \"Implement Change\",\n      \"description\": \"Implement the change and open a PR\",\n      \"agent_type\": \"developer\",\n      \"context_policy\": \"deep\",\n      \"tools\": [\n        \"vcs:create_branch\",\n        \"vcs:commit_changes\",\n        \"vcs:create_pr\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"root_cause\": \"string\"\n        },\n        {\n          \"fix_approach\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"fix_pr_url\": \"string\"\n        },\n        {\n          \"test_coverage\": \"string\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 50,\n      \"include_audit_history\": true\n    }\n  }\n}\n}}"
       },
       "id": "execute-opencode-develop",
       "name": "Execute OpenCode develop",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1500,
+        1760,
         0
       ],
       "notesInFlow": true,
@@ -167,14 +182,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"review\",\n  \"message\": \"Starting Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"index\": 4,\n      \"name\": \"Verify Change\",\n      \"description\": \"Review the change for correctness and approve only after full regression (or equivalent full CI suite) passes\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:review_pr\",\n        \"vcs:approve_pr\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"pr_urls\": \"list[string]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"review_status\": \"enum[approved|changes_requested]\"\n        }\n      ],\n      \"on_success\": \"route_review\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"review\",\n  \"message\": \"Starting Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"index\": 4,\n      \"name\": \"Verify Change\",\n      \"description\": \"Review the change for correctness and approve only after full regression (or equivalent full CI suite) passes\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:review_pr\",\n        \"vcs:approve_pr\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"pr_urls\": \"list[string]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"review_status\": \"enum[approved|changes_requested]\"\n        }\n      ],\n      \"on_success\": \"route_review\"\n    }\n  }\n}\n}}"
       },
       "id": "start-review",
       "name": "04 Start review",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1640,
+        1900,
         120
       ],
       "notesInFlow": true,
@@ -188,14 +203,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"review_completed\",\n  \"message\": \"Completed Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"name\": \"Verify Change\",\n      \"description\": \"Review the change for correctness and approve only after full regression (or equivalent full CI suite) passes\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:review_pr\",\n        \"vcs:approve_pr\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"pr_urls\": \"list[string]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"review_status\": \"enum[approved|changes_requested]\"\n        }\n      ],\n      \"on_success\": \"route_review\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"review_completed\",\n  \"message\": \"Completed Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"name\": \"Verify Change\",\n      \"description\": \"Review the change for correctness and approve only after full regression (or equivalent full CI suite) passes\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:review_pr\",\n        \"vcs:approve_pr\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"pr_urls\": \"list[string]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"review_status\": \"enum[approved|changes_requested]\"\n        }\n      ],\n      \"on_success\": \"route_review\"\n    }\n  }\n}\n}}"
       },
       "id": "complete-review",
       "name": "Complete review",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1860,
+        2120,
         120
       ],
       "notesInFlow": true,
@@ -209,14 +224,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"route_review\",\n  \"message\": \"Starting Nexus step route_review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"route_review\",\n      \"index\": 5,\n      \"name\": \"Route After Verification\",\n      \"agent_type\": \"router\",\n      \"context_policy\": \"minimal\",\n      \"routes\": [\n        {\n          \"when\": \"review_status == 'approved'\",\n          \"then\": \"deploy\"\n        },\n        {\n          \"default\": \"develop\"\n        }\n      ]\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"route_review\",\n  \"message\": \"Starting Nexus step route_review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"route_review\",\n      \"index\": 5,\n      \"name\": \"Route After Verification\",\n      \"agent_type\": \"router\",\n      \"context_policy\": \"minimal\",\n      \"routes\": [\n        {\n          \"when\": \"review_status == 'approved'\",\n          \"then\": \"deploy\"\n        },\n        {\n          \"default\": \"develop\"\n        }\n      ]\n    }\n  }\n}\n}}"
       },
       "id": "start-route_review",
       "name": "05 Start route_review",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2000,
+        2260,
         260
       ]
     },
@@ -229,7 +244,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2220,
+        2480,
         260
       ],
       "notesInFlow": true,
@@ -243,14 +258,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"deploy\",\n  \"message\": \"Starting Nexus step deploy\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"deploy\",\n      \"index\": 6,\n      \"name\": \"Deploy Change\",\n      \"description\": \"Merge the change and create a release\",\n      \"agent_type\": \"deployer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:merge_pr\",\n        \"vcs:create_release\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"fix_pr_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"deployment_status\": \"string\"\n        }\n      ],\n      \"on_success\": \"close_loop\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"deploy\",\n  \"message\": \"Starting Nexus step deploy\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"deploy\",\n      \"index\": 6,\n      \"name\": \"Deploy Change\",\n      \"description\": \"Merge the change and create a release\",\n      \"agent_type\": \"deployer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:merge_pr\",\n        \"vcs:create_release\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"fix_pr_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"deployment_status\": \"string\"\n        }\n      ],\n      \"on_success\": \"close_loop\"\n    }\n  }\n}\n}}"
       },
       "id": "start-deploy",
       "name": "06 Start deploy",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2360,
+        2620,
         120
       ],
       "notesInFlow": true,
@@ -264,14 +279,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"deploy_completed\",\n  \"message\": \"Completed Nexus step deploy\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"deploy\",\n      \"name\": \"Deploy Change\",\n      \"description\": \"Merge the change and create a release\",\n      \"agent_type\": \"deployer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:merge_pr\",\n        \"vcs:create_release\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"fix_pr_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"deployment_status\": \"string\"\n        }\n      ],\n      \"on_success\": \"close_loop\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"deploy_completed\",\n  \"message\": \"Completed Nexus step deploy\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"deploy\",\n      \"name\": \"Deploy Change\",\n      \"description\": \"Merge the change and create a release\",\n      \"agent_type\": \"deployer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:merge_pr\",\n        \"vcs:create_release\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"fix_pr_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"deployment_status\": \"string\"\n        }\n      ],\n      \"on_success\": \"close_loop\"\n    }\n  }\n}\n}}"
       },
       "id": "complete-deploy",
       "name": "Complete deploy",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2580,
+        2840,
         120
       ],
       "notesInFlow": true,
@@ -285,14 +300,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"close_loop\",\n  \"message\": \"Starting Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"index\": 7,\n      \"name\": \"Document & Close\",\n      \"description\": \"Write summary and close the issue\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:add_comment\",\n        \"vcs:close_issue\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"root_cause\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"postmortem\": \"string\"\n        }\n      ],\n      \"final_step\": true,\n      \"audit_limit\": 10\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"close_loop\",\n  \"message\": \"Starting Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"index\": 7,\n      \"name\": \"Document & Close\",\n      \"description\": \"Write summary and close the issue\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:add_comment\",\n        \"vcs:close_issue\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"root_cause\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"postmortem\": \"string\"\n        }\n      ],\n      \"final_step\": true,\n      \"audit_limit\": 10\n    }\n  }\n}\n}}"
       },
       "id": "start-close_loop",
       "name": "07 Start close_loop",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2720,
+        2980,
         0
       ],
       "notesInFlow": true,
@@ -306,14 +321,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"close_loop_completed\",\n  \"message\": \"Completed Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"name\": \"Document & Close\",\n      \"description\": \"Write summary and close the issue\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:add_comment\",\n        \"vcs:close_issue\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"root_cause\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"postmortem\": \"string\"\n        }\n      ],\n      \"final_step\": true,\n      \"audit_limit\": 10\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"close_loop_completed\",\n  \"message\": \"Completed Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"name\": \"Document & Close\",\n      \"description\": \"Write summary and close the issue\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:add_comment\",\n        \"vcs:close_issue\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        },\n        {\n          \"root_cause\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"postmortem\": \"string\"\n        }\n      ],\n      \"final_step\": true,\n      \"audit_limit\": 10\n    }\n  }\n}\n}}"
       },
       "id": "complete-close_loop",
       "name": "Complete close_loop",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2940,
+        3200,
         0
       ],
       "notesInFlow": true,
@@ -363,7 +378,7 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
       "position": [
-        2440,
+        2700,
         260
       ],
       "notesInFlow": true,
@@ -460,6 +475,17 @@
       ]
     },
     "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Nexus Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Nexus Input": {
       "main": [
         [
           {

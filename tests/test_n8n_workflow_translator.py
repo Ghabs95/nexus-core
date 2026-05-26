@@ -26,6 +26,9 @@ def test_converts_enterprise_full_compliance_gate():
     assert compliance["type"] == "n8n-nodes-base.httpRequest"
     assert compliance["parameters"]["url"].endswith("/api/v1/n8n/runs/update")
     assert '"state": "compliance"' in compliance["parameters"]["jsonBody"]
+    assert compliance["parameters"]["jsonBody"].startswith("={{")
+    assert '"run_id": $json.run?.run_id || $json.run_id' in compliance["parameters"]["jsonBody"]
+    assert '"run_id": "={{' not in compliance["parameters"]["jsonBody"]
 
     approval = _node_by_name(workflow, "Approval Gate compliance")
     assert "Human approval required" in approval["parameters"]["jsonBody"]
@@ -41,7 +44,38 @@ def test_developer_steps_use_guarded_opencode_endpoint():
     develop = _node_by_name(workflow, "Execute OpenCode develop")
     assert develop["parameters"]["url"].endswith("/api/v1/n8n/coding/execute")
     assert '"worker": "opencode"' in develop["parameters"]["jsonBody"]
+    assert '"repo_dir": $json.repo_dir || $json.run?.metadata?.repo_dir || ' in develop[
+        "parameters"
+    ]["jsonBody"]
     assert "isolated worktree" in develop["notes"]
+
+
+def test_create_run_body_uses_prepared_input_and_preserves_repo_dir():
+    workflow = convert_workflow_to_n8n(ENTERPRISE_FULL)
+
+    create = _node_by_name(workflow, "Create Nexus Run")
+    assert create["parameters"]["jsonBody"].startswith("={{")
+    assert '"task": $json.task || $json.run?.task' in create["parameters"]["jsonBody"]
+    assert '"project_key": $json.project_key || $json.run?.project_key' in create["parameters"][
+        "jsonBody"
+    ]
+    assert (
+        '"repo_dir": $json.repo_dir || $json.repo_path || $json.run?.metadata?.repo_dir || '
+        in create["parameters"]["jsonBody"]
+    )
+    assert '"task": "={{' not in create["parameters"]["jsonBody"]
+
+
+def test_generated_workflow_makes_manual_input_contract_explicit():
+    workflow = convert_workflow_to_n8n(ENTERPRISE_FULL)
+
+    prepare = _node_by_name(workflow, "Prepare Nexus Input")
+    assert prepare["type"] == "n8n-nodes-base.code"
+    assert "const manualInput = {" in prepare["parameters"]["jsCode"]
+    assert "task: ''" in prepare["parameters"]["jsCode"]
+    assert "project_key: ''" in prepare["parameters"]["jsCode"]
+    assert "repo_dir: ''" in prepare["parameters"]["jsCode"]
+    assert "Set task in Prepare Nexus Input" in prepare["parameters"]["jsCode"]
 
 
 def test_router_workflow_can_resolve_requested_tier():
@@ -58,4 +92,5 @@ def test_translator_outputs_valid_json():
     parsed = json.loads(rendered)
 
     assert parsed["nodes"][0]["name"] == "Manual Trigger"
-    assert parsed["connections"]["Manual Trigger"]["main"][0][0]["node"] == "Create Nexus Run"
+    assert parsed["connections"]["Manual Trigger"]["main"][0][0]["node"] == "Prepare Nexus Input"
+    assert parsed["connections"]["Prepare Nexus Input"]["main"][0][0]["node"] == "Create Nexus Run"

@@ -98,11 +98,13 @@ class _N8nWorkflowBuilder:
 
     def build(self) -> dict[str, Any]:
         self._add_manual_trigger()
+        prepare_input_name = self._add_prepare_input()
         create_run_name = self._add_create_run()
         self._register_step_nodes()
         first_step_id = _step_id(self.steps[0], 1)
         self._connect("Create Nexus Run", self.step_start_names[first_step_id])
-        self._connect("Manual Trigger", create_run_name)
+        self._connect("Manual Trigger", prepare_input_name)
+        self._connect(prepare_input_name, create_run_name)
         self._wire_step_transitions()
 
         return {
@@ -131,14 +133,31 @@ class _N8nWorkflowBuilder:
             position=(0, 0),
         )
 
+    def _add_prepare_input(self) -> str:
+        self._node(
+            node_id="prepare-nexus-input",
+            name="Prepare Nexus Input",
+            node_type="n8n-nodes-base.code",
+            type_version=2,
+            parameters={"jsCode": _prepare_input_code()},
+            position=(260, 0),
+            notes=(
+                "For Manual Trigger runs, fill manualInput in this node. "
+                "Webhook/Form/parent workflows can provide task, project_key, "
+                "issue_number, and repo_dir on the incoming item instead."
+            ),
+        )
+        return "Prepare Nexus Input"
+
     def _add_create_run(self) -> str:
         metadata = self.data.get("metadata") if isinstance(self.data.get("metadata"), dict) else {}
         body = {
-            "task": "={{$json.task || $json.title || 'Run Nexus workflow'}}",
-            "project_key": "={{$json.project_key || $json.project || 'nexus'}}",
-            "issue_number": "={{$json.issue_number || $json.issue || ''}}",
+            "task": "={{$json.task || $json.run?.task}}",
+            "project_key": "={{$json.project_key || $json.run?.project_key}}",
+            "issue_number": "={{$json.issue_number || $json.issue || $json.run?.issue_number || ''}}",
             "requester": {"source": "n8n", "workflow": self.workflow_name},
             "metadata": {
+                "repo_dir": "={{$json.repo_dir || $json.repo_path || $json.run?.metadata?.repo_dir || ''}}",
                 "nexus_workflow": metadata,
                 "workflow_type": self.workflow_type or self.data.get("workflow_type"),
                 "source": str(self.source_path),
@@ -150,7 +169,7 @@ class _N8nWorkflowBuilder:
             method="POST",
             url=f"{self.bridge_url}/api/v1/n8n/runs",
             json_body=body,
-            position=(260, 0),
+            position=(520, 0),
             notes="Creates the durable Nexus run that n8n will advance.",
         )
         return "Create Nexus Run"
@@ -158,7 +177,7 @@ class _N8nWorkflowBuilder:
     def _register_step_nodes(self) -> None:
         for index, step in enumerate(self.steps, start=1):
             step_id = _step_id(step, index)
-            x = 560 + (index - 1) * 360
+            x = 820 + (index - 1) * 360
             y = _lane_for_step(step, index)
             start_name = self._add_step_start(step, step_id, index, x, y)
             self.step_start_names[step_id] = start_name
@@ -230,6 +249,7 @@ class _N8nWorkflowBuilder:
                     + "}}"
                 ),
                 "project_key": "={{$json.project_key || $json.run?.project_key || 'nexus'}}",
+                "repo_dir": "={{$json.repo_dir || $json.run?.metadata?.repo_dir || ''}}",
                 "worker": "opencode",
                 "agent": "build",
                 "base_branch": "develop",
@@ -363,7 +383,7 @@ class _N8nWorkflowBuilder:
                 "nodeCredentialType": "httpBearerAuth",
                 "sendBody": True,
                 "specifyBody": "json",
-                "jsonBody": json.dumps(json_body, indent=2),
+                "jsonBody": _n8n_json_body_expression(json_body),
             },
             position=position,
             notes=notes,
@@ -481,6 +501,41 @@ return [{{ json: {{ ...state, next_step: nextStep }} }}];
 """
 
 
+def _prepare_input_code() -> str:
+    return """// Fill these values for Manual Trigger runs.
+// Webhook/Form/parent workflow input overrides matching manualInput fields.
+const manualInput = {
+  task: '',
+  project_key: '',
+  issue_number: '',
+  repo_dir: '',
+};
+
+const input = { ...manualInput, ...$json };
+const task = String(input.task || input.title || input.run?.task || '').trim();
+const projectKey = String(input.project_key || input.project || input.run?.project_key || '').trim();
+const issueNumber = String(input.issue_number || input.issue || input.run?.issue_number || '').trim();
+const repoDir = String(input.repo_dir || input.repo_path || input.run?.metadata?.repo_dir || '').trim();
+
+if (!task) {
+  throw new Error('Set task in Prepare Nexus Input or pass task/title into the workflow.');
+}
+if (!projectKey) {
+  throw new Error('Set project_key in Prepare Nexus Input or pass project/project_key into the workflow.');
+}
+
+return [{
+  json: {
+    ...input,
+    task,
+    project_key: projectKey,
+    issue_number: issueNumber,
+    repo_dir: repoDir,
+  },
+}];
+"""
+
+
 def _public_step_payload(step: dict[str, Any], step_id: str, index: int) -> dict[str, Any]:
     keys = (
         "name",
@@ -509,6 +564,48 @@ def _public_step_payload(step: dict[str, Any], step_id: str, index: int) -> dict
 
 def _run_id_expression() -> str:
     return "={{$json.run?.run_id || $json.run_id}}"
+
+
+def _n8n_json_body_expression(value: dict[str, Any]) -> str:
+    """Render an HTTP Request JSON body as one n8n expression.
+
+    n8n does not evaluate expressions nested as strings inside the JSON body
+    editor. The whole body must be an expression when it mixes static JSON with
+    dynamic values.
+    """
+    return "={{\n" + _render_n8n_expression_value(value) + "\n}}"
+
+
+def _render_n8n_expression_value(value: Any, *, indent: int = 0) -> str:
+    next_indent = indent + 2
+    prefix = " " * indent
+    child_prefix = " " * next_indent
+
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        fields = [
+            (
+                f"{child_prefix}{json.dumps(str(key))}: "
+                f"{_render_n8n_expression_value(child, indent=next_indent)}"
+            )
+            for key, child in value.items()
+        ]
+        return "{\n" + ",\n".join(fields) + f"\n{prefix}" + "}"
+
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        items = [
+            f"{child_prefix}{_render_n8n_expression_value(child, indent=next_indent)}"
+            for child in value
+        ]
+        return "[\n" + ",\n".join(items) + f"\n{prefix}" + "]"
+
+    if isinstance(value, str) and value.startswith("={{") and value.endswith("}}"):
+        return value[3:-2].strip()
+
+    return json.dumps(value)
 
 
 def _slug(value: str) -> str:

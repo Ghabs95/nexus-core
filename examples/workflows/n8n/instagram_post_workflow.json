@@ -14,20 +14,35 @@
     },
     {
       "parameters": {
+        "jsCode": "// Fill these values for Manual Trigger runs.\n// Webhook/Form/parent workflow input overrides matching manualInput fields.\nconst manualInput = {\n  task: '',\n  project_key: '',\n  issue_number: '',\n  repo_dir: '',\n};\n\nconst input = { ...manualInput, ...$json };\nconst task = String(input.task || input.title || input.run?.task || '').trim();\nconst projectKey = String(input.project_key || input.project || input.run?.project_key || '').trim();\nconst issueNumber = String(input.issue_number || input.issue || input.run?.issue_number || '').trim();\nconst repoDir = String(input.repo_dir || input.repo_path || input.run?.metadata?.repo_dir || '').trim();\n\nif (!task) {\n  throw new Error('Set task in Prepare Nexus Input or pass task/title into the workflow.');\n}\nif (!projectKey) {\n  throw new Error('Set project_key in Prepare Nexus Input or pass project/project_key into the workflow.');\n}\n\nreturn [{\n  json: {\n    ...input,\n    task,\n    project_key: projectKey,\n    issue_number: issueNumber,\n    repo_dir: repoDir,\n  },\n}];\n"
+      },
+      "id": "prepare-nexus-input",
+      "name": "Prepare Nexus Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "For Manual Trigger runs, fill manualInput in this node. Webhook/Form/parent workflows can provide task, project_key, issue_number, and repo_dir on the incoming item instead."
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"task\": \"={{$json.task || $json.title || 'Run Nexus workflow'}}\",\n  \"project_key\": \"={{$json.project_key || $json.project || 'nexus'}}\",\n  \"issue_number\": \"={{$json.issue_number || $json.issue || ''}}\",\n  \"requester\": {\n    \"source\": \"n8n\",\n    \"workflow\": \"Instagram Post Workflow\"\n  },\n  \"metadata\": {\n    \"nexus_workflow\": {\n      \"name\": \"Instagram Post Workflow\",\n      \"description\": \"Research a topic, write an Instagram caption, validate it, and publish via Meta adapter.\",\n      \"version\": \"1.0.0\"\n    },\n    \"workflow_type\": \"social-post\",\n    \"source\": \"examples/workflows/instagram_post_workflow.yaml\"\n  }\n}"
+        "jsonBody": "={{\n{\n  \"task\": $json.task || $json.run?.task,\n  \"project_key\": $json.project_key || $json.run?.project_key,\n  \"issue_number\": $json.issue_number || $json.issue || $json.run?.issue_number || '',\n  \"requester\": {\n    \"source\": \"n8n\",\n    \"workflow\": \"Instagram Post Workflow\"\n  },\n  \"metadata\": {\n    \"repo_dir\": $json.repo_dir || $json.repo_path || $json.run?.metadata?.repo_dir || '',\n    \"nexus_workflow\": {\n      \"name\": \"Instagram Post Workflow\",\n      \"description\": \"Research a topic, write an Instagram caption, validate it, and publish via Meta adapter.\",\n      \"version\": \"1.0.0\"\n    },\n    \"workflow_type\": \"social-post\",\n    \"source\": \"examples/workflows/instagram_post_workflow.yaml\"\n  }\n}\n}}"
       },
       "id": "create-nexus-run",
       "name": "Create Nexus Run",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        260,
+        520,
         0
       ],
       "notesInFlow": true,
@@ -41,14 +56,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"research\",\n  \"message\": \"Starting Nexus step research\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"research\",\n      \"index\": 1,\n      \"name\": \"Research\",\n      \"description\": \"Gather context about the topic for Instagram. Identify: visual concept (what image/video would work), caption hook, tone (authentic, aspirational, or educational), and 10\\u201320 relevant hashtags. Instagram audience is visual-first \\u2014 the caption supports the image.\\n\",\n      \"agent_type\": \"researcher\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"topic\": \"string\"\n        },\n        {\n          \"audience\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"visual_concept\": \"string\"\n        },\n        {\n          \"suggested_hashtags\": \"list[string]\"\n        }\n      ],\n      \"on_success\": \"write\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"research\",\n  \"message\": \"Starting Nexus step research\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"research\",\n      \"index\": 1,\n      \"name\": \"Research\",\n      \"description\": \"Gather context about the topic for Instagram. Identify: visual concept (what image/video would work), caption hook, tone (authentic, aspirational, or educational), and 10\\u201320 relevant hashtags. Instagram audience is visual-first \\u2014 the caption supports the image.\\n\",\n      \"agent_type\": \"researcher\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"topic\": \"string\"\n        },\n        {\n          \"audience\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"visual_concept\": \"string\"\n        },\n        {\n          \"suggested_hashtags\": \"list[string]\"\n        }\n      ],\n      \"on_success\": \"write\"\n    }\n  }\n}\n}}"
       },
       "id": "start-research",
       "name": "01 Start research",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        560,
+        820,
         0
       ],
       "notesInFlow": true,
@@ -62,14 +77,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"research_completed\",\n  \"message\": \"Completed Nexus step research\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"research\",\n      \"name\": \"Research\",\n      \"description\": \"Gather context about the topic for Instagram. Identify: visual concept (what image/video would work), caption hook, tone (authentic, aspirational, or educational), and 10\\u201320 relevant hashtags. Instagram audience is visual-first \\u2014 the caption supports the image.\\n\",\n      \"agent_type\": \"researcher\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"topic\": \"string\"\n        },\n        {\n          \"audience\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"visual_concept\": \"string\"\n        },\n        {\n          \"suggested_hashtags\": \"list[string]\"\n        }\n      ],\n      \"on_success\": \"write\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"research_completed\",\n  \"message\": \"Completed Nexus step research\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"research\",\n      \"name\": \"Research\",\n      \"description\": \"Gather context about the topic for Instagram. Identify: visual concept (what image/video would work), caption hook, tone (authentic, aspirational, or educational), and 10\\u201320 relevant hashtags. Instagram audience is visual-first \\u2014 the caption supports the image.\\n\",\n      \"agent_type\": \"researcher\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"topic\": \"string\"\n        },\n        {\n          \"audience\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"visual_concept\": \"string\"\n        },\n        {\n          \"suggested_hashtags\": \"list[string]\"\n        }\n      ],\n      \"on_success\": \"write\"\n    }\n  }\n}\n}}"
       },
       "id": "complete-research",
       "name": "Complete research",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        780,
+        1040,
         0
       ],
       "notesInFlow": true,
@@ -83,14 +98,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"write\",\n  \"message\": \"Starting Nexus step write\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"write\",\n      \"index\": 2,\n      \"name\": \"Write Instagram Caption\",\n      \"description\": \"Write the Instagram caption based on the research brief. Format: hook (1\\u20132 sentences) \\u2192 body (story or insight) \\u2192 CTA \\u2192 hashtag block. Max 2200 characters. Hashtags: 10\\u201320, grouped at the end. Tone: authentic, human, platform-native. No corporate speak. Note: the image must be provided separately via image_url in the issue.\\n\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"visual_concept\": \"string\"\n        },\n        {\n          \"suggested_hashtags\": \"list[string]\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"post_text\": \"string\"\n        },\n        {\n          \"post_platform\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        },\n        {\n          \"hashtag_count\": \"integer\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 10,\n      \"include_audit_history\": true\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"write\",\n  \"message\": \"Starting Nexus step write\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"write\",\n      \"index\": 2,\n      \"name\": \"Write Instagram Caption\",\n      \"description\": \"Write the Instagram caption based on the research brief. Format: hook (1\\u20132 sentences) \\u2192 body (story or insight) \\u2192 CTA \\u2192 hashtag block. Max 2200 characters. Hashtags: 10\\u201320, grouped at the end. Tone: authentic, human, platform-native. No corporate speak. Note: the image must be provided separately via image_url in the issue.\\n\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"visual_concept\": \"string\"\n        },\n        {\n          \"suggested_hashtags\": \"list[string]\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"post_text\": \"string\"\n        },\n        {\n          \"post_platform\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        },\n        {\n          \"hashtag_count\": \"integer\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 10,\n      \"include_audit_history\": true\n    }\n  }\n}\n}}"
       },
       "id": "start-write",
       "name": "02 Start write",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        920,
+        1180,
         120
       ],
       "notesInFlow": true,
@@ -104,14 +119,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"write_completed\",\n  \"message\": \"Completed Nexus step write\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"write\",\n      \"name\": \"Write Instagram Caption\",\n      \"description\": \"Write the Instagram caption based on the research brief. Format: hook (1\\u20132 sentences) \\u2192 body (story or insight) \\u2192 CTA \\u2192 hashtag block. Max 2200 characters. Hashtags: 10\\u201320, grouped at the end. Tone: authentic, human, platform-native. No corporate speak. Note: the image must be provided separately via image_url in the issue.\\n\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"visual_concept\": \"string\"\n        },\n        {\n          \"suggested_hashtags\": \"list[string]\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"post_text\": \"string\"\n        },\n        {\n          \"post_platform\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        },\n        {\n          \"hashtag_count\": \"integer\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 10,\n      \"include_audit_history\": true\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"write_completed\",\n  \"message\": \"Completed Nexus step write\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"write\",\n      \"name\": \"Write Instagram Caption\",\n      \"description\": \"Write the Instagram caption based on the research brief. Format: hook (1\\u20132 sentences) \\u2192 body (story or insight) \\u2192 CTA \\u2192 hashtag block. Max 2200 characters. Hashtags: 10\\u201320, grouped at the end. Tone: authentic, human, platform-native. No corporate speak. Note: the image must be provided separately via image_url in the issue.\\n\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"research_brief\": \"string\"\n        },\n        {\n          \"visual_concept\": \"string\"\n        },\n        {\n          \"suggested_hashtags\": \"list[string]\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"post_text\": \"string\"\n        },\n        {\n          \"post_platform\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        },\n        {\n          \"hashtag_count\": \"integer\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 10,\n      \"include_audit_history\": true\n    }\n  }\n}\n}}"
       },
       "id": "complete-write",
       "name": "Complete write",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1140,
+        1400,
         120
       ],
       "notesInFlow": true,
@@ -125,14 +140,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"review\",\n  \"message\": \"Starting Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"index\": 3,\n      \"name\": \"Review & Validate\",\n      \"description\": \"Review caption for: character limit (\\u22642200), hashtag count (10\\u201320), tone (authentic, not corporate), no unverified claims, image_url present. Approve or request specific changes.\\n\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"post_text\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"review_status\": \"enum[approved|changes_requested]\"\n        },\n        {\n          \"review_notes\": \"string\"\n        }\n      ],\n      \"on_success\": \"route_review\",\n      \"audit_limit\": 20,\n      \"include_audit_history\": true\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"review\",\n  \"message\": \"Starting Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"index\": 3,\n      \"name\": \"Review & Validate\",\n      \"description\": \"Review caption for: character limit (\\u22642200), hashtag count (10\\u201320), tone (authentic, not corporate), no unverified claims, image_url present. Approve or request specific changes.\\n\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"post_text\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"review_status\": \"enum[approved|changes_requested]\"\n        },\n        {\n          \"review_notes\": \"string\"\n        }\n      ],\n      \"on_success\": \"route_review\",\n      \"audit_limit\": 20,\n      \"include_audit_history\": true\n    }\n  }\n}\n}}"
       },
       "id": "start-review",
       "name": "03 Start review",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1280,
+        1540,
         0
       ],
       "notesInFlow": true,
@@ -146,14 +161,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"review_completed\",\n  \"message\": \"Completed Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"name\": \"Review & Validate\",\n      \"description\": \"Review caption for: character limit (\\u22642200), hashtag count (10\\u201320), tone (authentic, not corporate), no unverified claims, image_url present. Approve or request specific changes.\\n\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"post_text\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"review_status\": \"enum[approved|changes_requested]\"\n        },\n        {\n          \"review_notes\": \"string\"\n        }\n      ],\n      \"on_success\": \"route_review\",\n      \"audit_limit\": 20,\n      \"include_audit_history\": true\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"review_completed\",\n  \"message\": \"Completed Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"name\": \"Review & Validate\",\n      \"description\": \"Review caption for: character limit (\\u22642200), hashtag count (10\\u201320), tone (authentic, not corporate), no unverified claims, image_url present. Approve or request specific changes.\\n\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"post_text\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"review_status\": \"enum[approved|changes_requested]\"\n        },\n        {\n          \"review_notes\": \"string\"\n        }\n      ],\n      \"on_success\": \"route_review\",\n      \"audit_limit\": 20,\n      \"include_audit_history\": true\n    }\n  }\n}\n}}"
       },
       "id": "complete-review",
       "name": "Complete review",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1500,
+        1760,
         0
       ],
       "notesInFlow": true,
@@ -167,14 +182,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"route_review\",\n  \"message\": \"Starting Nexus step route_review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"route_review\",\n      \"index\": 4,\n      \"name\": \"Route After Review\",\n      \"agent_type\": \"router\",\n      \"context_policy\": \"minimal\",\n      \"routes\": [\n        {\n          \"when\": \"review_status == 'approved'\",\n          \"then\": \"publish\"\n        },\n        {\n          \"when\": \"review_status == 'changes_requested'\",\n          \"then\": \"write\"\n        },\n        {\n          \"default\": \"write\"\n        }\n      ]\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"route_review\",\n  \"message\": \"Starting Nexus step route_review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"route_review\",\n      \"index\": 4,\n      \"name\": \"Route After Review\",\n      \"agent_type\": \"router\",\n      \"context_policy\": \"minimal\",\n      \"routes\": [\n        {\n          \"when\": \"review_status == 'approved'\",\n          \"then\": \"publish\"\n        },\n        {\n          \"when\": \"review_status == 'changes_requested'\",\n          \"then\": \"write\"\n        },\n        {\n          \"default\": \"write\"\n        }\n      ]\n    }\n  }\n}\n}}"
       },
       "id": "start-route_review",
       "name": "04 Start route_review",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1640,
+        1900,
         260
       ]
     },
@@ -187,7 +202,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1860,
+        2120,
         260
       ],
       "notesInFlow": true,
@@ -201,14 +216,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"publish\",\n  \"message\": \"Starting Nexus step publish\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"publish\",\n      \"index\": 5,\n      \"name\": \"Publish to Instagram\",\n      \"description\": \"Publish the approved caption + image to Instagram via the Meta adapter (target=instagram, instagram_account_id required). First run a dry_run to validate credentials, image_url, and caption length. If dry_run passes: publish. Post the result (IG post URL) as a comment. NOTE: image_url must be a public HTTPS URL accessible by Meta's servers.\\n\",\n      \"agent_type\": \"publisher\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"post_text\": \"string\"\n        },\n        {\n          \"post_platform\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"publish_status\": \"enum[published|dry_run_only|failed]\"\n        },\n        {\n          \"publish_url\": \"string\"\n        },\n        {\n          \"publish_platform\": \"string\"\n        }\n      ],\n      \"on_success\": \"close_loop\",\n      \"require_human_approval\": true,\n      \"audit_limit\": 20,\n      \"include_audit_history\": true\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"publish\",\n  \"message\": \"Starting Nexus step publish\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"publish\",\n      \"index\": 5,\n      \"name\": \"Publish to Instagram\",\n      \"description\": \"Publish the approved caption + image to Instagram via the Meta adapter (target=instagram, instagram_account_id required). First run a dry_run to validate credentials, image_url, and caption length. If dry_run passes: publish. Post the result (IG post URL) as a comment. NOTE: image_url must be a public HTTPS URL accessible by Meta's servers.\\n\",\n      \"agent_type\": \"publisher\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"post_text\": \"string\"\n        },\n        {\n          \"post_platform\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"publish_status\": \"enum[published|dry_run_only|failed]\"\n        },\n        {\n          \"publish_url\": \"string\"\n        },\n        {\n          \"publish_platform\": \"string\"\n        }\n      ],\n      \"on_success\": \"close_loop\",\n      \"require_human_approval\": true,\n      \"audit_limit\": 20,\n      \"include_audit_history\": true\n    }\n  }\n}\n}}"
       },
       "id": "start-publish",
       "name": "05 Start publish",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2000,
+        2260,
         -180
       ],
       "notesInFlow": true,
@@ -222,14 +237,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"publish_awaiting_approval\",\n  \"message\": \"Human approval required before publish\",\n  \"data\": {\n    \"step_id\": \"publish\",\n    \"agent_type\": \"publisher\"\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"publish_awaiting_approval\",\n  \"message\": \"Human approval required before publish\",\n  \"data\": {\n    \"step_id\": \"publish\",\n    \"agent_type\": \"publisher\"\n  }\n}\n}}"
       },
       "id": "approval-publish",
       "name": "Approval Gate publish",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2220,
+        2480,
         -300
       ],
       "notesInFlow": true,
@@ -243,14 +258,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"publish_completed\",\n  \"message\": \"Completed Nexus step publish\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"publish\",\n      \"name\": \"Publish to Instagram\",\n      \"description\": \"Publish the approved caption + image to Instagram via the Meta adapter (target=instagram, instagram_account_id required). First run a dry_run to validate credentials, image_url, and caption length. If dry_run passes: publish. Post the result (IG post URL) as a comment. NOTE: image_url must be a public HTTPS URL accessible by Meta's servers.\\n\",\n      \"agent_type\": \"publisher\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"post_text\": \"string\"\n        },\n        {\n          \"post_platform\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"publish_status\": \"enum[published|dry_run_only|failed]\"\n        },\n        {\n          \"publish_url\": \"string\"\n        },\n        {\n          \"publish_platform\": \"string\"\n        }\n      ],\n      \"on_success\": \"close_loop\",\n      \"require_human_approval\": true,\n      \"audit_limit\": 20,\n      \"include_audit_history\": true\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"publish_completed\",\n  \"message\": \"Completed Nexus step publish\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"publish\",\n      \"name\": \"Publish to Instagram\",\n      \"description\": \"Publish the approved caption + image to Instagram via the Meta adapter (target=instagram, instagram_account_id required). First run a dry_run to validate credentials, image_url, and caption length. If dry_run passes: publish. Post the result (IG post URL) as a comment. NOTE: image_url must be a public HTTPS URL accessible by Meta's servers.\\n\",\n      \"agent_type\": \"publisher\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:read_comments\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"post_text\": \"string\"\n        },\n        {\n          \"post_platform\": \"string\"\n        },\n        {\n          \"image_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"publish_status\": \"enum[published|dry_run_only|failed]\"\n        },\n        {\n          \"publish_url\": \"string\"\n        },\n        {\n          \"publish_platform\": \"string\"\n        }\n      ],\n      \"on_success\": \"close_loop\",\n      \"require_human_approval\": true,\n      \"audit_limit\": 20,\n      \"include_audit_history\": true\n    }\n  }\n}\n}}"
       },
       "id": "complete-publish",
       "name": "Complete publish",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2220,
+        2480,
         -180
       ],
       "notesInFlow": true,
@@ -264,14 +279,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"close_loop\",\n  \"message\": \"Starting Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"index\": 6,\n      \"name\": \"Document & Close\",\n      \"description\": \"Write a short summary of the published post. Close the issue with label social:published.\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:add_comment\",\n        \"vcs:add_label\",\n        \"vcs:close_issue\"\n      ],\n      \"inputs\": [\n        {\n          \"publish_url\": \"string\"\n        },\n        {\n          \"publish_platform\": \"string\"\n        },\n        {\n          \"post_text\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"summary\": \"string\"\n        }\n      ],\n      \"final_step\": true\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"close_loop\",\n  \"message\": \"Starting Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"index\": 6,\n      \"name\": \"Document & Close\",\n      \"description\": \"Write a short summary of the published post. Close the issue with label social:published.\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:add_comment\",\n        \"vcs:add_label\",\n        \"vcs:close_issue\"\n      ],\n      \"inputs\": [\n        {\n          \"publish_url\": \"string\"\n        },\n        {\n          \"publish_platform\": \"string\"\n        },\n        {\n          \"post_text\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"summary\": \"string\"\n        }\n      ],\n      \"final_step\": true\n    }\n  }\n}\n}}"
       },
       "id": "start-close_loop",
       "name": "06 Start close_loop",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2360,
+        2620,
         120
       ],
       "notesInFlow": true,
@@ -285,14 +300,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"close_loop_completed\",\n  \"message\": \"Completed Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"name\": \"Document & Close\",\n      \"description\": \"Write a short summary of the published post. Close the issue with label social:published.\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:add_comment\",\n        \"vcs:add_label\",\n        \"vcs:close_issue\"\n      ],\n      \"inputs\": [\n        {\n          \"publish_url\": \"string\"\n        },\n        {\n          \"publish_platform\": \"string\"\n        },\n        {\n          \"post_text\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"summary\": \"string\"\n        }\n      ],\n      \"final_step\": true\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"close_loop_completed\",\n  \"message\": \"Completed Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"name\": \"Document & Close\",\n      \"description\": \"Write a short summary of the published post. Close the issue with label social:published.\",\n      \"agent_type\": \"writer\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:add_comment\",\n        \"vcs:add_label\",\n        \"vcs:close_issue\"\n      ],\n      \"inputs\": [\n        {\n          \"publish_url\": \"string\"\n        },\n        {\n          \"publish_platform\": \"string\"\n        },\n        {\n          \"post_text\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"summary\": \"string\"\n        }\n      ],\n      \"final_step\": true\n    }\n  }\n}\n}}"
       },
       "id": "complete-close_loop",
       "name": "Complete close_loop",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2580,
+        2840,
         120
       ],
       "notesInFlow": true,
@@ -342,7 +357,7 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
       "position": [
-        2080,
+        2340,
         260
       ],
       "notesInFlow": true,
@@ -439,6 +454,17 @@
       ]
     },
     "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Nexus Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Nexus Input": {
       "main": [
         [
           {

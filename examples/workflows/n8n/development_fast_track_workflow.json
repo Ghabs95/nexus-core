@@ -14,20 +14,35 @@
     },
     {
       "parameters": {
+        "jsCode": "// Fill these values for Manual Trigger runs.\n// Webhook/Form/parent workflow input overrides matching manualInput fields.\nconst manualInput = {\n  task: '',\n  project_key: '',\n  issue_number: '',\n  repo_dir: '',\n};\n\nconst input = { ...manualInput, ...$json };\nconst task = String(input.task || input.title || input.run?.task || '').trim();\nconst projectKey = String(input.project_key || input.project || input.run?.project_key || '').trim();\nconst issueNumber = String(input.issue_number || input.issue || input.run?.issue_number || '').trim();\nconst repoDir = String(input.repo_dir || input.repo_path || input.run?.metadata?.repo_dir || '').trim();\n\nif (!task) {\n  throw new Error('Set task in Prepare Nexus Input or pass task/title into the workflow.');\n}\nif (!projectKey) {\n  throw new Error('Set project_key in Prepare Nexus Input or pass project/project_key into the workflow.');\n}\n\nreturn [{\n  json: {\n    ...input,\n    task,\n    project_key: projectKey,\n    issue_number: issueNumber,\n    repo_dir: repoDir,\n  },\n}];\n"
+      },
+      "id": "prepare-nexus-input",
+      "name": "Prepare Nexus Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "notesInFlow": true,
+      "notes": "For Manual Trigger runs, fill manualInput in this node. Webhook/Form/parent workflows can provide task, project_key, issue_number, and repo_dir on the incoming item instead."
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "http://nexus-bridge-1:8091/api/v1/n8n/runs",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"task\": \"={{$json.task || $json.title || 'Run Nexus workflow'}}\",\n  \"project_key\": \"={{$json.project_key || $json.project || 'nexus'}}\",\n  \"issue_number\": \"={{$json.issue_number || $json.issue || ''}}\",\n  \"requester\": {\n    \"source\": \"n8n\",\n    \"workflow\": \"Development Fast-Track Workflow\"\n  },\n  \"metadata\": {\n    \"nexus_workflow\": {\n      \"name\": \"Development Fast-Track Workflow\",\n      \"description\": \"Critical path for urgent fixes with minimal stages.\",\n      \"version\": \"0.1.0\"\n    },\n    \"workflow_type\": \"fast-track\",\n    \"source\": \"examples/workflows/development_fast_track_workflow.yaml\"\n  }\n}"
+        "jsonBody": "={{\n{\n  \"task\": $json.task || $json.run?.task,\n  \"project_key\": $json.project_key || $json.run?.project_key,\n  \"issue_number\": $json.issue_number || $json.issue || $json.run?.issue_number || '',\n  \"requester\": {\n    \"source\": \"n8n\",\n    \"workflow\": \"Development Fast-Track Workflow\"\n  },\n  \"metadata\": {\n    \"repo_dir\": $json.repo_dir || $json.repo_path || $json.run?.metadata?.repo_dir || '',\n    \"nexus_workflow\": {\n      \"name\": \"Development Fast-Track Workflow\",\n      \"description\": \"Critical path for urgent fixes with minimal stages.\",\n      \"version\": \"0.1.0\"\n    },\n    \"workflow_type\": \"fast-track\",\n    \"source\": \"examples/workflows/development_fast_track_workflow.yaml\"\n  }\n}\n}}"
       },
       "id": "create-nexus-run",
       "name": "Create Nexus Run",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        260,
+        520,
         0
       ],
       "notesInFlow": true,
@@ -41,14 +56,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"triage\",\n  \"message\": \"Starting Nexus step triage\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"triage\",\n      \"index\": 1,\n      \"name\": \"Emergency Triage\",\n      \"description\": \"Rapid assessment of urgency and blast radius\",\n      \"agent_type\": \"triage\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_label\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"urgency\": \"enum[critical|urgent]\"\n        },\n        {\n          \"impact\": \"string\"\n        }\n      ],\n      \"on_success\": \"develop\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"triage\",\n  \"message\": \"Starting Nexus step triage\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"triage\",\n      \"index\": 1,\n      \"name\": \"Emergency Triage\",\n      \"description\": \"Rapid assessment of urgency and blast radius\",\n      \"agent_type\": \"triage\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_label\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"urgency\": \"enum[critical|urgent]\"\n        },\n        {\n          \"impact\": \"string\"\n        }\n      ],\n      \"on_success\": \"develop\"\n    }\n  }\n}\n}}"
       },
       "id": "start-triage",
       "name": "01 Start triage",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        560,
+        820,
         0
       ],
       "notesInFlow": true,
@@ -62,14 +77,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"triage_completed\",\n  \"message\": \"Completed Nexus step triage\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"triage\",\n      \"name\": \"Emergency Triage\",\n      \"description\": \"Rapid assessment of urgency and blast radius\",\n      \"agent_type\": \"triage\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_label\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"urgency\": \"enum[critical|urgent]\"\n        },\n        {\n          \"impact\": \"string\"\n        }\n      ],\n      \"on_success\": \"develop\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"triage_completed\",\n  \"message\": \"Completed Nexus step triage\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"triage\",\n      \"name\": \"Emergency Triage\",\n      \"description\": \"Rapid assessment of urgency and blast radius\",\n      \"agent_type\": \"triage\",\n      \"context_policy\": \"minimal\",\n      \"tools\": [\n        \"vcs:read_issue\",\n        \"vcs:add_label\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"urgency\": \"enum[critical|urgent]\"\n        },\n        {\n          \"impact\": \"string\"\n        }\n      ],\n      \"on_success\": \"develop\"\n    }\n  }\n}\n}}"
       },
       "id": "complete-triage",
       "name": "Complete triage",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        780,
+        1040,
         0
       ],
       "notesInFlow": true,
@@ -83,14 +98,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"develop\",\n  \"message\": \"Starting Nexus step develop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"develop\",\n      \"index\": 2,\n      \"name\": \"Fast-Track Implementation\",\n      \"description\": \"Implement minimal safe fix\",\n      \"agent_type\": \"developer\",\n      \"context_policy\": \"deep\",\n      \"tools\": [\n        \"vcs:create_branch\",\n        \"vcs:edit_file\",\n        \"vcs:create_pr\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"pr_url\": \"string\"\n        },\n        {\n          \"rollback_plan\": \"string\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 50,\n      \"include_audit_history\": true\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"develop\",\n  \"message\": \"Starting Nexus step develop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"develop\",\n      \"index\": 2,\n      \"name\": \"Fast-Track Implementation\",\n      \"description\": \"Implement minimal safe fix\",\n      \"agent_type\": \"developer\",\n      \"context_policy\": \"deep\",\n      \"tools\": [\n        \"vcs:create_branch\",\n        \"vcs:edit_file\",\n        \"vcs:create_pr\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"pr_url\": \"string\"\n        },\n        {\n          \"rollback_plan\": \"string\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 50,\n      \"include_audit_history\": true\n    }\n  }\n}\n}}"
       },
       "id": "start-develop",
       "name": "02 Start develop",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        920,
+        1180,
         120
       ],
       "notesInFlow": true,
@@ -104,14 +119,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"task\": \"={{$json.task || $json.run?.task || \\\"Implement minimal safe fix\\\"}}\",\n  \"project_key\": \"={{$json.project_key || $json.run?.project_key || 'nexus'}}\",\n  \"worker\": \"opencode\",\n  \"agent\": \"build\",\n  \"base_branch\": \"develop\",\n  \"metadata\": {\n    \"step\": {\n      \"id\": \"develop\",\n      \"name\": \"Fast-Track Implementation\",\n      \"description\": \"Implement minimal safe fix\",\n      \"agent_type\": \"developer\",\n      \"context_policy\": \"deep\",\n      \"tools\": [\n        \"vcs:create_branch\",\n        \"vcs:edit_file\",\n        \"vcs:create_pr\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"pr_url\": \"string\"\n        },\n        {\n          \"rollback_plan\": \"string\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 50,\n      \"include_audit_history\": true\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"task\": $json.task || $json.run?.task || \"Implement minimal safe fix\",\n  \"project_key\": $json.project_key || $json.run?.project_key || 'nexus',\n  \"repo_dir\": $json.repo_dir || $json.run?.metadata?.repo_dir || '',\n  \"worker\": \"opencode\",\n  \"agent\": \"build\",\n  \"base_branch\": \"develop\",\n  \"metadata\": {\n    \"step\": {\n      \"id\": \"develop\",\n      \"name\": \"Fast-Track Implementation\",\n      \"description\": \"Implement minimal safe fix\",\n      \"agent_type\": \"developer\",\n      \"context_policy\": \"deep\",\n      \"tools\": [\n        \"vcs:create_branch\",\n        \"vcs:edit_file\",\n        \"vcs:create_pr\",\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"pr_url\": \"string\"\n        },\n        {\n          \"rollback_plan\": \"string\"\n        }\n      ],\n      \"on_success\": \"review\",\n      \"audit_limit\": 50,\n      \"include_audit_history\": true\n    }\n  }\n}\n}}"
       },
       "id": "execute-opencode-develop",
       "name": "Execute OpenCode develop",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1140,
+        1400,
         120
       ],
       "notesInFlow": true,
@@ -125,14 +140,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"review\",\n  \"message\": \"Starting Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"index\": 3,\n      \"name\": \"Quick Verification\",\n      \"description\": \"Fast review with full CI/regression requirement\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:review_pr\",\n        \"vcs:approve_pr\",\n        \"vcs:request_changes\"\n      ],\n      \"inputs\": [\n        {\n          \"pr_urls\": \"list[string]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"approval_status\": \"enum[approved|rejected]\"\n        }\n      ],\n      \"on_success\": \"route_review\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"review\",\n  \"message\": \"Starting Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"index\": 3,\n      \"name\": \"Quick Verification\",\n      \"description\": \"Fast review with full CI/regression requirement\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:review_pr\",\n        \"vcs:approve_pr\",\n        \"vcs:request_changes\"\n      ],\n      \"inputs\": [\n        {\n          \"pr_urls\": \"list[string]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"approval_status\": \"enum[approved|rejected]\"\n        }\n      ],\n      \"on_success\": \"route_review\"\n    }\n  }\n}\n}}"
       },
       "id": "start-review",
       "name": "03 Start review",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1280,
+        1540,
         0
       ],
       "notesInFlow": true,
@@ -146,14 +161,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"review_completed\",\n  \"message\": \"Completed Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"name\": \"Quick Verification\",\n      \"description\": \"Fast review with full CI/regression requirement\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:review_pr\",\n        \"vcs:approve_pr\",\n        \"vcs:request_changes\"\n      ],\n      \"inputs\": [\n        {\n          \"pr_urls\": \"list[string]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"approval_status\": \"enum[approved|rejected]\"\n        }\n      ],\n      \"on_success\": \"route_review\"\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"review_completed\",\n  \"message\": \"Completed Nexus step review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"review\",\n      \"name\": \"Quick Verification\",\n      \"description\": \"Fast review with full CI/regression requirement\",\n      \"agent_type\": \"reviewer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:review_pr\",\n        \"vcs:approve_pr\",\n        \"vcs:request_changes\"\n      ],\n      \"inputs\": [\n        {\n          \"pr_urls\": \"list[string]\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"approval_status\": \"enum[approved|rejected]\"\n        }\n      ],\n      \"on_success\": \"route_review\"\n    }\n  }\n}\n}}"
       },
       "id": "complete-review",
       "name": "Complete review",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1500,
+        1760,
         0
       ],
       "notesInFlow": true,
@@ -167,14 +182,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"route_review\",\n  \"message\": \"Starting Nexus step route_review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"route_review\",\n      \"index\": 4,\n      \"name\": \"Route After Verification\",\n      \"agent_type\": \"router\",\n      \"context_policy\": \"minimal\",\n      \"routes\": [\n        {\n          \"when\": \"approval_status == 'approved'\",\n          \"then\": \"close_loop\"\n        },\n        {\n          \"default\": \"develop\"\n        }\n      ]\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"route_review\",\n  \"message\": \"Starting Nexus step route_review\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"route_review\",\n      \"index\": 4,\n      \"name\": \"Route After Verification\",\n      \"agent_type\": \"router\",\n      \"context_policy\": \"minimal\",\n      \"routes\": [\n        {\n          \"when\": \"approval_status == 'approved'\",\n          \"then\": \"close_loop\"\n        },\n        {\n          \"default\": \"develop\"\n        }\n      ]\n    }\n  }\n}\n}}"
       },
       "id": "start-route_review",
       "name": "04 Start route_review",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1640,
+        1900,
         260
       ]
     },
@@ -187,7 +202,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1860,
+        2120,
         260
       ],
       "notesInFlow": true,
@@ -201,14 +216,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"close_loop\",\n  \"message\": \"Starting Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"index\": 5,\n      \"name\": \"Summarize & Close\",\n      \"description\": \"Post fast-track summary\",\n      \"agent_type\": \"summarizer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"summary\": \"string\"\n        }\n      ],\n      \"final_step\": true,\n      \"audit_limit\": 10\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"close_loop\",\n  \"message\": \"Starting Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"index\": 5,\n      \"name\": \"Summarize & Close\",\n      \"description\": \"Post fast-track summary\",\n      \"agent_type\": \"summarizer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"summary\": \"string\"\n        }\n      ],\n      \"final_step\": true,\n      \"audit_limit\": 10\n    }\n  }\n}\n}}"
       },
       "id": "start-close_loop",
       "name": "05 Start close_loop",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2000,
+        2260,
         0
       ],
       "notesInFlow": true,
@@ -222,14 +237,14 @@
         "nodeCredentialType": "httpBearerAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"run_id\": \"={{$json.run?.run_id || $json.run_id}}\",\n  \"state\": \"close_loop_completed\",\n  \"message\": \"Completed Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"name\": \"Summarize & Close\",\n      \"description\": \"Post fast-track summary\",\n      \"agent_type\": \"summarizer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"summary\": \"string\"\n        }\n      ],\n      \"final_step\": true,\n      \"audit_limit\": 10\n    }\n  }\n}"
+        "jsonBody": "={{\n{\n  \"run_id\": $json.run?.run_id || $json.run_id,\n  \"state\": \"close_loop_completed\",\n  \"message\": \"Completed Nexus step close_loop\",\n  \"data\": {\n    \"step\": {\n      \"id\": \"close_loop\",\n      \"name\": \"Summarize & Close\",\n      \"description\": \"Post fast-track summary\",\n      \"agent_type\": \"summarizer\",\n      \"context_policy\": \"standard\",\n      \"tools\": [\n        \"vcs:add_comment\"\n      ],\n      \"inputs\": [\n        {\n          \"issue_url\": \"string\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"summary\": \"string\"\n        }\n      ],\n      \"final_step\": true,\n      \"audit_limit\": 10\n    }\n  }\n}\n}}"
       },
       "id": "complete-close_loop",
       "name": "Complete close_loop",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2220,
+        2480,
         0
       ],
       "notesInFlow": true,
@@ -279,7 +294,7 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
       "position": [
-        2080,
+        2340,
         260
       ],
       "notesInFlow": true,
@@ -354,6 +369,17 @@
       ]
     },
     "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Nexus Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Nexus Input": {
       "main": [
         [
           {

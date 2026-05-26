@@ -83,6 +83,18 @@ Importable n8n equivalents are generated under `examples/workflows/n8n/`.
 They keep n8n as the state machine and call the Nexus command bridge for state
 updates and guarded OpenCode execution on developer steps.
 
+Each generated workflow starts with `Prepare Nexus Input`. For a Manual Trigger
+run, edit that Code node's `manualInput` fields before executing it:
+
+- `task`: the feature, bug, or delivery request to work on.
+- `project_key`: the Nexus project key recorded on the bridge run.
+- `issue_number`: optional issue reference.
+- `repo_dir`: the concrete allowlisted git checkout for developer/OpenCode
+  steps. This is important for multi-repo project workspaces.
+
+Webhook, Form, or parent workflows can pass the same fields on the incoming
+n8n item instead of editing `manualInput`.
+
 Regenerate them after changing workflow YAML:
 
 ```bash
