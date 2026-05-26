@@ -53,6 +53,32 @@ Allowed states:
 
 `GET /api/v1/n8n/runs/<run_id>`
 
+### Intake Task
+
+`POST /api/v1/n8n/intake`
+
+Use this when n8n should trigger Nexus the same way a Telegram task message
+does: natural language enters Nexus, Nexus classifies/routes it, then the normal
+inbox/processor path creates the issue and launches the configured workflow.
+
+```json
+{
+  "task": "Implement the new feature idea",
+  "project_key": "optional-project-hint",
+  "message_id": "optional-stable-event-id",
+  "requester": {
+    "source": "n8n",
+    "sender_id": "optional-user-or-system-id"
+  },
+  "labels": ["feature"]
+}
+```
+
+`task`, `text`, `message`, `title`, or `request` can carry the natural-language
+request. `project_key` is optional; if it is omitted, Nexus uses its normal
+classification path and may return a pending-resolution response if the project
+is ambiguous.
+
 ### Execute Coding
 
 `POST /api/v1/n8n/coding/execute`
@@ -89,7 +115,14 @@ an explicit later state in the n8n workflow.
 
 ## n8n Shape
 
-A minimal workflow is:
+For Telegram-equivalent intake, the minimal workflow is:
+
+1. Webhook/Form/chat trigger.
+2. Normalize body into `task`, optional `project_key`, optional `message_id`.
+3. `POST /api/v1/n8n/intake`.
+4. Return the Nexus result to the caller.
+
+For n8n-owned state-machine execution, a minimal workflow is:
 
 1. Manual/chat webhook trigger.
 2. `POST /api/v1/n8n/runs`.

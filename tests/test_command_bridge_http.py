@@ -347,6 +347,67 @@ def test_n8n_run_lifecycle_requires_auth_and_persists_state(tmp_path, monkeypatc
     assert get_payload["run"]["events"][-1]["message"] == "Gab approved"
 
 
+def test_n8n_intake_requires_auth_and_routes_through_inbox(monkeypatch):
+    captured = {}
+
+    class _FakeOrchestrator:
+        pass
+
+    async def _fake_process_inbox_task(text, orchestrator, message_id, **kwargs):
+        captured["text"] = text
+        captured["orchestrator"] = orchestrator
+        captured["message_id"] = message_id
+        captured["kwargs"] = kwargs
+        return {
+            "success": True,
+            "message": "queued",
+            "project": kwargs.get("project_hint"),
+        }
+
+    monkeypatch.setattr(
+        "nexus.core.command_bridge.n8n_intake.get_orchestrator",
+        lambda: _FakeOrchestrator(),
+    )
+    monkeypatch.setattr(
+        "nexus.core.command_bridge.n8n_intake.process_inbox_task",
+        _fake_process_inbox_task,
+    )
+    app = create_command_bridge_app(
+        _FakeRouter(),
+        config=CommandBridgeConfig(auth_token="secret"),
+    )
+
+    unauthorized_status, unauthorized_payload = _call_app(
+        app,
+        method="POST",
+        path="/api/v1/n8n/intake",
+        payload={"task": "Build a feature", "project_key": "nexus"},
+    )
+    status, payload = _call_app(
+        app,
+        method="POST",
+        path="/api/v1/n8n/intake",
+        auth="Bearer secret",
+        payload={
+            "task": "Build a feature",
+            "project_key": "nexus",
+            "message_id": "n8n-demo",
+            "requester": {"sender_id": "47168736"},
+            "labels": ["feature"],
+        },
+    )
+
+    assert unauthorized_status.startswith("401")
+    assert unauthorized_payload["error_code"] == "missing_bearer_token"
+    assert status.startswith("202")
+    assert payload["ok"] is True
+    assert captured["text"] == "Build a feature"
+    assert captured["message_id"] == "n8n-demo"
+    assert captured["kwargs"]["project_hint"] == "nexus"
+    assert captured["kwargs"]["requester_context"]["source"] == "n8n"
+    assert captured["kwargs"]["issue_labels"] == ["feature", "source:n8n"]
+
+
 def test_n8n_run_lifecycle_accepts_workflow_step_states(tmp_path, monkeypatch):
     monkeypatch.setenv("NEXUS_N8N_STATE_DIR", str(tmp_path / "state"))
     app = create_command_bridge_app(

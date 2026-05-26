@@ -582,6 +582,13 @@ def create_command_bridge_app(
                 result = create_run(payload)
                 return _json_response(start_response, 201, result)
 
+            if method == "POST" and path == "/api/v1/n8n/intake":
+                payload = _load_json_body(environ)
+                from nexus.core.command_bridge.n8n_intake import create_intake_task
+
+                result = asyncio.run(create_intake_task(payload))
+                return _json_response(start_response, 202 if result.get("ok") else 400, result)
+
             if method == "POST" and path == "/api/v1/n8n/runs/update":
                 payload = _load_json_body(environ)
                 from nexus.core.command_bridge.n8n_state_machine import update_run
