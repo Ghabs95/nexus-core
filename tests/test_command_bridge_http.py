@@ -408,6 +408,47 @@ def test_n8n_intake_requires_auth_and_routes_through_inbox(monkeypatch):
     assert captured["kwargs"]["issue_labels"] == ["feature", "source:n8n"]
 
 
+def test_n8n_intake_accepts_wrapped_trigger_payload(monkeypatch):
+    captured = {}
+
+    async def _fake_process_inbox_task(text, orchestrator, message_id, **kwargs):
+        captured["text"] = text
+        captured["message_id"] = message_id
+        captured["kwargs"] = kwargs
+        return {"success": True, "message": "queued"}
+
+    monkeypatch.setattr("nexus.core.command_bridge.n8n_intake.get_orchestrator", lambda: object())
+    monkeypatch.setattr(
+        "nexus.core.command_bridge.n8n_intake.process_inbox_task",
+        _fake_process_inbox_task,
+    )
+    app = create_command_bridge_app(
+        _FakeRouter(),
+        config=CommandBridgeConfig(auth_token="secret"),
+    )
+
+    status, payload = _call_app(
+        app,
+        method="POST",
+        path="/api/v1/n8n/intake",
+        auth="Bearer secret",
+        payload={
+            "body": {
+                "chatInput": "Add a new Nexus feature from n8n",
+                "project": "nexus",
+            },
+            "query": {"message_id": "n8n-chat-1"},
+        },
+    )
+
+    assert status.startswith("202")
+    assert payload["ok"] is True
+    assert captured["text"] == "Add a new Nexus feature from n8n"
+    assert captured["message_id"] == "n8n-chat-1"
+    assert captured["kwargs"]["project_hint"] == "nexus"
+    assert captured["kwargs"]["issue_labels"] == ["source:n8n"]
+
+
 def test_n8n_run_lifecycle_accepts_workflow_step_states(tmp_path, monkeypatch):
     monkeypatch.setenv("NEXUS_N8N_STATE_DIR", str(tmp_path / "state"))
     app = create_command_bridge_app(

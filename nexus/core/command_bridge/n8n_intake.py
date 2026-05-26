@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import json
 from typing import Any
 
 from nexus.core.handlers.inbox_routing_handler import process_inbox_task
@@ -11,7 +12,20 @@ from nexus.core.orchestration.ai_orchestrator import get_orchestrator
 
 async def create_intake_task(payload: dict[str, Any]) -> dict[str, Any]:
     """Capture an n8n request through the same inbox path used by chat surfaces."""
-    text = _first_str(payload, "text", "task", "message", "title", "request")
+    payload = _normalize_payload(payload)
+    text = _first_str(
+        payload,
+        "text",
+        "task",
+        "message",
+        "title",
+        "request",
+        "chatInput",
+        "input",
+        "prompt",
+        "idea",
+        "feature",
+    )
     if not text:
         raise ValueError("text or task is required")
 
@@ -50,6 +64,49 @@ def _first_str(payload: dict[str, Any], *keys: str) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Flatten common n8n trigger envelopes into the intake contract.
+
+    n8n Webhook/Form/Chat nodes often wrap user input under keys such as
+    ``body`` or ``chatInput``. The bridge accepts those shapes so workflows can
+    call the intake endpoint directly without fragile Code-node reshaping.
+    """
+    if not isinstance(payload, dict):
+        return {}
+
+    normalized: dict[str, Any] = {}
+    nested_keys = ("body", "json", "data", "payload", "fields", "query", "params")
+
+    for key in nested_keys:
+        nested = _coerce_mapping(payload.get(key))
+        if nested:
+            normalized.update(nested)
+
+    for key, value in payload.items():
+        if key in nested_keys:
+            if isinstance(value, str) and value.strip() and "text" not in normalized:
+                normalized["text"] = value.strip()
+            continue
+        normalized[key] = value
+
+    return normalized
+
+
+def _coerce_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {"text": value.strip()}
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, str) and parsed.strip():
+            return {"text": parsed.strip()}
+    return {}
 
 
 def _labels(value: Any) -> list[str]:

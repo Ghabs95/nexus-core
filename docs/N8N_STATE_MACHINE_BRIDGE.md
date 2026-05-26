@@ -75,7 +75,10 @@ inbox/processor path creates the issue and launches the configured workflow.
 ```
 
 `task`, `text`, `message`, `title`, or `request` can carry the natural-language
-request. `project_key` is optional; if it is omitted, Nexus uses its normal
+request. n8n trigger envelopes are also accepted: the bridge unwraps common
+`body`, `json`, `data`, `payload`, `fields`, `query`, and `params` objects, and
+also accepts chat-style fields such as `chatInput`, `input`, `prompt`, `idea`,
+or `feature`. `project_key` is optional; if it is omitted, Nexus uses its normal
 classification path and may return a pending-resolution response if the project
 is ambiguous.
 
