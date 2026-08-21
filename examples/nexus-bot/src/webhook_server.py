@@ -2798,9 +2798,10 @@ def main():
         allow_unsafe_werkzeug = True
     logger.info("Socket.IO async mode: %s", async_mode)
 
+    host = os.getenv("NEXUS_WEBHOOK_HOST", "127.0.0.1").strip() or "127.0.0.1"
     socketio.run(
         app,
-        host="0.0.0.0",
+        host=host,
         port=port,
         debug=False,
         allow_unsafe_werkzeug=allow_unsafe_werkzeug,

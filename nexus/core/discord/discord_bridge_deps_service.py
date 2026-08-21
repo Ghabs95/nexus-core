@@ -7,7 +7,9 @@ from nexus.adapters.git.utils import build_issue_url, resolve_repo
 from nexus.core.analytics.reporting import get_stats_report
 from nexus.core.audit_store import AuditStore
 from nexus.core.completion import scan_for_completions
+from nexus.core.execution_mode import PLANNING_EXECUTION_MODE
 from nexus.core.config import (
+
     AI_PERSONA,
     BASE_DIR,
     LOGS_DIR,
@@ -509,6 +511,29 @@ def ops_bridge_deps(*, allowed_user_ids, prompt_project_selection, ensure_projec
     )
 
 
+async def _create_planning_task(
+    *,
+    text: str,
+    project_key: str,
+    message_id: str,
+    requester_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    system_ops = PROJECT_CONFIG.get("system_operations", {})
+    plan_agent = str(system_ops.get("plan") or system_ops.get("default") or "").strip()
+    orchestrator = get_orchestrator()
+    return await process_inbox_task(
+        text=text,
+        orchestrator=orchestrator,
+        message_id_or_unique_id=message_id,
+        project_hint=project_key,
+        requester_context=requester_context,
+        agent_type=plan_agent or None,
+        issue_labels=["agent:plan-requested"],
+        execution_mode=PLANNING_EXECUTION_MODE,
+    )
+
+
+
 def issue_bridge_deps(*, allowed_user_ids, prompt_project_selection, ensure_project_issue):
     return _svc_build_issue_handler_deps(
         logger=logger,
@@ -534,6 +559,7 @@ def issue_bridge_deps(*, allowed_user_ids, prompt_project_selection, ensure_proj
         default_issue_url=_default_issue_url,
         get_project_label=_get_project_label,
         track_short_projects=get_track_short_projects(),
+        create_planning_task=_create_planning_task,
     )
 
 

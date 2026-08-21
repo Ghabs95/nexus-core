@@ -926,58 +926,16 @@ def _callback_handler_deps() -> CallbackHandlerDeps:
     )
 
 
-async def _route_feedback_action(ctx, decision_id: str, action: str, corrected_task: str | None):
+async def _route_feedback_action(ctx, decision_id: str, action: str, corrected_task: str | None, model_verdict: str | None = None):
     callback_ref = str(decision_id or "").strip()
     # Handle `skip` sentinel from task-selection step — treat as no correction
     if corrected_task == "skip":
         corrected_task = None
+    if model_verdict == "skip":
+        model_verdict = None
 
-    # ── "Wrong" without a corrected task should NOT immediately record.
-    # Instead prompt the user to choose the correct task (Step 1/2) — this
-    # matches the expected UX where Wrong asks follow-up questions.
-    if action == "wrong" and not corrected_task:
-        try:
-            from nexus.adapters.notifications.base import Button as _Btn  # type: ignore
-        except Exception:
-            _Btn = None  # type: ignore
-
-        # Use Button if available, otherwise fallback to plain dict shape
-        def _mk(label: str, data: str):
-            if _Btn is not None:
-                return _Btn(label, callback_data=data)
-            # fallback: InteractiveContext also accepts dict-like Button
-            return type("B", (), {"label": label, "callback_data": data})()  # type: ignore
-
-        buttons = [
-            [
-                _mk("coding", f"routefb:fix:{callback_ref}:coding"),
-                _mk("review", f"routefb:fix:{callback_ref}:code_review"),
-            ],
-            [
-                _mk("reasoning", f"routefb:fix:{callback_ref}:reasoning"),
-                _mk("chat", f"routefb:fix:{callback_ref}:general_chat"),
-            ],
-            [
-                _mk("⏭ Skip", f"routefb:fix:{callback_ref}:skip"),
-            ],
-        ]
-        try:
-            if ctx.query and ctx.query.message_id:
-                await ctx.edit_message_text(
-                    message_id=ctx.query.message_id,
-                    text="❌ Which task was correct? Select one or Skip:",
-                    buttons=buttons,  # type: ignore
-                )
-            else:
-                await ctx.reply_text("❌ Which task was correct? Select one or Skip:", buttons=buttons)  # type: ignore
-        except Exception:
-            logger.exception(
-                "Could not show task selection for wrong feedback: user_id=%s decision_ref=%s",
-                ctx.user_id,
-                callback_ref,
-            )
-            await ctx.reply_text("❌ Which task was correct? Reply with e.g. `wrong -> reasoning`")
-        return
+    # This function is now only called for final submission (ok, wrong with task+model_verdict)
+    # The intermediate steps (task selection, model verdict) are handled by the core callback handler
 
     decision_id = resolve_feedback_token(
         user_id=str(ctx.user_id),
@@ -988,6 +946,7 @@ async def _route_feedback_action(ctx, decision_id: str, action: str, corrected_t
         "decision_id": decision_id,
         "verdict": verdict,
         "corrected_task": corrected_task,
+        "model_verdict": model_verdict,
         "source_surface": "telegram_feedback_card",
         "source_channel": "telegram",
         "source_user_id": str(ctx.user_id),
@@ -2645,7 +2604,7 @@ def main():
             "close_flow_handler": close_flow_handler,
             "feature_callback_handler": feature_callback_handler,
             "task_confirmation_callback_handler": task_confirmation_callback_handler,
-            "route_feedback_handler": route_feedback_handler,
+            "route_feedback_callback_handler": route_feedback_handler,
             "inline_keyboard_handler": inline_keyboard_handler,
             "hands_free_handler": hands_free_handler,
             "telegram_error_handler": telegram_error_handler,

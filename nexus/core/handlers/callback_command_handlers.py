@@ -31,7 +31,7 @@ class CallbackHandlerDeps:
     workflow_state_plugin_kwargs: dict[str, Any]
     action_handlers: dict[str, Callable[..., Awaitable[None]]]
     report_bug_action: Callable[[InteractiveContext, str, str], Awaitable[None]]
-    route_feedback_action: Callable[[InteractiveContext, str, str, str | None], Awaitable[None]] | None = None
+    route_feedback_action: Callable[[InteractiveContext, str, str, str | None, str | None], Awaitable[None]] | None = None
     requester_context_builder: Callable[[int], dict[str, Any]] | None = None
 
 
@@ -235,6 +235,14 @@ async def menu_callback_handler(ctx: InteractiveContext, deps: CallbackHandlerDe
     await service_menu_callback_handler(ctx)
 
 
+# Model verdict labels for Step 2 of Wrong flow
+MODEL_VERDICT_LABELS: dict[str, str] = {
+    "too_cheap": "📉 Too cheap",
+    "ok": "✅ OK",
+    "too_powerful": "📈 Too powerful",
+}
+
+
 async def route_feedback_handler(ctx: InteractiveContext, deps: CallbackHandlerDeps):
     await ctx.answer_callback_query()
     query = ctx.query
@@ -242,59 +250,148 @@ async def route_feedback_handler(ctx: InteractiveContext, deps: CallbackHandlerD
         return
 
     parts = query.action_data.split(":")
-    if len(parts) not in {3, 4} or parts[0] != "routefb":
+    if len(parts) < 3 or parts[0] != "routefb":
         await ctx.edit_message_text(query.message_id, "❌ Invalid routing feedback action.")
         return
 
     verdict = parts[1]
     decision_id = parts[2].strip()
-    corrected_task = parts[3].strip() if len(parts) == 4 else None
-    if verdict not in {"ok", "wrong", "fix"} or not decision_id:
+    if not decision_id:
         await ctx.edit_message_text(query.message_id, "❌ Invalid routing feedback action.")
         return
-    # ── "Wrong" without a task should ask which task was correct ──────────
-    # Instead of immediately recording `wrong`, prompt for the correct task.
-    if verdict == "wrong" and not corrected_task:
+
+    # ── Back navigation ──────────────────────────────────────────────────
+    if verdict == "back":
+        target = parts[3] if len(parts) >= 4 else "initial"
+        if target == "initial":
+            await ctx.edit_message_text(
+                message_id=query.message_id,
+                text="⚠️ Cannot go back from initial feedback card.",
+            )
+        elif target == "wrong_task":
+            # Show the wrong task selection again
+            try:
+                from nexus.adapters.notifications.base import Button  # type: ignore
+
+                buttons = [
+                    [
+                        Button("coding", callback_data=f"routefb:wrong_task:{decision_id}:coding"),
+                        Button("review", callback_data=f"routefb:wrong_task:{decision_id}:code_review"),
+                    ],
+                    [
+                        Button("reasoning", callback_data=f"routefb:wrong_task:{decision_id}:reasoning"),
+                        Button("chat", callback_data=f"routefb:wrong_task:{decision_id}:general_chat"),
+                    ],
+                    [
+                        Button("⏭ Skip", callback_data=f"routefb:wrong_task:{decision_id}:skip"),
+                    ],
+                ]
+                await ctx.edit_message_text(
+                    message_id=query.message_id,
+                    text="❌ Step 1/2 — Which task was it?",
+                    buttons=buttons,  # type: ignore
+                )
+            except Exception:
+                await ctx.edit_message_text(
+                    message_id=query.message_id,
+                    text="❌ Which task was correct? Reply with e.g. `wrong -> reasoning` or `skip`.",
+                )
+        return
+
+    # ── ✅ Correct ──────────────────────────────────────────────────────
+    if verdict == "ok":
+        await deps.route_feedback_action(ctx, decision_id, "ok", None, None)
+        return
+
+    # ── ❌ Wrong - Step 1/2: ask which task was correct ────────────────
+    if verdict == "wrong" and len(parts) == 3:
         try:
             from nexus.adapters.notifications.base import Button  # type: ignore
 
             buttons = [
                 [
-                    Button("coding", callback_data=f"routefb:fix:{decision_id}:coding"),
-                    Button("review", callback_data=f"routefb:fix:{decision_id}:code_review"),
+                    Button("coding", callback_data=f"routefb:wrong_task:{decision_id}:coding"),
+                    Button("review", callback_data=f"routefb:wrong_task:{decision_id}:code_review"),
                 ],
                 [
-                    Button("reasoning", callback_data=f"routefb:fix:{decision_id}:reasoning"),
-                    Button("chat", callback_data=f"routefb:fix:{decision_id}:general_chat"),
+                    Button("reasoning", callback_data=f"routefb:wrong_task:{decision_id}:reasoning"),
+                    Button("chat", callback_data=f"routefb:wrong_task:{decision_id}:general_chat"),
                 ],
                 [
-                    Button("⏭ Skip", callback_data=f"routefb:fix:{decision_id}:skip"),
+                    Button("summarization", callback_data=f"routefb:wrong_task:{decision_id}:summarization"),
+                    Button("fast_utility", callback_data=f"routefb:wrong_task:{decision_id}:fast_utility"),
+                ],
+                [
+                    Button("long_context", callback_data=f"routefb:wrong_task:{decision_id}:long_context"),
+                    Button("vision", callback_data=f"routefb:wrong_task:{decision_id}:vision"),
+                ],
+                [
+                    Button("⏭ Skip", callback_data=f"routefb:wrong_task:{decision_id}:skip"),
+                    Button("⬅️ Back", callback_data=f"routefb:back:{decision_id}:initial"),
                 ],
             ]
             await ctx.edit_message_text(
                 message_id=query.message_id,
-                text="❌ Which task was correct? Select one or Skip:",
+                text="❌ Step 1/2 — Which task was it?",
                 buttons=buttons,  # type: ignore
             )
         except Exception:
-            # Fallback to simple text if button rendering fails
             await ctx.edit_message_text(
                 message_id=query.message_id,
                 text="❌ Which task was correct? Reply with e.g. `wrong -> reasoning` or `skip`.",
             )
         return
-    if verdict == "fix":
-        if not corrected_task:
+
+    # ── Fix/Task selected (also handles wrong_task from router feedback service) - Step 2/2: ask about model quality ──────────
+    if verdict in {"fix", "wrong_task"}:
+        if len(parts) < 4:
             await ctx.edit_message_text(query.message_id, "❌ Missing corrected task type.")
             return
-        # `skip` is a sentinel meaning "wrong without specifying task"
+        corrected_task = parts[3].strip()
         if corrected_task == "skip":
             corrected_task = None
-        elif corrected_task not in {"coding", "code_review", "reasoning", "general_chat", "summarization", "fast_utility", "long_context", "vision"}:
-            # Allow any task label but normalize unknown to None
-            pass
+        # Show model verdict prompt (Step 2/2)
+        try:
+            from nexus.adapters.notifications.base import Button  # type: ignore
 
-    await deps.route_feedback_action(ctx, decision_id, verdict, corrected_task)
+            buttons = [
+                [
+                    Button("📉 Too cheap", callback_data=f"routefb:wrong_model:{decision_id}:{corrected_task or 'skip'}:too_cheap"),
+                    Button("✅ OK", callback_data=f"routefb:wrong_model:{decision_id}:{corrected_task or 'skip'}:ok"),
+                    Button("📈 Too powerful", callback_data=f"routefb:wrong_model:{decision_id}:{corrected_task or 'skip'}:too_powerful"),
+                ],
+                [
+                    Button("⬅️ Back", callback_data=f"routefb:back:{decision_id}:wrong_task"),
+                    Button("⏭ Skip", callback_data=f"routefb:wrong_model:{decision_id}:{corrected_task or 'skip'}:skip"),
+                ],
+            ]
+            await ctx.edit_message_text(
+                message_id=query.message_id,
+                text="❌ Step 2/2 — Was the model right?",
+                buttons=buttons,  # type: ignore
+            )
+        except Exception:
+            await ctx.edit_message_text(
+                message_id=query.message_id,
+                text="❌ Step 2/2 — Was the model right? (too cheap / ok / too powerful)",
+            )
+        return
+
+    # ── Wrong Model verdict selected - submit feedback ─────────────────
+    if verdict == "wrong_model":
+        if len(parts) < 5:
+            await ctx.edit_message_text(query.message_id, "❌ Invalid model verdict.")
+            return
+        corrected_task = parts[3].strip()
+        model_verdict = parts[4].strip()
+        if corrected_task == "skip":
+            corrected_task = None
+        if model_verdict == "skip":
+            model_verdict = None
+        await deps.route_feedback_action(ctx, decision_id, "wrong", corrected_task, model_verdict)
+        return
+
+    await ctx.edit_message_text(query.message_id, "❌ Invalid routing feedback action.")
 
 
 async def inline_keyboard_handler(ctx: InteractiveContext, deps: CallbackHandlerDeps):
