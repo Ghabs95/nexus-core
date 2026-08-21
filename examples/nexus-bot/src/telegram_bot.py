@@ -3,6 +3,9 @@ import contextlib
 import logging
 import os
 import time
+import json
+import urllib.error
+import urllib.request
 from typing import Any
 
 from src.alerting import init_alerting_system
@@ -43,7 +46,6 @@ from nexus.core.config import (
     NEXUS_GITLAB_CLIENT_SECRET,
     NEXUS_PUBLIC_BASE_URL,
     NEXUS_CORE_STORAGE_DIR,
-    NEXUS_ROUTER_FEEDBACK_CONFIG,
     NEXUS_STORAGE_DSN,
     NEXUS_STORAGE_BACKEND,
     NEXUS_WORKFLOW_BACKEND,
@@ -67,8 +69,6 @@ from nexus.core.config import (
 from nexus.adapters.git.utils import build_issue_url, resolve_repo
 from nexus.core.analytics.reporting import get_stats_report
 from nexus.core.audit_store import AuditStore
-from nexus.core.execution_mode import PLANNING_EXECUTION_MODE
-from src.dependencies import get_bridge_operator_service
 from nexus.core.auth import (
     check_project_access as _svc_check_project_access,
 )
@@ -78,9 +78,6 @@ from nexus.core.auth import (
 )
 from nexus.core.auth import (
     get_latest_login_session_status as _svc_get_latest_login_session_status,
-)
-from nexus.core.auth import (
-    import_openclaw_local_provider_credentials as _svc_import_openclaw_local_provider_credentials,
 )
 from nexus.core.auth import (
     get_setup_status as _svc_get_setup_status,
@@ -117,8 +114,9 @@ from nexus.core.handlers.callback_command_handlers import (
     inline_keyboard_handler as callback_inline_keyboard_handler,
 )
 from nexus.core.handlers.callback_command_handlers import (
-    route_feedback_callback_handler as callback_route_feedback_callback_handler,
+    route_feedback_handler as callback_route_feedback_handler,
 )
+from nexus.core.telegram.telegram_router_feedback_service import resolve_feedback_token
 from nexus.core.handlers.callback_command_handlers import (
     issue_picker_handler as callback_issue_picker_handler,
 )
@@ -227,9 +225,6 @@ from nexus.core.handlers.ops_command_handlers import (
 )
 from nexus.core.handlers.ops_command_handlers import (
     audit_handler as ops_audit_handler,
-)
-from nexus.core.handlers.ops_command_handlers import (
-    doctor_handler as ops_doctor_handler,
 )
 from nexus.core.handlers.ops_command_handlers import (
     direct_handler as ops_direct_handler,
@@ -828,27 +823,6 @@ def _monitoring_handler_deps() -> MonitoringHandlersDeps:
 
 
 def _issue_handler_deps() -> IssueHandlerDeps:
-    async def _create_planning_task(
-        *,
-        text: str,
-        project_key: str,
-        message_id: str,
-        requester_context: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        system_ops = PROJECT_CONFIG.get("system_operations", {})
-        plan_agent = str(system_ops.get("plan") or system_ops.get("default") or "").strip()
-        return await process_inbox_task(
-            text=text,
-            orchestrator=orchestrator,
-            message_id_or_unique_id=message_id,
-            project_hint=project_key,
-            requester_context=requester_context,
-            authorize_project=_authorize_project_for_requester,
-            agent_type=plan_agent or None,
-            issue_labels=["agent:plan-requested"],
-            execution_mode=PLANNING_EXECUTION_MODE,
-        )
-
     return _svc_build_issue_handler_deps(
         logger=logger,
         allowed_user_ids=TELEGRAM_ALLOWED_USER_IDS,
@@ -873,12 +847,6 @@ def _issue_handler_deps() -> IssueHandlerDeps:
         default_issue_url=_default_issue_url,
         get_project_label=_get_project_label,
         track_short_projects=get_track_short_projects(),
-        create_planning_task=_create_planning_task,
-        requester_context_builder=lambda user_id: {
-            "platform": "telegram",
-            "platform_user_id": str(user_id),
-            "nexus_id": str(user_manager.resolve_nexus_id("telegram", str(user_id)) or ""),
-        },
     )
 
 
@@ -926,7 +894,6 @@ def _ops_handler_deps() -> OpsHandlerDeps:
         append_message=append_message,
         create_chat=create_chat,
         requester_context_builder=_requester_context_for_telegram_user_id,
-        run_doctor=lambda **kwargs: get_bridge_operator_service().doctor(**kwargs),
     )
 
 
@@ -955,8 +922,136 @@ def _callback_handler_deps() -> CallbackHandlerDeps:
             plan_handler=plan_handler,
         ),
         report_bug_action=_report_bug_action_wrapper,
-        router_feedback_url=NEXUS_ROUTER_FEEDBACK_CONFIG.get("router_url"),
+        route_feedback_action=_route_feedback_action,
     )
+
+
+async def _route_feedback_action(ctx, decision_id: str, action: str, corrected_task: str | None):
+    callback_ref = str(decision_id or "").strip()
+    # Handle `skip` sentinel from task-selection step — treat as no correction
+    if corrected_task == "skip":
+        corrected_task = None
+
+    # ── "Wrong" without a corrected task should NOT immediately record.
+    # Instead prompt the user to choose the correct task (Step 1/2) — this
+    # matches the expected UX where Wrong asks follow-up questions.
+    if action == "wrong" and not corrected_task:
+        try:
+            from nexus.adapters.notifications.base import Button as _Btn  # type: ignore
+        except Exception:
+            _Btn = None  # type: ignore
+
+        # Use Button if available, otherwise fallback to plain dict shape
+        def _mk(label: str, data: str):
+            if _Btn is not None:
+                return _Btn(label, callback_data=data)
+            # fallback: InteractiveContext also accepts dict-like Button
+            return type("B", (), {"label": label, "callback_data": data})()  # type: ignore
+
+        buttons = [
+            [
+                _mk("coding", f"routefb:fix:{callback_ref}:coding"),
+                _mk("review", f"routefb:fix:{callback_ref}:code_review"),
+            ],
+            [
+                _mk("reasoning", f"routefb:fix:{callback_ref}:reasoning"),
+                _mk("chat", f"routefb:fix:{callback_ref}:general_chat"),
+            ],
+            [
+                _mk("⏭ Skip", f"routefb:fix:{callback_ref}:skip"),
+            ],
+        ]
+        try:
+            if ctx.query and ctx.query.message_id:
+                await ctx.edit_message_text(
+                    message_id=ctx.query.message_id,
+                    text="❌ Which task was correct? Select one or Skip:",
+                    buttons=buttons,  # type: ignore
+                )
+            else:
+                await ctx.reply_text("❌ Which task was correct? Select one or Skip:", buttons=buttons)  # type: ignore
+        except Exception:
+            logger.exception(
+                "Could not show task selection for wrong feedback: user_id=%s decision_ref=%s",
+                ctx.user_id,
+                callback_ref,
+            )
+            await ctx.reply_text("❌ Which task was correct? Reply with e.g. `wrong -> reasoning`")
+        return
+
+    decision_id = resolve_feedback_token(
+        user_id=str(ctx.user_id),
+        decision_ref=callback_ref,
+    )
+    verdict = "correct" if action == "ok" else "wrong"
+    payload = {
+        "decision_id": decision_id,
+        "verdict": verdict,
+        "corrected_task": corrected_task,
+        "source_surface": "telegram_feedback_card",
+        "source_channel": "telegram",
+        "source_user_id": str(ctx.user_id),
+        "source_message_id": str(ctx.query.message_id) if ctx.query else None,
+    }
+    router_url = os.getenv("NEXUS_ROUTER_URL", "http://127.0.0.1:7771").rstrip("/")
+
+    def post_feedback() -> tuple[int, str]:
+        request = urllib.request.Request(
+            f"{router_url}/feedback",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8")
+
+    if not decision_id:
+        confirmation = "⚠️ This feedback card has expired or is invalid. Please use a newer card."
+        status, response_body = 0, "feedback_token_not_found"
+    else:
+        status, response_body = await asyncio.to_thread(post_feedback)
+
+    if status == 200:
+        label = "correct" if verdict == "correct" else (
+            f"wrong, corrected to {corrected_task}" if corrected_task else "wrong"
+        )
+        confirmation = f"Feedback recorded: {label}."
+    else:
+        logger.warning(
+            "Router feedback failed: status=%s decision_id=%s body=%s",
+            status,
+            decision_id,
+            response_body[:500],
+        )
+        if "decision_id_not_found" in response_body:
+            confirmation = "⚠️ This feedback card has expired or is invalid. Please use a newer card."
+        else:
+            confirmation = "❌ Could not record routing feedback. Please try again."
+
+    # Feedback cards can outlive their Telegram message (or be delivered by a
+    # different Telegram path/account). Never turn an otherwise handled click
+    # into a callback error when Telegram refuses the edit. Send confirmation
+    # as a new message instead.
+    try:
+        if ctx.query and ctx.query.message_id:
+            await ctx.edit_message_text(
+                text=confirmation,
+                message_id=ctx.query.message_id,
+            )
+        else:
+            raise ValueError("feedback callback has no message_id")
+    except Exception:
+        logger.exception(
+            "Could not edit feedback card; falling back to new message: "
+            "user_id=%s message_id=%s decision_id=%s",
+            ctx.user_id,
+            ctx.query.message_id if ctx.query else None,
+            decision_id,
+        )
+        await ctx.reply_text(confirmation)
 
 
 def _feature_ideation_handler_deps() -> FeatureIdeationHandlerDeps:
@@ -1367,7 +1462,6 @@ def _command_handler_map():
         active_handler=active_handler,
         inboxq_handler=inboxq_handler,
         stats_handler=stats_handler,
-        doctor_handler=doctor_handler,
         logs_handler=logs_handler,
         logsfull_handler=logsfull_handler,
         tail_handler=tail_handler,
@@ -1562,10 +1656,6 @@ async def close_flow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await _call_core_callback_handler(update, context, callback_close_flow_handler)
 
 
-async def route_feedback_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await _call_core_callback_handler(update, context, callback_route_feedback_callback_handler)
-
-
 # --- STATES ---
 SELECT_PROJECT, SELECT_TYPE, INPUT_TASK = range(3)
 
@@ -1626,6 +1716,11 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not NEXUS_AUTH_ENABLED:
         await update.effective_message.reply_text("ℹ️ Auth onboarding is disabled in this environment.")
         return
+    if not NEXUS_PUBLIC_BASE_URL:
+        await update.effective_message.reply_text(
+            "⚠️ NEXUS_PUBLIC_BASE_URL is not configured. Ask an admin to configure auth."
+        )
+        return
 
     requested_provider = str((context.args[0] if context.args else "") or "").strip().lower()
     provider_aliases = {
@@ -1640,38 +1735,6 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if requested_provider in {"codex", "gemini", "claude", "copilot"}
         else ""
     )
-    user = _get_or_create_telegram_user(update.effective_user)
-
-    if account_provider_target in {"codex", "gemini", "claude", "copilot"}:
-        imported = _svc_import_openclaw_local_provider_credentials(
-            nexus_id=str(user.nexus_id),
-            provider=account_provider_target,
-        )
-        import_state = str(imported.get("state") or "").strip().lower()
-        if bool(imported.get("imported")):
-            await update.effective_message.reply_text(
-                "\n".join(
-                    [
-                        f"✅ {imported.get('message') or f'Imported saved {account_provider_target.title()} credentials.'}",
-                        "Run `/setup_status` to verify setup readiness.",
-                    ]
-                ),
-                disable_web_page_preview=True,
-            )
-            return
-        if import_state in {"invalid", "error"}:
-            await update.effective_message.reply_text(
-                f"⚠️ {imported.get('message') or 'Saved provider credentials could not be imported.'}",
-                disable_web_page_preview=True,
-            )
-            return
-
-    if not NEXUS_PUBLIC_BASE_URL:
-        await update.effective_message.reply_text(
-            "⚠️ NEXUS_PUBLIC_BASE_URL is not configured. Ask an admin to configure auth."
-        )
-        return
-
     github_oauth_ready = bool(NEXUS_GITHUB_CLIENT_ID and NEXUS_GITHUB_CLIENT_SECRET)
     gitlab_oauth_ready = bool(NEXUS_GITLAB_CLIENT_ID and NEXUS_GITLAB_CLIENT_SECRET)
     if requested_provider == "github" and not github_oauth_ready:
@@ -1687,20 +1750,15 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    user = _get_or_create_telegram_user(update.effective_user)
     available_providers: list[str] = []
     if github_oauth_ready:
         available_providers.append("github")
     if gitlab_oauth_ready:
         available_providers.append("gitlab")
-    if bool(os.getenv("NEXUS_LINKEDIN_CLIENT_ID") and os.getenv("NEXUS_LINKEDIN_CLIENT_SECRET")):
-        available_providers.append("linkedin")
-    if bool(os.getenv("NEXUS_X_CLIENT_ID") and os.getenv("NEXUS_X_CLIENT_SECRET")):
-        available_providers.append("x")
-    if bool(os.getenv("NEXUS_META_CLIENT_ID") and os.getenv("NEXUS_META_CLIENT_SECRET")):
-        available_providers.append("meta")
     if not available_providers:
         await update.effective_message.reply_text(
-            "⚠️ No OAuth providers are configured. Ask an admin to configure GitHub/GitLab/LinkedIn/X/Meta OAuth.",
+            "⚠️ No OAuth providers are configured. Ask an admin to configure GitHub/GitLab OAuth.",
         )
         return
     if account_provider_target == "copilot" and "github" not in available_providers:
@@ -1798,7 +1856,7 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (
                 "🔐 Setup required before task execution.\n\n"
                 f"Session reference: {session_ref}\n"
-                "Choose your OAuth provider to continue onboarding."
+                "Choose your Git provider to continue OAuth onboarding."
             ),
             reply_markup=InlineKeyboardMarkup(keyboard),
             disable_web_page_preview=True,
@@ -1814,16 +1872,14 @@ async def login_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning("Failed to register Telegram onboarding message for session %s: %s", session_id, exc)
         return
 
-    if requested_provider and not account_provider_target and requested_provider not in {"github", "gitlab", "linkedin", "x", "meta", "instagram"}:
+    if requested_provider and not account_provider_target and requested_provider not in {"github", "gitlab"}:
         await update.effective_message.reply_text(
-            "⚠️ Invalid provider. Use `/login github`, `/login gitlab`, `/login linkedin`, `/login x`, `/login meta`, `/login codex`, `/login gemini`, `/login claude`, or `/login copilot`.",
+            "⚠️ Invalid provider. Use `/login github`, `/login gitlab`, `/login codex`, `/login gemini`, `/login claude`, or `/login copilot`.",
             parse_mode="Markdown",
         )
         return
 
-    # Social providers (linkedin, x, meta/instagram) don't need available_providers check
-    _social_providers = {"linkedin", "x", "meta", "instagram"}
-    if not account_provider_target and requested_provider not in _social_providers and requested_provider not in available_providers:
+    if not account_provider_target and requested_provider not in available_providers:
         await update.effective_message.reply_text(
             f"⚠️ {requested_provider.title()} OAuth is not configured in this environment.",
         )
@@ -1879,15 +1935,8 @@ async def setup_status_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         f"- CLI auth mode: `{status.get('cli_auth_mode') or 'account'}`",
         f"- GitHub linked: {'✅' if status.get('github_linked') else '❌'}",
         f"- GitLab linked: {'✅' if status.get('gitlab_linked') else '❌'}",
-        f"- LinkedIn linked: {'✅' if status.get('linkedin_linked') else '❌'}",
-        f"- X linked: {'✅' if status.get('x_linked') else '❌'}",
-        f"- Meta linked: {'✅' if status.get('meta_linked') else '❌'}",
-        f"- Instagram linked: {'✅' if status.get('instagram_linked') else '❌'}",
         f"- GitHub login: `{status.get('github_login') or 'n/a'}`",
         f"- GitLab username: `{status.get('gitlab_username') or 'n/a'}`",
-        f"- LinkedIn author URN: `{status.get('linkedin_author_urn') or 'n/a'}`",
-        f"- Meta page ID: `{status.get('meta_page_id') or 'n/a'}`",
-        f"- Instagram account ID: `{status.get('meta_ig_account_id') or 'n/a'}`",
         f"- Codex key set: {'✅' if status.get('codex_key_set') else '❌'}",
         f"- Gemini key set: {'✅' if status.get('gemini_key_set') else '❌'}",
         f"- Claude key set: {'✅' if status.get('claude_key_set') else '❌'}",
@@ -2016,7 +2065,6 @@ async def task_confirmation_callback_handler(update: Update, context: ContextTyp
         process_inbox_task=process_inbox_task,
         requester_context_builder=_requester_context_for_telegram_user,
         authorize_project=_authorize_project_for_requester,
-        router_feedback_config=NEXUS_ROUTER_FEEDBACK_CONFIG,
     )
 
 
@@ -2049,7 +2097,6 @@ async def hands_free_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         handle_feature_ideation_request=handle_feature_ideation_request,
         feature_ideation_deps_factory=_feature_ideation_handler_deps,
         route_hands_free_text=route_hands_free_text,
-        router_feedback_config=NEXUS_ROUTER_FEEDBACK_CONFIG,
     )
 
 
@@ -2205,7 +2252,10 @@ async def prepare_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @rate_limited("plan")
 async def plan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Creates a new planning task and routes it to the planning agent."""
+    """Requests AI agent to formulate a plan for an issue.
+
+    Adds an `agent:plan-requested` label.
+    """
     await issue_plan_handler(
         _build_telegram_interactive_ctx(update, context), _issue_handler_deps()
     )
@@ -2301,12 +2351,6 @@ async def audit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Display system analytics and performance statistics."""
     await ops_stats_handler(_build_telegram_interactive_ctx(update, context), _ops_handler_deps())
-
-
-@rate_limited("stats")
-async def doctor_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Diagnose runtime or workflow state and optionally apply a safe fix."""
-    await ops_doctor_handler(_build_telegram_interactive_ctx(update, context), _ops_handler_deps())
 
 
 @rate_limited("stats")
@@ -2447,6 +2491,11 @@ async def inline_keyboard_handler(update: Update, context: ContextTypes.DEFAULT_
     await _call_core_callback_handler(update, context, callback_inline_keyboard_handler)
 
 
+async def route_feedback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle routing feedback cards from the router plugin."""
+    await _call_core_callback_handler(update, context, callback_route_feedback_handler)
+
+
 async def _report_bug_action_wrapper(ctx, issue_num: str, project_key: str):
     repo_key = get_repo(project_key)
     requester_nexus_id = None
@@ -2567,7 +2616,6 @@ def main():
             "visualize_handler": visualize_handler,
             "watch_handler": watch_handler,
             "stats_handler": stats_handler,
-            "doctor_handler": doctor_handler,
             "comments_handler": comments_handler,
             "reprocess_handler": reprocess_handler,
             "reconcile_handler": reconcile_handler,
@@ -2596,8 +2644,8 @@ def main():
             "monitor_project_picker_handler": monitor_project_picker_handler,
             "close_flow_handler": close_flow_handler,
             "feature_callback_handler": feature_callback_handler,
-            "route_feedback_callback_handler": route_feedback_callback_handler,
             "task_confirmation_callback_handler": task_confirmation_callback_handler,
+            "route_feedback_handler": route_feedback_handler,
             "inline_keyboard_handler": inline_keyboard_handler,
             "hands_free_handler": hands_free_handler,
             "telegram_error_handler": telegram_error_handler,
